@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 serde_json = "1"
+sha2 = "0.10"
+uuid = "1.18"
 runinator-models = { path = "../runinator-models" }
 runinator-compute = { path = "../runinator-compute" }
 runinator-rexrap-syntax = { path = "../runinator-rexrap-syntax" }

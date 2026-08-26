@@ -37,6 +37,9 @@ pub use scheduling_operations::SchedulingOperations;
 pub use workflow_authoring::WorkflowAuthoring;
 
 #[cfg(test)]
+#[path = "pack_operations_tests.rs"]
+mod pack_operations_tests;
+#[cfg(test)]
 #[path = "pipeline_operations_tests.rs"]
 mod pipeline_operations_tests;
 #[cfg(test)]

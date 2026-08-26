@@ -39,6 +39,7 @@ macro_rules! workflow_from_row {
         WorkflowDefinition {
             id: $row.get("id"),
             name: $row.get("name"),
+            key: $row.get("resource_key"),
             namespace: $row.get("namespace"),
             org_id: $row.get("org_id"),
             version: $row.get::<String, _>("version").parse().unwrap_or_default(),
@@ -60,6 +61,7 @@ macro_rules! workflow_revision_from_row {
             id: $row.get("id"),
             workflow_id: $row.get("workflow_id"),
             revision: $row.get("revision"),
+            digest: $row.get("digest"),
             version: $row.get::<String, _>("version").parse().unwrap_or_default(),
             name: $row.get("name"),
             input_type: parse_type($row.get::<String, _>("input_schema")),
@@ -109,6 +111,8 @@ macro_rules! pipeline_from_row {
         Pipeline {
             id: $row.get("id"),
             name: $row.get("name"),
+            key: $row.get("resource_key"),
+            namespace: $row.get("namespace"),
             description: $row.get::<Option<String>, _>("description"),
             org_id: $row.get("org_id"),
             graph: serde_json::from_str($row.get::<String, _>("graph").as_str())
@@ -127,6 +131,34 @@ macro_rules! pipeline_from_row {
 }
 
 row_mapper!(row_to_pipeline(row) -> Pipeline { pipeline_from_row!(row) });
+
+macro_rules! pipeline_revision_from_row {
+    ($row:expr) => {{
+        PipelineRevision {
+            id: $row.get("id"),
+            pipeline_id: $row.get("pipeline_id"),
+            revision: $row.get("revision"),
+            digest: $row.get("digest"),
+            name: $row.get("name"),
+            description: $row.get("description"),
+            graph: serde_json::from_str($row.get::<String, _>("graph").as_str())
+                .unwrap_or_default(),
+            concurrency: serde_json::from_str($row.get::<String, _>("concurrency").as_str())
+                .unwrap_or_default(),
+            defaults: serde_json::from_str($row.get::<String, _>("defaults").as_str())
+                .unwrap_or_default(),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            source: RevisionSource::try_from($row.get::<String, _>("source").as_str())
+                .unwrap_or_default(),
+            actor_id: $row.get("actor_id"),
+            actor_kind: $row.get("actor_kind"),
+            note: $row.get("note"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
+        }
+    }};
+}
+
+row_mapper!(row_to_pipeline_revision(row) -> PipelineRevision { pipeline_revision_from_row!(row) });
 
 macro_rules! workflow_run_from_row {
     ($row:expr) => {{

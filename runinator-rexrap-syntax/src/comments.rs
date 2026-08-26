@@ -314,7 +314,7 @@ fn process_anchors(mut anchors: Vec<Anchor>, cursor: &mut Cursor, container_end:
     }
 }
 
-// top-level items (functions and workflows) in source order; leftovers after the last item become
+// top-level items (functions, source modules, and workflows) in source order; leftovers after the last item become
 // the document's trailing comments.
 fn attach_document(document: &mut Document, cursor: &mut Cursor, src: &str) {
     {
@@ -324,6 +324,14 @@ fn attach_document(document: &mut Document, cursor: &mut Cursor, src: &str) {
                 start: function.span.start,
                 set: &mut function.comments,
             });
+        }
+        for module in &mut document.modules {
+            for function in &mut module.functions {
+                tops.push(Anchor::Leaf {
+                    start: function.span.start,
+                    set: &mut function.comments,
+                });
+            }
         }
         for workflow in &mut document.workflows {
             tops.push(Anchor::Workflow(workflow));

@@ -825,18 +825,21 @@ fn setting_completion(src: &str, marker: &str) -> RexRapCompletionResponse {
     let source = src.replacen(marker, "", 1);
     let settings = vec![
         SettingSummary {
+            id: uuid::Uuid::nil(),
             scope: "github".into(),
             name: "token".into(),
             kind: SettingKind::Secret,
             expires_at: None,
         },
         SettingSummary {
+            id: uuid::Uuid::nil(),
             scope: "github".into(),
             name: "base_url".into(),
             kind: SettingKind::Config,
             expires_at: None,
         },
         SettingSummary {
+            id: uuid::Uuid::nil(),
             scope: "slack".into(),
             name: "webhook".into(),
             kind: SettingKind::Secret,

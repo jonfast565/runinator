@@ -31,6 +31,7 @@ row_mapper!(row_to_run_summary(row) -> RunSummary { run_summary_from_row!(row) }
 macro_rules! setting_from_row {
     ($row:expr) => {{
         SettingRecord {
+            id: $row.get("id"),
             kind: SettingKind::from_str_lossy(&$row.get::<String, _>("kind")),
             scope: $row.get("scope"),
             name: $row.get("name"),

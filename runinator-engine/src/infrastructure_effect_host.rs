@@ -10,13 +10,16 @@ use chrono::{DateTime, TimeZone, Utc};
 use runinator_broker_core::{Broker, EffectDelivery, EffectResultMessage, WakeMessage};
 use runinator_comm::{EffectExecutor, EffectResult, WakeCommand};
 use runinator_models::workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus};
-use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, WorkflowVmStore},
+};
 use tokio::{sync::Notify, task::JoinSet};
 use tracing::{info, warn};
 
 const CONSUMER_ID: &str = "runinator-infrastructure-effects";
 
-pub async fn run_infrastructure_effect_host<T: RuntimeStore + WorkflowVmStore>(
+pub async fn run_infrastructure_effect_host<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
@@ -68,7 +71,7 @@ enum Outcome {
     },
 }
 
-async fn handle_delivery<T: RuntimeStore + WorkflowVmStore>(
+async fn handle_delivery<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     delivery: EffectDelivery,
@@ -152,7 +155,10 @@ fn instant_from_unix(due_at: i64) -> DateTime<Utc> {
         .unwrap_or_else(Utc::now)
 }
 
-async fn execute<T: RuntimeStore + WorkflowVmStore>(db: &T, delivery: &EffectDelivery) -> Outcome {
+async fn execute<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
+    db: &T,
+    delivery: &EffectDelivery,
+) -> Outcome {
     let command = &delivery.command;
     if command.executor != EffectExecutor::Infrastructure {
         return Outcome::Settle(failed(
@@ -184,6 +190,8 @@ async fn execute<T: RuntimeStore + WorkflowVmStore>(db: &T, delivery: &EffectDel
         WorkflowEffectRequest::ChildRun {
             workflow_id,
             workflow_name,
+            workflow_revision,
+            workflow_revision_digest,
             input,
             wait,
             run_name,
@@ -194,6 +202,8 @@ async fn execute<T: RuntimeStore + WorkflowVmStore>(db: &T, delivery: &EffectDel
                 command,
                 *workflow_id,
                 workflow_name.as_deref(),
+                *workflow_revision,
+                workflow_revision_digest.as_deref(),
                 input.clone(),
                 *wait,
                 run_name.clone(),
@@ -709,16 +719,31 @@ async fn execute_condition_gate<T: RuntimeStore + WorkflowVmStore>(
     }
 }
 
-async fn execute_child_run<T: RuntimeStore + WorkflowVmStore>(
+async fn execute_child_run<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     workflow_id: Option<uuid::Uuid>,
     workflow_name: Option<&str>,
+    workflow_revision: Option<i64>,
+    workflow_revision_digest: Option<&str>,
     input: runinator_models::value::Value,
     wait: bool,
     run_name: Option<runinator_models::value::Value>,
 ) -> Result<runinator_models::value::Value, runinator_models::errors::SendableError> {
-    let workflow = if let Some(id) = workflow_id {
+    let workflow = if let (Some(id), Some(revision), Some(digest)) =
+        (workflow_id, workflow_revision, workflow_revision_digest)
+    {
+        Some(
+            crate::repository::support::fetch_workflow_revision_snapshot(db, id, revision, digest)
+                .await?,
+        )
+    } else if workflow_revision.is_some() || workflow_revision_digest.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "child workflow revision pins require id, revision, and digest",
+        )
+        .into());
+    } else if let Some(id) = workflow_id {
         db.fetch_workflow(id).await?
     } else if let Some(name) = workflow_name {
         db.fetch_workflow_by_name(name.to_string()).await?
@@ -842,7 +867,13 @@ mod tests {
     use chrono::Utc;
     use runinator_broker_core::{EffectMessage, in_memory::InMemoryBroker};
     use runinator_comm::EffectCommand;
-    use runinator_store::DatabaseImpl;
+    use runinator_models::{
+        revisions::{RevisionSource, WorkflowRevision},
+        semver::SemVer,
+        types::RuninatorType,
+        workflows::{WorkflowDefinition, WorkflowGraph},
+    };
+    use runinator_store::{DatabaseImpl, RuntimeStore, roles::DefinitionStore};
     use uuid::Uuid;
 
     #[tokio::test]
@@ -1060,5 +1091,103 @@ mod tests {
             idempotency_key: Uuid::now_v7().to_string(),
             notification_delivery_id: None,
         }
+    }
+
+    fn revisioned_workflow(metadata: runinator_models::value::Value) -> WorkflowDefinition {
+        WorkflowDefinition {
+            id: None,
+            name: "child".into(),
+            key: None,
+            namespace: Some("acme.billing".into()),
+            org_id: None,
+            version: SemVer::new(1, 0, 0),
+            enabled: true,
+            input_type: RuninatorType::Any,
+            definition: WorkflowGraph::from_value(runinator_models::json!({
+                "start": "start",
+                "metadata": metadata,
+                "nodes": [
+                    { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
+                    { "id": "end", "kind": "end" }
+                ]
+            }))
+            .unwrap(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    async fn capture_revision(
+        db: &runinator_database::sqlite::SqliteDb,
+        workflow: &WorkflowDefinition,
+    ) -> WorkflowRevision {
+        let revision = WorkflowRevision {
+            id: Uuid::nil(),
+            workflow_id: workflow.id.unwrap(),
+            revision: 0,
+            digest: WorkflowRevision::content_digest(
+                workflow.version,
+                &workflow.input_type,
+                &workflow.definition,
+            ),
+            version: workflow.version,
+            name: workflow.name.clone(),
+            input_type: workflow.input_type.clone(),
+            definition: workflow.definition.clone(),
+            source: RevisionSource::Api,
+            actor_id: None,
+            actor_kind: "test".into(),
+            note: None,
+            created_at: None,
+        };
+        db.insert_workflow_revision(&revision)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn pinned_child_run_uses_the_selected_revision_not_the_current_head() {
+        let path =
+            std::env::temp_dir().join(format!("runinator-pinned-child-{}.db", Uuid::now_v7()));
+        let db = runinator_database::sqlite::SqliteDb::new(path.to_str().unwrap())
+            .await
+            .unwrap();
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+
+        let first = db
+            .upsert_workflow(&revisioned_workflow(
+                runinator_models::json!({ "generation": 1 }),
+            ))
+            .await
+            .unwrap();
+        let first_revision = capture_revision(&db, &first).await;
+
+        let mut second = revisioned_workflow(runinator_models::json!({ "generation": 2 }));
+        second.id = first.id;
+        let second = db.upsert_workflow(&second).await.unwrap();
+        let _second_revision = capture_revision(&db, &second).await;
+
+        let output = execute_child_run(
+            &db,
+            &command(WorkflowEffectRequest::Timer { due_at: 0 }),
+            first.id,
+            None,
+            Some(first_revision.revision),
+            Some(&first_revision.digest),
+            runinator_models::value::Value::Null,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let child_id = output["run_id"].as_str().unwrap().parse().unwrap();
+        let child = db.fetch_workflow_run(child_id).await.unwrap().unwrap();
+        assert_eq!(
+            child.workflow_snapshot.unwrap().definition.metadata["generation"],
+            runinator_models::value::Value::Number(1.into())
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 }

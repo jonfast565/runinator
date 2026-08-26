@@ -174,6 +174,14 @@ pub async fn import_pack<
     if !published.is_empty() {
         log::info!("Imported {} function versions from pack", published.len());
     }
+    if let Err(err) = packs
+        .resolve_provisional_function_bindings(&mut workflow_bundle, &published)
+        .await
+    {
+        return api_error(format!(
+            "pack function bindings could not be resolved after publish: {err}"
+        ));
+    }
 
     // apply config/secrets before workflows so a pack's own `config.*` values are present in the
     // store when its workflows are type-checked on import.

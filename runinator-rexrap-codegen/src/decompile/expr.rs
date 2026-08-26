@@ -564,11 +564,17 @@ fn render_type_value(value: &runinator_models::value::Value) -> String {
     }
 }
 
-/// recognize a `secret://<scope>/<name>` literal and render it as `secret.<scope>.<name…>`.
+/// recognize a path- or UUID-backed secret literal and render it as `secret.<scope>.<name…>`.
 /// returns None (so the caller quotes it as a plain string) unless every segment is a bare
 /// ident, keeping the result a clean round-trip with the lowering.
 fn secret_path(text: &str) -> Option<String> {
-    let rest = text.strip_prefix("secret://")?;
+    let rest = if let Some(rest) = text.strip_prefix("secret+uuid://") {
+        let (id, path) = rest.split_once('/')?;
+        uuid::Uuid::parse_str(id).ok()?;
+        path
+    } else {
+        text.strip_prefix("secret://")?
+    };
     let (scope, name) = rest.split_once('/')?;
     if scope.is_empty() || name.is_empty() {
         return None;
@@ -606,4 +612,17 @@ fn quote(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod uuid_secret_tests {
+    use super::secret_path;
+
+    #[test]
+    fn uuid_backed_secret_keeps_its_authored_path() {
+        assert_eq!(
+            secret_path("secret+uuid://95cd92f0-f144-4bad-b06a-f811d3f2420a/acme/api/token"),
+            Some("secret.acme.api.token".into())
+        );
+    }
 }

@@ -25,6 +25,16 @@ pub const IMPORT_UNKNOWN_PIPELINE_MEMBER: ErrorDescriptor = ErrorDescriptor::new
     "workflow.import.unknown_pipeline_member",
     "Imported pipeline references an unknown member workflow",
 );
+pub const IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI124",
+    "workflow.import.ambiguous_artifact_reference",
+    "Imported workflow reference matches more than one artifact",
+);
+pub const ARTIFACT_HAS_INBOUND_REFERENCES: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI125",
+    "workflow.artifact.has_inbound_references",
+    "Artifact has inbound durable references",
+);
 
 // debug, control, and replay.
 pub const DEBUG_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
@@ -257,6 +267,8 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_INVALID_TRIGGER_BLACKOUT,
     IMPORT_UNKNOWN_CHAINED_TARGET,
     IMPORT_UNKNOWN_PIPELINE_MEMBER,
+    IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE,
+    ARTIFACT_HAS_INBOUND_REFERENCES,
     DEBUG_NOT_FOUND,
     DEBUG_DISABLED,
     DEBUG_TERMINAL,

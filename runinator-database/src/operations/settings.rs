@@ -49,8 +49,9 @@ where
             .dialect()
             .on_conflict_update("kind, scope, name", &["value", "updated_at"]);
         sqlx::query(&self.render(&format!(
-            "INSERT INTO settings (kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?) {conflict}",
+            "INSERT INTO settings (id, kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?, ?) {conflict}",
         )))
+        .bind(Uuid::now_v7())
         .bind(kind.as_str())
         .bind(scope)
         .bind(name)
@@ -80,5 +81,25 @@ where
         })
         .await?;
         Ok(())
+    }
+
+    async fn move_setting(
+        &self,
+        id: Uuid,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+    ) -> Result<Option<SettingRecord>, SendableError> {
+        sqlx::query(&self.render(
+            "UPDATE settings SET kind = ?, scope = ?, name = ?, updated_at = ? WHERE id = ?",
+        ))
+        .bind(kind.as_str())
+        .bind(scope)
+        .bind(name)
+        .bind(Utc::now().timestamp())
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        self.fetch_setting_by_id(id).await
     }
 }

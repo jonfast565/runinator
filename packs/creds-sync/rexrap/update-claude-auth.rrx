@@ -1,6 +1,10 @@
 language rexrap-1
 
+namespace runinator.operations.credentials {
+
 workflow "Update Claude Worker Auth" v1 {
+    key update_claude_auth
+
     // hourly: copy the operator's local Claude Code login into the k8s `claude-credentials` Secret
     // the worker pods mount, so cloud workers act as the logged-in identity.
     trigger cron "0 * * * *"
@@ -33,4 +37,5 @@ workflow "Update Claude Worker Auth" v1 {
                 }
             }
     }
+}
 }

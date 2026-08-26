@@ -291,6 +291,29 @@ where
         Ok(row.map(|row| mappers::row_to_function_package(&row)))
     }
 
+    async fn move_function_package(
+        &self,
+        package_id: Uuid,
+        namespace: Option<String>,
+        name: String,
+    ) -> Result<Option<FunctionPackage>, SendableError> {
+        let Some(package) = self.fetch_function_package_by_id(package_id).await? else {
+            return Ok(None);
+        };
+        let identity = identity_key(package.org_id, namespace.as_deref(), &name);
+        sqlx::query(&self.render(
+            "UPDATE function_packages SET namespace = ?, name = ?, identity_key = ?, updated_at = ? WHERE id = ?",
+        ))
+        .bind(namespace)
+        .bind(name)
+        .bind(identity)
+        .bind(Utc::now().timestamp())
+        .bind(package_id)
+        .execute(self.pool())
+        .await?;
+        self.fetch_function_package_by_id(package_id).await
+    }
+
     async fn delete_function_package(&self, package_id: Uuid) -> Result<bool, SendableError> {
         let now = Utc::now().timestamp();
         let result = sqlx::query(&self.render(

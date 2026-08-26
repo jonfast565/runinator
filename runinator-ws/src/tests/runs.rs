@@ -59,6 +59,7 @@ fn ancestors_in_snapshot_returns_topological_path() {
     let snapshot = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "ancestors".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
@@ -96,6 +97,7 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
     let snapshot = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "loop_ancestor".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
@@ -131,6 +133,7 @@ fn ancestors_in_snapshot_rejects_missing_step() {
     let snapshot = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "missing".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),

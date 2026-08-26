@@ -52,7 +52,7 @@ secret_kind      = { "secret" | "config" }
 // the grammar only expresses well-formed pipelines; the lowering rejects empty/danging references.
 pipeline_document       = { SOI ~ pipeline_decl* ~ EOI }
 pipeline_decl           = { "pipeline" ~ string ~ "{" ~ pipeline_item* ~ "}" }
-pipeline_item           = { pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
+pipeline_item           = { key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
 pipeline_desc           = { "description" ~ string }
 pipeline_on_failure     = { "on_failure" ~ pipeline_failure_policy }
 pipeline_failure_policy = { "halt" | "continue" }
@@ -76,9 +76,11 @@ pipeline_chain_source     = { "workflow" | "pipeline" }
 
 document_item = {
     func_def
+  | source_module
   | namespace_block
   | workflow
   | namespace_decl
+  | key_decl
   | workflow_decl
   | params_block
   | import_decl
@@ -96,6 +98,10 @@ document_item = {
   | stmt
 }
 
+// A pack-local source module exports pure functions at a dotted path. It exists only while a pack
+// compiles; consumers embed the resolved function AST and its digest.
+source_module = { "module" ~ ns_path ~ "{" ~ func_def* ~ "}" }
+
 // `do { … }` is the lexical runtime block: the thread of control a run follows. It holds the
 // statement sequence a workflow executes, separating it from the header declarations above.
 run_block = { do_kw ~ "{" ~ (join_decl | stmt)* ~ "}" }
@@ -108,19 +114,24 @@ join_kw   = @{ "join" ~ !(ASCII_ALPHANUMERIC | "_") }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
 workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ workflow_item* ~ "}" }
-workflow_item = _{ import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
+workflow_item = _{ key_decl | import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
 returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
 // subflow targets resolve unambiguously across packs; falls back to the pack name on import when
 // absent. render-only surface that rides in metadata.
 namespace_decl = { "namespace" ~ ns_path }
+// Stable logical key. Unlike the namespace and display name it does not change when the artifact
+// is reorganized or renamed, so pack re-apply can recover the existing UUID.
+key_decl = { "key" ~ ns_path }
 
-// `import <path> (as <alias>)?` opens a namespace into local scope. `import std.strings` makes
+// `import [kind] <path> [@revision(N)] (as <alias>)?` opens a namespace into local scope. `import std.strings` makes
 // `upper(x)` callable bare; `import std.strings as s` binds `s.upper(x)`; `import some_pack` brings
 // another pack's workflows into subflow scope. pure surface sugar carried in metadata; the compiled
 // graph only ever holds fully-resolved names.
-import_decl = { "import" ~ ns_path ~ ("as" ~ ident)? }
+import_decl = { "import" ~ import_kind? ~ ns_path ~ revision_selector? ~ ("as" ~ ident)? }
+import_kind = { "workflow" | "functions" | "settings" | "module" }
+revision_selector = { "@revision" ~ "(" ~ integer ~ ")" }
 
 // a dotted namespace path (`std.strings`, `some_pack.helpers`). atomic so it is captured whole and
 // split by the parser.
@@ -368,7 +379,8 @@ arg_pair     = { ident ~ ":" ~ expr }
 mod_arg_list  = { mod_arg ~ ("," ~ mod_arg)* ~ ","? }
 mod_arg       = { (ident ~ ":")? ~ expr }
 
-subflow_stmt = { "subflow" ~ "(" ~ string ~ ("," ~ subflow_arg)* ~ ","? ~ ")" }
+subflow_stmt = { "subflow" ~ "(" ~ subflow_target ~ ("," ~ subflow_arg)* ~ ","? ~ ")" }
+subflow_target = { string | ns_path }
 subflow_arg  = { ident ~ ":" ~ expr }
 
 // `wait until <cond>` is a condition wait with no body: it parks, re-checks on the `every` interval

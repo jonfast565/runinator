@@ -47,7 +47,7 @@ use runinator_models::{
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
         ReplicaStatus, WorkflowRunProvenance,
     },
-    revisions::WorkflowRevision,
+    revisions::{PipelineRevision, WorkflowRevision},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     schedules::{
         BackfillRequest, BackfillResponse, CatchupPolicy, ConcurrencyPolicy,
@@ -74,14 +74,15 @@ use crate::{
 use runinator_store::prelude::*;
 
 const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, state_version, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
+const WORKFLOW_COLUMNS: &str = "id, name, resource_key, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at";
 /// every column `mappers::row_to_ready_node` reads. hoisted because this list appeared verbatim in
 /// seven places, and a mapper reading a column one of them forgot to select panics only on that one
 /// code path.
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 const AGENT_DIRECTIVE_COLUMNS: &str = "directive_id, replica_id, kind_json, state, issued_at, expires_at, published_at, completed_at, payload_json, message, attempts, claimed_at, claimed_by_runtime_id";
-const PIPELINE_COLUMNS: &str =
-    "id, name, description, org_id, defaults, metadata, graph, concurrency, created_at, updated_at";
+const PIPELINE_COLUMNS: &str = "id, name, resource_key, namespace, description, org_id, defaults, metadata, graph, concurrency, created_at, updated_at";
+const PIPELINE_REVISION_COLUMNS: &str = "id, pipeline_id, revision, digest, name, description, graph, concurrency, defaults, metadata, source, actor_id, actor_kind, note, created_at";
 const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
 const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata";
 const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at";

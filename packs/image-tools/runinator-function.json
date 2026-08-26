@@ -1,5 +1,6 @@
 {
   "name": "image-tools",
+  "namespace": "runinator.examples",
   "description": "Image inspection and resizing, as a packaged function.",
   "runtime": {
     "runtime": "python3.13"

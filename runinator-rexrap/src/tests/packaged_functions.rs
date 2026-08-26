@@ -80,6 +80,30 @@ fn lowers_to_the_one_provider_and_action_the_runtime_dispatches() {
 }
 
 #[test]
+fn typed_function_import_alias_resolves_to_the_catalogued_package() {
+    let mut entry = catalog_entry(3);
+    entry.package_name = "pdf".into();
+    entry.namespace = Some("acme.shared".into());
+    entry.export_name = "render".into();
+    let source = r#"
+workflow "Render" {
+    import functions acme.shared.pdf as pdf
+
+    do {
+        pdf.render(source: "invoice.html")
+    }
+}
+"#;
+
+    let action = action_of(&compile_functions(source, vec![entry]));
+    let binding = action.function_binding.expect("a binding");
+    assert_eq!(action.provider, "functions");
+    assert_eq!(action.function, "invoke");
+    assert_eq!(binding.call_path(), "functions.acme.shared.pdf.render");
+    assert_eq!(binding.version, 3);
+}
+
+#[test]
 fn the_authored_arguments_become_the_handlers_input() {
     let action = action_of(&compile_functions(SOURCE, vec![catalog_entry(1)]));
     let input = action

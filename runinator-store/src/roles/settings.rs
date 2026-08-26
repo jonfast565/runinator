@@ -5,7 +5,10 @@
 
 use std::future::Future;
 
-use runinator_models::{errors::SendableError, settings::SettingKind};
+use runinator_models::{
+    errors::SendableError,
+    settings::{SettingKind, SettingRecord},
+};
 
 // re-exported here so callers that reach for the contract at its historical path
 // (`runinator_database::interfaces::*`) can import both halves from one place.
@@ -31,4 +34,13 @@ pub trait SettingStore: Send + Sync + 'static {
         scope: String,
         name: String,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Move a setting's human-facing alias while preserving its durable UUID and current value.
+    fn move_setting(
+        &self,
+        id: uuid::Uuid,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+    ) -> impl Future<Output = Result<Option<SettingRecord>, SendableError>> + Send;
 }

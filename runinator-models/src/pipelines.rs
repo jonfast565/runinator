@@ -160,6 +160,11 @@ pub struct PipelineJoinSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineSpec {
     pub name: String,
+    /// Stable key used to find this logical pipeline across display-name edits and namespace moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -294,6 +299,10 @@ impl PipelineGraph {
 pub struct Pipeline {
     pub id: Option<Uuid>,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     /// the owning organization (tenant), or `None` for platform-global. stamped from the creator's
@@ -312,6 +321,16 @@ pub struct Pipeline {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl Pipeline {
+    pub fn artifact_key(&self) -> &str {
+        self.key.as_deref().unwrap_or(&self.name)
+    }
+
+    pub fn artifact_path(&self) -> crate::artifacts::ArtifactPath {
+        crate::artifacts::ArtifactPath::new(self.namespace.clone(), self.artifact_key().to_string())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

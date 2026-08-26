@@ -1,6 +1,10 @@
 language rexrap-1
 
+namespace runinator.operations.credentials {
+
 workflow "Update AWS Worker Auth" v1 {
+    key update_aws_auth
+
     // hourly: refresh the operator's local AWS SSO cache and copy it into the k8s `aws-sso-cache`
     // Secret the worker pods mount, so cloud workers use the SSO identity. the sync spec is the
     // single point that grows to carry API-key credential files in the future.
@@ -34,4 +38,5 @@ workflow "Update AWS Worker Auth" v1 {
                 }
             }
     }
+}
 }

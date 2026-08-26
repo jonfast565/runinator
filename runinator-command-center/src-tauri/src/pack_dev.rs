@@ -90,6 +90,9 @@ pub fn inspect_dev_pack(
                 .secrets
                 .iter()
                 .map(|entry| SettingSummary {
+                    // Authored pack settings have no server identity until import. Completion only
+                    // needs their paths, so use the nil UUID as an explicit provisional sentinel.
+                    id: uuid::Uuid::nil(),
                     scope: entry.scope.clone(),
                     name: entry.name.clone(),
                     kind: entry.kind,

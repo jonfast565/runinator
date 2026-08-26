@@ -29,6 +29,7 @@ fn workflow() -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: "run operations".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: SemVer::new(1, 0, 0),

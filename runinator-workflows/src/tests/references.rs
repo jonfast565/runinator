@@ -60,6 +60,7 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
     let wf = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "schema-boundary".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),

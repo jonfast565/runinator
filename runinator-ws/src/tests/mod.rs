@@ -78,6 +78,7 @@ fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id,
         name: name.into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),

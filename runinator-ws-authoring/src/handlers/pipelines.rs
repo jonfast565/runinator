@@ -1,7 +1,11 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::{Path, Query},
+    http::StatusCode,
+};
 use runinator_models::{
     auth::{AuthContext, Permission},
     pipelines::{Pipeline, PipelineTrigger},
@@ -10,6 +14,7 @@ use runinator_store::{
     RuntimeStore,
     roles::{DefinitionStore, ScheduleStore, WorkflowVmStore},
 };
+use serde::Deserialize;
 
 use runinator_engine::services::PipelineOperations;
 use runinator_ws_core::models::{
@@ -62,6 +67,63 @@ pub async fn get_pipeline<
     match service.fetch(pipeline_id).await {
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
         Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+const DEFAULT_REVISION_LIMIT: i64 = 50;
+const MAX_REVISION_LIMIT: i64 = 500;
+
+#[derive(Debug, Deserialize)]
+pub struct PipelineRevisionListQuery {
+    limit: Option<i64>,
+}
+
+pub async fn get_pipeline_revisions<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_id): Path<Uuid>,
+    Query(query): Query<PipelineRevisionListQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::View)
+        .await
+    {
+        return reply;
+    }
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_REVISION_LIMIT)
+        .clamp(1, MAX_REVISION_LIMIT);
+    match service.revisions(pipeline_id, limit).await {
+        Ok(revisions) => (
+            StatusCode::OK,
+            Json(ApiResponse::PipelineRevisionList(revisions)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn get_pipeline_revision<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((pipeline_id, revision)): Path<(Uuid, i64)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::View)
+        .await
+    {
+        return reply;
+    }
+    match service.revision(pipeline_id, revision).await {
+        Ok(Some(found)) => (StatusCode::OK, Json(ApiResponse::PipelineRevision(found))),
+        Ok(None) => not_found(format!("Pipeline {pipeline_id} has no revision {revision}")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -242,7 +304,12 @@ pub async fn create_pipeline_run<
         return reply;
     }
     match service
-        .create_run(pipeline_id, request.parameters, Some("api".into()))
+        .create_run(
+            pipeline_id,
+            request.parameters,
+            request.revision,
+            Some("api".into()),
+        )
         .await
     {
         Ok(run) => (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run))),
@@ -487,6 +554,14 @@ pub fn routes<
                 .patch(update_pipeline::<T>)
                 .delete(delete_pipeline::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/revisions",
+            get(get_pipeline_revisions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/revisions/{revision}",
+            get(get_pipeline_revision::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/pipelines/{id}/triggers",

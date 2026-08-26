@@ -43,6 +43,57 @@ pub async fn config_tree<T: RuntimeStore>(db: &T) -> Value {
     Value::Object(root)
 }
 
+/// Build the run's config snapshot and re-expose UUID-bound settings at the path the workflow was
+/// authored against. A later setting move therefore changes only its current alias, not deployed
+/// workflow behavior.
+pub async fn config_tree_for_workflow<T: RuntimeStore>(
+    db: &T,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
+) -> Value {
+    let mut tree = config_tree(db).await;
+    let Some(bindings) = workflow
+        .definition
+        .metadata
+        .pointer("/artifact_refs/settings")
+        .and_then(Value::as_array)
+    else {
+        return tree;
+    };
+    let cipher = settings_cipher();
+    for value in bindings {
+        let Ok(binding) = serde_json::from_value::<runinator_models::settings::SettingBinding>(
+            value.clone().into(),
+        ) else {
+            continue;
+        };
+        if binding.kind != SettingKind::Config {
+            continue;
+        }
+        let Some(path) = binding.reference.authored_path else {
+            continue;
+        };
+        let Some(scope_name) = path.namespace else {
+            continue;
+        };
+        let Ok(Some(record)) = db.fetch_setting_by_id(binding.reference.id).await else {
+            continue;
+        };
+        let Some(plaintext) = cipher.try_decrypt(&record.value) else {
+            continue;
+        };
+        let Some(root) = tree.as_object_mut() else {
+            continue;
+        };
+        let scope = root
+            .entry(scope_name)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(scope) = scope.as_object_mut() {
+            scope.insert(path.key, decode_config_value(&plaintext));
+        }
+    }
+    tree
+}
+
 /// fetch one config value by scope/name, decrypting and decoding the persisted payload.
 pub async fn config_value<T: RuntimeStore>(
     db: &T,

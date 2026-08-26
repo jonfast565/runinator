@@ -42,6 +42,11 @@ const MAX_LOG_LINES: usize = 3;
 /// local to the dashboard: durable, cross-replica history remains the job of heartbeats and OTEL.
 const RESOURCE_HISTORY_CAPACITY: usize = 60;
 const RESOURCE_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+/// A component card needs enough room for its title, details, activity, and metrics. More cards
+/// than this fit in the available space are shown on adjacent pages instead of being squeezed down
+/// to zero-height rectangles by the layout engine.
+const COMPONENT_MIN_HEIGHT: u16 = 6;
+const DASHBOARD_FIXED_HEIGHT: u16 = 3 + 4 + 4 + (MAX_LOG_LINES as u16 + 2) + 1;
 
 /// Configure terminal-safe logging and return whether the interactive dashboard can be started.
 /// A `--tui` invocation in a pipe or supervisor daemon deliberately falls back to ordinary logs.
@@ -332,6 +337,8 @@ struct ComponentSnapshot {
 struct ResourceHistory {
     host_cpu: Vec<u64>,
     host_memory: Vec<u64>,
+    host_memory_used: u64,
+    host_memory_total: u64,
     process_cpu: Vec<u64>,
     network_rx: Vec<u64>,
     network_tx: Vec<u64>,
@@ -342,6 +349,8 @@ impl ResourceHistory {
     fn push(&mut self, resources: &runinator_models::telemetry::ResourceTelemetry) {
         push_history(&mut self.host_cpu, percent(resources.cpu_percent));
         push_history(&mut self.host_memory, percent(resources.mem_percent));
+        self.host_memory_used = resources.mem_used_bytes;
+        self.host_memory_total = resources.mem_total_bytes;
         push_history(
             &mut self.process_cpu,
             percent(resources.process.cpu_percent),
@@ -402,6 +411,7 @@ fn run(
     let mut resources = collector.sample();
     let mut resource_history = ResourceHistory::default();
     resource_history.push(&resources);
+    let mut component_page = 0;
     let mut next_resource_sample = Instant::now() + RESOURCE_SAMPLE_INTERVAL;
     let mut raw = false;
     let mut alternate_screen = false;
@@ -419,16 +429,35 @@ fn run(
                 next_resource_sample = Instant::now() + RESOURCE_SAMPLE_INTERVAL;
             }
             let snapshot = dashboard.snapshot();
-            terminal.draw(|frame| render(frame, &snapshot, &resource_history))?;
+            let page_count = component_page_count(
+                snapshot.components.len(),
+                dashboard_component_page_capacity(terminal.size()?.height),
+            );
+            component_page = component_page.min(page_count.saturating_sub(1));
+            terminal.draw(|frame| render(frame, &snapshot, &resource_history, component_page))?;
             if event::poll(Duration::from_millis(250))?
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
-                && (matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                    || (key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(event::KeyModifiers::CONTROL)))
             {
-                (request_shutdown)();
-                break;
+                match key.code {
+                    // Keep page navigation on unmodified arrows: this dashboard has no text
+                    // editor or row selection competing for those keys.
+                    KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
+                        component_page = component_page.saturating_sub(1);
+                    }
+                    KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
+                        component_page = (component_page + 1).min(page_count.saturating_sub(1));
+                    }
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        (request_shutdown)();
+                        break;
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                        (request_shutdown)();
+                        break;
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -471,6 +500,7 @@ fn render(
     frame: &mut ratatui::Frame,
     snapshot: &DashboardSnapshot,
     resource_history: &ResourceHistory,
+    component_page: usize,
 ) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -508,7 +538,7 @@ fn render(
     render_sparkline(
         frame,
         top_resource_graphs[0],
-        "Host CPU · 60 sec",
+        percent_graph_title("Host CPU", &resource_history.host_cpu),
         &resource_history.host_cpu,
         Some(100),
         Color::Cyan,
@@ -516,7 +546,7 @@ fn render(
     render_sparkline(
         frame,
         top_resource_graphs[1],
-        "Host RAM · 60 sec",
+        memory_graph_title(resource_history),
         &resource_history.host_memory,
         Some(100),
         Color::Magenta,
@@ -524,7 +554,7 @@ fn render(
     render_sparkline(
         frame,
         top_resource_graphs[2],
-        "Process CPU · 60 sec",
+        percent_graph_title("Process CPU", &resource_history.process_cpu),
         &resource_history.process_cpu,
         None,
         Color::Yellow,
@@ -537,7 +567,7 @@ fn render(
     render_sparkline(
         frame,
         bottom_resource_graphs[0],
-        "Network in · 60 sec",
+        rate_graph_title("Network in", &resource_history.network_rx),
         &resource_history.network_rx,
         None,
         Color::Green,
@@ -545,7 +575,7 @@ fn render(
     render_sparkline(
         frame,
         bottom_resource_graphs[1],
-        "Network out · 60 sec",
+        rate_graph_title("Network out", &resource_history.network_tx),
         &resource_history.network_tx,
         None,
         Color::Red,
@@ -553,54 +583,74 @@ fn render(
     render_sparkline(
         frame,
         bottom_resource_graphs[2],
-        "Disk I/O · 60 sec",
+        rate_graph_title("Disk I/O", &resource_history.disk_io),
         &resource_history.disk_io,
         None,
         Color::Blue,
     );
 
-    let component_constraints = snapshot
-        .components
-        .iter()
-        .map(|_| Constraint::Ratio(1, snapshot.components.len() as u32))
-        .collect::<Vec<_>>();
-    let components = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(component_constraints)
-        .split(layout[3]);
-    for (area, component) in components.iter().zip(&snapshot.components) {
-        let mut lines = Vec::new();
-        if !component.details.is_empty() {
-            lines.push(Line::from(component.details.join("  •  ")));
-        }
-        let remaining = component
-            .expected_remaining
-            .map(|duration| format!("  deadline in {}", human_duration(duration)))
-            .unwrap_or_default();
-        lines.push(Line::from(vec![
-            Span::styled("now   ", Style::default().fg(Color::Yellow)),
-            Span::raw(&component.activity),
-            Span::styled(
-                format!(
-                    "  for {}{}",
-                    human_duration(component.activity_age),
-                    remaining
-                ),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
-        if !component.gauges.is_empty() {
-            lines.push(Line::from(format_metrics("live", &component.gauges)));
-        }
-        if !component.counters.is_empty() {
-            lines.push(Line::from(format_metrics("total", &component.counters)));
-        }
+    let components_per_page = component_page_capacity(layout[3].height);
+    let page_count = component_page_count(snapshot.components.len(), components_per_page);
+    let component_page = component_page.min(page_count.saturating_sub(1));
+    let first_component = component_page * components_per_page;
+    let last_component = (first_component + components_per_page).min(snapshot.components.len());
+    let visible_components = &snapshot.components[first_component..last_component];
+    if visible_components.is_empty() {
         frame.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: true })
-                .block(Block::default().borders(Borders::ALL).title(component.name)),
-            *area,
+            Paragraph::new("No runtime components have registered yet.")
+                .block(Block::default().borders(Borders::ALL).title(" Components ")),
+            layout[3],
         );
+    } else {
+        let component_constraints = visible_components
+            .iter()
+            .map(|_| Constraint::Ratio(1, visible_components.len() as u32))
+            .collect::<Vec<_>>();
+        let components = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(component_constraints)
+            .split(layout[3]);
+        for (index, (area, component)) in components.iter().zip(visible_components).enumerate() {
+            let mut lines = Vec::new();
+            if !component.details.is_empty() {
+                lines.push(Line::from(component.details.join("  •  ")));
+            }
+            let remaining = component
+                .expected_remaining
+                .map(|duration| format!("  deadline in {}", human_duration(duration)))
+                .unwrap_or_default();
+            lines.push(Line::from(vec![
+                Span::styled("now   ", Style::default().fg(Color::Yellow)),
+                Span::raw(&component.activity),
+                Span::styled(
+                    format!(
+                        "  for {}{}",
+                        human_duration(component.activity_age),
+                        remaining
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+            if !component.gauges.is_empty() {
+                lines.push(Line::from(format_metrics("live", &component.gauges)));
+            }
+            if !component.counters.is_empty() {
+                lines.push(Line::from(format_metrics("total", &component.counters)));
+            }
+            frame.render_widget(
+                Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+                    Block::default().borders(Borders::ALL).title(format!(
+                        " {} · {} of {} · page {}/{} ",
+                        component.name,
+                        first_component + index + 1,
+                        snapshot.components.len(),
+                        component_page + 1,
+                        page_count,
+                    )),
+                ),
+                *area,
+            );
+        }
     }
 
     let log_lines = snapshot
@@ -615,7 +665,11 @@ fn render(
     );
 
     frame.render_widget(
-        Paragraph::new("q / Esc / Ctrl-C: gracefully stop this runtime")
+        Paragraph::new(format!(
+            "←/↑ previous page · →/↓ next page · {}/{} · q / Esc / Ctrl-C: gracefully stop this runtime",
+            component_page + 1,
+            page_count,
+        ))
             .style(Style::default().fg(Color::DarkGray)),
         layout[5],
     );
@@ -624,7 +678,7 @@ fn render(
 fn render_sparkline(
     frame: &mut ratatui::Frame,
     area: ratatui::layout::Rect,
-    title: &'static str,
+    title: String,
     values: &[u64],
     max: Option<u64>,
     color: Color,
@@ -638,6 +692,57 @@ fn render_sparkline(
         None => sparkline,
     };
     frame.render_widget(sparkline, area);
+}
+
+fn component_page_capacity(available_height: u16) -> usize {
+    usize::from(available_height.max(COMPONENT_MIN_HEIGHT) / COMPONENT_MIN_HEIGHT)
+}
+
+fn dashboard_component_page_capacity(terminal_height: u16) -> usize {
+    component_page_capacity(terminal_height.saturating_sub(DASHBOARD_FIXED_HEIGHT))
+}
+
+fn component_page_count(component_count: usize, components_per_page: usize) -> usize {
+    let components_per_page = components_per_page.max(1);
+    (component_count / components_per_page
+        + usize::from(component_count % components_per_page != 0))
+    .max(1)
+}
+
+fn latest(values: &[u64]) -> u64 {
+    values.last().copied().unwrap_or_default()
+}
+
+fn percent_graph_title(name: &str, values: &[u64]) -> String {
+    format!("{name} · {}% · 60 sec", latest(values))
+}
+
+fn memory_graph_title(resources: &ResourceHistory) -> String {
+    format!(
+        "Host RAM · {}/{} · {}% · 60 sec",
+        format_bytes(resources.host_memory_used),
+        format_bytes(resources.host_memory_total),
+        latest(&resources.host_memory),
+    )
+}
+
+fn rate_graph_title(name: &str, values: &[u64]) -> String {
+    format!("{name} · {}/s · 60 sec", format_bytes(latest(values)))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn format_metrics<T: std::fmt::Display>(
@@ -665,8 +770,14 @@ fn human_duration(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dashboard, RESOURCE_HISTORY_CAPACITY, human_duration, push_history};
-    use std::time::Duration;
+    use super::{
+        ComponentSnapshot, Dashboard, DashboardSnapshot, RESOURCE_HISTORY_CAPACITY,
+        ResourceHistory, component_page_capacity, component_page_count,
+        dashboard_component_page_capacity, format_bytes, human_duration, memory_graph_title,
+        percent_graph_title, push_history, rate_graph_title, render,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::{collections::BTreeMap, time::Duration};
 
     #[test]
     fn duration_formatter_keeps_the_dashboard_scannable() {
@@ -683,6 +794,90 @@ mod tests {
         assert_eq!(history.len(), RESOURCE_HISTORY_CAPACITY);
         assert_eq!(history.first(), Some(&1));
         assert_eq!(history.last(), Some(&(RESOURCE_HISTORY_CAPACITY as u64)));
+    }
+
+    #[test]
+    fn component_pages_follow_the_available_card_height() {
+        assert_eq!(component_page_capacity(6), 1);
+        assert_eq!(component_page_capacity(18), 3);
+        assert_eq!(dashboard_component_page_capacity(28), 1);
+        assert_eq!(component_page_count(7, 3), 3);
+        assert_eq!(component_page_count(0, 3), 1);
+    }
+
+    #[test]
+    fn graph_titles_include_the_latest_cpu_ram_and_network_values() {
+        let history = ResourceHistory {
+            host_memory: vec![42],
+            host_memory_used: 3 * 1024 * 1024 * 1024,
+            host_memory_total: 8 * 1024 * 1024 * 1024,
+            ..ResourceHistory::default()
+        };
+
+        assert_eq!(
+            percent_graph_title("Host CPU", &[17]),
+            "Host CPU · 17% · 60 sec"
+        );
+        assert_eq!(
+            memory_graph_title(&history),
+            "Host RAM · 3.0 GiB/8.0 GiB · 42% · 60 sec"
+        );
+        assert_eq!(
+            rate_graph_title("Network in", &[1536]),
+            "Network in · 1.5 KiB/s · 60 sec"
+        );
+        assert_eq!(format_bytes(0), "0 B");
+    }
+
+    #[test]
+    fn dashboard_renders_the_selected_component_page_and_live_graph_values() {
+        let component = |name| ComponentSnapshot {
+            name,
+            details: Vec::new(),
+            activity: "waiting".to_string(),
+            activity_age: Duration::ZERO,
+            expected_remaining: None,
+            counters: BTreeMap::new(),
+            gauges: BTreeMap::new(),
+        };
+        let snapshot = DashboardSnapshot {
+            uptime: Duration::ZERO,
+            components: vec![component("engine"), component("worker")],
+            logs: Vec::new(),
+        };
+        let history = ResourceHistory {
+            host_cpu: vec![17],
+            host_memory: vec![42],
+            host_memory_used: 3 * 1024 * 1024 * 1024,
+            host_memory_total: 8 * 1024 * 1024 * 1024,
+            network_rx: vec![1536],
+            ..ResourceHistory::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(120, 28)).expect("test terminal builds");
+        terminal
+            .draw(|frame| render(frame, &snapshot, &history, 1))
+            .expect("dashboard renders");
+        let buffer = terminal.backend().buffer();
+        let lines = (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line.contains("Host CPU · 17%")));
+        assert!(lines.iter().any(|line| line.contains("Host RAM · 3.0 GiB")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Network in · 1.5 KiB/s"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("worker · 2 of 2 · page 2/2"))
+        );
     }
 
     #[test]

@@ -99,6 +99,40 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     ),
     (
         "get",
+        "/pipelines/{id}/revisions",
+        docs::EndpointPolicy::ResourceAction(
+            runinator_models::auth::ResourceType::Pipeline,
+            runinator_models::rbac::Action::View,
+        ),
+    ),
+    (
+        "get",
+        "/pipelines/{id}/revisions/{revision}",
+        docs::EndpointPolicy::ResourceAction(
+            runinator_models::auth::ResourceType::Pipeline,
+            runinator_models::rbac::Action::View,
+        ),
+    ),
+    (
+        "get",
+        "/credentials/{id}",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::SecretsRead),
+    ),
+    (
+        "patch",
+        "/credentials/{id}",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::SecretsWrite),
+    ),
+    (
+        "patch",
+        "/function_packages/{package_id}",
+        docs::EndpointPolicy::ResourceAction(
+            runinator_models::auth::ResourceType::FunctionPackage,
+            runinator_models::rbac::Action::Edit,
+        ),
+    ),
+    (
+        "get",
         "/workflows/{id}/revisions/{revision}",
         docs::EndpointPolicy::ResourceAction(
             runinator_models::auth::ResourceType::Workflow,

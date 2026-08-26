@@ -41,6 +41,7 @@ fn test_workflow_state_machine_logic_integration() {
     let wf = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "integration-test".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),

@@ -5,14 +5,27 @@ use runinator_models::pipelines::{
     PipelineSpec, PipelineTrigger,
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
+use runinator_models::revisions::{PipelineRevision, RevisionAuthor, RevisionSource};
 use uuid::Uuid;
 
 pub async fn upsert_pipeline<T: DefinitionStore>(
     db: &T,
     pipeline: &Pipeline,
 ) -> Result<Pipeline, SendableError> {
+    upsert_pipeline_with_author(db, pipeline, &RevisionAuthor::system(RevisionSource::Api)).await
+}
+
+pub async fn upsert_pipeline_with_author<T: DefinitionStore>(
+    db: &T,
+    pipeline: &Pipeline,
+    author: &RevisionAuthor,
+) -> Result<Pipeline, SendableError> {
     validate_pipeline(pipeline)?;
-    db.upsert_pipeline(pipeline).await
+    let saved = db.upsert_pipeline(pipeline).await?;
+    if let Some(revision) = PipelineRevision::from_pipeline(&saved, author) {
+        db.insert_pipeline_revision(&revision).await?;
+    }
+    Ok(saved)
 }
 
 fn invalid_pipeline(message: impl Into<String>) -> SendableError {
@@ -208,14 +221,21 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
                 .unwrap_or(spec.defaults.default_failure_mode),
         });
     }
-    // reuse the id of an existing pipeline with the same name and org so re-import updates in place.
-    let prior = existing
-        .iter()
-        .find(|p| p.name == spec.name && p.org_id == import_org);
+    // A stable key survives a namespace move or display rename. Legacy specs without one retain
+    // name matching until the namespace migration rewrites their source.
+    let prior = existing.iter().find(|pipeline| {
+        pipeline.org_id == import_org
+            && match &spec.key {
+                Some(key) => pipeline.artifact_key() == key,
+                None => pipeline.name == spec.name && pipeline.namespace == spec.namespace,
+            }
+    });
     let prior_id = prior.and_then(|p| p.id);
     let pipeline = Pipeline {
         id: prior_id,
         name: spec.name.clone(),
+        key: spec.key.clone(),
+        namespace: spec.namespace.clone(),
         description: spec.description.clone(),
         org_id: import_org,
         graph: PipelineGraph {
@@ -264,7 +284,9 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
         updated_at: None,
     };
     validate_pipeline(&pipeline)?;
-    let saved = db.upsert_pipeline(&pipeline).await?;
+    let saved =
+        upsert_pipeline_with_author(db, &pipeline, &RevisionAuthor::system(RevisionSource::Pack))
+            .await?;
     let pipeline_id = saved
         .id
         .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(spec.name.as_str()))?;
@@ -376,17 +398,34 @@ pub async fn delete_pipeline_trigger<T: ScheduleStore>(
 // --- pipeline runs ---
 
 /// start a manual pipeline run for a pipeline id (creates the run and its entry members).
-pub async fn create_manual_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
+pub async fn create_manual_pipeline_run<T: DefinitionStore + RuntimeStore + WorkflowVmStore>(
     db: &T,
     pipeline_id: Uuid,
     parameters: Value,
+    revision: Option<i64>,
     actor_replica_id: Option<Uuid>,
     actor_display_name: Option<String>,
 ) -> Result<PipelineRun, SendableError> {
-    let pipeline = db
+    let current = db
         .fetch_pipeline(pipeline_id)
         .await?
         .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_id))?;
+    let pipeline = if let Some(revision) = revision {
+        if revision < 1 {
+            return Err(invalid_pipeline(
+                "pipeline revision must be greater than zero",
+            ));
+        }
+        db.fetch_pipeline_revision(pipeline_id, revision)
+            .await?
+            .ok_or_else(|| {
+                crate::errors::PIPELINE_NOT_FOUND
+                    .error(format!("pipeline {pipeline_id} has no revision {revision}"))
+            })?
+            .to_pipeline(&current)
+    } else {
+        current
+    };
     let provenance = WorkflowRunProvenance {
         source_kind: Some(TriggerSourceKind::Manual),
         actor_type: Some(TriggerActorType::User),
@@ -401,7 +440,9 @@ pub async fn create_manual_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
 }
 
 /// start a pipeline run from a manual/cron pipeline trigger id.
-pub async fn create_pipeline_run_for_trigger<T: ScheduleStore + RuntimeStore + WorkflowVmStore>(
+pub async fn create_pipeline_run_for_trigger<
+    T: DefinitionStore + ScheduleStore + RuntimeStore + WorkflowVmStore,
+>(
     db: &T,
     trigger_id: Uuid,
     parameters: Value,
@@ -426,6 +467,7 @@ pub async fn create_pipeline_run_for_trigger<T: ScheduleStore + RuntimeStore + W
         db,
         trigger.pipeline_id,
         effective,
+        None,
         actor_replica_id,
         actor_display_name,
     )

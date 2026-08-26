@@ -13,7 +13,8 @@ fn pack_zip_round_trips() {
         workflows: vec![WorkflowDefinition {
             id: None,
             name: "demo".into(),
-            namespace: None,
+            key: Some("demo".into()),
+            namespace: Some("runinator.test".into()),
             org_id: None,
             version: runinator_models::semver::SemVer::new(1, 0, 0),
             enabled: true,
@@ -39,6 +40,8 @@ fn pack_zip_round_trips() {
     let pipelines = PipelineBundle {
         pipelines: vec![PipelineSpec {
             name: "Core SDLC".into(),
+            key: Some("core".into()),
+            namespace: Some("runinator.test".into()),
             description: Some("demo pipeline".into()),
             defaults: Default::default(),
             members: vec![PipelineMemberSpec {
@@ -87,7 +90,7 @@ fn a_pack_carries_functions_and_their_artifacts() {
     let publish = NewFunctionVersion {
         package: NewFunctionPackage {
             name: "image-tools".into(),
-            namespace: None,
+            namespace: Some("runinator.test".into()),
             description: None,
             org_id: None,
         },
@@ -147,7 +150,7 @@ fn a_pack_may_carry_a_publish_without_its_artifact() {
     let publish = NewFunctionVersion {
         package: NewFunctionPackage {
             name: "image-tools".into(),
-            namespace: None,
+            namespace: Some("runinator.test".into()),
             description: None,
             org_id: None,
         },
@@ -168,4 +171,27 @@ fn a_pack_may_carry_a_publish_without_its_artifact() {
     let contents = read_pack_zip(&zipped).expect("unzip");
     assert_eq!(contents.functions.len(), 1);
     assert!(contents.function_artifacts.is_empty());
+}
+
+#[test]
+fn old_unnamespaced_compiled_packs_are_rejected() {
+    let workflows = WorkflowBundle {
+        workflows: vec![WorkflowDefinition {
+            id: None,
+            name: "legacy".into(),
+            key: None,
+            namespace: None,
+            org_id: None,
+            version: Default::default(),
+            enabled: true,
+            input_type: Default::default(),
+            definition: Default::default(),
+            created_at: None,
+            updated_at: None,
+        }],
+        triggers: Vec::new(),
+    };
+
+    let error = build_pack_zip(&workflows, None, None).expect_err("legacy pack must fail");
+    assert!(error.to_string().contains("dotted namespace"));
 }

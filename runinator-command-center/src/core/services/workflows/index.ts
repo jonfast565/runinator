@@ -139,6 +139,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     if (isTerminalWorkflowRunStatus(state.workflowRunDetail?.run.status)) {
       return [];
     }
+
     return buildCursorMarkers(getCursors(), getDebugState(), getSelectedCursorId());
   }
 
@@ -262,7 +263,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     }
 
     return state.workflows.filter((workflow) =>
-      [workflow.name, workflow.id ?? "", workflow.version].some((value) =>
+      [workflow.name, workflow.namespace ?? "", workflow.id ?? "", workflow.version].some((value) =>
         value.toLowerCase().includes(query),
       ),
     );

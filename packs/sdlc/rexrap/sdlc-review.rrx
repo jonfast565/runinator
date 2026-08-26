@@ -1,6 +1,10 @@
 language rexrap-1
 
+namespace runinator.sdlc {
+
 workflow "SDLC: Review" v1 {
+    key review
+
     // scan In Review tickets the automation owns. each pass re-attaches the worktree, has claude
     // address open Copilot/human feedback, checks CI and approvals, and merges when ready — moving
     // the ticket to Ready for Testing (the Deploy phase's inbox). tickets not yet ready are left in
@@ -8,17 +12,26 @@ workflow "SDLC: Review" v1 {
     trigger cron "*/30 * * * *"
 
     import std
+    import settings jira as jira
+    import settings github as github_settings
+    import settings slack as slack
+    import settings claude as claude
+    import settings selection as selection
+    import settings review as review_settings
+    import settings branch as branch
+    import settings git as git_settings
+    import settings transitions as transitions
 
-    alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
-    alias github_conn = { token: secret.github.token, owner: config.github.owner, repo: config.github.repo }
-    alias slack_conn = { token: secret.slack.token, channel: config.slack.channel }
+    alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
+    alias github_conn = { token: github_settings.secret.token, owner: github_settings.owner, repo: github_settings.repo }
+    alias slack_conn = { token: slack.secret.token, channel: slack.channel }
     alias claude_cfg = {
-        binary: config.claude.binary,
-        model: config.claude.model,
-        output_format: config.claude.output_format,
-        allowed_tools: config.claude.allowed_tools,
-        permission_mode: config.claude.permission_mode,
-        extra_args: config.claude.extra_args
+        binary: claude.binary,
+        model: claude.model,
+        output_format: claude.output_format,
+        allowed_tools: claude.allowed_tools,
+        permission_mode: claude.permission_mode,
+        extra_args: claude.extra_args
     }
 
     do {
@@ -33,25 +46,25 @@ workflow "SDLC: Review" v1 {
 
         @timeout(120s)
         @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        let tickets = jira.search(...jira_conn, jql: config.jira.in_review_jql)
+        let tickets = jira.search(...jira_conn, jql: jira.in_review_jql)
 
-        for ticket in tickets.issues limit config.selection.max_in_flight {
+        for ticket in tickets.issues limit selection.max_in_flight {
             // re-attach the shared worktree on the sdlc worker (create-or-attach from the remote branch).
             @runner("sdlc")
             @timeout(120s)
             @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
             let workspace = git.worktree(
-                repo: config.git.repo,
-                branch: config.branch.prefix ++ ticket.key,
-                path: config.git.worktree_root ++ "/" ++ ticket.key
+                repo: git_settings.repo,
+                branch: branch.prefix ++ ticket.key,
+                path: git_settings.worktree_root ++ "/" ++ ticket.key
             )
 
             // create-or-update returns the existing open PR for this branch (no duplicate is opened).
             @timeout(60s)
             let pr = github.create_pr(
                 ...github_conn,
-                base: config.github.base_branch,
-                head: config.branch.prefix ++ ticket.key,
+                base: github_settings.base_branch,
+                head: branch.prefix ++ ticket.key,
                 title: ticket.key ++ ": " ++ ticket.fields.summary,
                 body: "Automated implementation for " ++ ticket.key ++ "."
             )
@@ -60,13 +73,13 @@ workflow "SDLC: Review" v1 {
             let add_reviewers = github.request_reviewers(
                 ...github_conn,
                 pull_number: string(pr.number),
-                reviewers: config.review.reviewers
+                reviewers: review_settings.reviewers
             )
             @timeout(30s)
             let add_assignee = github.add_assignees(
                 ...github_conn,
                 issue_number: string(pr.number),
-                assignees: config.review.assignees
+                assignees: review_settings.assignees
             )
 
             // one claude pass addresses whatever Copilot/review feedback is open on the PR; commit and
@@ -76,9 +89,9 @@ workflow "SDLC: Review" v1 {
             let fix_feedback = ai-command.claude_code(
                 ...claude_cfg,
                 working_dir: workspace.workspace,
-                prompt: config.claude.review_fix_prompt
+                prompt: claude.review_fix_prompt
                     ++ " PR #" ++ string(pr.number)
-                    ++ " in " ++ config.github.owner ++ "/" ++ config.github.repo
+                    ++ " in " ++ github_settings.owner ++ "/" ++ github_settings.repo
             )
             @runner("sdlc")
             @timeout(30s)
@@ -96,8 +109,8 @@ workflow "SDLC: Review" v1 {
                 @retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
                 let push_fix = git.push(
                     workspace: workspace.workspace,
-                    remote: config.git.remote,
-                    branch: config.branch.prefix ++ ticket.key
+                    remote: git_settings.remote,
+                    branch: branch.prefix ++ ticket.key
                 )
             }
 
@@ -131,7 +144,7 @@ workflow "SDLC: Review" v1 {
                 let transition_testing = jira.transition(
                     ...jira_conn,
                     key: ticket.key,
-                    transition_id: config.transitions.ready_for_testing
+                    transition_id: transitions.ready_for_testing
                 )
                 @timeout(30s)
                 let ready_comment = jira.comment(
@@ -148,4 +161,5 @@ workflow "SDLC: Review" v1 {
             }
         }
     }
+}
 }

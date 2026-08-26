@@ -528,7 +528,7 @@ impl Env {
 
     fn check_subflow(&self, subflow: &SubflowStmt, span: Span, diagnostics: &mut Vec<Diagnostic>) {
         let Some(signature) = self.workflow_signatures.get(&subflow.workflow_name) else {
-            if self.type_policy == TypePolicy::Strict {
+            if self.type_policy == TypePolicy::Strict && !subflow.imported {
                 diagnostics.push(Diagnostic::error(
                     span,
                     format!("unknown subflow target '{}'", subflow.workflow_name),

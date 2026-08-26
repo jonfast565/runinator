@@ -205,18 +205,26 @@ async fn apply_workflow_source(
     // a .rexrap/.rexrapm/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
     if pack::is_pack_source(file) {
+        // Discover local function packages before compiling. A workflow in this pack may call an
+        // export it publishes, whose permanent UUIDs do not exist until the server accepts this
+        // import; temporary catalog entries make that call type-check and bind deterministically.
+        let function_sources = runinator_pack::functions::discover_function_sources(file)?;
         // both halves of the catalog: provider metadata types ordinary actions, and the published
         // function entries are what a `functions.<pkg>.<export>(...)` call binds against. fetched
         // together because a compile given only one silently loses the ability to resolve the other.
-        let catalog = pack::PackCatalog {
+        let mut catalog = pack::PackCatalog {
             providers: client.fetch_providers().await.unwrap_or_default(),
             functions: client.fetch_function_catalog().await.unwrap_or_default(),
         };
+        catalog.functions.extend(
+            function_sources
+                .iter()
+                .flat_map(|source| source.provisional_catalog_entries()),
+        );
         let bundle = pack::load_workflow_bundle_with_catalog(file, &catalog)?;
         // function packages the pack carries, published as part of the same apply. discovered from
         // the source tree rather than declared in the manifest: the manifest lists what to compile,
         // and a package directory is already self-identifying by its own manifest file.
-        let function_sources = runinator_pack::functions::discover_function_sources(file)?;
         // any settings (`settings.rexraps`/`.json`) always ride in the same compiled pack zip.
         let settings = pack::load_pack_settings(file)?;
         // any pipelines (`.rexrapp` files) ride along too; the backend upserts them and materializes

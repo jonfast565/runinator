@@ -227,6 +227,21 @@ pub trait RuntimeStore: Send + Sync + 'static {
         &self,
     ) -> impl Future<Output = Result<Vec<SettingRecord>, SendableError>> + Send;
 
+    /// Fetch a setting through its durable logical UUID. The default keeps lightweight fakes
+    /// source-compatible; SQL backends may override it with an indexed lookup later.
+    fn fetch_setting_by_id(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Result<Option<SettingRecord>, SendableError>> + Send {
+        async move {
+            Ok(self
+                .list_settings()
+                .await?
+                .into_iter()
+                .find(|setting| setting.id == id))
+        }
+    }
+
     /// Fetch an org by id.
     fn fetch_org(
         &self,

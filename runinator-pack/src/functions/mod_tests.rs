@@ -23,6 +23,7 @@ fn write(root: &Path, relative: &str, contents: &str) {
 
 const MANIFEST: &str = r#"{
   "name": "image-tools",
+  "namespace": "runinator.examples",
   "description": "image utilities",
   "runtime": { "runtime": "python3.13" },
   "exports": [
@@ -52,7 +53,7 @@ fn reads_a_manifest_into_a_publish_request() {
     let root = package("manifest");
     let source = FunctionSource::load(&root).unwrap();
 
-    assert_eq!(source.qualified_name(), "image-tools");
+    assert_eq!(source.qualified_name(), "runinator.examples.image-tools");
     let request = source.publish_request();
     assert_eq!(request.package.name, "image-tools");
     assert_eq!(request.exports.len(), 1);
@@ -64,6 +65,32 @@ fn reads_a_manifest_into_a_publish_request() {
     assert!(!request.exports[0].limits.network);
     // the manifest is kept verbatim so a later publish can be diffed against what was published.
     assert!(request.manifest.get("exports").is_some());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn provisional_catalog_entries_bind_same_pack_calls_deterministically() {
+    let root = package("provisional-catalog");
+    let first = FunctionSource::load(&root).unwrap();
+    let second = FunctionSource::load(&root).unwrap();
+
+    let entries = first.provisional_catalog_entries();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(
+        entry.provider_name(),
+        "functions.runinator.examples.image-tools"
+    );
+    assert_eq!(entry.export_name, "resize");
+    assert_eq!(
+        entry.version,
+        runinator_models::functions::PROVISIONAL_FUNCTION_VERSION
+    );
+    assert!(entry.binding().is_provisional());
+    // Re-reading an unchanged package produces exactly the same temporary identity, so source
+    // diagnostics and compiled zip contents do not depend on the machine applying the pack.
+    assert_eq!(entries, second.provisional_catalog_entries());
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -162,5 +189,15 @@ fn rejects_a_manifest_that_could_not_be_called() {
     let duplicate = r#"{"name":"a","runtime":{"runtime":"python3.13"},
         "exports":[{"name":"go","handler":"h"},{"name":"go","handler":"i"}]}"#;
     let manifest: FunctionManifest = serde_json::from_str(duplicate).unwrap();
+    assert!(manifest.validate().is_err());
+
+    let nested_namespace = r#"{"name":"a","namespace":"acme.shared.tools","runtime":{"runtime":"python3.13"},
+        "exports":[{"name":"go","handler":"h"}]}"#;
+    let manifest: FunctionManifest = serde_json::from_str(nested_namespace).unwrap();
+    assert!(manifest.validate().is_ok());
+
+    let empty_namespace_segment = r#"{"name":"a","namespace":"acme..tools","runtime":{"runtime":"python3.13"},
+        "exports":[{"name":"go","handler":"h"}]}"#;
+    let manifest: FunctionManifest = serde_json::from_str(empty_namespace_segment).unwrap();
     assert!(manifest.validate().is_err());
 }

@@ -43,6 +43,24 @@ fn parses_pipeline_members_links_and_defaults() {
 }
 
 #[test]
+fn pipeline_key_and_namespace_round_trip() {
+    let source = r#"
+pipeline "Release train" {
+    key release_train
+    namespace acme.delivery
+    workflow "Build"
+}
+"#;
+    let bundle = parse_pipeline_str(source).unwrap();
+    let spec = &bundle.pipelines[0];
+    assert_eq!(spec.key.as_deref(), Some("release_train"));
+    assert_eq!(spec.namespace.as_deref(), Some("acme.delivery"));
+    let rendered = pipeline_to_rexrapp(&bundle);
+    let reparsed = parse_pipeline_str(&rendered).unwrap();
+    assert_eq!(reparsed, bundle);
+}
+
+#[test]
 fn link_selector_defaults_from_failure_policy() {
     // halt (default) -> links without `on` fire on success.
     let halt = parse_pipeline_str(r#"pipeline "P" { workflow "A" workflow "B" "A" -> "B" }"#)

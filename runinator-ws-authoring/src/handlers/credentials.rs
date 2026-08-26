@@ -1,21 +1,30 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::{Extension, Json, extract::Query, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::{Path, Query},
+    http::StatusCode,
+};
 use runinator_models::auth::AuthContext;
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
-    settings::SettingKind,
+    settings::{SettingBinding, SettingKind},
     web::TaskResponse,
 };
 use runinator_secrets::secret_cipher::SecretCipher;
-use runinator_store::{RuntimeStore, roles::SettingStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, SettingStore},
+};
 
 use crate::settings::{
     decode_config_schema, decode_config_value, decode_secret, validate_and_encode_with_expiry,
 };
-use runinator_ws_core::models::{ApiResponse, CredentialPutRequest, CredentialQuery};
+use runinator_ws_core::models::{
+    ApiResponse, CredentialPutRequest, CredentialQuery, SettingMoveRequest,
+};
 use runinator_ws_core::openapi::docs::{
     CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body,
 };
@@ -74,6 +83,7 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
                                 .flatten()
                                 .and_then(|bytes| decode_secret(&bytes).expires_at);
                             runinator_models::json!({
+                                "id": entry.id,
                                 "scope": entry.scope,
                                 "name": entry.name,
                                 "kind": entry.kind.as_str(),
@@ -125,6 +135,52 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
         Ok(None) => not_found("credential not found"),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(setting_id): Path<uuid::Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let record = match db.fetch_setting_by_id(setting_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found("credential not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if ctx.system_role == Some(runinator_models::rbac::SystemRole::Agent) {
+        let principal_scope = ctx.principal_id.map(|id| format!("agent:{id}"));
+        let org_scope = ctx.org_id.map(|id| format!("org:{id}"));
+        if principal_scope.as_deref() != Some(record.scope.as_str())
+            && org_scope.as_deref() != Some(record.scope.as_str())
+        {
+            return not_found("credential not found");
+        }
+    } else if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsRead,
+        ctx.selected_scope(),
+    ) {
+        return reply;
+    }
+    if record.kind != SettingKind::Secret {
+        return not_found("credential not found");
+    }
+    let Some(bytes) = settings_cipher().try_decrypt(&record.value) else {
+        return api_error(
+            "stored credential could not be decrypted; the encryption key may be unavailable",
+        );
+    };
+    let secret = decode_secret(&bytes);
+    (
+        StatusCode::OK,
+        Json(ApiResponse::JsonValue(runinator_models::json!({
+            "id": record.id,
+            "scope": record.scope,
+            "name": record.name,
+            "kind": record.kind.as_str(),
+            "expires_at": secret.expires_at,
+            "secret": secret.value,
+        }))),
+    )
 }
 
 pub async fn put_credential<T: SettingStore + RuntimeStore>(
@@ -396,7 +452,7 @@ fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
     }
 }
 
-pub async fn delete_credential<T: SettingStore + RuntimeStore>(
+pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
@@ -411,6 +467,44 @@ pub async fn delete_credential<T: SettingStore + RuntimeStore>(
         return bad_request("credential deletion requires both scope and name");
     };
 
+    let target = match db
+        .fetch_setting(query.kind, scope.clone(), name.clone())
+        .await
+    {
+        Ok(target) => target,
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Some(target) = target {
+        let workflows = match db.fetch_workflows().await {
+            Ok(workflows) => workflows,
+            Err(err) => return api_error(err.to_string()),
+        };
+        let inbound = workflows
+            .into_iter()
+            .filter(|workflow| {
+                workflow
+                    .definition
+                    .metadata
+                    .pointer("/artifact_refs/settings")
+                    .and_then(Value::as_array)
+                    .is_some_and(|bindings| {
+                        bindings.iter().any(|binding| {
+                            serde_json::from_value::<SettingBinding>(binding.clone().into())
+                                .is_ok_and(|binding| binding.reference.id == target.id)
+                        })
+                    })
+            })
+            .map(|workflow| workflow.artifact_path().qualified())
+            .collect::<Vec<_>>();
+        if !inbound.is_empty() {
+            return bad_request(format!(
+                "setting {} is referenced by {}",
+                target.id,
+                inbound.join(", ")
+            ));
+        }
+    }
+
     match db.delete_setting(query.kind, scope, name).await {
         Ok(()) => (
             StatusCode::OK,
@@ -423,8 +517,51 @@ pub async fn delete_credential<T: SettingStore + RuntimeStore>(
     }
 }
 
+pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(setting_id): Path<uuid::Uuid>,
+    Json(request): Json<SettingMoveRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsWrite,
+        ctx.selected_scope(),
+    ) {
+        return reply;
+    }
+    if request.scope.trim().is_empty() || request.name.trim().is_empty() {
+        return bad_request("setting scope and name must not be empty");
+    }
+    let existing = match db.fetch_setting_by_id(setting_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found("setting not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if existing.kind != request.kind {
+        return bad_request("a setting move cannot change its kind");
+    }
+    match db
+        .move_setting(setting_id, existing.kind, request.scope, request.name)
+        .await
+    {
+        Ok(Some(record)) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "id": record.id,
+                "kind": record.kind.as_str(),
+                "scope": record.scope,
+                "name": record.name,
+            }))),
+        ),
+        Ok(None) => not_found("setting not found"),
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
 /// the `credentials` endpoints.
-pub fn routes<T: SettingStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: DefinitionStore + SettingStore + RuntimeStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()
@@ -433,6 +570,12 @@ pub fn routes<T: SettingStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::
             get(get_credential::<T>)
                 .post(put_credential::<T>)
                 .delete(delete_credential::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/credentials/{id}",
+            get(get_credential_by_id::<T>)
+                .patch(move_credential::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(

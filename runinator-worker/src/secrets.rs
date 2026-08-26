@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use runinator_api::{ApiError, AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
 use runinator_models::value::Value;
+use uuid::Uuid;
 
 /// whether a secret-resolution failure is transient (web service unreachable, 5xx, discovery) and
 /// worth a redelivery, rather than a definitive rejection of the reference itself (4xx, malformed
@@ -29,18 +30,24 @@ pub(crate) async fn resolve_secret_refs(
     let mut secrets = HashMap::new();
     for secret_ref in refs {
         // never log the secret value itself; scope/name identify the reference, not its contents.
-        let secret = api_client
-            .fetch_credential(&secret_ref.scope, &secret_ref.name)
-            .await
-            .map_err(|err| {
-                tracing::warn!(
-                    scope = %secret_ref.scope,
-                    name = %secret_ref.name,
-                    "failed to fetch credential: {}",
-                    err
-                );
-                Box::new(err) as SendableError
-            })?;
+        let secret = match secret_ref.id {
+            Some(id) => api_client.fetch_credential_by_id(id).await,
+            None => {
+                api_client
+                    .fetch_credential(&secret_ref.scope, &secret_ref.name)
+                    .await
+            }
+        }
+        .map_err(|err| {
+            tracing::warn!(
+                id = ?secret_ref.id,
+                scope = %secret_ref.scope,
+                name = %secret_ref.name,
+                "failed to fetch credential: {}",
+                err
+            );
+            Box::new(err) as SendableError
+        })?;
         secrets.insert(secret_ref, secret);
     }
 
@@ -92,20 +99,42 @@ fn replace_secret_refs(value: Value, secrets: &HashMap<SecretRef, String>) -> Va
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct SecretRef {
+    id: Option<Uuid>,
     scope: String,
     name: String,
 }
 
 fn parse_secret_ref(raw: &str) -> Option<SecretRef> {
-    let path = raw.strip_prefix("secret://")?;
+    let (id, path) = if let Some(path) = raw.strip_prefix("secret+uuid://") {
+        let (id, path) = path.split_once('/')?;
+        (Some(Uuid::parse_str(id).ok()?), path)
+    } else {
+        (None, raw.strip_prefix("secret://")?)
+    };
     let (scope, name) = path.split_once('/')?;
     if scope.is_empty() || name.is_empty() {
         return None;
     }
     Some(SecretRef {
+        id,
         scope: percent_decode(scope)?,
         name: percent_decode(name)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_uuid_backed_secret_references() {
+        let id = Uuid::new_v4();
+        let reference =
+            parse_secret_ref(&format!("secret+uuid://{id}/acme.shared/api%2Ftoken")).unwrap();
+        assert_eq!(reference.id, Some(id));
+        assert_eq!(reference.scope, "acme.shared");
+        assert_eq!(reference.name, "api/token");
+    }
 }
 
 fn percent_decode(raw: &str) -> Option<String> {

@@ -894,6 +894,13 @@ pub enum WorkflowEffectRequest {
         workflow_id: Option<Uuid>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workflow_name: Option<String>,
+        /// Exact immutable target selected by an authored revision pin. Both this and its digest
+        /// are carried in the durable effect receipt so a delayed dispatch cannot observe a later
+        /// workflow head.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workflow_revision: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workflow_revision_digest: Option<String>,
         input: Value,
         #[serde(default)]
         wait: bool,

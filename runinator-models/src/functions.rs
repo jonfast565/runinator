@@ -42,6 +42,16 @@ pub use version::FunctionVersion;
 /// CLI, the UI, and the invocation API all resolve the same default.
 pub const DEFAULT_ALIAS: &str = "latest";
 
+/// A version number reserved for a package that is being published by the same pack currently
+/// compiling a workflow.
+///
+/// A compiled pack cannot know the database UUIDs or the monotonic version number that publish
+/// will assign. The client therefore binds calls to deterministic *temporary* UUIDs and this
+/// reserved version. The pack importer replaces those bindings with the newly published catalog
+/// entries before it persists the workflow. Store implementations must never assign this value to
+/// a real release.
+pub const PROVISIONAL_FUNCTION_VERSION: i64 = i64::MAX;
+
 /// the provider name a packaged function call lowers to. per-package authoring names
 /// (`functions.image_tools`) are catalog entries; this is the one provider a worker resolves.
 pub const FUNCTIONS_PROVIDER: &str = "functions";

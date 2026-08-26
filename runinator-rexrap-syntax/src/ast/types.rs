@@ -91,6 +91,8 @@ pub struct PipelineMemberDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineDecl {
     pub name: String,
+    pub key: Option<String>,
+    pub namespace: Option<String>,
     pub description: Option<String>,
     pub on_failure: Option<String>,
     pub max_depth: Option<u32>,

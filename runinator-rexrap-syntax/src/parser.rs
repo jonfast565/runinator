@@ -44,6 +44,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
         .next()
         .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
     let mut functions = Vec::new();
+    let mut modules = Vec::new();
     let mut workflows = Vec::new();
     let mut active: Option<Workflow> = None;
     let mut current_namespace: Option<String> = None;
@@ -57,6 +58,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
         match inner.as_rule() {
             Rule::language_decl => language_header = true,
             Rule::func_def => functions.push(parse_func_def(inner)?),
+            Rule::source_module => modules.push(parse_source_module(inner)?),
             Rule::namespace_decl => {
                 current_namespace = Some(first_inner(inner)?.as_str().to_string());
                 if let Some(workflow) = active.as_mut() {
@@ -82,6 +84,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                 let (name, version, output, span) = parse_workflow_decl(inner)?;
                 active = Some(Workflow {
                     name,
+                    key: None,
                     version,
                     input: None,
                     output,
@@ -112,6 +115,16 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                     ));
                 }
                 workflow.input = Some(parse_params_block(inner)?);
+            }
+            Rule::key_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                if workflow.key.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one key",
+                    ));
+                }
+                workflow.key = Some(first_inner(inner)?.as_str().to_string());
             }
             Rule::import_decl => {
                 let workflow = require_active(&mut active, &inner)?;
@@ -188,18 +201,52 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
         reject_duplicate_joins(&workflow.joins)?;
         workflows.push(workflow);
     }
-    if workflows.is_empty() {
-        return Err(RexRapError::Parse("missing workflow".into()));
+    if workflows.is_empty() && modules.is_empty() {
+        return Err(RexRapError::Parse(
+            "missing workflow or source module".into(),
+        ));
     }
     let mut document = Document {
         language_header,
         functions,
+        modules,
         workflows,
         trailing_comments: Vec::new(),
     };
     // pest drops comments as silent trivia; lex them separately and attach for lossless formatting.
     attach_comments(&mut document, src);
     Ok(document)
+}
+
+fn parse_source_module(pair: Pair<Rule>) -> Result<SourceModule, RexRapError> {
+    let span = span_of(&pair);
+    let mut path = None;
+    let mut functions = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ns_path => path = Some(inner.as_str().to_string()),
+            Rule::func_def => functions.push(parse_func_def(inner)?),
+            _ => {}
+        }
+    }
+    let path = path.ok_or_else(|| RexRapError::syntax(span, "source module needs a path"))?;
+    if functions.is_empty() {
+        return Err(RexRapError::syntax(
+            span,
+            format!("source module '{path}' must export at least one function"),
+        ));
+    }
+    if let Some(function) = functions.iter().find(|function| function.is_task) {
+        return Err(RexRapError::syntax(
+            function.span,
+            "source modules may export only pure `fn` definitions",
+        ));
+    }
+    Ok(SourceModule {
+        path,
+        functions,
+        span,
+    })
 }
 
 /// A console-only top-level module: zero or more function declarations and an optional bare
@@ -482,6 +529,8 @@ pub fn parse_pipeline_document(src: &str) -> Result<Vec<PipelineDecl>, RexRapErr
 fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
     let span = span_of(&pair);
     let mut name = String::new();
+    let mut key = None;
+    let mut namespace = None;
     let mut description = None;
     let mut on_failure = None;
     let mut max_depth = None;
@@ -500,6 +549,24 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
                     .next()
                     .ok_or_else(|| RexRapError::syntax(span, "empty pipeline item"))?;
                 match item.as_rule() {
+                    Rule::key_decl => {
+                        if key.is_some() {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare one key",
+                            ));
+                        }
+                        key = Some(first_inner(item)?.as_str().to_string());
+                    }
+                    Rule::namespace_decl => {
+                        if namespace.is_some() {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare one namespace",
+                            ));
+                        }
+                        namespace = Some(first_inner(item)?.as_str().to_string());
+                    }
                     Rule::pipeline_desc => {
                         if let Some(s) = item.into_inner().find(|p| p.as_rule() == Rule::string) {
                             description = Some(plain_string(s)?);
@@ -535,6 +602,8 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
     }
     Ok(PipelineDecl {
         name,
+        key,
+        namespace,
         description,
         on_failure,
         max_depth,
@@ -678,6 +747,7 @@ fn parse_namespace_block(pair: Pair<Rule>) -> Result<Vec<Workflow>, RexRapError>
 fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflow, RexRapError> {
     let span = span_of(&pair);
     let mut name = String::new();
+    let mut key = None;
     let mut version = None;
     let mut input = None;
     let mut output = None;
@@ -714,6 +784,15 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
                 output = Some(parse_type_expr(ty)?);
             }
             Rule::params_block => input = Some(parse_params_block(inner)?),
+            Rule::key_decl => {
+                if key.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one key",
+                    ));
+                }
+                key = Some(first_inner(inner)?.as_str().to_string());
+            }
             Rule::import_decl => imports.push(parse_import_decl(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
             Rule::notify_decl => notifications.push(parse_notify_decl(inner)?),
@@ -757,6 +836,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     reject_duplicate_joins(&joins)?;
     Ok(Workflow {
         name,
+        key,
         version,
         input,
         output,
@@ -904,17 +984,40 @@ fn parse_interrupt_decl(pair: Pair<Rule>) -> Result<InterruptDecl, RexRapError> 
 
 fn parse_import_decl(pair: Pair<Rule>) -> Result<Import, RexRapError> {
     let span = span_of(&pair);
+    let mut kind = None;
     let mut path = String::new();
+    let mut revision = None;
     let mut alias = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::import_kind => {
+                kind = Some(match inner.as_str() {
+                    "workflow" => ImportKind::Workflow,
+                    "functions" => ImportKind::Functions,
+                    "settings" => ImportKind::Settings,
+                    "module" => ImportKind::Module,
+                    _ => return Err(RexRapError::lower("unknown import kind")),
+                });
+            }
             Rule::ns_path => path = inner.as_str().to_string(),
+            Rule::revision_selector => {
+                let revision_number = inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| RexRapError::lower("revision selector missing value"))?
+                    .as_str()
+                    .parse::<i64>()
+                    .map_err(|_| RexRapError::lower("invalid revision selector"))?;
+                revision = Some(revision_number);
+            }
             Rule::ident => alias = Some(inner.as_str().to_string()),
             _ => {}
         }
     }
     Ok(Import {
+        kind,
         path,
+        revision,
         alias,
         span,
         comments: CommentSet::default(),
@@ -2064,7 +2167,17 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, RexRapError> {
     let mut params = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::string => workflow_name = plain_string(inner)?,
+            Rule::subflow_target => {
+                let target = inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| RexRapError::lower("subflow target missing"))?;
+                workflow_name = match target.as_rule() {
+                    Rule::string => plain_string(target)?,
+                    Rule::ns_path => target.as_str().to_string(),
+                    _ => return Err(RexRapError::lower("invalid subflow target")),
+                };
+            }
             Rule::subflow_arg => {
                 let span = span_of(&inner);
                 let mut parts = inner.into_inner();
@@ -2103,6 +2216,8 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, RexRapError> {
     }
     Ok(SubflowStmt {
         workflow_name,
+        revision: None,
+        imported: false,
         detached,
         reuse,
         run_name,

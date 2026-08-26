@@ -1,4 +1,5 @@
 pub mod api_routes;
+pub mod artifacts;
 pub mod auth;
 pub mod billing;
 pub mod bundles;

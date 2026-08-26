@@ -181,6 +181,8 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
     let bundle = PipelineBundle {
         pipelines: vec![PipelineSpec {
             name: "Core SDLC".into(),
+            key: None,
+            namespace: None,
             description: Some("test".into()),
             defaults: Default::default(),
             members: vec!["SDLC: Development".into(), "SDLC: Review".into()],
@@ -246,6 +248,8 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
     let bundle = PipelineBundle {
         pipelines: vec![PipelineSpec {
             name: "Release".into(),
+            key: None,
+            namespace: None,
             description: None,
             defaults: Default::default(),
             members: vec!["Build".into(), "Deploy".into()],
@@ -271,6 +275,7 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
         &db,
         pipeline_id,
         json!({}),
+        None,
         None,
         Some("test".into()),
     )

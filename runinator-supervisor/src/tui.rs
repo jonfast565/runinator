@@ -33,6 +33,8 @@ use crate::{
 /// State is sampled twice per second, so 120 samples makes the graph a one-minute window.
 const HISTORY_CAPACITY: usize = 120;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+const FIXED_DASHBOARD_ROWS: u16 = 3 + 5 + 5 + 1;
+const PROCESS_TABLE_CHROME_ROWS: u16 = 4;
 
 /// What leaving the dashboard means depends on who owns the supervision loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,9 @@ pub(crate) struct SupervisorTui {
     mode: DashboardMode,
     selected: usize,
     process_count: usize,
+    /// Number of data rows visible in the process table on the last draw. Keeping this alongside
+    /// the selection lets left/right move through a whole visible page even after a resize.
+    process_page_rows: usize,
     history: MetricHistory,
     active: bool,
 }
@@ -89,6 +94,7 @@ impl SupervisorTui {
             mode,
             selected: 0,
             process_count: 0,
+            process_page_rows: 1,
             history: MetricHistory::default(),
             active: true,
         }))
@@ -145,8 +151,20 @@ impl SupervisorTui {
         let selected = self.selected;
         let mode = self.mode;
         let history = &self.history;
-        self.terminal
-            .draw(|frame| render(frame, snapshot, warning, selected, history, mode))?;
+        let mut process_page_rows = self.process_page_rows;
+        self.terminal.draw(|frame| {
+            process_page_rows = visible_process_rows(frame.area().height);
+            render(
+                frame,
+                snapshot,
+                warning,
+                selected,
+                history,
+                mode,
+                process_page_rows,
+            )
+        })?;
+        self.process_page_rows = process_page_rows;
         Ok(())
     }
 
@@ -170,6 +188,13 @@ impl SupervisorTui {
                 if self.process_count > 0 {
                     self.selected = (self.selected + 1).min(self.process_count - 1);
                 }
+            }
+            KeyCode::Left | KeyCode::PageUp | KeyCode::Char('h') => {
+                self.selected = previous_process_page(self.selected, self.process_page_rows);
+            }
+            KeyCode::Right | KeyCode::PageDown | KeyCode::Char('l') => {
+                self.selected =
+                    next_process_page(self.selected, self.process_count, self.process_page_rows);
             }
             KeyCode::Char('q') | KeyCode::Esc => {
                 return Ok(match self.mode {
@@ -330,6 +355,7 @@ fn render(
     selected: usize,
     history: &MetricHistory,
     mode: DashboardMode,
+    process_page_rows: usize,
 ) {
     let [header, metrics, processes, detail, footer] = Layout::vertical([
         Constraint::Length(3),
@@ -342,9 +368,16 @@ fn render(
 
     render_header(frame, header, snapshot, warning);
     render_metrics(frame, metrics, snapshot, history);
-    render_processes(frame, processes, snapshot, selected);
+    render_processes(frame, processes, snapshot, selected, process_page_rows);
     render_detail(frame, detail, snapshot, selected);
-    render_footer(frame, footer, mode);
+    render_footer(
+        frame,
+        footer,
+        mode,
+        selected,
+        snapshot.map_or(0, |state| state.processes.len()),
+        process_page_rows,
+    );
 }
 
 fn render_header(
@@ -468,6 +501,7 @@ fn render_processes(
     area: Rect,
     snapshot: Option<&StateSnapshot>,
     selected: usize,
+    process_page_rows: usize,
 ) {
     let Some(snapshot) = snapshot else {
         frame.render_widget(
@@ -484,6 +518,8 @@ fn render_processes(
     .style(Style::new().fg(Color::Cyan).bold())
     .bottom_margin(1);
     let rows = snapshot.processes.iter().map(process_row);
+    let (page, page_count) =
+        process_page_position(selected, snapshot.processes.len(), process_page_rows);
     let table = Table::new(
         rows,
         [
@@ -498,8 +534,8 @@ fn render_processes(
     )
     .header(header)
     .block(Block::new().borders(Borders::ALL).title(format!(
-        " Processes · {} managed ",
-        snapshot.processes.len()
+        " Processes · {} managed · page {page}/{page_count} ",
+        snapshot.processes.len(),
     )))
     .row_highlight_style(
         Style::new()
@@ -615,16 +651,58 @@ fn render_detail(
     );
 }
 
-fn render_footer(frame: &mut ratatui::Frame, area: Rect, mode: DashboardMode) {
+fn render_footer(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    mode: DashboardMode,
+    selected: usize,
+    process_count: usize,
+    process_page_rows: usize,
+) {
     let close = match mode {
         DashboardMode::Monitor => "q / Esc close monitor",
         DashboardMode::ForegroundSupervisor => "q / Esc stop supervisor",
     };
+    let (page, page_count) = process_page_position(selected, process_count, process_page_rows);
     frame.render_widget(
-        Paragraph::new(format!(" ↑/↓ or j/k select   ·   {close} "))
-            .style(Style::new().fg(Color::DarkGray)),
+        Paragraph::new(format!(
+            " ↑/↓ or j/k select · ←/→ or PgUp/PgDn page {page}/{page_count} · {close} "
+        ))
+        .style(Style::new().fg(Color::DarkGray)),
         area,
     );
+}
+
+fn visible_process_rows(frame_height: u16) -> usize {
+    usize::from(
+        frame_height
+            .saturating_sub(FIXED_DASHBOARD_ROWS + PROCESS_TABLE_CHROME_ROWS)
+            .max(1),
+    )
+}
+
+fn previous_process_page(selected: usize, process_page_rows: usize) -> usize {
+    selected.saturating_sub(process_page_rows.max(1))
+}
+
+fn next_process_page(selected: usize, process_count: usize, process_page_rows: usize) -> usize {
+    selected
+        .saturating_add(process_page_rows.max(1))
+        .min(process_count.saturating_sub(1))
+}
+
+fn process_page_position(
+    selected: usize,
+    process_count: usize,
+    process_page_rows: usize,
+) -> (usize, usize) {
+    let process_page_rows = process_page_rows.max(1);
+    let page_count = (process_count / process_page_rows
+        + usize::from(process_count % process_page_rows != 0))
+    .max(1);
+    let page =
+        (selected.min(process_count.saturating_sub(1)) / process_page_rows + 1).min(page_count);
+    (page, page_count)
 }
 
 fn format_uptime(seconds: u64) -> String {
@@ -636,7 +714,10 @@ fn format_uptime(seconds: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DashboardMode, HISTORY_CAPACITY, MetricHistory, StatusTone, render, status_tone};
+    use super::{
+        DashboardMode, HISTORY_CAPACITY, MetricHistory, StatusTone, next_process_page,
+        previous_process_page, process_page_position, render, status_tone,
+    };
     use crate::snapshot::{ProcessSnapshot, StateSnapshot};
     use ratatui::{Terminal, backend::TestBackend, style::Color};
 
@@ -704,6 +785,16 @@ mod tests {
     }
 
     #[test]
+    fn process_navigation_moves_by_the_visible_page() {
+        assert_eq!(previous_process_page(7, 5), 2);
+        assert_eq!(previous_process_page(2, 5), 0);
+        assert_eq!(next_process_page(2, 13, 5), 7);
+        assert_eq!(next_process_page(11, 13, 5), 12);
+        assert_eq!(process_page_position(7, 13, 5), (2, 3));
+        assert_eq!(process_page_position(0, 0, 5), (1, 1));
+    }
+
+    #[test]
     fn dashboard_renders_process_states_and_live_graphs() {
         let state = snapshot(vec![
             process("worker", "running", 0),
@@ -721,6 +812,7 @@ mod tests {
                     0,
                     &history,
                     DashboardMode::Monitor,
+                    10,
                 );
             })
             .expect("dashboard renders");

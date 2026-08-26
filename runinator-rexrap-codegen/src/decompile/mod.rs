@@ -132,6 +132,10 @@ pub fn decompile_definition(
         returns
     ));
     decompiler.indent += 1;
+    if let Some(key) = &definition.key {
+        decompiler.line(&format!("key {key}"));
+        decompiler.out.push('\n');
+    }
     decompiler.emit_params(&definition.input_type)?;
     decompiler.emit_triggers(metadata.triggers())?;
     decompiler.emit_notifications(metadata.notifications())?;

@@ -11,7 +11,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     pipelines::{Pipeline, PipelineRun},
-    revisions::WorkflowRevision,
+    revisions::{PipelineRevision, WorkflowRevision},
     workflows::WorkflowDefinition,
 };
 
@@ -89,6 +89,23 @@ pub trait DefinitionStore: Send + Sync + 'static {
         &self,
         pipeline: &Pipeline,
     ) -> impl Future<Output = Result<Pipeline, SendableError>> + Send;
+
+    fn insert_pipeline_revision(
+        &self,
+        revision: &PipelineRevision,
+    ) -> impl Future<Output = Result<Option<PipelineRevision>, SendableError>> + Send;
+
+    fn fetch_pipeline_revisions(
+        &self,
+        pipeline_id: Uuid,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<PipelineRevision>, SendableError>> + Send;
+
+    fn fetch_pipeline_revision(
+        &self,
+        pipeline_id: Uuid,
+        revision: i64,
+    ) -> impl Future<Output = Result<Option<PipelineRevision>, SendableError>> + Send;
 
     /// Fetch all pipeline instances.
     fn fetch_pipelines(&self) -> impl Future<Output = Result<Vec<Pipeline>, SendableError>> + Send;

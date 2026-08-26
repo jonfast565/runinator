@@ -238,6 +238,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SettingsCommands,
     },
+    /// Plan and apply the one-time migration to UUID-backed namespace aliases.
+    Namespaces {
+        #[command(subcommand)]
+        command: NamespaceCommands,
+    },
     /// Spin up, scale, and stop worker/waker nodes on demand.
     Nodes {
         #[command(subcommand)]
@@ -258,6 +263,18 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NamespaceCommands {
+    /// Write an editable JSON mapping for workflows, pipelines, function packages, and settings.
+    Plan {
+        /// Write the mapping to this file; omit to print it.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Apply an edited mapping after verifying that all workflow and pipeline runs have drained.
+    Apply { file: PathBuf },
 }
 
 /// CLI-facing replica kind. wider than `CliNodeKind`, which only names the kinds a provisioner can
@@ -841,10 +858,21 @@ pub enum PipelineCommands {
         /// Read the run parameters from a json file instead.
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
+        /// Run this immutable pipeline revision instead of the current head.
+        #[arg(long)]
+        revision: Option<i64>,
         /// Wait for the run to reach a terminal status before returning.
         #[arg(long)]
         follow: bool,
     },
+    /// List a pipeline's immutable revision history, newest first.
+    Revisions {
+        pipeline: String,
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
+    /// Show one immutable pipeline revision and its digest.
+    Revision { pipeline: String, revision: i64 },
     /// List pipeline runs, newest first.
     Runs {
         /// Only runs of one pipeline, by id or name.

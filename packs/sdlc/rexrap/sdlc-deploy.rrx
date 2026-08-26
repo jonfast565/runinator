@@ -1,6 +1,10 @@
 language rexrap-1
 
+namespace runinator.sdlc {
+
 workflow "SDLC: Deploy" v1 {
+    key deploy
+
     // scan Ready for Testing tickets (merged, awaiting deploy). each pass classifies the merged diff
     // by path, dispatches the matching deploy workflows, verifies none failed, then moves the ticket
     // to In Testing (the QA phase's inbox). the status transition is the deploy marker: a ticket in
@@ -8,9 +12,17 @@ workflow "SDLC: Deploy" v1 {
     trigger cron "*/30 * * * *"
 
     import std
+    import settings jira as jira
+    import settings github as github_settings
+    import settings selection as selection
+    import settings git as git_settings
+    import settings branch as branch
+    import settings deploy as deploy
+    import settings waits as waits
+    import settings transitions as transitions
 
-    alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
-    alias github_conn = { token: secret.github.token, owner: config.github.owner, repo: config.github.repo }
+    alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
+    alias github_conn = { token: github_settings.secret.token, owner: github_settings.owner, repo: github_settings.repo }
 
     do {
         // cooldown: collapse a near-simultaneous cron + chained fire into one pass per 5 minutes so a
@@ -24,16 +36,16 @@ workflow "SDLC: Deploy" v1 {
 
         @timeout(120s)
         @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        let tickets = jira.search(...jira_conn, jql: config.jira.deploy_jql)
+        let tickets = jira.search(...jira_conn, jql: jira.deploy_jql)
 
-        for ticket in tickets.issues limit config.selection.max_in_flight {
+        for ticket in tickets.issues limit selection.max_in_flight {
             @runner("sdlc")
             @timeout(120s)
             @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
             let workspace = git.worktree(
-                repo: config.git.repo,
-                branch: config.branch.prefix ++ ticket.key,
-                path: config.git.worktree_root ++ "/" ++ ticket.key
+                repo: git_settings.repo,
+                branch: branch.prefix ++ ticket.key,
+                path: git_settings.worktree_root ++ "/" ++ ticket.key
             )
 
             @runner("sdlc")
@@ -44,9 +56,9 @@ workflow "SDLC: Deploy" v1 {
             let impact: { api: boolean, dashboards: boolean, lambdas: string[] } = compute {
                 let files = split(merged_diff.stdout, "\n")
                 return {
-                    api: any(files, f => f.starts_with(config.deploy.api_prefix)),
-                    dashboards: any(files, f => f.starts_with(config.deploy.dashboard_prefix)),
-                    lambdas: filter(files, f => f.starts_with(config.deploy.lambda_prefix))
+                    api: any(files, f => f.starts_with(deploy.api_prefix)),
+                    dashboards: any(files, f => f.starts_with(deploy.dashboard_prefix)),
+                    lambdas: filter(files, f => f.starts_with(deploy.lambda_prefix))
                 }
             }
 
@@ -56,8 +68,8 @@ workflow "SDLC: Deploy" v1 {
                         @timeout(60s)
                         let deploy_api = github.dispatch(
                             ...github_conn,
-                            workflow_id: config.deploy.api_workflow,
-                            ref: config.github.base_branch
+                            workflow_id: deploy.api_workflow,
+                            ref: github_settings.base_branch
                         )
                     }
                 }
@@ -66,8 +78,8 @@ workflow "SDLC: Deploy" v1 {
                         @timeout(60s)
                         let deploy_dash = github.dispatch(
                             ...github_conn,
-                            workflow_id: config.deploy.dashboard_workflow,
-                            ref: config.github.base_branch
+                            workflow_id: deploy.dashboard_workflow,
+                            ref: github_settings.base_branch
                         )
                     }
                 }
@@ -76,8 +88,8 @@ workflow "SDLC: Deploy" v1 {
                         @timeout(60s)
                         let deploy_lambda = github.dispatch(
                             ...github_conn,
-                            workflow_id: config.deploy.lambda_workflow,
-                            ref: config.github.base_branch,
+                            workflow_id: deploy.lambda_workflow,
+                            ref: github_settings.base_branch,
                             inputs: { path: lambda_path }
                         )
                     }
@@ -85,13 +97,13 @@ workflow "SDLC: Deploy" v1 {
             } join all
 
             // let the dispatched runs start, then confirm none failed before handing off to QA.
-            wait config.waits.deploy_settle_seconds
+            wait waits.deploy_settle_seconds
 
             @timeout(30s)
             @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
             let deploy_runs: any = github.workflow_runs(
                 ...github_conn,
-                branch: config.github.base_branch
+                branch: github_settings.base_branch
             )
             let deploy_state: { failed: integer } = compute {
                 let runs = deploy_runs.workflow_runs
@@ -113,7 +125,7 @@ workflow "SDLC: Deploy" v1 {
                 let transition_testing = jira.transition(
                     ...jira_conn,
                     key: ticket.key,
-                    transition_id: config.transitions.in_testing
+                    transition_id: transitions.in_testing
                 )
                 @timeout(30s)
                 let deployed_note = jira.comment(
@@ -124,4 +136,5 @@ workflow "SDLC: Deploy" v1 {
             }
         }
     }
+}
 }

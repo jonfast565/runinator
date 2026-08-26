@@ -13,7 +13,7 @@ use runinator_models::{
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup},
     replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
-    revisions::WorkflowRevision,
+    revisions::{PipelineRevision, WorkflowRevision},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     schedules::{BackfillResponse, FreezeWindow},
     settings::SettingKind,
@@ -112,6 +112,8 @@ pub enum ApiResponse {
     WorkflowTriggerList(Vec<WorkflowTrigger>),
     Pipeline(Pipeline),
     PipelineList(Vec<Pipeline>),
+    PipelineRevision(PipelineRevision),
+    PipelineRevisionList(Vec<PipelineRevision>),
     PipelineTrigger(PipelineTrigger),
     PipelineTriggerList(Vec<PipelineTrigger>),
     PipelineRun(PipelineRun),
@@ -208,12 +210,22 @@ pub struct WorkflowTriggerRunRequest {
 pub struct PipelineRunRequest {
     #[serde(default)]
     pub parameters: Value,
+    /// Run an immutable historical pipeline definition instead of the current head.
+    #[serde(default)]
+    pub revision: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PipelineMemberRetryRequest {
     #[serde(default)]
     pub parameters: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SettingMoveRequest {
+    pub kind: SettingKind,
+    pub scope: String,
+    pub name: String,
 }
 
 /// resolve a pipeline run's pending inquiry (a member with the `Inquire` failure mode paused it).

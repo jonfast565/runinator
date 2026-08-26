@@ -76,6 +76,7 @@ fn definition(name: &str, nodes: Vec<WorkflowNode>, metadata: Value) -> Workflow
     WorkflowDefinition {
         id: None,
         name: name.into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: Default::default(),

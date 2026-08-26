@@ -15,6 +15,16 @@ pub fn format_document(document: &Document) -> String {
     formatter.out
 }
 
+/// Canonical source used to digest a compile-time module independently of the file containing it.
+pub fn format_source_module(module: &SourceModule) -> String {
+    let mut formatter = Formatter {
+        out: String::new(),
+        indent: 0,
+    };
+    formatter.source_module(module);
+    formatter.out
+}
+
 struct Formatter {
     out: String,
     indent: usize,
@@ -88,7 +98,10 @@ impl Formatter {
     fn document(&mut self, document: &Document) {
         if document.language_header {
             self.line("language rexrap-1");
-            if !document.functions.is_empty() || !document.workflows.is_empty() {
+            if !document.functions.is_empty()
+                || !document.modules.is_empty()
+                || !document.workflows.is_empty()
+            {
                 self.out.push('\n');
             }
         }
@@ -97,6 +110,15 @@ impl Formatter {
             self.function_def(function);
         }
         if !document.functions.is_empty() {
+            self.out.push('\n');
+        }
+        for (index, module) in document.modules.iter().enumerate() {
+            if index > 0 {
+                self.out.push('\n');
+            }
+            self.source_module(module);
+        }
+        if !document.modules.is_empty() && !document.workflows.is_empty() {
             self.out.push('\n');
         }
         for (index, workflow) in document.workflows.iter().enumerate() {
@@ -120,6 +142,16 @@ impl Formatter {
         }
     }
 
+    fn source_module(&mut self, module: &SourceModule) {
+        self.line(&format!("module {} {{", module.path));
+        self.indent += 1;
+        for function in &module.functions {
+            self.function_def(function);
+        }
+        self.indent -= 1;
+        self.line("}");
+    }
+
     fn workflow(&mut self, workflow: &Workflow) {
         self.emit_leading(&workflow.leading_comments);
         let version = workflow
@@ -136,9 +168,12 @@ impl Formatter {
             quote(&workflow.name)
         ));
         self.indent += 1;
+        // `params` is structural grammar and must be the first workflow-body item. Keep it before
+        // the stable identity key so formatted source always reparses.
         if let Some(input) = &workflow.input {
             self.params(input);
-            if !workflow.triggers.is_empty()
+            if workflow.key.is_some()
+                || !workflow.triggers.is_empty()
                 || !workflow.aliases.is_empty()
                 || !workflow.body.is_empty()
                 || !workflow.imports.is_empty()
@@ -146,12 +181,32 @@ impl Formatter {
                 self.out.push('\n');
             }
         }
+        if let Some(key) = &workflow.key {
+            self.line(&format!("key {key}"));
+            if !workflow.imports.is_empty()
+                || !workflow.triggers.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty()
+            {
+                self.out.push('\n');
+            }
+        }
         for import in &workflow.imports {
             self.emit_leading(&import.comments.leading);
-            match &import.alias {
-                Some(alias) => self.line(&format!("import {} as {alias}", import.path)),
-                None => self.line(&format!("import {}", import.path)),
-            }
+            let kind = import
+                .kind
+                .map(|kind| format!("{} ", kind.keyword()))
+                .unwrap_or_default();
+            let revision = import
+                .revision
+                .map(|revision| format!(" @revision({revision})"))
+                .unwrap_or_default();
+            let alias = import
+                .alias
+                .as_ref()
+                .map(|alias| format!(" as {alias}"))
+                .unwrap_or_default();
+            self.line(&format!("import {kind}{}{revision}{alias}", import.path));
             self.append_trailing(&import.comments);
         }
         if (workflow.namespace.is_some() || !workflow.imports.is_empty())

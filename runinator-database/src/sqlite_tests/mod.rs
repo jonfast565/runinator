@@ -35,6 +35,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.to_string(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),

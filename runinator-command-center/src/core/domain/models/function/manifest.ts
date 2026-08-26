@@ -20,7 +20,7 @@ export type NewFunctionExport = Pick<FunctionExport, "name" | "handler"> &
 
 export interface FunctionManifest {
   name: string;
-  namespace?: string | null;
+  namespace: string;
   description?: string | null;
   runtime: FunctionRuntimeSpec;
   exports: NewFunctionExport[];
@@ -34,7 +34,7 @@ export interface FunctionManifest {
 
 export interface NewFunctionPackage {
   name: string;
-  namespace?: string | null;
+  namespace: string;
   description?: string | null;
 }
 
@@ -58,7 +58,7 @@ export function publishRequest(
     // an org the publisher does not belong to.
     package: {
       name: manifest.name,
-      namespace: manifest.namespace ?? null,
+      namespace: manifest.namespace,
       description: manifest.description ?? null,
     },
     artifact_digest: artifactDigest,
@@ -95,9 +95,7 @@ export function validateManifest(manifest: FunctionManifest): void {
   const declared = manifest as Partial<FunctionManifest>;
   validateIdent("package name", declared.name);
 
-  if (declared.namespace) {
-    validateIdent("namespace", declared.namespace);
-  }
+  validateNamespace(declared.namespace);
 
   const runtime: string | undefined = declared.runtime?.runtime;
 
@@ -127,6 +125,20 @@ export function validateManifest(manifest: FunctionManifest): void {
 
   if (declared.alias) {
     validateIdent("alias", declared.alias);
+  }
+}
+
+function validateNamespace(value: string | undefined): asserts value is string {
+  if (!value) {
+    throw new Error("function package must declare a dotted namespace");
+  }
+
+  if (value.length > 255) {
+    throw new Error(`namespace '${value}' is longer than 255 characters`);
+  }
+
+  for (const segment of value.split(".")) {
+    validateIdent("namespace segment", segment);
   }
 }
 

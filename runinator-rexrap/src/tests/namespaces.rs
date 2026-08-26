@@ -4,6 +4,27 @@
 use super::*;
 
 #[test]
+fn stable_workflow_key_round_trips_independently_of_display_name() {
+    let src = r#"
+        namespace acme.billing {
+            workflow "Nightly reconciliation" v1 {
+                key billing_reconcile
+
+                do { return }
+            }
+        }
+    "#;
+    let definition = compile(src);
+    assert_eq!(definition.name, "Nightly reconciliation");
+    assert_eq!(definition.key.as_deref(), Some("billing_reconcile"));
+    assert_eq!(
+        definition.artifact_path().qualified(),
+        "acme.billing.billing_reconcile"
+    );
+    assert_round_trips(src);
+}
+
+#[test]
 fn workflow_namespace_and_qualified_subflow_round_trip() {
     // a `namespace` header rides in metadata, and a qualified subflow target keeps its dotted name.
     let src = r#"
@@ -27,6 +48,92 @@ fn workflow_namespace_and_qualified_subflow_round_trip() {
         .expect("subflow node");
     assert_eq!(subflow["subflow"]["workflow_name"], "core_sdlc.ticket_work");
     assert_round_trips(src);
+}
+
+#[test]
+fn typed_workflow_import_resolves_an_alias_and_keeps_its_revision_selector() {
+    let definition = compile(
+        r#"
+        workflow "Caller" v1 {
+            import workflow acme.billing.reconcile @revision(42) as reconcile
+
+            do {
+                subflow(reconcile, params: { id: params.id })
+            }
+        }
+        "#,
+    );
+    let graph = graph_value(&definition);
+    let subflow = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["kind"] == "subflow")
+        .expect("subflow node");
+    assert_eq!(
+        subflow["subflow"]["workflow_name"],
+        "acme.billing.reconcile"
+    );
+    assert_eq!(subflow["subflow"]["revision"], 42);
+}
+
+#[test]
+fn typed_settings_import_resolves_config_and_secret_aliases() {
+    let definition = compile(
+        r#"
+        workflow "Settings alias" v1 {
+            import settings acme.shared as shared
+
+            do {
+                slack.send_message(
+                    text: shared.message,
+                    token: shared.secret.slack_token,
+                )
+            }
+        }
+        "#,
+    );
+    let action = graph_value(&definition)["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["kind"] == "action")
+        .unwrap()["action"]
+        .clone();
+    assert_eq!(
+        action["configuration"]["text"]["$ref"]["config"],
+        serde_json::json!(["acme.shared", "message"])
+    );
+    assert_eq!(
+        action["configuration"]["token"],
+        "secret://acme.shared/slack_token"
+    );
+}
+
+#[test]
+fn strict_pack_compilation_rejects_legacy_artifact_authoring() {
+    let strict = CompileOptions {
+        strict_namespaces: true,
+        ..default_test_options()
+    };
+    let missing_identity = r#"
+        workflow "Legacy" v1 {
+            do { return }
+        }
+    "#;
+    let error = compile_str(missing_identity, &strict).expect_err("stable identity is required");
+    assert!(error.to_string().contains("stable `key`"));
+
+    let bare_setting = r#"
+        namespace acme.billing {
+            workflow "Legacy setting" v1 {
+                key legacy_setting
+                do { console.run(command: config.app.command) }
+            }
+        }
+    "#;
+    let error = compile_str(bare_setting, &strict).expect_err("typed settings import is required");
+    assert!(error.to_string().contains("typed `import settings"));
 }
 #[test]
 fn import_std_brings_intrinsics_into_bare_scope() {

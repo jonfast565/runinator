@@ -38,6 +38,7 @@ fn workflow(definition: runinator_models::value::Value) -> WorkflowDefinition {
     WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "test".into(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),

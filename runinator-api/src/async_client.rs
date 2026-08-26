@@ -53,7 +53,7 @@ use runinator_models::{
         ReplicaProviderRegistration, ReplicaProviderRegistrationRequest, ReplicaRecord,
         ReplicaRegistrationRequest, ReplicaStatus,
     },
-    revisions::WorkflowRevision,
+    revisions::{PipelineRevision, WorkflowRevision},
     runs::{RunStatus, RunSummary},
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     telemetry::ReplicaSampleSeries,
@@ -231,12 +231,22 @@ where
         pipeline_id: Uuid,
         parameters: Value,
     ) -> Result<PipelineRun> {
+        self.create_pipeline_run_at_revision(pipeline_id, parameters, None)
+            .await
+    }
+
+    pub async fn create_pipeline_run_at_revision(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+        revision: Option<i64>,
+    ) -> Result<PipelineRun> {
         let url = self
             .build_url(&format!("/pipelines/{pipeline_id}/runs"))
             .await?;
         let response = self
             .http_post(url.clone())
-            .json(&json!({ "parameters": parameters }))
+            .json(&json!({ "parameters": parameters, "revision": revision }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
@@ -262,6 +272,49 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn upsert_pipeline(&self, pipeline: &Pipeline) -> Result<Pipeline> {
+        let url = match pipeline.id {
+            Some(id) => self.build_url(&format!("/pipelines/{id}")).await?,
+            None => self.build_url("/pipelines").await?,
+        };
+        let response = match pipeline.id {
+            Some(_) => self.http_patch(url.clone()).json(pipeline).send().await?,
+            None => self.http_post(url.clone()).json(pipeline).send().await?,
+        };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn fetch_pipeline_revisions(
+        &self,
+        pipeline_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<Vec<PipelineRevision>> {
+        let mut url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/revisions"))
+            .await?;
+        if let Some(limit) = limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<PipelineRevision>>().await?)
+    }
+
+    pub async fn fetch_pipeline_revision(
+        &self,
+        pipeline_id: Uuid,
+        revision: i64,
+    ) -> Result<PipelineRevision> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/revisions/{revision}"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRevision>().await?)
     }
 
     pub async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<()> {
@@ -993,6 +1046,24 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionPackageDetail>().await?)
+    }
+
+    pub async fn move_function_package(
+        &self,
+        package_id: Uuid,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<FunctionPackage> {
+        let url = self
+            .build_url(&format!("/function_packages/{package_id}"))
+            .await?;
+        let response = self
+            .http_patch(url.clone())
+            .json(&json!({ "namespace": namespace, "name": name }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionPackage>().await?)
     }
 
     /// The flattened catalog of every published export.
@@ -1808,6 +1879,19 @@ where
         url.query_pairs_mut()
             .append_pair("scope", scope)
             .append_pair("name", name);
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("secret")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
+    }
+
+    /// Fetch a secret through its durable logical identity. UUID-backed workflow bindings use
+    /// this path so moving the human-readable scope/name alias cannot break a queued action.
+    pub async fn fetch_credential_by_id(&self, id: Uuid) -> Result<String> {
+        let url = self.build_url(&format!("/credentials/{id}")).await?;
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;

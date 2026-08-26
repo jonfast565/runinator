@@ -176,7 +176,11 @@ pub fn compile_all_str_with_diagnostics(
 ) -> Result<(Vec<WorkflowDefinition>, Vec<Diagnostic>), RexRapError> {
     let mut document = parse_document(src)?;
     // resolve namespaced calls to their bare runtime form before any later pass runs.
-    namespace::resolve(&mut document)?;
+    if options.strict_namespaces {
+        namespace::resolve_strict(&mut document)?;
+    } else {
+        namespace::resolve(&mut document)?;
+    }
     // desugar a clone so sema validates the fully-expanded program, while lowering keeps the
     // sugared form to record `...alias` spreads for the decompile sidecar.
     let mut desugared = document.clone();
@@ -508,7 +512,11 @@ pub fn compile_unchecked(
     options: &CompileOptions,
 ) -> Result<WorkflowDefinition, RexRapError> {
     let mut document = parse_document(src)?;
-    namespace::resolve(&mut document)?;
+    if options.strict_namespaces {
+        namespace::resolve_strict(&mut document)?;
+    } else {
+        namespace::resolve(&mut document)?;
+    }
     // validate the alias expansion on a clone, then lower the sugared form (see above).
     let mut desugared = document.clone();
     desugar::desugar(&mut desugared)?;

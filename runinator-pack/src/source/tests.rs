@@ -184,7 +184,7 @@ fn directory_pack_loads_rexraps_settings() {
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
         dir.join("flow.rrx"),
-        "language rexrap-1\n\nworkflow \"Temp\" v1 {\n\n    do {\n      let go = console.run(command: \"hi\")\n    }\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
+        "language rexrap-1\n\nnamespace runinator.test {\nworkflow \"Temp\" v1 {\n    key temp\n\n    do {\n      let go = console.run(command: \"hi\")\n    }\n}\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
     )
     .expect("write rexrap");
 
@@ -215,12 +215,15 @@ fn directory_pack_types_pack_local_subflows() {
         dir.join("child.rrx"),
         r#"language rexrap-1
 
+namespace runinator.test {
 workflow "Child" v1 returns { url: string } {
   params { id: string }
+  key child
 
   do {
     console.run(command: params.id)
   }
+}
 }
 "#,
     )
@@ -229,12 +232,16 @@ workflow "Child" v1 returns { url: string } {
         dir.join("parent.rrx"),
         r#"language rexrap-1
 
+namespace runinator.test {
 workflow "Parent" v1 {
+    key parent
+    import workflow runinator.test.child as child
 
     do {
-      let child = subflow("Child", params: { id: "RUNI-1" })
-      console.run(command: child.state.url)
+      let child_run = subflow("child", params: { id: "RUNI-1" })
+      console.run(command: child_run.state.url)
     }
+}
 }
 "#,
     )
@@ -242,6 +249,83 @@ workflow "Parent" v1 {
 
     let bundle = load_workflow_bundle(&dir).expect("directory pack should type subflow");
     assert_eq!(bundle.workflows.len(), 2);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_pack_embeds_imported_source_module_and_digest() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join(format!(
+        "runinator_source_module_pack_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("temp pack dir");
+    fs::write(
+        dir.join("money.rrx"),
+        r#"language rexrap-1
+
+module acme.shared.money {
+  fn echo(value: string) -> string = value
+}
+
+module acme.shared.unused {
+  fn hidden(value: string) -> string = value
+}
+"#,
+    )
+    .expect("write module");
+    fs::write(
+        dir.join("workflow.rrx"),
+        r#"language rexrap-1
+
+namespace acme.billing {
+workflow "Invoice" v1 {
+  params { command: string }
+  key invoice
+  import module acme.shared.money as money
+
+  do {
+    console.run(command: money.echo(params.command))
+  }
+}
+}
+"#,
+    )
+    .expect("write workflow");
+
+    let bundle = load_workflow_bundle(&dir).expect("directory pack should compile source module");
+    assert_eq!(
+        bundle.workflows.len(),
+        1,
+        "modules are not runtime artifacts"
+    );
+    let definition = &bundle.workflows[0];
+    let encoded = serde_json::to_value(definition).expect("serialize workflow");
+    let modules = encoded["definition"]["metadata"]["rexrap"]["source_modules"]
+        .as_array()
+        .expect("source module metadata");
+    assert_eq!(modules.len(), 1);
+    assert_eq!(modules[0]["path"], "acme.shared.money");
+    assert!(
+        modules[0]["digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+    assert!(
+        encoded["definition"]
+            .to_string()
+            .contains("__module_4acme_6shared_5money__echo"),
+        "the resolved pure function should be embedded in the consuming workflow"
+    );
+    assert!(
+        !encoded["definition"]
+            .to_string()
+            .contains("__module_4acme_6shared_6unused__hidden"),
+        "an unimported module must not be embedded"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

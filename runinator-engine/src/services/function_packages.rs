@@ -81,6 +81,15 @@ impl<T: FunctionStore + DefinitionStore + RuntimeStore> FunctionPackages<T> {
         repository::functions::delete_package(self.store.as_ref(), package_id).await
     }
 
+    pub async fn move_package(
+        &self,
+        package_id: Uuid,
+        namespace: Option<String>,
+        name: String,
+    ) -> Result<Option<FunctionPackage>, SendableError> {
+        repository::functions::move_package(self.store.as_ref(), package_id, namespace, name).await
+    }
+
     pub async fn restore(&self, package_id: Uuid) -> Result<bool, SendableError> {
         repository::functions::restore_package(self.store.as_ref(), package_id).await
     }

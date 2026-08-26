@@ -8,6 +8,7 @@ mod expr;
 mod inline;
 mod spreads;
 
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -145,10 +146,10 @@ fn lower_workflow(
     options: &CompileOptions,
 ) -> Result<(WorkflowDefinition, Vec<NodeSpan>), RexRapError> {
     let mut lowerer = Lowerer::new();
+    let functions = functions_for_workflow(document, workflow);
     lowerer.source_dir = options.source_dir.clone();
     // the callable registry resolves keyword args in both the workflow body and function bodies.
-    lowerer.registry =
-        runinator_rexrap_sema::registry::FunctionRegistry::build(&document.functions);
+    lowerer.registry = runinator_rexrap_sema::registry::FunctionRegistry::build(&functions);
     lowerer.provider_metadata = options.all_providers();
     lowerer.provider_actions = provider_actions(&lowerer.provider_metadata);
     lowerer.functions = options.functions.clone();
@@ -160,9 +161,9 @@ fn lower_workflow(
     // user `fn` definitions are lowered *before* the body, not after, because an `invocation` node
     // assembles them into its module as it is emitted. the lowered form is identical either way —
     // function bodies do not depend on the body's node ids — so this only moves when it happens.
-    lowerer.lowered_functions = lowerer.lower_functions(&document.functions)?;
+    lowerer.lowered_functions = lowerer.lower_functions(&functions)?;
     // `task fn`s are inlined, not compiled into the function table, so keep them by name.
-    for def in &document.functions {
+    for def in &functions {
         if def.is_task {
             lowerer.task_fns.insert(def.name.clone(), def.clone());
         }
@@ -300,15 +301,42 @@ fn lower_workflow(
     }
     // per-function surface signatures (`(params) -> ret`), recorded so decompile can reconstruct the
     // typed `fn` headers the runtime `functions` form does not carry. the runtime ignores this hint.
-    if !document.functions.is_empty() {
+    if !functions.is_empty() {
         let mut sigs = Map::new();
-        for def in &document.functions {
+        for def in &functions {
             sigs.insert(
                 def.name.clone(),
                 Value::String(runinator_rexrap_syntax::format::format_fn_signature(def)),
             );
         }
         rexrap.insert("functions".into(), Value::Object(sigs));
+    }
+    let mut source_modules = Vec::new();
+    for import in workflow
+        .imports
+        .iter()
+        .filter(|import| import.kind == Some(ImportKind::Module))
+    {
+        let module = document
+            .modules
+            .iter()
+            .find(|module| module.path == import.path)
+            .ok_or_else(|| {
+                RexRapError::lower(format!("pack has no source module '{}'", import.path))
+            })?;
+        let canonical = runinator_rexrap_syntax::format::format_source_module(module);
+        let mut digest = Sha256::new();
+        digest.update(canonical.as_bytes());
+        let mut entry = Map::new();
+        entry.insert("path".into(), Value::String(module.path.clone()));
+        entry.insert(
+            "digest".into(),
+            Value::String(format!("sha256:{:x}", digest.finalize())),
+        );
+        source_modules.push(Value::Object(entry));
+    }
+    if !source_modules.is_empty() {
+        rexrap.insert("source_modules".into(), Value::Array(source_modules));
     }
     // header `trigger cron` declarations, carried as runtime data the web service materializes on
     // import (unlike the render-only `rexrap` sidecar).
@@ -374,6 +402,7 @@ fn lower_workflow(
         WorkflowDefinition {
             id: None,
             name: workflow.name.clone(),
+            key: workflow.key.clone(),
             namespace: workflow.namespace.clone(),
             // org is assigned by the web service at import time, not during compilation.
             org_id: None,
@@ -386,6 +415,46 @@ fn lower_workflow(
         },
         std::mem::take(&mut lowerer.spans),
     ))
+}
+
+/// Top-level functions are pack-wide. Source-module functions are embedded only in workflows that
+/// explicitly import their module, keeping a compile-time folder from inflating unrelated graphs.
+fn functions_for_workflow(document: &Document, workflow: &Workflow) -> Vec<FunctionDef> {
+    let imported_modules = workflow
+        .imports
+        .iter()
+        .filter(|import| import.kind == Some(ImportKind::Module))
+        .map(|import| import.path.as_str())
+        .collect::<HashSet<_>>();
+    let mut all_module_functions = HashSet::new();
+    let mut imported_module_functions = HashSet::new();
+    for module in &document.modules {
+        for function in &module.functions {
+            let name = module_function_name(&module.path, &function.name);
+            all_module_functions.insert(name.clone());
+            if imported_modules.contains(module.path.as_str()) {
+                imported_module_functions.insert(name);
+            }
+        }
+    }
+    document
+        .functions
+        .iter()
+        .filter(|function| {
+            !all_module_functions.contains(&function.name)
+                || imported_module_functions.contains(&function.name)
+        })
+        .cloned()
+        .collect()
+}
+
+fn module_function_name(module: &str, function: &str) -> String {
+    let encoded = module
+        .split('.')
+        .map(|segment| format!("{}{}", segment.len(), segment))
+        .collect::<Vec<_>>()
+        .join("_");
+    format!("__module_{encoded}__{function}")
 }
 
 pub fn lower_expression_fragment(
@@ -1291,6 +1360,9 @@ impl Lowerer {
             "workflow_name".into(),
             Value::String(subflow.workflow_name.clone()),
         );
+        if let Some(revision) = subflow.revision {
+            subflow_obj.insert("revision".into(), Value::Number(revision.into()));
+        }
         subflow_obj.insert(
             "type".into(),
             Value::String(if subflow.detached {

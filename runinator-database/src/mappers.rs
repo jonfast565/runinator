@@ -32,7 +32,7 @@ use runinator_models::{
         ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
         TriggerSourceKind,
     },
-    revisions::{RevisionSource, WorkflowRevision},
+    revisions::{PipelineRevision, RevisionSource, WorkflowRevision},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     schedules::FreezeWindow,
     settings::{SettingKind, SettingRecord},

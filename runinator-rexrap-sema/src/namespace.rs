@@ -39,6 +39,27 @@ struct Scope {
     bare_intrinsics: HashSet<String>,
     /// user-defined function names (callable bare).
     user_fns: HashSet<String>,
+    /// typed workflow import alias -> durable-path selector. This remains source-only until the
+    /// pack importer resolves it to an ArtifactRef UUID/digest.
+    workflow_aliases: HashMap<String, WorkflowImport>,
+    /// typed function-package import alias -> the package's authoring path. An action written as
+    /// `pdf.render(...)` becomes `functions.acme.shared.pdf.render(...)` before lowering, where
+    /// the normal function catalog resolver records the exact package/version/export binding.
+    function_aliases: HashMap<String, String>,
+    /// typed settings import alias -> durable authoring namespace. `shared.timeout` is config by
+    /// default; `shared.secret.token` selects the late-resolved secret family explicitly.
+    settings_aliases: HashMap<String, String>,
+    /// source-module import alias -> exported leaf -> deterministic embedded function name.
+    module_aliases: HashMap<String, HashMap<String, String>>,
+    /// bare calls rewritten while preparing one module's private function namespace.
+    function_renames: HashMap<String, String>,
+    strict_resources: bool,
+}
+
+#[derive(Clone)]
+struct WorkflowImport {
+    path: String,
+    revision: Option<i64>,
 }
 
 impl Scope {
@@ -48,6 +69,12 @@ impl Scope {
             aliases: HashMap::new(),
             bare_intrinsics: HashSet::new(),
             user_fns: HashSet::new(),
+            workflow_aliases: HashMap::new(),
+            function_aliases: HashMap::new(),
+            settings_aliases: HashMap::new(),
+            module_aliases: HashMap::new(),
+            function_renames: HashMap::new(),
+            strict_resources: false,
         }
     }
 }
@@ -69,6 +96,17 @@ pub fn resolve_compute_fragment(body: &mut [ComputeLine]) -> Result<(), RexRapEr
 
 /// resolve every namespaced call in the document to its bare runtime form, in place.
 pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
+    resolve_with_policy(document, false)
+}
+
+/// Resolve a pack source under the namespaced-artifact contract. Durable references must use a
+/// typed import and every workflow must declare its stable key and namespace.
+pub fn resolve_strict(document: &mut Document) -> Result<(), RexRapError> {
+    resolve_with_policy(document, true)
+}
+
+fn resolve_with_policy(document: &mut Document, strict_resources: bool) -> Result<(), RexRapError> {
+    let modules = prepare_source_modules(document)?;
     let function_scope = build_function_scope(document);
     for function in document.functions.iter_mut() {
         for param in function.params.iter_mut() {
@@ -93,7 +131,19 @@ pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
     for workflow in document.workflows.iter_mut() {
-        let scope = build_scope(workflow, user_fns.clone())?;
+        if strict_resources && workflow.key.is_none() {
+            return Err(RexRapError::semantic(
+                workflow.span,
+                format!("workflow '{}' must declare a stable `key`", workflow.name),
+            ));
+        }
+        if strict_resources && workflow.namespace.is_none() {
+            return Err(RexRapError::semantic(
+                workflow.span,
+                format!("workflow '{}' must declare a `namespace`", workflow.name),
+            ));
+        }
+        let scope = build_scope(workflow, user_fns.clone(), &modules, strict_resources)?;
         for alias in workflow.aliases.iter_mut() {
             for (_, value) in alias.entries.iter_mut() {
                 resolve_expr(value, &scope)?;
@@ -140,6 +190,74 @@ pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
     Ok(())
 }
 
+type ModuleRegistry = HashMap<String, HashMap<String, String>>;
+
+fn prepare_source_modules(document: &mut Document) -> Result<ModuleRegistry, RexRapError> {
+    let mut registry = ModuleRegistry::new();
+    let mut embedded = Vec::new();
+    for module in &document.modules {
+        if registry.contains_key(&module.path) {
+            return Err(RexRapError::semantic(
+                module.span,
+                format!("duplicate source module '{}'", module.path),
+            ));
+        }
+        let mut exports = HashMap::new();
+        for function in &module.functions {
+            let embedded_name = module_function_name(&module.path, &function.name);
+            if exports
+                .insert(function.name.clone(), embedded_name)
+                .is_some()
+            {
+                return Err(RexRapError::semantic(
+                    function.span,
+                    format!(
+                        "source module '{}' exports function '{}' twice",
+                        module.path, function.name
+                    ),
+                ));
+            }
+        }
+        let scope = Scope {
+            aliases: HashMap::new(),
+            bare_intrinsics: HashSet::new(),
+            user_fns: exports.keys().cloned().collect(),
+            workflow_aliases: HashMap::new(),
+            function_aliases: HashMap::new(),
+            settings_aliases: HashMap::new(),
+            module_aliases: HashMap::new(),
+            function_renames: exports.clone(),
+            strict_resources: false,
+        };
+        for mut function in module.functions.clone() {
+            for param in &mut function.params {
+                if let Some(default) = param.default.as_mut() {
+                    resolve_expr(default, &scope)?;
+                }
+            }
+            match &mut function.body {
+                FnBody::Expr(expr) => resolve_expr(expr, &scope)?,
+                FnBody::Block(lines) => resolve_compute_block(lines, &scope)?,
+                FnBody::Run(_) => unreachable!("task functions are rejected in source modules"),
+            }
+            function.name = exports[&function.name].clone();
+            embedded.push(function);
+        }
+        registry.insert(module.path.clone(), exports);
+    }
+    document.functions.extend(embedded);
+    Ok(registry)
+}
+
+fn module_function_name(module: &str, function: &str) -> String {
+    let encoded = module
+        .split('.')
+        .map(|segment| format!("{}{}", segment.len(), segment))
+        .collect::<Vec<_>>()
+        .join("_");
+    format!("__module_{encoded}__{function}")
+}
+
 /// build the name scope from the document's user functions and `import` declarations.
 fn build_function_scope(document: &Document) -> Scope {
     Scope {
@@ -150,14 +268,136 @@ fn build_function_scope(document: &Document) -> Scope {
             .iter()
             .map(|function| function.name.clone())
             .collect(),
+        workflow_aliases: HashMap::new(),
+        function_aliases: HashMap::new(),
+        settings_aliases: HashMap::new(),
+        module_aliases: HashMap::new(),
+        function_renames: HashMap::new(),
+        strict_resources: false,
     }
 }
 
-fn build_scope(workflow: &Workflow, user_fns: HashSet<String>) -> Result<Scope, RexRapError> {
+fn build_scope(
+    workflow: &Workflow,
+    user_fns: HashSet<String>,
+    modules: &ModuleRegistry,
+    strict_resources: bool,
+) -> Result<Scope, RexRapError> {
     let mut aliases = HashMap::new();
     let mut bare_intrinsics = HashSet::new();
+    let mut workflow_aliases = HashMap::new();
+    let mut function_aliases = HashMap::new();
+    let mut settings_aliases = HashMap::new();
+    let mut module_aliases = HashMap::new();
+    // Every alias shares one workflow-local namespace, even when its consumer is a different
+    // resolver (a subflow, a package action, or a source/settings declaration). Letting two kinds
+    // reuse a spelling would make a later language feature silently change what old source means.
+    let mut claimed_aliases = HashSet::new();
     for import in &workflow.imports {
+        if import.kind == Some(ImportKind::Workflow) {
+            let alias = import.alias.as_ref().ok_or_else(|| {
+                RexRapError::semantic(
+                    import.span,
+                    format!("workflow import '{}' requires an alias", import.path),
+                )
+            })?;
+            if RESERVED_ROOTS.contains(&alias.as_str()) {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("import alias '{alias}' is reserved"),
+                ));
+            }
+            if !claimed_aliases.insert(alias.clone()) {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("duplicate import alias '{alias}'"),
+                ));
+            }
+            if workflow_aliases
+                .insert(
+                    alias.clone(),
+                    WorkflowImport {
+                        path: import.path.clone(),
+                        revision: import.revision,
+                    },
+                )
+                .is_some()
+            {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("duplicate import alias '{alias}'"),
+                ));
+            }
+            continue;
+        }
+        if import.kind == Some(ImportKind::Functions) {
+            let alias = import.alias.as_ref().ok_or_else(|| {
+                RexRapError::semantic(
+                    import.span,
+                    format!("functions import '{}' requires an alias", import.path),
+                )
+            })?;
+            if RESERVED_ROOTS.contains(&alias.as_str()) {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("import alias '{alias}' is reserved"),
+                ));
+            }
+            if !claimed_aliases.insert(alias.clone()) {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("duplicate import alias '{alias}'"),
+                ));
+            }
+            function_aliases.insert(alias.clone(), import.path.clone());
+            continue;
+        }
+        if matches!(import.kind, Some(ImportKind::Settings | ImportKind::Module)) {
+            let alias = import.alias.as_ref().ok_or_else(|| {
+                RexRapError::semantic(
+                    import.span,
+                    format!(
+                        "{} import '{}' requires an alias",
+                        import.kind.unwrap().keyword(),
+                        import.path
+                    ),
+                )
+            })?;
+            if RESERVED_ROOTS.contains(&alias.as_str()) {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("import alias '{alias}' is reserved"),
+                ));
+            }
+            if !claimed_aliases.insert(alias.clone()) {
+                return Err(RexRapError::semantic(
+                    import.span,
+                    format!("duplicate import alias '{alias}'"),
+                ));
+            }
+            if import.kind == Some(ImportKind::Settings) {
+                settings_aliases.insert(alias.clone(), import.path.clone());
+            } else {
+                let exports = modules.get(&import.path).ok_or_else(|| {
+                    RexRapError::semantic(
+                        import.span,
+                        format!("pack has no source module '{}'", import.path),
+                    )
+                })?;
+                module_aliases.insert(alias.clone(), exports.clone());
+            }
+            continue;
+        }
         let segments: Vec<&str> = import.path.split('.').collect();
+        if strict_resources && segments.first() != Some(&STD_NAMESPACE) {
+            return Err(RexRapError::semantic(
+                import.span,
+                format!(
+                    "durable import '{}' must declare one of: workflow, functions, settings, module",
+                    import.path
+                ),
+            ));
+        }
         // `import std` opens the entire standard library into bare scope; it cannot be aliased.
         if segments.as_slice() == [STD_NAMESPACE] {
             if import.alias.is_some() {
@@ -199,12 +439,13 @@ fn build_scope(workflow: &Workflow, user_fns: HashSet<String>) -> Result<Scope, 
                         format!("import alias '{alias}' is reserved"),
                     ));
                 }
-                if aliases.insert(alias.clone(), import.path.clone()).is_some() {
+                if !claimed_aliases.insert(alias.clone()) {
                     return Err(RexRapError::semantic(
                         import.span,
                         format!("duplicate import alias '{alias}'"),
                     ));
                 }
+                aliases.insert(alias.clone(), import.path.clone());
             }
             None if is_std => {
                 // bring every leaf of the imported module into bare scope.
@@ -222,6 +463,12 @@ fn build_scope(workflow: &Workflow, user_fns: HashSet<String>) -> Result<Scope, 
         aliases,
         bare_intrinsics,
         user_fns,
+        workflow_aliases,
+        function_aliases,
+        settings_aliases,
+        module_aliases,
+        function_renames: HashMap::new(),
+        strict_resources,
     })
 }
 
@@ -251,13 +498,28 @@ fn resolve_block(block: &mut Block, scope: &Scope) -> Result<(), RexRapError> {
 }
 
 fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
+    let stmt_span = stmt.span;
     match &mut stmt.kind {
-        StmtKind::Action(action) => resolve_entries(&mut action.args, scope)?,
+        StmtKind::Action(action) => resolve_action(action, scope, stmt_span)?,
         StmtKind::TaskCall(call) => resolve_entries(&mut call.args, scope)?,
         StmtKind::Return(Some(value)) => resolve_expr(value, scope)?,
         StmtKind::Return(None) | StmtKind::Detach(_) => {}
         StmtKind::Compute(compute) => resolve_compute_block(&mut compute.body, scope)?,
         StmtKind::Subflow(subflow) => {
+            if let Some(import) = scope.workflow_aliases.get(&subflow.workflow_name) {
+                subflow.workflow_name = import.path.clone();
+                subflow.revision = import.revision;
+                subflow.imported = true;
+            }
+            if scope.strict_resources && !subflow.imported {
+                return Err(RexRapError::semantic(
+                    stmt.span,
+                    format!(
+                        "workflow '{}' must be referenced through a typed `import workflow ... as ...` alias",
+                        subflow.workflow_name
+                    ),
+                ));
+            }
             if let Some(run_name) = subflow.run_name.as_mut() {
                 resolve_expr(run_name, scope)?;
             }
@@ -317,6 +579,9 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
         }
         StmtKind::For(for_stmt) => {
             resolve_expr(&mut for_stmt.items, scope)?;
+            if let Some(limit) = for_stmt.limit.as_mut() {
+                resolve_expr(limit, scope)?;
+            }
             resolve_block(&mut for_stmt.body, scope)?;
         }
         StmtKind::While(while_stmt) => {
@@ -410,7 +675,23 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
         | StmtKind::Barrier(_)
         | StmtKind::CircuitBreaker(_) => {}
     }
+    if let Some(compensation) = stmt.compensation.as_mut() {
+        resolve_action(compensation, scope, stmt_span)?;
+    }
     Ok(())
+}
+
+fn resolve_action(action: &mut ActionStmt, scope: &Scope, span: Span) -> Result<(), RexRapError> {
+    if scope.strict_resources && action.provider.starts_with("functions.") {
+        return Err(RexRapError::semantic(
+            span,
+            "packaged functions must be referenced through a typed `import functions ... as ...` alias",
+        ));
+    }
+    if let Some(path) = scope.function_aliases.get(&action.provider) {
+        action.provider = format!("functions.{path}");
+    }
+    resolve_entries(&mut action.args, scope)
 }
 
 fn resolve_compute_block(body: &mut [ComputeLine], scope: &Scope) -> Result<(), RexRapError> {
@@ -575,7 +856,19 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), RexRapError> {
             }
         }
         // a namespace used as a value (not called) is an error; a genuine value path is fine.
-        ExprKind::Path(segs) => reject_namespace_value(segs, scope, span)?,
+        ExprKind::Path(segs) => {
+            let settings_alias = resolve_settings_path(segs, scope, span)?;
+            if scope.strict_resources
+                && !settings_alias
+                && matches!(segs.first().and_then(path_key), Some("config" | "secret"))
+            {
+                return Err(RexRapError::semantic(
+                    span,
+                    "settings must be referenced through a typed `import settings ... as ...` alias",
+                ));
+            }
+            reject_namespace_value(segs, scope, span)?;
+        }
         ExprKind::Null
         | ExprKind::Bool(_)
         | ExprKind::Int(_)
@@ -586,6 +879,49 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), RexRapError> {
         | ExprKind::Spread(_) => {}
     }
     Ok(())
+}
+
+/// Rewrite a typed settings alias into the runtime's existing config/secret address shape while
+/// retaining the dotted imported namespace as one scope key. Examples:
+///
+/// `shared.timeout` -> `config.<acme.shared>.timeout`
+/// `shared.config.timeout` -> `config.<acme.shared>.timeout`
+/// `shared.secret.token` -> `secret.<acme.shared>.token`
+fn resolve_settings_path(
+    segs: &mut Vec<PathSeg>,
+    scope: &Scope,
+    span: Span,
+) -> Result<bool, RexRapError> {
+    let Some(alias) = segs.first().and_then(path_key) else {
+        return Ok(false);
+    };
+    let Some(namespace) = scope.settings_aliases.get(alias) else {
+        return Ok(false);
+    };
+    let mut tail = segs[1..].to_vec();
+    let family = match tail.first().and_then(path_key) {
+        Some("config") => {
+            tail.remove(0);
+            "config"
+        }
+        Some("secret") => {
+            tail.remove(0);
+            "secret"
+        }
+        _ => "config",
+    };
+    if tail.is_empty() {
+        return Err(RexRapError::semantic(
+            span,
+            format!("settings alias '{alias}' requires a setting key"),
+        ));
+    }
+    *segs = vec![
+        PathSeg::Key(family.to_string()),
+        PathSeg::Key(namespace.clone()),
+    ];
+    segs.extend(tail);
+    Ok(true)
 }
 
 // if `receiver` is a namespace path (`std.module` or an import alias), validate that `leaf` names a
@@ -633,6 +969,17 @@ fn namespaced_leaf(
             )),
         };
     }
+    if let Some(exports) = scope.module_aliases.get(head) {
+        if keys.len() != 1 {
+            return Ok(None);
+        }
+        return exports.get(leaf).cloned().map(Some).ok_or_else(|| {
+            RexRapError::semantic(
+                span,
+                format!("source module alias '{head}' has no function '{leaf}'"),
+            )
+        });
+    }
     Ok(None)
 }
 
@@ -653,7 +1000,11 @@ fn resolve_std_leaf(module: &str, leaf: &str, span: Span) -> Result<String, RexR
 
 // a bare prefix call must be a user function or an imported intrinsic; a bare prefix call to a
 // builtin intrinsic is rejected with guidance to qualify or import it.
-fn enforce_prefix_call(name: &str, scope: &Scope, span: Span) -> Result<(), RexRapError> {
+fn enforce_prefix_call(name: &mut String, scope: &Scope, span: Span) -> Result<(), RexRapError> {
+    if let Some(rewritten) = scope.function_renames.get(name) {
+        *name = rewritten.clone();
+        return Ok(());
+    }
     if scope.user_fns.contains(name) || scope.bare_intrinsics.contains(name) {
         return Ok(());
     }
@@ -686,6 +1037,12 @@ fn reject_namespace_value(segs: &[PathSeg], scope: &Scope, span: Span) -> Result
         return Err(RexRapError::semantic(
             span,
             format!("'{head}' is an imported namespace and cannot be used as a value"),
+        ));
+    }
+    if scope.module_aliases.contains_key(head) {
+        return Err(RexRapError::semantic(
+            span,
+            format!("'{head}' is a source module and cannot be used as a value"),
         ));
     }
     Ok(())

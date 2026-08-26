@@ -8,6 +8,11 @@ fn revision_for(saved: &WorkflowDefinition, source: RevisionSource) -> WorkflowR
         id: Uuid::nil(),
         workflow_id: saved.id.unwrap(),
         revision: 0,
+        digest: WorkflowRevision::content_digest(
+            saved.version,
+            &saved.input_type,
+            &saved.definition,
+        ),
         version: saved.version,
         name: saved.name.clone(),
         input_type: saved.input_type.clone(),

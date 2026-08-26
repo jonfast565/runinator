@@ -63,10 +63,12 @@ where
         &self,
         workflow_id: Uuid,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
-            .bind(workflow_id)
-            .fetch_optional(self.pool())
-            .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_COLUMNS} FROM workflows WHERE id = ?"
+        )))
+        .bind(workflow_id)
+        .fetch_optional(self.pool())
+        .await?;
         Ok(row.map(|row| mappers::row_to_workflow(&row)))
     }
 
@@ -765,7 +767,7 @@ where
 
     async fn list_settings(&self) -> Result<Vec<SettingRecord>, SendableError> {
         let rows = sqlx::query(
-            "SELECT kind, scope, name, value, updated_at FROM settings ORDER BY kind, scope, name",
+            "SELECT id, kind, scope, name, value, updated_at FROM settings ORDER BY kind, scope, name",
         )
         .fetch_all(self.pool())
         .await?;
@@ -803,20 +805,20 @@ where
         &self,
         name: String,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
-        // match either an unqualified `name` or a qualified subflow target `"<namespace>.<name>"`
-        // against the stored identity `namespace + "." + name`. matching the concatenation (rather
-        // than splitting the target) is unambiguous when a workflow name itself contains dots.
+        // Canonical paths use namespace + stable key. Display-name matching remains temporarily for
+        // pre-migration callers; persisted dependencies are UUID-backed before storage.
         let concat = if self.dialect() == SqlDialect::MySql {
-            "CONCAT(namespace, '.', name)"
+            "CONCAT(namespace, '.', resource_key)"
         } else {
-            "namespace || '.' || name"
+            "namespace || '.' || resource_key"
         };
         let sql = format!(
-            "SELECT id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at \
-             FROM workflows WHERE name = ? OR (namespace IS NOT NULL AND {concat} = ?) \
+            "SELECT {WORKFLOW_COLUMNS} \
+             FROM workflows WHERE resource_key = ? OR name = ? OR (namespace IS NOT NULL AND {concat} = ?) \
              ORDER BY created_at, id LIMIT 1"
         );
         let row = sqlx::query(&self.render(&sql))
+            .bind(&name)
             .bind(&name)
             .bind(&name)
             .fetch_optional(self.pool())
@@ -1162,7 +1164,7 @@ where
         name: String,
     ) -> Result<Option<SettingRecord>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT kind, scope, name, value, updated_at FROM settings WHERE kind = ? AND scope = ? AND name = ?",
+            "SELECT id, kind, scope, name, value, updated_at FROM settings WHERE kind = ? AND scope = ? AND name = ?",
         ))
         .bind(kind.as_str())
         .bind(scope)

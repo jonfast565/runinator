@@ -40,6 +40,7 @@ async fn settings_round_trip_by_kind_scope_name() {
     assert_eq!(secret.value, b"cipher-a");
     assert_eq!(secret.updated_at, 100);
     assert_eq!(secret.kind, SettingKind::Secret);
+    assert!(!secret.id.is_nil());
 
     let config = db
         .fetch_setting(SettingKind::Config, "jira".into(), "token".into())
@@ -65,6 +66,10 @@ async fn settings_round_trip_by_kind_scope_name() {
         .unwrap();
     assert_eq!(updated.value, b"cipher-c");
     assert_eq!(updated.updated_at, 300);
+    assert_eq!(
+        updated.id, secret.id,
+        "value updates preserve the setting UUID"
+    );
 
     // list returns both rows; delete is kind-scoped.
     assert_eq!(db.list_settings().await.unwrap().len(), 2);

@@ -23,7 +23,11 @@ impl NodeKindSpec for Subflow {
     }
 
     fn check_parameters(&self, node: &WorkflowNode) -> Result<(), WorkflowValidationError> {
-        if node.subflow_id.is_none()
+        if node
+            .subflow
+            .target_workflow_id()
+            .or(node.subflow_id)
+            .is_none()
             && node
                 .subflow
                 .workflow_name

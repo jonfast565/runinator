@@ -92,6 +92,26 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         repository::fetch_pipeline(self.store.as_ref(), pipeline_id).await
     }
 
+    pub async fn revisions(
+        &self,
+        pipeline_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<runinator_models::revisions::PipelineRevision>, SendableError> {
+        self.store
+            .fetch_pipeline_revisions(pipeline_id, limit)
+            .await
+    }
+
+    pub async fn revision(
+        &self,
+        pipeline_id: Uuid,
+        revision: i64,
+    ) -> Result<Option<runinator_models::revisions::PipelineRevision>, SendableError> {
+        self.store
+            .fetch_pipeline_revision(pipeline_id, revision)
+            .await
+    }
+
     pub async fn save(&self, pipeline: &Pipeline) -> Result<Pipeline, SendableError> {
         let saved = repository::upsert_pipeline(self.store.as_ref(), pipeline).await?;
         emit_workflows_changed(&self.events, saved.org_id);
@@ -166,12 +186,14 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         &self,
         pipeline_id: Uuid,
         parameters: Value,
+        revision: Option<i64>,
         actor_display_name: Option<String>,
     ) -> Result<PipelineRun, SendableError> {
         let run = repository::create_manual_pipeline_run(
             self.store.as_ref(),
             pipeline_id,
             parameters,
+            revision,
             None,
             actor_display_name,
         )

@@ -7,9 +7,19 @@ pub struct Document {
     /// top-level `fn` definitions, callable from the workflow body, compute blocks, and other
     /// function bodies. siblings of the workflow.
     pub functions: Vec<FunctionDef>,
+    /// Pack-local, compile-time-only function modules. Imports select these by path; lowering
+    /// embeds their resolved functions and digest into consuming workflows, never as an artifact.
+    pub modules: Vec<SourceModule>,
     pub workflows: Vec<Workflow>,
     /// comments after the last top-level item, preserved for lossless formatting.
     pub trailing_comments: Vec<Comment>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceModule {
+    pub path: String,
+    pub functions: Vec<FunctionDef>,
+    pub span: Span,
 }
 
 impl Document {
@@ -68,6 +78,9 @@ pub struct FnParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
     pub name: String,
+    /// Stable logical key, independent of display name and namespace. `None` is accepted only for
+    /// pre-migration source and lowers with a temporary name fallback.
+    pub key: Option<String>,
     pub version: Option<SemVer>,
     /// top-level workflow parameters, surfaced in source as `params { ... }`.
     pub input: Option<TypeExpr>,
@@ -351,11 +364,36 @@ pub struct InterruptDecl {
     pub body: Block,
 }
 
-/// a header `import <path> (as <alias>)?` declaration. `path` is the dotted namespace
-/// (`std.strings`, `some_pack`); `alias` binds a short local name when present.
+/// The artifact family opened by a typed import. An absent kind is the legacy namespace import
+/// used by `std`; strict namespaced packs use one of these explicit kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportKind {
+    Workflow,
+    Functions,
+    Settings,
+    Module,
+}
+
+impl ImportKind {
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Workflow => "workflow",
+            Self::Functions => "functions",
+            Self::Settings => "settings",
+            Self::Module => "module",
+        }
+    }
+}
+
+/// a header `import [kind] <path> [@revision(N)] (as <alias>)?` declaration. `path` is the
+/// dotted namespace (`std.strings`, `acme.billing.reconcile`); `alias` binds a short local name.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
+    pub kind: Option<ImportKind>,
     pub path: String,
+    /// `@revision(N)` is meaningful for workflow imports. It is resolved to a UUID + digest by
+    /// pack import, never treated as a runtime name lookup.
+    pub revision: Option<i64>,
     pub alias: Option<String>,
     pub span: Span,
     pub comments: CommentSet,

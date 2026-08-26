@@ -295,6 +295,63 @@ pub struct SetFunctionAliasRequest {
     pub from_alias: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MoveFunctionPackageRequest {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    pub name: String,
+}
+
+pub async fn move_function_package<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(package_id): Path<Uuid>,
+    Json(request): Json<MoveFunctionPackageRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if request.name.trim().is_empty()
+        || request
+            .namespace
+            .as_deref()
+            .is_some_and(|namespace| namespace.trim().is_empty())
+    {
+        return bad_request("function package name and namespace segments must not be empty");
+    }
+    let found = match service.list().await {
+        Ok(packages) => packages
+            .into_iter()
+            .find(|package| package.id == package_id),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let Some(found) = found else {
+        return not_found("function package not found");
+    };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::FunctionPackage, found.id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
+    let namespace = request
+        .namespace
+        .map(|namespace| namespace.trim().to_string());
+    match service
+        .move_package(package_id, namespace, request.name.trim().to_string())
+        .await
+    {
+        Ok(Some(package)) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                serde_json::to_value(package).unwrap_or_default().into(),
+            )),
+        ),
+        Ok(None) => not_found("function package not found"),
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
 /// point an alias at a version.
 pub async fn set_function_alias<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
@@ -577,6 +634,10 @@ pub fn routes<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeS
             get(get_function::<T>)
                 .delete(delete_function::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/function_packages/{package_id}",
+            axum::routing::patch(move_function_package::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/functions/{package}/restore",

@@ -1025,6 +1025,8 @@ fn resolve_effect_request(
         WorkflowEffectRequest::ChildRun {
             workflow_id,
             workflow_name,
+            workflow_revision,
+            workflow_revision_digest,
             input,
             wait,
             reuse_open_run,
@@ -1032,6 +1034,8 @@ fn resolve_effect_request(
         } => WorkflowEffectRequest::ChildRun {
             workflow_id,
             workflow_name,
+            workflow_revision,
+            workflow_revision_digest,
             input: resolve(input)?,
             wait,
             reuse_open_run,
@@ -1882,6 +1886,8 @@ mod tests {
             WorkflowEffectRequest::ChildRun {
                 workflow_id: Some(Uuid::nil()),
                 workflow_name: None,
+                workflow_revision: None,
+                workflow_revision_digest: None,
                 input: Value::Null,
                 wait: true,
                 reuse_open_run: false,
@@ -2211,6 +2217,7 @@ mod tests {
         let module = compile_workflow_module(&WorkflowDefinition {
             id: None,
             name: "linear".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),

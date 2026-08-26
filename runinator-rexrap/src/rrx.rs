@@ -77,7 +77,7 @@ pub fn parse_rrx_blocks(source: &str) -> Result<RrxBlocks, RexRapError> {
         let end = matching_brace(source, brace)?;
         let declaration = &source[start..end];
         match word.as_str() {
-            "workflow" => {
+            "workflow" | "module" | "namespace" => {
                 blocks.workflows.push_str(&header);
                 blocks.workflows.push_str(declaration);
                 blocks.workflows.push('\n');
@@ -222,5 +222,19 @@ tests { case "smoke" {} }"#,
         assert_eq!(blocks.settings.len(), 1);
         assert_eq!(blocks.tests.len(), 1);
         assert!(blocks.language_header);
+    }
+
+    #[test]
+    fn keeps_namespace_blocks_with_workflow_source() {
+        let blocks = parse_rrx_blocks(
+            r#"language rexrap-1
+namespace acme.billing {
+  workflow "Reconcile" v1 { key reconcile do { let x = console.run() } }
+}"#,
+        )
+        .expect("namespace block");
+
+        assert!(blocks.workflows.contains("namespace acme.billing"));
+        assert!(blocks.workflows.contains("workflow \"Reconcile\""));
     }
 }

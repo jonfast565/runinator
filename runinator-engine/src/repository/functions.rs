@@ -334,6 +334,32 @@ pub async fn fetch_package_versions<T: FunctionStore>(
     db.fetch_function_versions(package_id).await
 }
 
+/// Move the authoring alias while preserving the package UUID and every immutable release.
+pub async fn move_package<T: FunctionStore + DefinitionStore>(
+    db: &T,
+    package_id: Uuid,
+    namespace: Option<String>,
+    name: String,
+) -> Result<Option<FunctionPackage>, SendableError> {
+    let old = db.fetch_function_package_by_id(package_id).await?;
+    let moved = db
+        .move_function_package(package_id, namespace, name)
+        .await?;
+    if let (Some(old), Some(_)) = (&old, &moved) {
+        let old_provider = match &old.namespace {
+            Some(namespace) => format!("functions.{namespace}.{}", old.name),
+            None => format!("functions.{}", old.name),
+        };
+        crate::repository::catalog::delete_catalog_item(
+            db,
+            &crate::repository::provider_catalog_uri(&old_provider),
+        )
+        .await?;
+        sync_provider_catalog(db, package_id).await?;
+    }
+    Ok(moved)
+}
+
 /// archive a package and remove only its authoring catalog mirror.
 pub async fn delete_package<T: FunctionStore + DefinitionStore>(
     db: &T,

@@ -33,12 +33,15 @@ pub(super) async fn pipelines(
             pipeline,
             params,
             json_file,
+            revision,
             follow,
         } => {
             let pipeline = resolve_pipeline(client, pipeline).await?;
             let pipeline_id = pipeline_id(&pipeline)?;
             let parameters = params::load_object(json_file.as_deref(), params)?;
-            let run = client.create_pipeline_run(pipeline_id, parameters).await?;
+            let run = client
+                .create_pipeline_run_at_revision(pipeline_id, parameters, *revision)
+                .await?;
             let run = match follow {
                 true => follow_run(client, run.id).await?,
                 false => run,
@@ -47,6 +50,48 @@ pub(super) async fn pipelines(
                 return output::json(&run);
             }
             println!("pipeline run {} [{}]", run.id, run.status.as_str());
+            Ok(())
+        }
+        PipelineCommands::Revisions { pipeline, limit } => {
+            let pipeline = resolve_pipeline(client, pipeline).await?;
+            let revisions = client
+                .fetch_pipeline_revisions(pipeline_id(&pipeline)?, Some(*limit))
+                .await?;
+            if json_output {
+                return output::json(&revisions);
+            }
+            let rows = revisions
+                .iter()
+                .map(|revision| {
+                    vec![
+                        revision.revision.to_string(),
+                        revision.digest.clone(),
+                        revision.source.to_string(),
+                        revision.name.clone(),
+                        output::time(revision.created_at),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(&["REV", "DIGEST", "SOURCE", "NAME", "CREATED"], &rows)
+            );
+            Ok(())
+        }
+        PipelineCommands::Revision { pipeline, revision } => {
+            let pipeline = resolve_pipeline(client, pipeline).await?;
+            let found = client
+                .fetch_pipeline_revision(pipeline_id(&pipeline)?, *revision)
+                .await?;
+            if json_output {
+                return output::json(&found);
+            }
+            println!("revision: {}", found.revision);
+            println!("digest: {}", found.digest);
+            println!("name: {}", found.name);
+            println!("source: {}", found.source);
+            println!("created_at: {}", output::time(found.created_at));
+            println!("graph: {}", serde_json::to_string_pretty(&found.graph)?);
             Ok(())
         }
         PipelineCommands::Runs { pipeline } => {

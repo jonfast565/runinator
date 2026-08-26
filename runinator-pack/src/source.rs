@@ -153,6 +153,22 @@ pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
                     e.render(&blocks.pipelines)
                 ))
             })?;
+            for pipeline in &bundle.pipelines {
+                if pipeline.key.is_none() {
+                    return Err(PackError::compile(format!(
+                        "pipeline '{}' in {} must declare a stable `key`",
+                        pipeline.name,
+                        source_path.display()
+                    )));
+                }
+                if pipeline.namespace.is_none() {
+                    return Err(PackError::compile(format!(
+                        "pipeline '{}' in {} must declare a `namespace`",
+                        pipeline.name,
+                        source_path.display()
+                    )));
+                }
+            }
             pipelines.extend(bundle.pipelines);
         }
     }
@@ -338,6 +354,7 @@ fn compile_rexrap_with_signatures(
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
         providers: compile_providers(&catalog.providers),
+        strict_namespaces: true,
         functions: catalog.functions.clone(),
         workflow_signatures: workflow_signatures.to_vec(),
         ..runinator_rexrap::CompileOptions::default()
@@ -373,6 +390,7 @@ fn compile_rexrap_all_with_signatures(
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
         providers: compile_providers(&catalog.providers),
+        strict_namespaces: true,
         functions: catalog.functions.clone(),
         workflow_signatures: workflow_signatures.to_vec(),
         ..runinator_rexrap::CompileOptions::default()
@@ -395,10 +413,6 @@ fn compile_rexrap_all_with_signatures(
         definition.updated_at = file_modified(path);
     }
     Ok(definitions)
-}
-
-fn collect_workflow_signatures(paths: &[PathBuf]) -> Result<Vec<WorkflowSignature>> {
-    collect_workflow_signatures_with_current(paths, None, None)
 }
 
 fn collect_workflow_signatures_with_current(
@@ -483,21 +497,39 @@ fn load_rexrap_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBu
         )));
     }
 
-    let workflow_signatures = collect_workflow_signatures(&rexrap_paths)?;
-    let mut workflows = Vec::with_capacity(rexrap_paths.len());
+    let mut combined = String::from("language rexrap-1\n\n");
+    let mut newest = None;
     for rexrap_path in &rexrap_paths {
         let data = fs::read_to_string(rexrap_path)?;
         let blocks = parse_pack_source(rexrap_path, &data)?;
-        if blocks.workflows.trim().is_empty() {
-            continue;
+        if !blocks.workflows.trim().is_empty() {
+            for line in blocks.workflows.lines() {
+                if line.trim() != "language rexrap-1" {
+                    combined.push_str(line);
+                    combined.push('\n');
+                }
+            }
+            combined.push('\n');
         }
-        workflows.extend(compile_rexrap_all_with_signatures(
-            rexrap_path,
-            &blocks.workflows,
-            SemVer::default(),
-            catalog,
-            &workflow_signatures,
-        )?);
+        newest = newest.max(file_modified(rexrap_path));
+    }
+    let synthetic = dir.join("__pack__.rrx");
+    let signatures = runinator_rexrap::workflow_signature_from_source(&combined).map_err(|e| {
+        PackError::compile(format!(
+            "failed to read pack workflow signatures from {}:\n{}",
+            dir.display(),
+            e.render(&combined)
+        ))
+    })?;
+    let mut workflows = compile_rexrap_all_with_signatures(
+        &synthetic,
+        &combined,
+        SemVer::default(),
+        catalog,
+        &signatures,
+    )?;
+    for workflow in &mut workflows {
+        workflow.updated_at = newest;
     }
     Ok(WorkflowBundle {
         workflows,

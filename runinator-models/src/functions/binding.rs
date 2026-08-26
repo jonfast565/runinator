@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::FUNCTIONS_NAMESPACE_PREFIX;
+use super::{FUNCTIONS_NAMESPACE_PREFIX, PROVISIONAL_FUNCTION_VERSION};
 
 /// the pinned identity of one packaged-function call, recorded on the action at compile time.
 ///
@@ -29,6 +29,14 @@ pub struct FunctionBinding {
 }
 
 impl FunctionBinding {
+    /// True when this binding was produced while compiling a pack that also publishes its package.
+    ///
+    /// The pack import service must replace it with the real package/version/export UUIDs before
+    /// validating and storing the workflow definition.
+    pub fn is_provisional(&self) -> bool {
+        self.version == PROVISIONAL_FUNCTION_VERSION
+    }
+
     /// the authoring provider name this call was written as, e.g. `functions.image_tools`.
     pub fn provider_name(&self) -> String {
         match &self.namespace {

@@ -8,3 +8,6 @@ runinator-models = { path = "../runinator-models" }
 runinator-rexrap = { path = "../runinator-rexrap" }
 runinator-compute = { path = "../runinator-compute" }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+uuid = "1.18"

@@ -14,7 +14,10 @@ pub use manifest::{FunctionManifest, MANIFEST_FILE};
 
 use std::path::Path;
 
-use runinator_models::functions::NewFunctionVersion;
+use runinator_models::functions::{
+    FunctionCatalogEntry, NewFunctionVersion, PROVISIONAL_FUNCTION_VERSION,
+};
+use uuid::Uuid;
 
 use crate::errors::Result;
 
@@ -45,6 +48,47 @@ impl FunctionSource {
             None => self.manifest.name.clone(),
         }
     }
+
+    /// Catalog entries used while compiling a workflow pack that also publishes this source.
+    ///
+    /// The database decides real package, version, and export UUIDs, so these values are only
+    /// stable temporary references. The pack import service recognises the
+    /// reserved version number and resolves them against the versions it just published before the
+    /// workflow is stored. IDs are nevertheless deterministic: a re-apply compiles identical
+    /// source to identical bytes and diagnostics remain stable across machines.
+    pub fn provisional_catalog_entries(&self) -> Vec<FunctionCatalogEntry> {
+        let package_id = provisional_id("package", &self.qualified_name(), &self.archive.digest);
+        let version_id = provisional_id("version", &self.qualified_name(), &self.archive.digest);
+        self.manifest
+            .sorted_exports()
+            .into_iter()
+            .map(|export| FunctionCatalogEntry {
+                package_id,
+                package_name: self.manifest.name.clone(),
+                namespace: self.manifest.namespace.clone(),
+                version_id,
+                version: PROVISIONAL_FUNCTION_VERSION,
+                export_id: provisional_id(
+                    "export",
+                    &format!("{}.{}", self.qualified_name(), export.name),
+                    &self.archive.digest,
+                ),
+                export_name: export.name,
+                artifact_digest: self.archive.digest.clone(),
+                description: export.description,
+                input: export.input,
+                output: export.output,
+                aliases: self.manifest.alias.clone().into_iter().collect(),
+            })
+            .collect()
+    }
+}
+
+fn provisional_id(kind: &str, name: &str, digest: &str) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("runinator.pack.provisional.{kind}:{name}:{digest}").as_bytes(),
+    )
 }
 
 /// true when a directory looks like a function package.

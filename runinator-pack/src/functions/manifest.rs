@@ -60,9 +60,10 @@ impl FunctionManifest {
     /// reject a manifest that would publish something unaddressable or uncallable.
     pub fn validate(&self) -> Result<()> {
         validate_ident("package name", &self.name)?;
-        if let Some(namespace) = &self.namespace {
-            validate_ident("namespace", namespace)?;
-        }
+        let namespace = self.namespace.as_deref().ok_or_else(|| {
+            PackError::source("function package must declare a dotted `namespace`")
+        })?;
+        validate_namespace(namespace)?;
         if self.runtime.runtime.trim().is_empty() {
             return Err(PackError::source("runtime must name a runtime"));
         }
@@ -126,6 +127,21 @@ impl FunctionManifest {
         exports.sort_by(|left, right| left.name.cmp(&right.name));
         exports
     }
+}
+
+fn validate_namespace(namespace: &str) -> Result<()> {
+    if namespace.is_empty() {
+        return Err(PackError::source("namespace must not be empty"));
+    }
+    if namespace.len() > 255 {
+        return Err(PackError::source(format!(
+            "namespace '{namespace}' is longer than 255 characters"
+        )));
+    }
+    for segment in namespace.split('.') {
+        validate_ident("namespace segment", segment)?;
+    }
+    Ok(())
 }
 
 // package, namespace, export, and alias names all become part of a dotted call path

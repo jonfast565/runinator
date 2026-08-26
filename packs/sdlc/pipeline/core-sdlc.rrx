@@ -6,6 +6,8 @@ language rexrap-1
 // optimization, not the only trigger). `on complete` keeps the chain flowing even when a pass finds
 // no work. member names must match the `workflow "…"` names in this pack's .rexrap files.
 pipeline "Core SDLC" {
+    key core
+    namespace runinator.sdlc
     description "Status-driven SDLC scanner pipeline: Development -> Review -> Deploy -> QA."
     on_failure continue
     max_depth 8

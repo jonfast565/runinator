@@ -89,4 +89,21 @@ where
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
+
+    pub async fn move_setting(
+        &self,
+        id: uuid::Uuid,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+    ) -> Result<Value> {
+        let url = self.build_url(&format!("/credentials/{id}")).await?;
+        let response = self
+            .http_patch(url.clone())
+            .json(&json!({ "kind": kind, "scope": scope, "name": name }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
 }

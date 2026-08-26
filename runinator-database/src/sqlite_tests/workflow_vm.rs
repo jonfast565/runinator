@@ -136,6 +136,8 @@ async fn terminal_vm_pipeline_members_are_recoverable_until_the_attempt_settles(
         .upsert_pipeline(&Pipeline {
             id: None,
             name: "vm-pipeline".into(),
+            key: None,
+            namespace: None,
             description: None,
             org_id: None,
             graph: PipelineGraph {

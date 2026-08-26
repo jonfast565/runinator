@@ -4,6 +4,11 @@ use super::*;
 pub struct WorkflowDefinition {
     pub id: Option<Uuid>,
     pub name: String,
+    /// Stable authoring key for this logical workflow. Display-name edits and namespace moves do
+    /// not change it. Older definitions omit it and temporarily fall back to `name` until the
+    /// namespace migration writes an explicit key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// the namespace that qualifies this workflow's identity, from a `namespace <path>` header.
     /// `None` for an unqualified workflow. a subflow target `"<namespace>.<name>"` resolves against
     /// the qualified identity `namespace + "." + name`.
@@ -26,6 +31,18 @@ pub struct WorkflowDefinition {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl WorkflowDefinition {
+    /// The durable key used when source does not carry the UUID directly.
+    pub fn artifact_key(&self) -> &str {
+        self.key.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The current human-facing path. This is an alias for the UUID, not the artifact identity.
+    pub fn artifact_path(&self) -> crate::artifacts::ArtifactPath {
+        crate::artifacts::ArtifactPath::new(self.namespace.clone(), self.artifact_key().to_string())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]

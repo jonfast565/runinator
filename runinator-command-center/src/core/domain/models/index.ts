@@ -91,7 +91,7 @@ export type {
   WorkflowJournalRecord,
   WorkflowVmCursor,
 } from "./workflow/vm";
-export { workflowInputType } from "./workflow/definition";
+export { workflowInputType, workflowPath } from "./workflow/definition";
 export type { RevisionSource, WorkflowRevision } from "./workflow/revision";
 export { revisionAuthorLabel } from "./workflow/revision";
 export type { WorkflowBundle } from "./workflow/bundle";

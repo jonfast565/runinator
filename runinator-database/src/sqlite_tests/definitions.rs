@@ -71,6 +71,40 @@ async fn namespaced_workflow_persists_and_resolves_by_qualified_name() {
 }
 
 #[tokio::test]
+async fn stable_workflow_key_survives_display_rename_and_namespace_move() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-stable-key-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let mut original = workflow("Reconcile invoices");
+    original.key = Some("billing_reconcile".into());
+    original.namespace = Some("acme.billing".into());
+    let original = db.upsert_workflow(&original).await.unwrap();
+
+    let mut moved = workflow("Nightly reconciliation");
+    moved.key = Some("billing_reconcile".into());
+    moved.namespace = Some("acme.finance".into());
+    let moved = db.upsert_workflow(&moved).await.unwrap();
+
+    assert_eq!(moved.id, original.id);
+    assert_eq!(moved.name, "Nightly reconciliation");
+    assert_eq!(moved.namespace.as_deref(), Some("acme.finance"));
+    assert_eq!(moved.key.as_deref(), Some("billing_reconcile"));
+    assert_eq!(db.fetch_workflows().await.unwrap().len(), 1);
+    let resolved = db
+        .fetch_workflow_by_name("acme.finance.billing_reconcile".into())
+        .await
+        .unwrap()
+        .expect("moved canonical path resolves");
+    assert_eq!(resolved.id, original.id);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn insert_workflow_creates_sibling_row_sharing_name() {
     let path = std::env::temp_dir().join(format!(
         "runinator-workflow-insert-{}.db",
@@ -116,6 +150,8 @@ async fn pipeline_round_trip_create_update_delete() {
         .upsert_pipeline(&Pipeline {
             id: None,
             name: "Release".into(),
+            key: Some("release_train".into()),
+            namespace: Some("delivery.production".into()),
             description: Some("ship it".into()),
             org_id: Some(org),
             graph: runinator_models::pipelines::PipelineGraph {
@@ -171,6 +207,19 @@ async fn pipeline_round_trip_create_update_delete() {
     let updated = db.upsert_pipeline(&edit).await.unwrap();
     assert_eq!(updated.id, Some(id));
     assert_eq!(updated.name, "Release v2");
+
+    // A key-based apply without an id still finds this logical pipeline after a move.
+    let mut moved = updated.clone();
+    moved.id = None;
+    moved.key = Some("release_train".into());
+    moved.namespace = Some("delivery.production".into());
+    let first_keyed = db.upsert_pipeline(&moved).await.unwrap();
+    let mut moved_again = moved;
+    moved_again.name = "Production delivery".into();
+    moved_again.namespace = Some("delivery".into());
+    let moved_again = db.upsert_pipeline(&moved_again).await.unwrap();
+    assert_eq!(moved_again.id, first_keyed.id);
+    assert_eq!(moved_again.namespace.as_deref(), Some("delivery"));
     assert_eq!(
         updated.defaults.on_step_failure,
         PipelineFailurePolicy::Halt
@@ -179,7 +228,7 @@ async fn pipeline_round_trip_create_update_delete() {
     let all = db.fetch_pipelines().await.unwrap();
     assert_eq!(all.len(), 1);
     let fetched = db.fetch_pipeline(id).await.unwrap().unwrap();
-    assert_eq!(fetched.name, "Release v2");
+    assert_eq!(fetched.name, "Production delivery");
     // org ownership: the pipeline is discoverable by its org, and reassignment clears it.
     assert_eq!(db.fetch_pipeline_ids_for_org(org).await.unwrap(), vec![id]);
     db.set_pipeline_org(id, None).await.unwrap();
@@ -202,7 +251,7 @@ async fn pipeline_round_trip_create_update_delete() {
     let pipeline_run = db
         .create_pipeline_run(
             id,
-            updated.clone(),
+            moved_again.clone(),
             runinator_models::json!({}),
             runinator_models::json!({}),
             Default::default(),

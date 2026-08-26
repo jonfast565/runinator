@@ -91,6 +91,8 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         .collect::<Result<Vec<_>, RexRapError>>()?;
     Ok(PipelineSpec {
         name: decl.name.clone(),
+        key: decl.key.clone(),
+        namespace: decl.namespace.clone(),
         description: decl.description.clone(),
         defaults,
         members,
@@ -381,6 +383,12 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
             out.push('\n');
         }
         out.push_str(&format!("pipeline {} {{\n", quote(&spec.name)));
+        if let Some(key) = &spec.key {
+            out.push_str(&format!("    key {key}\n"));
+        }
+        if let Some(namespace) = &spec.namespace {
+            out.push_str(&format!("    namespace {namespace}\n"));
+        }
         if let Some(description) = &spec.description {
             out.push_str(&format!("    description {}\n", quote(description)));
         }

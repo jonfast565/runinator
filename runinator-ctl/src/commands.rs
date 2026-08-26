@@ -126,6 +126,9 @@ pub async fn run_command(
         Commands::Artifacts { command } => artifacts::artifacts(client, command, json_output).await,
         Commands::RexRap { command } => workflows::rexrap(command, json_output),
         Commands::Settings { command } => settings::settings(client, command, json_output).await,
+        Commands::Namespaces { command } => {
+            namespaces::namespaces(client, command, json_output).await
+        }
         Commands::Nodes { command } => nodes::nodes(client, command, json_output).await,
         Commands::Orgs { command } => orgs::orgs(client, command, json_output).await,
         Commands::Replicas { command } => replicas::replicas(client, command, json_output).await,
@@ -136,6 +139,7 @@ pub async fn run_command(
 }
 
 mod agents;
+mod namespaces;
 mod nodes;
 mod orgs;
 mod status;

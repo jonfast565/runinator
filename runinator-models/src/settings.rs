@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::artifacts::ArtifactRef;
 
 /// classifies a stored setting: a redacted, late-resolved `Secret` or a
 /// non-sensitive, eagerly-resolved `Config` value.
@@ -33,6 +36,7 @@ impl SettingKind {
 /// a stored setting's identity, without its value. returned by the list endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingSummary {
+    pub id: Uuid,
     pub scope: String,
     pub name: String,
     #[serde(default)]
@@ -47,9 +51,20 @@ pub struct SettingSummary {
 /// reconciliation. this is a persistence record, not a wire type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingRecord {
+    /// Durable logical identity. Scope/name are the human-facing alias and may move without
+    /// changing a persisted consumer reference.
+    pub id: Uuid,
     pub kind: SettingKind,
     pub scope: String,
     pub name: String,
     pub value: Vec<u8>,
     pub updated_at: i64,
+}
+
+/// A workflow's durable dependency on a config or secret value. The UUID is authoritative while
+/// the authored scope/key remains available for decompilation and run-input aliasing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingBinding {
+    pub kind: SettingKind,
+    pub reference: ArtifactRef,
 }

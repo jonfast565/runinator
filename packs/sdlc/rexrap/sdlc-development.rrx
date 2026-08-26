@@ -1,22 +1,33 @@
 language rexrap-1
 
+namespace runinator.sdlc {
+
 workflow "SDLC: Development" v1 {
+    key development
+
     // pipeline head: scan Ready for Development on a schedule (the chained phases also carry their
     // own cron backstop). one pass admits up to the in-flight budget, implements each ticket, opens a
     // PR, and moves it to In Review — the inbox the Review phase scans next.
     trigger cron "0 * * * *"
 
     import std
+    import settings jira as jira
+    import settings github as github_settings
+    import settings claude as claude
+    import settings selection as selection
+    import settings transitions as transitions
+    import settings git as git_settings
+    import settings branch as branch
 
-    alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
-    alias github_conn = { token: secret.github.token, owner: config.github.owner, repo: config.github.repo }
+    alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
+    alias github_conn = { token: github_settings.secret.token, owner: github_settings.owner, repo: github_settings.repo }
     alias claude_cfg = {
-        binary: config.claude.binary,
-        model: config.claude.model,
-        output_format: config.claude.output_format,
-        allowed_tools: config.claude.allowed_tools,
-        permission_mode: config.claude.permission_mode,
-        extra_args: config.claude.extra_args
+        binary: claude.binary,
+        model: claude.model,
+        output_format: claude.output_format,
+        allowed_tools: claude.allowed_tools,
+        permission_mode: claude.permission_mode,
+        extra_args: claude.extra_args
     }
 
     do {
@@ -33,12 +44,12 @@ workflow "SDLC: Development" v1 {
         // fresh work waiting in Ready for Development, and the work already in flight (for the cap).
         @timeout(120s)
         @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        let tickets = jira.search(...jira_conn, jql: config.jira.ready_jql)
+        let tickets = jira.search(...jira_conn, jql: jira.ready_jql)
         @timeout(120s)
         @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        let in_flight = jira.search(...jira_conn, jql: config.jira.in_flight_jql)
+        let in_flight = jira.search(...jira_conn, jql: jira.in_flight_jql)
         let budget: integer = compute {
-            return sub(config.selection.max_in_flight, len(in_flight.issues))
+            return sub(selection.max_in_flight, len(in_flight.issues))
         }
 
         // admit up to the budget; each admitted ticket transitions out of Ready for Development so the
@@ -48,7 +59,7 @@ workflow "SDLC: Development" v1 {
             let transition_in_progress = jira.transition(
                 ...jira_conn,
                 key: ticket.key,
-                transition_id: config.transitions.in_progress
+                transition_id: transitions.in_progress
             )
 
             @timeout(30s)
@@ -64,9 +75,9 @@ workflow "SDLC: Development" v1 {
             @timeout(120s)
             @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
             let create_workspace = git.worktree(
-                repo: config.git.repo,
-                branch: config.branch.prefix ++ ticket.key,
-                path: config.git.worktree_root ++ "/" ++ ticket.key
+                repo: git_settings.repo,
+                branch: branch.prefix ++ ticket.key,
+                path: git_settings.worktree_root ++ "/" ++ ticket.key
             )
 
             // push the empty branch first so github integrations have a ref to attach to.
@@ -75,8 +86,8 @@ workflow "SDLC: Development" v1 {
             @retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
             let push_branch = git.push(
                 workspace: create_workspace.workspace,
-                remote: config.git.remote,
-                branch: config.branch.prefix ++ ticket.key
+                remote: git_settings.remote,
+                branch: branch.prefix ++ ticket.key
             )
 
             @timeout(120s)
@@ -92,7 +103,7 @@ workflow "SDLC: Development" v1 {
             let implement_change = ai-command.claude_code(
                 ...claude_cfg,
                 working_dir: create_workspace.workspace,
-                prompt: config.claude.prompt_intro
+                prompt: claude.prompt_intro
                     ++ "\n\nTicket: " ++ ticket.key
                     ++ "\nSummary: " ++ ticket.fields.summary
                     ++ "\n\nComment history (any referenced images are saved under .jira-comments/):\n"
@@ -119,14 +130,14 @@ workflow "SDLC: Development" v1 {
                 @retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
                 let push_work = git.push(
                     workspace: create_workspace.workspace,
-                    remote: config.git.remote,
-                    branch: config.branch.prefix ++ ticket.key
+                    remote: git_settings.remote,
+                    branch: branch.prefix ++ ticket.key
                 )
                 @timeout(60s)
                 let create_pr = github.create_pr(
                     ...github_conn,
-                    base: config.github.base_branch,
-                    head: config.branch.prefix ++ ticket.key,
+                    base: github_settings.base_branch,
+                    head: branch.prefix ++ ticket.key,
                     title: ticket.key ++ ": " ++ ticket.fields.summary,
                     body: "Automated implementation for " ++ ticket.key ++ "."
                 )
@@ -140,9 +151,10 @@ workflow "SDLC: Development" v1 {
                 let transition_in_review = jira.transition(
                     ...jira_conn,
                     key: ticket.key,
-                    transition_id: config.transitions.in_review
+                    transition_id: transitions.in_review
                 )
             }
         }
     }
+}
 }

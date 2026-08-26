@@ -96,6 +96,7 @@ fn sample_workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.to_string(),
+        key: None,
         namespace: None,
         org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
@@ -647,6 +648,11 @@ async fn assert_revision_history<T: DatabaseImpl>(db: &T, workflow: &WorkflowDef
         id: Uuid::nil(),
         workflow_id: id,
         revision: 0,
+        digest: WorkflowRevision::content_digest(
+            workflow.version,
+            &workflow.input_type,
+            &workflow.definition,
+        ),
         version: workflow.version,
         name: workflow.name.clone(),
         input_type: workflow.input_type.clone(),

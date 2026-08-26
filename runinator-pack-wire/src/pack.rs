@@ -3,6 +3,7 @@
 // imports them. compilation stays on the client — the backend only reads the compiled json here.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io::{Cursor, Read, Write};
 
 use runinator_models::bundles::SecretBundle;
@@ -90,6 +91,7 @@ impl<'a> PackBuilder<'a> {
         let workflows = self
             .workflows
             .ok_or_else(|| -> PackError { "pack must carry a workflow bundle".into() })?;
+        validate_namespaced_pack(workflows, self.pipelines, &self.functions)?;
         let mut buffer = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(Cursor::new(&mut buffer));
@@ -173,13 +175,100 @@ pub fn read_pack_zip(bytes: &[u8]) -> Result<PackContents, PackError> {
         function_artifacts.insert(format!("sha256:{hex}"), bytes);
     }
 
-    Ok(PackContents {
+    let contents = PackContents {
         workflows,
         secrets,
         pipelines,
         functions,
         function_artifacts,
-    })
+    };
+    validate_namespaced_pack(
+        &contents.workflows,
+        contents.pipelines.as_ref(),
+        &contents.functions,
+    )?;
+    Ok(contents)
+}
+
+/// The compiled-pack wire contract is intentionally strict: every durable artifact must arrive
+/// with its human path as well as the UUID the server will assign or recover. Raw JSON workflow
+/// imports are a separate, explicitly acknowledged escape hatch and do not pass through this
+/// validator.
+pub fn validate_namespaced_pack(
+    workflows: &WorkflowBundle,
+    pipelines: Option<&PipelineBundle>,
+    functions: &[NewFunctionVersion],
+) -> Result<(), PackError> {
+    let mut paths = BTreeSet::new();
+    for workflow in &workflows.workflows {
+        let path = required_path(
+            "workflow",
+            &workflow.name,
+            workflow.namespace.as_deref(),
+            workflow.key.as_deref(),
+        )?;
+        if !paths.insert(format!("workflow:{path}")) {
+            return Err(format!("pack declares workflow path '{path}' more than once").into());
+        }
+    }
+    if let Some(bundle) = pipelines {
+        for pipeline in &bundle.pipelines {
+            let path = required_path(
+                "pipeline",
+                &pipeline.name,
+                pipeline.namespace.as_deref(),
+                pipeline.key.as_deref(),
+            )?;
+            if !paths.insert(format!("pipeline:{path}")) {
+                return Err(format!("pack declares pipeline path '{path}' more than once").into());
+            }
+        }
+    }
+    for function in functions {
+        let namespace = required_namespace(
+            "function package",
+            &function.package.name,
+            function.package.namespace.as_deref(),
+        )?;
+        let path = format!("{namespace}.{}", function.package.name);
+        if !paths.insert(format!("function_package:{path}")) {
+            return Err(
+                format!("pack declares function package path '{path}' more than once").into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn required_path(
+    kind: &str,
+    display_name: &str,
+    namespace: Option<&str>,
+    key: Option<&str>,
+) -> Result<String, PackError> {
+    let namespace = required_namespace(kind, display_name, namespace)?;
+    let key = key.filter(|key| !key.trim().is_empty()).ok_or_else(|| {
+        format!("{kind} '{display_name}' in a compiled pack must declare a stable key")
+    })?;
+    Ok(format!("{namespace}.{key}"))
+}
+
+fn required_namespace<'a>(
+    kind: &str,
+    display_name: &str,
+    namespace: Option<&'a str>,
+) -> Result<&'a str, PackError> {
+    let namespace = namespace
+        .filter(|namespace| {
+            !namespace.trim().is_empty()
+                && namespace
+                    .split('.')
+                    .all(|segment| !segment.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            format!("{kind} '{display_name}' in a compiled pack must declare a dotted namespace")
+        })?;
+    Ok(namespace)
 }
 
 // read and deserialize an optional named entry, returning None when the entry is absent.

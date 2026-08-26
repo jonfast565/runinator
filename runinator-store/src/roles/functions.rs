@@ -70,6 +70,15 @@ pub trait FunctionStore: Send + Sync + 'static {
         package_id: Uuid,
     ) -> impl Future<Output = Result<Option<FunctionPackage>, SendableError>> + Send;
 
+    /// Move a package's human-readable namespace/name alias without changing its UUID, versions,
+    /// exports, or pinned consumers.
+    fn move_function_package(
+        &self,
+        package_id: Uuid,
+        namespace: Option<String>,
+        name: String,
+    ) -> impl Future<Output = Result<Option<FunctionPackage>, SendableError>> + Send;
+
     /// Archive a package. Versions, exports, adapters, and artifacts remain for pinned snapshots.
     fn delete_function_package(
         &self,

@@ -18,6 +18,7 @@ use crate::models::ApiResponse;
 
 const MANIFEST: &str = r#"{
   "name": "image-tools",
+  "namespace": "runinator.examples",
   "description": "image utilities",
   "runtime": { "runtime": "python3.13" },
   "exports": [

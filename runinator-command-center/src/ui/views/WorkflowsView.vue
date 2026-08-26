@@ -98,16 +98,31 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr
-                    v-for="workflow in scopedWorkflows"
-                    :key="workflow.id ?? workflow.name"
-                    class="cursor-pointer"
-                    :class="{
-                      selected: workflows.selectedWorkflowId === workflow.id,
-                      muted: !workflow.enabled,
-                    }"
-                    @click="chooseWorkflow(workflow)"
-                  >
+                  <template v-for="group in workflowNamespaceGroups" :key="group.namespace">
+                    <tr class="bg-surface-muted text-xs font-semibold text-fg-muted">
+                      <td colspan="4">
+                        <button
+                          class="flex w-full items-center gap-2 text-left"
+                          type="button"
+                          @click="toggleNamespace(group.namespace)"
+                        >
+                          <Icon :name="collapsedNamespaces.has(group.namespace) ? 'chevron-right' : 'arrow-down'" />
+                          <span>{{ group.label }}</span>
+                          <span class="font-normal">{{ group.workflows.length }}</span>
+                        </button>
+                      </td>
+                    </tr>
+                    <tr
+                      v-for="workflow in group.workflows"
+                      v-show="!collapsedNamespaces.has(group.namespace)"
+                      :key="workflow.id ?? workflowPath(workflow)"
+                      class="cursor-pointer"
+                      :class="{
+                        selected: workflows.selectedWorkflowId === workflow.id,
+                        muted: !workflow.enabled,
+                      }"
+                      @click="chooseWorkflow(workflow)"
+                    >
                     <td class="w-9">
                       <SelectCheckbox
                         :checked="selection.isSelected(workflow)"
@@ -115,10 +130,16 @@
                         @toggle="selection.toggle(workflow, $event)"
                       />
                     </td>
-                    <td>{{ workflow.name }}</td>
+                    <td>
+                      <div>{{ workflow.name }}</div>
+                      <div class="text-xs text-fg-muted">
+                        {{ workflowPath(workflow) }} · {{ workflow.id?.slice(0, 8) ?? 'new' }}
+                      </div>
+                    </td>
                     <td>{{ workflow.version }}</td>
                     <td><StatusBadge :status="workflow.enabled" /></td>
-                  </tr>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
             </DataTable>
@@ -143,6 +164,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { workflowPath } from "../../core/domain/models";
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
@@ -172,6 +194,7 @@ const { isLoading: loadingWorkflows, loadingMessage: loadingWorkflowsMessage } =
 const scopeFilter = ref<"all" | "org" | "global">("all");
 const mobileView = ref<"list" | "editor">("list");
 const importOpen = ref(false);
+const collapsedNamespaces = ref(new Set<string>());
 
 const scopedWorkflows = computed(() => {
   const list = workflows.filteredWorkflows;
@@ -192,6 +215,38 @@ const disabledWorkflowCount = computed(
   () => scopedWorkflows.value.filter((workflow) => !workflow.enabled).length,
 );
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
+const workflowNamespaceGroups = computed(() => {
+  const groups = new Map<string, (typeof scopedWorkflows.value)>();
+
+  for (const workflow of scopedWorkflows.value) {
+    const namespace = workflow.namespace ?? "";
+    const group = groups.get(namespace) ?? [];
+    group.push(workflow);
+    groups.set(namespace, group);
+  }
+
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([namespace, workflows]) => ({
+      namespace,
+      label: namespace || "Root",
+      workflows: workflows
+        .slice()
+        .sort((left, right) => workflowPath(left).localeCompare(workflowPath(right))),
+    }));
+});
+
+function toggleNamespace(namespace: string) {
+  const next = new Set(collapsedNamespaces.value);
+
+  if (next.has(namespace)) {
+    next.delete(namespace);
+  } else {
+    next.add(namespace);
+  }
+
+  collapsedNamespaces.value = next;
+}
 
 // bulk selection tracks the scoped (filtered) list, so changing the scope or the search drops rows
 // that are no longer visible out of the selection.

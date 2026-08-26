@@ -569,11 +569,18 @@ fn lower_node(
             jump_next(output);
         }
         WorkflowNodeKind::Subflow => {
+            let revision_pin = node
+                .subflow
+                .target
+                .as_ref()
+                .and_then(|reference| reference.revision_pin.as_ref());
             output.push(PendingInstruction::Instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::ChildRun {
-                        workflow_id: node.subflow_id,
+                        workflow_id: node.subflow.target_workflow_id().or(node.subflow_id),
                         workflow_name: node.subflow.workflow_name.clone(),
+                        workflow_revision: revision_pin.map(|pin| pin.revision),
+                        workflow_revision_digest: revision_pin.map(|pin| pin.digest.clone()),
                         input: node.parameters.clone().into(),
                         wait: matches!(node.subflow.subflow_type, WorkflowSubflowType::Wait),
                         reuse_open_run: node.subflow.reuse_open_run,
@@ -1088,6 +1095,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "linear".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1132,6 +1140,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "failure".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1184,6 +1193,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "ordered".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1243,6 +1253,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "edges".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1356,6 +1367,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "interrupts".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1464,6 +1476,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "policy".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1560,6 +1573,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "switch".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1701,6 +1715,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "phase-four".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),
@@ -1917,6 +1932,7 @@ mod tests {
         let definition = WorkflowDefinition {
             id: None,
             name: "reentry".into(),
+            key: None,
             namespace: None,
             org_id: None,
             version: Default::default(),

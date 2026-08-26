@@ -4,7 +4,10 @@ package {
   { "name": "Hello World Smoke Pack", "version": 1 }
 }
 
+namespace runinator.examples {
+
 workflow "Hello World Test" v1 {
+    key hello_world
 
     do {
         // run a single console command, then terminate at the synthetic end node.
@@ -15,6 +18,7 @@ workflow "Hello World Test" v1 {
                 }
             }
     }
+}
 }
 
 tests {
