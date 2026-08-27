@@ -665,17 +665,21 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 {
                     return Ok((binding, IntentApplyOutcome::IgnoredNoActiveMember));
                 }
-                if let Some(pointer) = intent.subject_revision_pointer.as_deref()
-                    && payload.pointer(pointer).and_then(Value::as_str)
-                        != binding.subject_revision.as_deref()
-                {
-                    return Ok((binding, IntentApplyOutcome::IgnoredSubjectRevision));
+                if let Some(pointer) = intent.subject_revision_pointer.as_deref() {
+                    if !signal_revision_matches(
+                        binding.subject_revision.as_deref(),
+                        &payload,
+                        pointer,
+                    ) {
+                        return Ok((binding, IntentApplyOutcome::IgnoredSubjectRevision));
+                    }
                 }
                 self.enqueue_control(
                     &binding,
                     "signal_epoch",
                     runinator_models::json!({
                         "signal": intent.signal_name.unwrap_or_else(|| name.to_string()),
+                        "member": binding.current_phase,
                         "payload": payload,
                     }),
                 )
@@ -752,6 +756,11 @@ fn resolve_restart_member(
     }
 }
 
+fn signal_revision_matches(expected: Option<&str>, payload: &Value, pointer: &str) -> bool {
+    expected
+        .is_some_and(|expected| payload.pointer(pointer).and_then(Value::as_str) == Some(expected))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -793,6 +802,16 @@ mod tests {
                 suppressed: vec!["redo".into(), "audit".into()],
             }
         );
+    }
+
+    #[test]
+    fn revision_bound_signals_require_both_revisions_to_exist_and_match() {
+        let payload = runinator_models::json!({ "revision": "r2" });
+        assert!(signal_revision_matches(Some("r2"), &payload, "/revision"));
+        assert!(!signal_revision_matches(None, &payload, "/revision"));
+        assert!(!signal_revision_matches(None, &Value::Null, "/revision"));
+        assert!(!signal_revision_matches(Some("r1"), &payload, "/revision"));
+        assert!(!signal_revision_matches(Some("r2"), &payload, "/missing"));
     }
 
     #[tokio::test]

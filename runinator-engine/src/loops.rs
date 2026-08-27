@@ -272,22 +272,23 @@ async fn execute_orchestration_command<
             let Some(run_id) = epoch.pipeline_run_id else {
                 return Ok(Value::Null);
             };
-            let member = db
-                .fetch_workflow_runs_for_pipeline_run(run_id)
-                .await?
-                .into_iter()
-                .filter(|run| run.status.is_active())
-                .min_by_key(|run| run.created_at);
-            if let Some(member) = member {
+            let Some(member_key) = command.payload.get("member").and_then(Value::as_str) else {
+                return Ok(runinator_models::json!({ "ignored": "missing member target" }));
+            };
+            let workflow_run_id = select_active_member_workflow_run(
+                &db.fetch_pipeline_member_attempts(run_id).await?,
+                member_key,
+            );
+            if let Some(workflow_run_id) = workflow_run_id {
                 repository::request_run_interrupt(
                     db.as_ref(),
-                    member.id,
+                    workflow_run_id,
                     InterruptSource::External,
                     command.payload.clone(),
                     None,
                 )
                 .await?;
-                Ok(runinator_models::json!({ "workflow_run_id": member.id }))
+                Ok(runinator_models::json!({ "workflow_run_id": workflow_run_id }))
             } else {
                 Ok(runinator_models::json!({ "ignored": "no active member" }))
             }
@@ -735,7 +736,12 @@ async fn abandon_canceled_epoch_workspaces<T: WorkspaceStore>(
                 .as_ref()
                 .is_some_and(|policy| policy.scope == workspace.scope && policy.reuse)
         });
-        if reusable && binding.status != OrchestrationStatus::Terminated {
+        if !should_abandon_canceled_workspace(
+            binding.status,
+            reusable,
+            workspace.attempt,
+            canceled_epoch,
+        ) {
             continue;
         }
         let _ = db
@@ -754,6 +760,15 @@ async fn abandon_canceled_epoch_workspaces<T: WorkspaceStore>(
             .await?;
     }
     Ok(())
+}
+
+fn should_abandon_canceled_workspace(
+    binding_status: OrchestrationStatus,
+    reusable: bool,
+    workspace_attempt: i64,
+    canceled_epoch: i64,
+) -> bool {
+    binding_status.is_terminal() || (!reusable && workspace_attempt == canceled_epoch)
 }
 
 async fn settle_epoch_workspaces<T: WorkspaceStore>(
@@ -852,6 +867,21 @@ fn select_epoch_phase_attempt(
         .iter()
         .filter(|attempt| attempt.status != PipelineMemberAttemptStatus::Skipped)
         .max_by_key(by_recency)
+}
+
+fn select_active_member_workflow_run(
+    attempts: &[PipelineMemberAttempt],
+    member_key: &str,
+) -> Option<uuid::Uuid> {
+    attempts
+        .iter()
+        .filter(|attempt| {
+            attempt.member_key == member_key
+                && !attempt.status.is_terminal()
+                && attempt.workflow_run_id.is_some()
+        })
+        .max_by_key(|attempt| attempt.attempt)
+        .and_then(|attempt| attempt.workflow_run_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

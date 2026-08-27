@@ -20,9 +20,13 @@ use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
     json,
     orchestration::{
-        IngressAdmission, IngressAdmissionClaim, IngressAdmissionStatus, IngressTarget,
-        IngressTargetKind,
+        ControlEffect, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
+        IngressAdmission, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
+        IngressEventDisposition, IngressTarget, IngressTargetKind, IntentPolicy,
+        NewOrchestrationBinding, OrchestrationEventReduction, OrchestrationPendingIntent,
+        OrchestrationPolicy, OrchestrationStatus,
     },
+    pipelines::{Pipeline, PipelineGraph, PipelineMember, PipelineMemberFailureMode},
     revisions::{RevisionSource, WorkflowRevision},
     settings::SettingKind,
     types::RuninatorType,
@@ -42,7 +46,10 @@ use uuid::Uuid;
 // `DatabaseImpl` composes every role trait, so bounding on it brings all of their methods into
 // scope without importing the roles one by one.
 use runinator_store::DatabaseImpl;
-use runinator_store::roles::WorkflowVmStore;
+use runinator_store::roles::{
+    ExternalOperationUpdate, NewAdapterDefinition, NewOrchestrationCommand, NewOrchestrationEpoch,
+    OrchestrationBindingUpdate, WorkflowVmStore,
+};
 
 fn sample_workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
@@ -89,6 +96,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_trigger_upsert(db, id).await;
     assert_idempotency_keys(db).await;
     assert_ingress_admission_claim(db).await;
+    assert_correlated_orchestration_lifecycle(db, id).await;
     assert_notifications(db).await;
     assert_settings(db).await;
     assert_catalog_upsert(db).await;
@@ -103,6 +111,428 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_workflow_vm_mutex_lifecycle(db, &after).await;
     assert_workflow_effect_retry_lifecycle(db, &after).await;
     assert_unreferenced_artifacts(db).await;
+}
+
+/// Exercise the orchestration-specific migration and every atomic primitive that differs by SQL
+/// dialect: idempotent inserts, leased claims, binding CAS, pending-intent consumption, and both
+/// command/provider outboxes. Live Postgres/MySQL suites call this exact function too.
+async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmStore>(
+    db: &T,
+    workflow_id: Uuid,
+) {
+    let now = Utc::now();
+    let suffix = Uuid::now_v7();
+    let pipeline = db
+        .upsert_pipeline(&Pipeline {
+            id: None,
+            name: format!("orchestration parity {suffix}"),
+            key: Some(format!("orchestration_parity_{suffix}")),
+            namespace: Some("dialect_parity".into()),
+            description: None,
+            org_id: None,
+            graph: PipelineGraph {
+                version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
+                members: vec![PipelineMember {
+                    key: "member".into(),
+                    workflow_id,
+                    failure_mode: PipelineMemberFailureMode::Stop,
+                }],
+                links: vec![],
+                joins: BTreeMap::new(),
+            },
+            concurrency: Default::default(),
+            defaults: Default::default(),
+            metadata: Value::Null,
+            created_at: None,
+            updated_at: None,
+        })
+        .await
+        .unwrap();
+    let pipeline_id = pipeline.id.unwrap();
+
+    let org_id = Uuid::now_v7();
+    let adapter_id = Uuid::now_v7();
+    let (adapter, revision) = db
+        .create_orchestration_adapter(
+            NewAdapterDefinition {
+                id: adapter_id,
+                org_id,
+                name: format!("parity adapter {suffix}"),
+                kind: "generic_webhook".into(),
+                kind_version: "1".into(),
+                endpoint_identity: format!("parity-{suffix}"),
+                configuration: json!({ "authentication": "bearer" }),
+                secret_bindings: BTreeMap::new(),
+                identity_configuration: json!({ "correlation": "/id" }),
+                actor_id: None,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(adapter.current_revision, 1);
+    assert_eq!(revision.revision, 1);
+
+    let admission_id = Uuid::now_v7();
+    db.claim_ingress_admission(
+        IngressAdmission {
+            id: Some(admission_id),
+            org_id: Some(org_id),
+            scope: format!("parity:{suffix}"),
+            correlation_key: "subject".into(),
+            generation: 1,
+            target: IngressTarget {
+                kind: IngressTargetKind::Pipeline,
+                id: pipeline_id,
+            },
+            status: IngressAdmissionStatus::Active,
+            workflow_run_id: None,
+            pipeline_run_id: None,
+            policy: json!({ "scope": "parity", "routes": [] }),
+            created_at: now,
+            updated_at: now,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    let event = db
+        .record_ingress_event(
+            admission_id,
+            1,
+            IngressEvent {
+                source: "adapter:parity".into(),
+                event_id: format!("event-{suffix}"),
+                event_type: "updated".into(),
+                correlation_key: "subject".into(),
+                payload: json!({ "revision": "r1" }),
+                provenance: json!({ "operation_key": "provider-effect" }),
+                occurred_at: Some(now),
+            },
+            IngressEventDisposition::Recorded,
+            false,
+            now,
+        )
+        .await
+        .unwrap();
+
+    let mut policy = OrchestrationPolicy::default();
+    policy.intents.insert(
+        "stop".into(),
+        IntentPolicy {
+            effect: ControlEffect::Terminate,
+            priority: 100,
+            coalesce_seconds: None,
+            stop: Default::default(),
+            restart: Default::default(),
+            subject_revision_pointer: None,
+            allow_self_originated: false,
+            signal_name: None,
+        },
+    );
+    let binding_id = Uuid::now_v7();
+    let new_binding = NewOrchestrationBinding {
+        id: binding_id,
+        admission_id,
+        org_id: Some(org_id),
+        scope: format!("parity:{suffix}"),
+        correlation_key: "subject".into(),
+        generation: 1,
+        pipeline_id,
+        pipeline_revision: 1,
+        pipeline_digest: format!("sha256:{suffix}"),
+        adapter_id: Some(adapter_id),
+        adapter_revision: Some(1),
+        policy,
+    };
+    let binding = db
+        .create_orchestration_binding(new_binding.clone())
+        .await
+        .unwrap();
+    let duplicate = db
+        .create_orchestration_binding(NewOrchestrationBinding {
+            id: Uuid::now_v7(),
+            ..new_binding
+        })
+        .await
+        .unwrap();
+    assert_eq!(duplicate.id, binding.id);
+
+    let owner = format!("parity-reducer-{suffix}");
+    let claimed = db
+        .claim_orchestration_bindings(owner.clone(), now, now + Duration::minutes(1), 100)
+        .await
+        .unwrap();
+    assert!(claimed.iter().any(|candidate| candidate.id == binding_id));
+    assert!(
+        db.claim_orchestration_bindings(
+            format!("parity-rival-{suffix}"),
+            now,
+            now + Duration::minutes(1),
+            100,
+        )
+        .await
+        .unwrap()
+        .iter()
+        .all(|candidate| candidate.id != binding_id)
+    );
+
+    let running = db
+        .update_orchestration_binding(
+            binding_id,
+            owner.clone(),
+            OrchestrationBindingUpdate {
+                expected_version: 0,
+                status: OrchestrationStatus::Running,
+                current_phase: Some("member".into()),
+                current_attempt: 1,
+                current_epoch: 1,
+                restart_member: None,
+                resume_existing_epoch: false,
+                subject_revision: Some("r1".into()),
+                resources: json!({ "candidate": "r1" }),
+                budgets: BTreeMap::new(),
+                last_reduced_sequence: event.entry.sequence,
+                finished_at: None,
+            },
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(running.version, 1);
+    assert!(
+        db.update_orchestration_binding(
+            binding_id,
+            owner.clone(),
+            OrchestrationBindingUpdate {
+                expected_version: 0,
+                status: OrchestrationStatus::Failed,
+                current_phase: None,
+                current_attempt: 0,
+                current_epoch: 0,
+                restart_member: None,
+                resume_existing_epoch: false,
+                subject_revision: None,
+                resources: Value::Null,
+                budgets: BTreeMap::new(),
+                last_reduced_sequence: 0,
+                finished_at: Some(now),
+            },
+            now,
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+
+    let pending = OrchestrationPendingIntent {
+        id: Uuid::now_v7(),
+        binding_id,
+        intent: "stop".into(),
+        priority: 100,
+        source_event_ids: vec![event.entry.id],
+        latest_payload: json!({ "reason": "parity" }),
+        wake_at: now,
+        created_at: now,
+        updated_at: now,
+    };
+    db.upsert_orchestration_pending_intent(pending.clone())
+        .await
+        .unwrap();
+    assert!(
+        db.fetch_due_orchestration_intents(now, 100)
+            .await
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.id == pending.id)
+    );
+    let consumed = db
+        .consume_orchestration_pending_intent(
+            binding_id,
+            "stop".into(),
+            100,
+            owner.clone(),
+            OrchestrationBindingUpdate {
+                expected_version: 1,
+                status: OrchestrationStatus::Running,
+                current_phase: Some("member".into()),
+                current_attempt: 1,
+                current_epoch: 1,
+                restart_member: None,
+                resume_existing_epoch: false,
+                subject_revision: Some("r1".into()),
+                resources: running.resources,
+                budgets: BTreeMap::new(),
+                last_reduced_sequence: event.entry.sequence,
+                finished_at: None,
+            },
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(consumed.version, 2);
+    assert!(
+        db.fetch_orchestration_pending_intents(binding_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let reduction = db
+        .record_orchestration_reduction(OrchestrationEventReduction {
+            id: Uuid::now_v7(),
+            binding_id,
+            inbox_event_id: event.entry.id,
+            sequence: event.entry.sequence,
+            matched_intents: vec!["stop".into()],
+            winner: Some("stop".into()),
+            suppressed_intents: vec![],
+            binding_version: consumed.version,
+            disposition: "applied".into(),
+            detail: json!({ "dialect": "parity" }),
+            created_at: now,
+        })
+        .await
+        .unwrap();
+    let duplicate_reduction = db
+        .record_orchestration_reduction(OrchestrationEventReduction {
+            id: Uuid::now_v7(),
+            ..reduction.clone()
+        })
+        .await
+        .unwrap();
+    assert_eq!(duplicate_reduction.id, reduction.id);
+
+    let epoch = db
+        .create_orchestration_epoch(
+            NewOrchestrationEpoch {
+                id: Uuid::now_v7(),
+                binding_id,
+                epoch: 1,
+                start_member: Some("member".into()),
+                parameters: json!({ "candidate": "r1" }),
+                reason: "parity".into(),
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    let duplicate_epoch = db
+        .create_orchestration_epoch(
+            NewOrchestrationEpoch {
+                id: Uuid::now_v7(),
+                binding_id,
+                epoch: 1,
+                start_member: None,
+                parameters: Value::Null,
+                reason: "duplicate".into(),
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(duplicate_epoch.id, epoch.id);
+
+    let operation_key = format!("start:{suffix}");
+    let command = db
+        .enqueue_orchestration_command(
+            NewOrchestrationCommand {
+                id: Uuid::now_v7(),
+                binding_id,
+                epoch: 1,
+                command_type: "start_epoch".into(),
+                operation_key: operation_key.clone(),
+                payload: Value::Null,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    let duplicate_command = db
+        .enqueue_orchestration_command(
+            NewOrchestrationCommand {
+                id: Uuid::now_v7(),
+                binding_id,
+                epoch: 1,
+                command_type: "start_epoch".into(),
+                operation_key,
+                payload: Value::Null,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(duplicate_command.id, command.id);
+    let command_owner = format!("parity-command-{suffix}");
+    let claimed_command = db
+        .claim_orchestration_commands(command_owner.clone(), now, now + Duration::minutes(1), 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.id == command.id)
+        .unwrap();
+    assert_eq!(claimed_command.attempts, 1);
+    assert!(
+        db.complete_orchestration_command(
+            command.id,
+            command_owner,
+            true,
+            json!({ "started": true }),
+            now,
+        )
+        .await
+        .unwrap()
+    );
+
+    let effect_id = Uuid::now_v7();
+    let operation = db
+        .create_external_operation(ExternalOperation {
+            id: Uuid::now_v7(),
+            binding_id,
+            epoch: 1,
+            workflow_run_id: None,
+            effect_id: Some(effect_id),
+            operation_key: format!("effect:{suffix}"),
+            provider: "parity".into(),
+            action: "ensure".into(),
+            semantics: DeliverySemantics::Reconcilable,
+            attempt: 1,
+            status: ExternalOperationStatus::Running,
+            ambiguous: false,
+            provenance: json!({ "operation_key": format!("effect:{suffix}") }),
+            receipt: Value::Null,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        db.fetch_external_operation_for_effect(effect_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        operation.id
+    );
+    let settled = db
+        .update_external_operation(
+            operation.id,
+            ExternalOperationUpdate {
+                status: ExternalOperationStatus::Succeeded,
+                attempt: 1,
+                ambiguous: false,
+                provenance: operation.provenance,
+                receipt: json!({ "id": "receipt" }),
+            },
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.status, ExternalOperationStatus::Succeeded);
 }
 
 async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(

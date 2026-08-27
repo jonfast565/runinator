@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use super::{
     FailureBudgetDecision, OrchestrationCommandFence, bucket_to_interval, consume_failure_budget,
-    orchestration_command_fence, select_epoch_phase_attempt, workspace_affinity_matches,
+    orchestration_command_fence, select_active_member_workflow_run, select_epoch_phase_attempt,
+    should_abandon_canceled_workspace, workspace_affinity_matches,
 };
 
 #[test]
@@ -182,4 +183,49 @@ fn workspace_fence_requires_current_version_attempt_and_instance() {
     released.status = WorkspaceStatus::Released;
     let released_affinity = released.affinity();
     assert!(!workspace_affinity_matches(&released, &released_affinity));
+}
+
+#[test]
+fn stale_epoch_cancel_does_not_abandon_replacement_workspaces() {
+    assert!(should_abandon_canceled_workspace(
+        OrchestrationStatus::Running,
+        false,
+        2,
+        2,
+    ));
+    assert!(!should_abandon_canceled_workspace(
+        OrchestrationStatus::Running,
+        false,
+        3,
+        2,
+    ));
+    assert!(!should_abandon_canceled_workspace(
+        OrchestrationStatus::Running,
+        true,
+        1,
+        2,
+    ));
+    assert!(should_abandon_canceled_workspace(
+        OrchestrationStatus::Terminated,
+        true,
+        1,
+        2,
+    ));
+}
+
+#[test]
+fn signal_targets_the_named_active_member_only() {
+    let intended_run = Uuid::now_v7();
+    let unrelated_run = Uuid::now_v7();
+    let mut intended = pipeline_attempt("implementation", PipelineMemberAttemptStatus::Running, 2);
+    intended.workflow_run_id = Some(intended_run);
+    let mut unrelated = pipeline_attempt("planning", PipelineMemberAttemptStatus::Running, 1);
+    unrelated.workflow_run_id = Some(unrelated_run);
+    let mut old = pipeline_attempt("implementation", PipelineMemberAttemptStatus::Succeeded, 0);
+    old.workflow_run_id = Some(Uuid::now_v7());
+
+    assert_eq!(
+        select_active_member_workflow_run(&[unrelated, old, intended], "implementation"),
+        Some(intended_run)
+    );
 }
