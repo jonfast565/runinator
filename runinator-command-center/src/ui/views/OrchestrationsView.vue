@@ -62,7 +62,19 @@
               </article>
               <p v-if="store.epochs.length === 0" class="text-sm text-fg-muted">No execution epoch has been created.</p>
             </div>
-            <pre v-else-if="activeInstanceTab === 'Evidence'" class="overflow-auto text-xs">{{ pretty(store.evidence) }}</pre>
+            <div v-else-if="activeInstanceTab === 'Evidence'" class="space-y-2">
+              <div v-if="store.evidence.length" class="flex justify-end">
+                <button class="button" @click="downloadAllEvidence">Download all evidence</button>
+              </div>
+              <article v-for="item in store.evidence" :key="item.id" class="rounded border border-border p-3 text-sm">
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                  <div><strong>{{ item.kind }}</strong><p class="text-xs text-fg-muted">epoch {{ item.epoch ?? "—" }} · revision {{ item.subject_revision ?? "—" }}</p></div>
+                  <button class="button" @click="downloadEvidence(item)">Download JSON</button>
+                </div>
+                <pre class="mt-2 max-h-80 overflow-auto text-xs">{{ pretty(item.payload) }}</pre>
+              </article>
+              <p v-if="store.evidence.length === 0" class="text-sm text-fg-muted">No evidence has been recorded.</p>
+            </div>
             <pre v-else-if="activeInstanceTab === 'Resources'" class="overflow-auto text-xs">{{ pretty(store.selected.resources) }}</pre>
             <pre v-else-if="activeInstanceTab === 'Budgets'" class="overflow-auto text-xs">{{ pretty({ consumed: store.selected.budgets, policy: store.selected.policy.budgets }) }}</pre>
             <div v-else-if="activeInstanceTab === 'Operations'" class="space-y-2">
@@ -77,7 +89,7 @@
                 </div>
                 <code class="mt-2 block break-all text-xs text-fg-muted">{{ workspace.local_key }}</code>
                 <p class="mt-2 text-xs text-fg-muted">lease until {{ workspace.leased_until }}</p>
-                <details v-if="workspace.evidence !== null" class="mt-2"><summary class="cursor-pointer text-xs">Evidence</summary><pre class="mt-2 overflow-auto text-xs">{{ pretty(workspace.evidence) }}</pre></details>
+                <details v-if="workspace.evidence !== null" class="mt-2"><summary class="cursor-pointer text-xs">Evidence</summary><pre class="mt-2 overflow-auto text-xs">{{ pretty(workspace.evidence) }}</pre><button class="button mt-2" @click="downloadWorkspaceEvidence(workspace)">Download evidence JSON</button></details>
               </article>
               <p v-if="store.workspaces.length === 0" class="text-sm text-fg-muted">No workspaces allocated for this generation.</p>
             </div>
@@ -154,7 +166,9 @@ import type {
   AdapterRevision,
   ExternalOperation,
   JsonValue,
+  OrchestrationEvidence,
   PipelineRunDetail,
+  WorkspaceLease,
 } from "../../core/domain/models";
 import { fetchAdapterHealth, fetchAdapterKinds, reloadAdapterHost } from "../../core/services/orchestrations";
 import { useAppStore } from "../adapters/pinia/app";
@@ -164,6 +178,7 @@ import { useSecretsStore } from "../adapters/pinia/secrets";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import TypedValueEditor from "../components/shared/TypedValueEditor.vue";
+import { downloadTextFile } from "../adapters/browser/files";
 
 const store = useOrchestrationsStore();
 const app = useAppStore();
@@ -280,6 +295,43 @@ const currentEpochDetail = computed<PipelineRunDetail | null>(() => {
 
 function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function safeFileSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "evidence";
+}
+
+function downloadJson(fileName: string, value: unknown): void {
+  downloadTextFile(fileName, `${pretty(value)}\n`, "application/json");
+}
+
+function downloadEvidence(item: OrchestrationEvidence): void {
+  downloadJson(
+    `${safeFileSegment(item.kind)}-${safeFileSegment(item.id)}.json`,
+    item,
+  );
+}
+
+function downloadAllEvidence(): void {
+  const correlation = store.selected?.correlation_key ?? "orchestration";
+
+  downloadJson(`${safeFileSegment(correlation)}-evidence.json`, store.evidence);
+}
+
+function downloadWorkspaceEvidence(workspace: WorkspaceLease): void {
+  downloadJson(
+    `workspace-${safeFileSegment(workspace.scope)}-attempt-${String(workspace.attempt)}.json`,
+    {
+      workspace_id: workspace.id,
+      admission_id: workspace.admission_id,
+      generation: workspace.generation,
+      scope: workspace.scope,
+      attempt: workspace.attempt,
+      status: workspace.status,
+      local_key: workspace.local_key,
+      evidence: workspace.evidence,
+    },
+  );
 }
 
 function jsonObject(value: JsonValue | undefined): Record<string, JsonValue> {
