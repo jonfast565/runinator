@@ -332,6 +332,48 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
             true,
         ),
         (
+            "pipeline",
+            "keyword",
+            "pipeline phase graph",
+            "pipeline \"${name}\" {\n    ingress scope \"${scope}\" {\n        on \"${event}\" when unbound\n            -> start\n    }\n\n    orchestration {\n        ${}\n    }\n\n    workflow \"${entry}\"\n}",
+            true,
+        ),
+        (
+            "ingress",
+            "keyword",
+            "correlated event admission routes",
+            "ingress scope \"${scope}\" {\n    on \"${event}\" when active\n        if \"${pointer}\" exists\n        -> dispatch \"${intent}\"\n}",
+            true,
+        ),
+        (
+            "orchestration",
+            "keyword",
+            "durable correlated execution policy",
+            "orchestration {\n    intent \"${name}\" effect ${effect} priority ${priority}\n    ${}\n}",
+            true,
+        ),
+        (
+            "intent",
+            "keyword",
+            "named generic control intent",
+            "intent \"${name}\" effect ${effect} priority ${priority}",
+            true,
+        ),
+        (
+            "budget",
+            "keyword",
+            "failure-class attempt budget",
+            "budget \"${failure_class}\" attempts ${attempts} exhausted ${behavior}",
+            true,
+        ),
+        (
+            "phase",
+            "keyword",
+            "member result and workspace policy",
+            "phase \"${member}\" {\n    failure_class from \"/failure_class\"\n    workspace scope \"${scope}\"\n}",
+            true,
+        ),
+        (
             "let",
             "keyword",
             "provider action node",
@@ -1379,11 +1421,25 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         | ExprKind::Div(_)
         | ExprKind::Mod(_)
         | ExprKind::Neg(_) => Some(RuninatorType::Number),
-        ExprKind::Call { name, args, .. } => {
-            if runinator_compute::is_higher_order(name) {
+        ExprKind::Call {
+            name, args, method, ..
+        } => {
+            let intrinsic = intrinsic_call_name(name, context);
+            let args = if *method
+                && intrinsic.is_some()
+                && args
+                    .first()
+                    .is_some_and(|receiver| intrinsic_namespace_receiver(receiver, name, context))
+            {
+                &args[1..]
+            } else {
+                args.as_slice()
+            };
+            if intrinsic.is_some_and(runinator_compute::is_higher_order) {
                 // recover the higher-order result from the collection + lambda body, falling back to
                 // `any` when the collection type or lambda shape is not statically determinable.
-                infer_higher_order_type(name, args, context).or(Some(RuninatorType::Any))
+                infer_higher_order_type(intrinsic.expect("higher-order intrinsic"), args, context)
+                    .or(Some(RuninatorType::Any))
             } else if let Some(RuninatorType::Function { ret, .. }) = function_local(name, context)
             {
                 // a call to a local bound to a first-class lambda yields the function's result type.
@@ -1399,16 +1455,20 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
                     .get(1)
                     .and_then(runinator_rexrap::ast::static_string_keys);
                 Some(
-                    runinator_compute::intrinsic_result_type(
-                        name,
-                        &arg_types,
-                        literal_keys.as_deref(),
-                    )
-                    .or_else(|| {
-                        runinator_compute::intrinsic_signature(name)
-                            .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
-                    })
-                    .unwrap_or(RuninatorType::Any),
+                    intrinsic
+                        .and_then(|name| {
+                            runinator_compute::intrinsic_result_type(
+                                name,
+                                &arg_types,
+                                literal_keys.as_deref(),
+                            )
+                            .or_else(|| {
+                                runinator_compute::intrinsic_signature(name).and_then(|sig| {
+                                    sig.results.first().map(|result| result.ty.clone())
+                                })
+                            })
+                        })
+                        .unwrap_or(RuninatorType::Any),
                 )
             }
         }
@@ -1428,6 +1488,49 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         // a spread carries no value type of its own; it is resolved by desugaring.
         ExprKind::Spread(_) => None,
     }
+}
+
+fn intrinsic_namespace_receiver(
+    receiver: &Expr,
+    intrinsic: &str,
+    context: &CompletionContext,
+) -> bool {
+    let ExprKind::Path(segments) = &receiver.kind else {
+        return false;
+    };
+    let keys = segments
+        .iter()
+        .map(|segment| match segment {
+            PathSeg::Key(key) => Some(key.as_str()),
+            PathSeg::Index(_) => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(keys) = keys else {
+        return false;
+    };
+    let module = match keys.as_slice() {
+        [root, module] if *root == runinator_compute::STD_NAMESPACE => Some(*module),
+        [alias] => context.namespace.aliases.get(*alias).map(String::as_str),
+        _ => None,
+    };
+    module.is_some_and(|module| runinator_compute::intrinsic_module(intrinsic) == Some(module))
+}
+
+/// Resolve the intrinsic leaf without requiring the whole semantic namespace pass to succeed.
+/// Editor buffers are commonly incomplete and may not yet declare the stable workflow identity
+/// that semantic lowering requires, but qualified and aliased `std` calls can still be typed.
+fn intrinsic_call_name<'a>(name: &'a str, context: &CompletionContext) -> Option<&'a str> {
+    if !name.contains('.') {
+        return runinator_compute::is_known_intrinsic(name).then_some(name);
+    }
+    let (root, rest) = name.split_once('.')?;
+    let (module, leaf) = if root == runinator_compute::STD_NAMESPACE {
+        rest.split_once('.')?
+    } else {
+        (context.namespace.aliases.get(root)?.as_str(), rest)
+    };
+    (!leaf.contains('.') && runinator_compute::intrinsic_module(leaf) == Some(module))
+        .then_some(leaf)
 }
 
 /// the result type of a higher-order intrinsic call, derived from the collection element type and

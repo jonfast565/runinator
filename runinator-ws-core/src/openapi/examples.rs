@@ -95,6 +95,28 @@ pub enum Example {
     FunctionAliasRequest,
     FunctionPublish,
     FunctionInvocationTarget,
+    OrchestrationBinding,
+    OrchestrationBindingList,
+    OrchestrationEpochList,
+    OrchestrationReductionList,
+    OrchestrationEvidenceList,
+    OrchestrationCommandList,
+    OrchestrationIntentRequest,
+    OrchestrationRequeueRequest,
+    ExternalOperation,
+    ExternalOperationList,
+    ExternalOperationResolution,
+    WorkspaceList,
+    AdapterKindList,
+    AdapterDefinition,
+    AdapterDefinitionList,
+    AdapterRevisionList,
+    AdapterApply,
+    AdapterEnable,
+    AdapterTest,
+    AdapterTestResult,
+    AdapterHealth,
+    AdapterWebhookResponse,
 }
 
 pub fn example_value(example: Example) -> Option<Value> {
@@ -284,6 +306,100 @@ pub fn example_value(example: Example) -> Option<Value> {
             }],
             "alias": "latest",
         }),
+        Example::OrchestrationBinding => orchestration_binding_example(),
+        Example::OrchestrationBindingList => json!([orchestration_binding_example()]),
+        Example::OrchestrationEpochList => json!([{
+            "id": UUID_EXAMPLE, "binding_id": UUID_EXAMPLE, "epoch": 2,
+            "pipeline_run_id": UUID_EXAMPLE, "start_member": "implementation",
+            "parameters": { "subject_revision": "abc123" }, "status": "running",
+            "reason": "scope_changed", "created_at": TIMESTAMP_EXAMPLE,
+            "started_at": TIMESTAMP_EXAMPLE, "finished_at": null
+        }]),
+        Example::OrchestrationReductionList => json!([{
+            "id": UUID_EXAMPLE, "binding_id": UUID_EXAMPLE, "inbox_event_id": UUID_EXAMPLE,
+            "sequence": 7, "matched_intents": ["rework", "observe"], "winner": "rework",
+            "suppressed_intents": ["observe"], "binding_version": 12,
+            "disposition": "superseded", "detail": { "event": { "event_type": "updated" } },
+            "created_at": TIMESTAMP_EXAMPLE
+        }]),
+        Example::OrchestrationEvidenceList => json!([{
+            "id": UUID_EXAMPLE, "binding_id": UUID_EXAMPLE, "epoch": 2,
+            "kind": "verification", "subject_revision": "abc123",
+            "payload": { "checks": ["lint", "test"], "passed": true },
+            "source_event_id": null, "created_at": TIMESTAMP_EXAMPLE
+        }]),
+        Example::OrchestrationCommandList => json!([{
+            "id": UUID_EXAMPLE, "binding_id": UUID_EXAMPLE, "epoch": 2,
+            "command_type": "start_epoch", "operation_key": "binding:epoch:2:start",
+            "payload": {}, "status": "succeeded", "attempts": 1,
+            "claimed_by": null, "claimed_until": null, "result": { "pipeline_run_id": UUID_EXAMPLE },
+            "created_at": TIMESTAMP_EXAMPLE, "updated_at": TIMESTAMP_EXAMPLE
+        }]),
+        Example::OrchestrationIntentRequest => json!({
+            "intent": "pause", "payload": { "note": "operator requested" },
+            "reason": "waiting for approval", "idempotency_key": "pause-2026-01-01"
+        }),
+        Example::OrchestrationRequeueRequest => json!({
+            "reason": "input corrected", "idempotency_key": "requeue-2026-01-01"
+        }),
+        Example::ExternalOperation => external_operation_example(),
+        Example::ExternalOperationList => json!([external_operation_example()]),
+        Example::ExternalOperationResolution => json!({
+            "resolution": "succeeded", "reason": "verified in provider console",
+            "receipt": { "external_id": "operation-42" }
+        }),
+        Example::WorkspaceList => json!([{
+            "id": UUID_EXAMPLE, "admission_id": UUID_EXAMPLE, "generation": 1,
+            "scope": "source", "attempt": 2, "worker_instance_id": "worker-1",
+            "local_key": "workspace-42", "requirements": { "capability": "git" },
+            "status": "active", "version": 3, "leased_until": TIMESTAMP_EXAMPLE,
+            "evidence": {}, "created_at": TIMESTAMP_EXAMPLE, "updated_at": TIMESTAMP_EXAMPLE
+        }]),
+        Example::AdapterKindList => json!([{
+            "metadata": {
+                "kind": "generic-webhook", "version": "1", "display_name": "Generic webhook",
+                "fields": [{ "name": "delivery_id_pointer", "value_type": "string", "required": true, "secret": false, "default": null }],
+                "event_names": ["created", "updated"], "canonical_pointers": ["/subject/id"],
+                "capabilities": ["hmac_sha256", "bearer"]
+            },
+            "origin": "builtin", "healthy": true, "error": null
+        }]),
+        Example::AdapterDefinition => adapter_definition_example(),
+        Example::AdapterDefinitionList => json!([adapter_definition_example()]),
+        Example::AdapterRevisionList => json!([{
+            "id": UUID_EXAMPLE, "adapter_id": UUID_EXAMPLE, "revision": 1,
+            "kind_version": "1", "configuration": { "delivery_id_pointer": "/delivery_id" },
+            "secret_bindings": { "signing_secret": UUID_EXAMPLE },
+            "identity_configuration": {}, "created_at": TIMESTAMP_EXAMPLE, "actor_id": UUID_EXAMPLE
+        }]),
+        Example::AdapterApply => json!({
+            "name": "work item events", "kind": "generic-webhook", "kind_version": "1",
+            "configuration": {
+                "delivery_id_pointer": "/delivery_id", "scope_pointer": "/scope",
+                "correlation_pointer": "/subject/id", "event_pointer": "/event"
+            },
+            "secret_bindings": { "signing_secret": UUID_EXAMPLE },
+            "identity_configuration": {}, "expected_revision": 1
+        }),
+        Example::AdapterEnable => json!({ "enabled": true }),
+        Example::AdapterTest => json!({
+            "headers": { "x-delivery-id": "delivery-123" },
+            "body_base64": "eyJldmVudCI6InVwZGF0ZWQifQ=="
+        }),
+        Example::AdapterTestResult => json!({
+            "verified": true,
+            "events": [{
+                "source": "generic-webhook", "delivery_id": "delivery-123",
+                "event_type": "updated", "scope": "work-items", "correlation_key": "item-42",
+                "subject_revision": "abc123", "payload": {}, "provenance": {}
+            }],
+            "errors": [], "previews": [{ "candidate_intents": ["rework"], "winner": "rework" }]
+        }),
+        Example::AdapterHealth => json!({ "status": "healthy", "loaded_kinds": 3, "errors": [] }),
+        Example::AdapterWebhookResponse => json!({
+            "adapter_id": UUID_EXAMPLE, "adapter_revision": 1,
+            "outcomes": [{ "disposition": "recorded", "duplicate": false }]
+        }),
         Example::ProviderBundle => json!({ "providers": [provider_example()] }),
         Example::Replica => {
             json!({ "id": UUID_EXAMPLE, "replica_type": "worker", "status": "online", "address": "worker-1" })
@@ -456,6 +572,43 @@ fn provider_example() -> Value {
         "name": "std",
         "version": "1.0.0",
         "actions": [{ "name": "echo", "description": "Return the supplied message." }],
+    })
+}
+
+fn orchestration_binding_example() -> Value {
+    json!({
+        "id": UUID_EXAMPLE, "admission_id": UUID_EXAMPLE, "org_id": UUID_EXAMPLE,
+        "scope": "work-items", "correlation_key": "item-42", "generation": 1,
+        "pipeline_id": UUID_EXAMPLE, "pipeline_revision": 4, "pipeline_digest": "sha256:abc123",
+        "adapter_id": UUID_EXAMPLE, "adapter_revision": 1,
+        "policy": { "intents": {}, "phases": {}, "budgets": {}, "defaults": null },
+        "status": "running", "current_phase": "implementation", "current_attempt": 2,
+        "current_epoch": 2, "restart_member": null, "resume_existing_epoch": false,
+        "subject_revision": "abc123", "resources": {}, "budgets": { "transient": 1 },
+        "last_reduced_sequence": 7, "version": 12, "reducer_lease_owner": null,
+        "reducer_leased_until": null, "created_at": TIMESTAMP_EXAMPLE,
+        "updated_at": TIMESTAMP_EXAMPLE, "finished_at": null
+    })
+}
+
+fn external_operation_example() -> Value {
+    json!({
+        "id": UUID_EXAMPLE, "binding_id": UUID_EXAMPLE, "epoch": 2,
+        "workflow_run_id": UUID_EXAMPLE, "effect_id": UUID_EXAMPLE,
+        "operation_key": "ensure-pr:item-42", "provider": "github", "action": "ensure_pr",
+        "semantics": "reconcilable", "attempt": 1, "status": "waiting", "ambiguous": true,
+        "provenance": { "operation_key": "ensure-pr:item-42" }, "receipt": {},
+        "created_at": TIMESTAMP_EXAMPLE, "updated_at": TIMESTAMP_EXAMPLE
+    })
+}
+
+fn adapter_definition_example() -> Value {
+    json!({
+        "id": UUID_EXAMPLE, "org_id": UUID_EXAMPLE, "name": "work item events",
+        "kind": "generic-webhook", "current_revision": 1, "enabled": true,
+        "endpoint_identity": "c0f83a4a-a8b9-45d0-a3ac-811c729ab421",
+        "has_admitted_binding": false, "created_at": TIMESTAMP_EXAMPLE,
+        "updated_at": TIMESTAMP_EXAMPLE
     })
 }
 

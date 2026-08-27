@@ -157,6 +157,38 @@ fn completes_language_constructs_at_bare_position() {
 }
 
 #[test]
+fn completes_and_hovers_correlated_orchestration_authoring() {
+    let labels = completion_labels(
+        r#"
+        pipeline "Correlated" {
+            orchestration {
+                <>
+            }
+        }
+    "#,
+        "<>",
+    );
+    for expected in ["ingress", "orchestration", "intent", "budget", "phase"] {
+        assert!(
+            labels.contains(&expected.to_string()),
+            "missing {expected}: {labels:?}"
+        );
+    }
+
+    let hover = hover_at(
+        r#"pipeline "Correlated" { <>orchestration { intent "pause" effect suspend priority 60 } }"#,
+        "<>",
+    );
+    assert_eq!(hover.title, "orchestration");
+    assert!(
+        hover
+            .documentation
+            .as_deref()
+            .is_some_and(|documentation| documentation.contains("failure budgets"))
+    );
+}
+
+#[test]
 fn gate_completion_and_hover_follow_timeout_policy_syntax() {
     let response = complete_source(RexRapCompletionRequest {
         source: "workflow \"Gate\" { }".into(),

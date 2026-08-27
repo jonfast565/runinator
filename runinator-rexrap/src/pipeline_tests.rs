@@ -232,7 +232,7 @@ pipeline "Correlated work" {
         intent "rework" effect supersede priority 80 coalesce 5m restart "acme.work.planning"
         intent "pause" effect suspend priority 60 stop cancel restart current
         intent "continue" effect resume priority 50
-        intent "revision_observed" effect signal priority 10 revision "/subject_revision"
+        intent "revision_observed" effect signal priority 10 revision "/subject_revision" signal "subject_updated" allow_self_originated
         budget "deterministic" attempts 2 exhausted pause
         budget "transient" attempts 3 exhausted pause
         phase "acme.work.implementation" {
@@ -240,7 +240,7 @@ pipeline "Correlated work" {
             resources from "/resources"
             evidence from "/evidence"
             failure_class from "/failure_class"
-            workspace scope "source" reuse labels { "capability": "git" }
+            workspace scope "source" reuse lease 10m recovery wait labels { "capability": "git" }
         }
     }
 
@@ -265,6 +265,30 @@ pipeline "Correlated work" {
             .pointer("/phases/acme.work.implementation/workspace/scope")
             .and_then(|value| value.as_str()),
         Some("source")
+    );
+    assert_eq!(
+        policy
+            .pointer("/intents/revision_observed/signal_name")
+            .and_then(|value| value.as_str()),
+        Some("subject_updated")
+    );
+    assert_eq!(
+        policy
+            .pointer("/intents/revision_observed/allow_self_originated")
+            .and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        policy
+            .pointer("/phases/acme.work.implementation/workspace/lease_seconds")
+            .and_then(|value| value.as_u64()),
+        Some(600)
+    );
+    assert_eq!(
+        policy
+            .pointer("/phases/acme.work.implementation/workspace/recovery")
+            .and_then(|value| value.as_str()),
+        Some("wait")
     );
     let rendered = pipeline_to_rexrapp(&bundle);
     let reparsed = parse_pipeline_str(&rendered).expect("reparse orchestration policy");

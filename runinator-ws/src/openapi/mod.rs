@@ -52,6 +52,8 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::functions::DOCS,
     handlers::function_invocations::DOCS,
     handlers::console::DOCS,
+    handlers::orchestrations::DOCS,
+    handlers::adapters::DOCS,
     handlers::auth::DOCS,
     handlers::authz::DOCS,
 ];
@@ -60,121 +62,6 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
 /// and receive a minimal OpenAPI operation. This keeps route, documentation, and authorization
 /// parity fail-closed without making descriptive documentation a prerequisite for enforcement.
 pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
-    (
-        "post",
-        "/webhooks/orchestration/{adapter_id}",
-        docs::EndpointPolicy::Public,
-    ),
-    (
-        "get",
-        "/orchestrations/adapters/kinds",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/adapters/health",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/adapters/reload",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/adapters",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/adapters",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/adapters/{id}",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/adapters/{id}",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "delete",
-        "/orchestrations/adapters/{id}",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/adapters/{id}/revisions",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/adapters/{id}/enabled",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/adapters/{id}/test",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}/events",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}/epochs",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}/evidence",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}/commands",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/{id}/intents",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/{id}/requeue",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}/operations",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/orchestrations/{id}/workspaces",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "post",
-        "/orchestrations/{id}/operations/{operation_id}/resolve",
-        docs::EndpointPolicy::Authenticated,
-    ),
     (
         "get",
         "/audit_log",
@@ -543,6 +430,8 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         (name = "Notifications", description = "User notification records."),
         (name = "Providers", description = "Registered task providers."),
         (name = "Functions", description = "Packaged functions: publishing, promotion, and artifacts."),
+        (name = "Orchestrations", description = "Durable correlated execution state, history, and intent controls."),
+        (name = "Orchestration Adapters", description = "Verified external-event adapters and their plugin catalog."),
         (name = "Console", description = "The REXRAP console: notebook sessions and their cells."),
         (name = "Replicas", description = "Service replica registry."),
         (name = "Supervisor", description = "Local supervisor status."),

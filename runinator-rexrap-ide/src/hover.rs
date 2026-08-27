@@ -44,15 +44,23 @@ pub fn hover_source(request: RexRapHoverRequest) -> Option<RexRapHoverResponse> 
     let source = request.source;
     let pos = clamp_to_char_boundary(&source, request.cursor_byte);
     let cursor = Cursor::new(&source, pos);
-    let document = parse_document(&source).ok()?;
+    let document = parse_document(&source).ok();
     let context = completion_context(&source, pos, &request.providers);
     let word = cursor.word_at()?;
 
     action_argument_hover(cursor, word, &request.providers)
         .or_else(|| action_hover(cursor, word, &request.providers))
         .or_else(|| path_hover(cursor, word, &context, &request.settings))
-        .or_else(|| type_hover(&document, word))
-        .or_else(|| function_hover(&document, word))
+        .or_else(|| {
+            document
+                .as_ref()
+                .and_then(|document| type_hover(document, word))
+        })
+        .or_else(|| {
+            document
+                .as_ref()
+                .and_then(|document| function_hover(document, word))
+        })
         .or_else(|| bare_symbol_hover(word, &context, &request.providers))
         .or_else(|| keyword_hover(word))
 }
@@ -406,6 +414,36 @@ fn bare_symbol_hover(
 fn keyword_hover(word: WordAt<'_>) -> Option<RexRapHoverResponse> {
     let docs = match word.text {
         "workflow" => "Declares a workflow and its body.",
+        "pipeline" => "Declares a static phase graph composed from member workflows.",
+        "ingress" => {
+            "Declares correlation scope and lifecycle-aware event routes. Matching dispatch routes select named orchestration intents."
+        }
+        "orchestration" => {
+            "Declares immutable correlated-execution policy: intents, failure budgets, result mappings, and workspace requirements."
+        }
+        "intent" => {
+            "Maps an author-defined name and unique priority to a generic control effect such as terminate, suspend, resume, supersede, observe, or signal."
+        }
+        "budget" => {
+            "Sets an attempt limit and exhaustion behavior for an arbitrary failure-class string."
+        }
+        "phase" => {
+            "Configures one pipeline member's result mappings and optional workspace policy."
+        }
+        "effect" => "Selects the generic control effect produced by an orchestration intent.",
+        "coalesce" => {
+            "Accumulates matching intent events until the configured durable wake deadline."
+        }
+        "dispatch" => "Routes a matching ingress event to a named orchestration intent.",
+        "subject_revision" | "revision" => {
+            "Maps or selects the provider-neutral subject revision used to reject stale events and results."
+        }
+        "resources" | "evidence" | "failure_class" => {
+            "Maps a member result field into durable orchestration state."
+        }
+        "workspace" => {
+            "Requests a durable opaque workspace lease for this phase; only workspace-affined effects receive its resolved local path."
+        }
         "params" => "Declares workflow input parameters.",
         "type" => "Declares a reusable named type.",
         "let" => {
