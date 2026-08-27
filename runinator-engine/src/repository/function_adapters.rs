@@ -124,10 +124,14 @@ pub fn build_adapter_workflow(
 /// one node, one call, and the export's declared inputs as workflow params — so the http request
 /// body is validated against the same schema a workflow call is type-checked against.
 fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> String {
+    let package_path = entry
+        .namespace
+        .as_deref()
+        .map(|namespace| format!("{namespace}.{}", entry.package_name))
+        .unwrap_or_else(|| entry.package_name.clone());
     let mut source = format!(
-        "namespace runinator.functions {{\nworkflow \"{}\" v1 {{\n    key functions.adapter.export_{}\n",
+        "namespace runinator.functions {{\nworkflow \"{}\" v1 {{\n",
         adapter_workflow_name(entry).replace('"', ""),
-        entry.export_id.simple(),
     );
     if !export.input.is_empty() {
         source.push_str("    params {\n");
@@ -140,6 +144,13 @@ fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> Stri
         }
         source.push_str("    }\n");
     }
+    source.push_str(&format!(
+        "    key functions.adapter.export_{}\n",
+        entry.export_id.simple()
+    ));
+    source.push_str(&format!(
+        "    import functions {package_path} as function_package\n"
+    ));
     let args = export
         .input
         .iter()
@@ -149,9 +160,8 @@ fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> Stri
     // the adapter's single step lives in the workflow's `do { ... }` runtime block.
     source.push_str("    do {\n");
     source.push_str(&format!(
-        "        let invoke = {}.{}({args})\n",
-        entry.provider_name(),
-        entry.export_name
+        "        let invoke = function_package.{}({args})\n",
+        entry.export_name,
     ));
     source.push_str("    }\n");
     source.push_str("}\n}\n");

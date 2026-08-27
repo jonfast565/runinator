@@ -11,6 +11,7 @@ use runinator_models::{
     value::Value,
     workflows::{WorkflowDefinition, WorkflowGraph},
 };
+use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{DatabaseImpl, RuntimeStore, roles::SettingStore};
 
 use super::*;
@@ -223,11 +224,12 @@ async fn saving_a_chained_trigger_resolves_and_blocks_deleting_its_target() {
 #[tokio::test]
 async fn saving_setting_references_records_their_durable_uuids() {
     let (db, path) = test_db().await;
+    let cipher = SecretCipher::from_env();
     db.upsert_setting(
         SettingKind::Config,
         "acme.shared".into(),
         "message".into(),
-        b"{}".to_vec(),
+        cipher.encrypt(b"{}"),
         1,
     )
     .await
@@ -236,7 +238,7 @@ async fn saving_setting_references_records_their_durable_uuids() {
         SettingKind::Secret,
         "acme.shared".into(),
         "token".into(),
-        b"encrypted".to_vec(),
+        cipher.encrypt(b"encrypted"),
         1,
     )
     .await
