@@ -46,10 +46,12 @@ async function command<T>(name: string, args?: Record<string, unknown>) {
       /(?:401|unauthorized|unauthenticated)/i.test(String(error))
     ) {
       const recovered = await unauthorizedHandler();
+
       if (recovered) {
         return getCommandRuntime().invoke<T>(name, args);
       }
     }
+
     throw error;
   }
 }

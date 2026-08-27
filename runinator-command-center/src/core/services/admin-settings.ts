@@ -129,6 +129,7 @@ export function createAdminSettingsService(app: AppService) {
         app.setError("Maximum refreshes must be an integer between 1 and 100000");
         return;
       }
+
       store.setState((state) => ({ ...state, maxRefreshes: value }));
     },
     async saveAuthSettings() {

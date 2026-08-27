@@ -252,6 +252,7 @@ const activeLanguage = computed(() =>
 function selectSection(section: ActiveSection) {
   activeSection.value = section;
   selected.value = "";
+
   if (section === "security") {
     void settings.refreshAuthSettings();
   }

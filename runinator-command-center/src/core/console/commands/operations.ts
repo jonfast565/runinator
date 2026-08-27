@@ -163,9 +163,11 @@ export const operationCommands: ConsoleCommand[] = [
     summary: "list artifacts from one workflow effect",
     run: async ({ flags, json: raw, print }) => {
       const effect = flag(flags, "effect");
+
       if (!effect) {
         throw new Error("artifacts list requires --effect ID");
       }
+
       const artifacts = (await fetchWorkflowEffectOutput(effect))
         .filter((event) => event.output.type === "artifact")
         .map((event) =>

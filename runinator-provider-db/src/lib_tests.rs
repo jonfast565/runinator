@@ -4,6 +4,7 @@ use runinator_plugin::cancel::CancellationToken;
 use serde_json::{Map, Value, json};
 
 use crate::actions::Shape;
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 use crate::connector::sql::ops::sql_returns_rows;
 use crate::engine::Engine;
 use crate::export::{ExportFormat, ExportSpec, export_rows};
@@ -285,6 +286,7 @@ fn exec_outcome_reports_a_null_last_insert_id_when_absent() {
     );
 }
 
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 #[test]
 fn row_returning_statements_are_detected_from_their_leading_keyword() {
     for text in [
@@ -680,6 +682,7 @@ fn provider_metadata_is_valid_and_covers_every_action() {
 /// DECIMAL/NUMERIC is the one column type with no lossless json representation: a json number is
 /// an f64, and both engines allow precisions well past what that holds. these pin the boundary
 /// where the decoder stops emitting a number and starts preserving digits as text.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 mod decimals {
     use crate::connector::sql::decode::decimal_to_json;
     use bigdecimal::BigDecimal;
