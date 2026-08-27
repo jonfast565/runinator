@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ProviderMetadata, WorkflowDefinition } from "../../domain/models";
+import type { ProviderMetadata, WorkflowDefinition, WorkflowRunDetail } from "../../domain/models";
 import {
   addDirectTransition,
   applyWorkflowInlineNodeEdit,
@@ -1243,6 +1243,121 @@ describe("workflow graph utils", () => {
     expect(active?.data.status).toBe("running");
     expect(active?.data.running).toBe(true);
     expect(active?.class).toBe("node-running");
+  });
+
+  it("colors visited, retrying, parked, and failed nodes and counts effect attempts once", () => {
+    const detail: WorkflowRunDetail = {
+      run: {
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
+        status: "failed",
+        active_node_id: "b",
+        created_at: "",
+        started_at: null,
+        finished_at: "",
+      },
+      nodes: [
+        {
+          id: "entered-a",
+          workflow_run_id: RUN_ID,
+          node_id: "a",
+          status: "succeeded",
+          attempt: 0,
+          parameters: {},
+          state: { journal_entry_id: "entered-a" },
+          message: null,
+        },
+        ...[1, 2, 3].map((attempt) => ({
+          id: `retry-${String(attempt)}`,
+          workflow_run_id: RUN_ID,
+          node_id: "b",
+          status: "retrying",
+          attempt,
+          parameters: {},
+          state: { effect_id: "effect-b", journal_entry_id: `retry-${String(attempt)}` },
+          message: null,
+        })),
+        {
+          id: "effect-b",
+          workflow_run_id: RUN_ID,
+          node_id: "b",
+          status: "failed",
+          attempt: 3,
+          parameters: {},
+          state: { effect_id: "effect-b" },
+          message: "failed after retries",
+        },
+      ],
+    };
+    const nodes = buildGraphNodes(workflow, detail);
+
+    expect(nodes.find((node) => node.id === "a")).toMatchObject({
+      class: "node-success",
+      data: { status: "succeeded", executionCount: 1 },
+    });
+    expect(nodes.find((node) => node.id === "b")).toMatchObject({
+      class: "node-danger",
+      data: { status: "failed", executionCount: 4 },
+    });
+
+    detail.run.status = "waiting";
+    detail.run.finished_at = null;
+    detail.nodes[detail.nodes.length - 1].status = "waiting";
+    detail.nodes[detail.nodes.length - 1].state = { effect_id: "effect-parked" };
+    const parked = buildGraphNodes(workflow, detail);
+    expect(parked.find((node) => node.id === "b")?.class).toBe("node-waiting");
+
+    detail.nodes[detail.nodes.length - 1].status = "requested";
+    detail.nodes[detail.nodes.length - 1].state = { effect_id: "effect-b" };
+    const retrying = buildGraphNodes(workflow, detail);
+    expect(retrying.find((node) => node.id === "b")?.class).toBe("node-running");
+    expect(retrying.find((node) => node.id === "b")?.data.statusLabel).toBe("retrying a3");
+  });
+
+  it("colors an unjournaled node on a provably traversed linear path", () => {
+    const linearWorkflow: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        start: "start",
+        nodes: [
+          { id: "start", kind: "start", transitions: { next: { $node: "config" } } },
+          { id: "config", kind: "config", transitions: { next: { $node: "action" } } },
+          {
+            id: "action",
+            kind: "action",
+            action: { provider: "Console", function: "run", configuration: {} },
+            transitions: {},
+          },
+        ],
+      },
+    };
+    const nodes = buildGraphNodes(linearWorkflow, {
+      run: {
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
+        status: "failed",
+        active_node_id: "action",
+        created_at: "",
+        started_at: null,
+        finished_at: "",
+      },
+      nodes: [
+        {
+          id: "effect-action",
+          workflow_run_id: RUN_ID,
+          node_id: "action",
+          status: "failed",
+          attempt: 0,
+          parameters: {},
+          state: { effect_id: "effect-action" },
+          message: "failed",
+        },
+      ],
+    });
+
+    expect(nodes.find((node) => node.id === "start")?.class).toBe("node-success");
+    expect(nodes.find((node) => node.id === "config")?.class).toBe("node-success");
+    expect(nodes.find((node) => node.id === "action")?.class).toBe("node-danger");
   });
 
   it("marks the reached end successful and hides persisted cursors after completion", () => {

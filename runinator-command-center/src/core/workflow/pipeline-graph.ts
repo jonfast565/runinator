@@ -83,6 +83,8 @@ export interface BuildPipelineGraphOptions {
   memberIds?: string[];
   /** per-member failure mode, keyed by workflow id. */
   memberFailureModes?: Record<string, PipelineMemberFailureMode>;
+  /** persisted pipeline member key, keyed by workflow id. Links address this key, not the title. */
+  memberKeysByWorkflowId?: Record<string, string>;
   /** the mode a member with no override takes (`Pipeline.defaults.default_failure_mode`). */
   defaultFailureMode?: PipelineMemberFailureMode;
 }
@@ -112,6 +114,11 @@ export function buildPipelineGraph(
 
   for (const wf of identified) {
     nameToId.set(wf.name, wf.id);
+    const memberKey = options.memberKeysByWorkflowId?.[wf.id];
+
+    if (memberKey) {
+      nameToId.set(memberKey, wf.id);
+    }
   }
 
   const nameById = new Map(identified.map((wf) => [wf.id, wf.name]));

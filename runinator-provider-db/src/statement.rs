@@ -39,6 +39,7 @@ pub struct StatementFields {
 }
 
 /// find/aggregate shaping options for document engines.
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DocumentOptions {
     #[serde(default)]
@@ -78,6 +79,7 @@ impl StatementInput {
 
 /// what a document engine should do. the document equivalent of "run a bare statement" is
 /// [`DocumentCommand::Raw`], which passes a command straight through to `runCommand`.
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub enum DocumentCommand {
     Find {
@@ -104,6 +106,7 @@ pub enum DocumentCommand {
     },
 }
 
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 impl DocumentCommand {
     /// whether this command is expected to return documents rather than counts.
     pub fn returns_documents(&self) -> bool {
@@ -129,6 +132,11 @@ impl DocumentCommand {
 
 /// an engine-resolved statement. keeping sql and document dialects in separate variants means
 /// a connector never has to guess which half of a union struct is populated.
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+    allow(dead_code)
+)]
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)] // direct commands keep connector matching and ownership straightforward.
 pub enum StatementSpec {

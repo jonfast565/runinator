@@ -175,7 +175,11 @@ fn lower_trigger(decl: &PipelineTriggerDecl) -> Result<PipelineTriggerSpec, RexR
     })
 }
 
-fn require_canonical_path(value: &str, span: crate::errors::Span, kind: &str) -> Result<(), RexRapError> {
+fn require_canonical_path(
+    value: &str,
+    span: crate::errors::Span,
+    kind: &str,
+) -> Result<(), RexRapError> {
     let mut segments = value.split('.');
     let valid = segments.clone().count() > 1
         && segments.all(|segment| {

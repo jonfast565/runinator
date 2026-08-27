@@ -56,6 +56,9 @@ export function buildPipelinePresentation(
     memberFailureModes: Object.fromEntries(
       pipeline.graph.members.map((member) => [member.workflow_id, member.failure_mode]),
     ),
+    memberKeysByWorkflowId: Object.fromEntries(
+      pipeline.graph.members.map((member) => [member.workflow_id, member.key]),
+    ),
     defaultFailureMode: pipeline.defaults.default_failure_mode,
   });
 }

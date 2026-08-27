@@ -277,10 +277,12 @@ fn resolve_workflow_path(
     match candidates.as_slice() {
         [id] => Ok(*id),
         [] => Err(crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(value)),
-        ids => Err(crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
-            "{kind} '{value}' maps to {} workflow UUIDs",
-            ids.len()
-        ))),
+        ids => Err(
+            crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
+                "{kind} '{value}' maps to {} workflow UUIDs",
+                ids.len()
+            )),
+        ),
     }
 }
 
@@ -302,11 +304,15 @@ fn resolve_pipeline_path(
         .collect::<Vec<_>>();
     match candidates.as_slice() {
         [id] => Ok(*id),
-        [] => Err(invalid_pipeline(format!("unknown pipeline source '{value}'"))),
-        ids => Err(crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
-            "{kind} '{value}' maps to {} pipeline UUIDs",
-            ids.len()
+        [] => Err(invalid_pipeline(format!(
+            "unknown pipeline source '{value}'"
         ))),
+        ids => Err(
+            crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
+                "{kind} '{value}' maps to {} pipeline UUIDs",
+                ids.len()
+            )),
+        ),
     }
 }
 
@@ -360,9 +366,7 @@ pub async fn import_pipeline_bundle_with<T: DefinitionStore + RuntimeStore + Sch
     let workflows = db.fetch_workflows().await?;
     let mut imported = Vec::with_capacity(bundle.pipelines.len());
     for spec in &bundle.pipelines {
-        imported.push(
-            import_pipeline_spec(db, spec, import_org, &existing, &workflows).await?,
-        );
+        imported.push(import_pipeline_spec(db, spec, import_org, &existing, &workflows).await?);
     }
     // Pipeline sources can point at another pipeline in the same pack, so materialize triggers
     // only after every graph has received its durable id.
@@ -403,9 +407,9 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
         .as_deref()
         .filter(|key| !key.trim().is_empty())
         .ok_or_else(|| invalid_pipeline("pipeline key is required"))?;
-    let prior = existing.iter().find(|pipeline| {
-        pipeline.org_id == import_org && pipeline.artifact_key() == stable_key
-    });
+    let prior = existing
+        .iter()
+        .find(|pipeline| pipeline.org_id == import_org && pipeline.artifact_key() == stable_key);
     let prior_id = prior.and_then(|p| p.id);
     let pipeline = Pipeline {
         id: prior_id,
@@ -487,13 +491,16 @@ async fn materialize_pipeline_triggers<T: ScheduleStore>(
         }
     }
     for spec_trigger in &spec.triggers {
-        let configuration = if spec_trigger.kind
-            == runinator_models::workflows::WorkflowTriggerKind::Chained
-        {
-            resolve_chained_trigger_configuration(&spec_trigger.configuration, workflows, pipelines)?
-        } else {
-            spec_trigger.configuration.clone()
-        };
+        let configuration =
+            if spec_trigger.kind == runinator_models::workflows::WorkflowTriggerKind::Chained {
+                resolve_chained_trigger_configuration(
+                    &spec_trigger.configuration,
+                    workflows,
+                    pipelines,
+                )?
+            } else {
+                spec_trigger.configuration.clone()
+            };
         let trigger = PipelineTrigger {
             id: None,
             pipeline_id,

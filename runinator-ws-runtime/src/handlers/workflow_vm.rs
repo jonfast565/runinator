@@ -110,7 +110,7 @@ async fn project_effect_nodes<T: AuthorizationStore + RuntimeStore + WorkflowVmS
     let Some(module) = module else {
         return Ok(effects);
     };
-    let node_by_effect = journal
+    let mut node_by_effect = journal
         .into_iter()
         .filter_map(|record| match record.entry {
             WorkflowJournalEntry::EffectRequested {
@@ -122,6 +122,38 @@ async fn project_effect_nodes<T: AuthorizationStore + RuntimeStore + WorkflowVmS
             _ => None,
         })
         .collect::<std::collections::HashMap<_, _>>();
+    // Runs created before EffectRequested carried its instruction pointer still have the frozen
+    // module and immutable effect request. If that request occurs in exactly one graph node, it is
+    // a safe historical source-map fallback. Ambiguous duplicate requests deliberately remain
+    // unassigned instead of being painted onto the continuation's final cursor.
+    let legacy_candidates = module
+        .instructions
+        .iter()
+        .enumerate()
+        .filter_map(|(instruction_pointer, instruction)| match instruction {
+            runinator_models::workflow_vm::WorkflowInstruction::Effect { request } => module
+                .graph_location(instruction_pointer)
+                .map(|location| (request, location.node_id.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for effect in &effects {
+        if node_by_effect.contains_key(&effect.id) {
+            continue;
+        }
+        let candidates = legacy_candidates
+            .iter()
+            .filter_map(|(request, node_id)| (*request == &effect.request).then_some(*node_id))
+            .collect::<std::collections::BTreeSet<_>>();
+        if let Some(node_id) = candidates
+            .iter()
+            .copied()
+            .next()
+            .filter(|_| candidates.len() == 1)
+        {
+            node_by_effect.insert(effect.id, node_id.to_owned());
+        }
+    }
     for effect in &mut effects {
         effect.node_id = node_by_effect.get(&effect.id).cloned();
     }

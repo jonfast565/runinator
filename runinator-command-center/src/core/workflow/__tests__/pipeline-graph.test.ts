@@ -56,6 +56,29 @@ describe("buildPipelineGraph", () => {
     expect(graph.unresolved).toHaveLength(0);
   });
 
+  it("resolves persisted links by member key when it differs from the workflow title", () => {
+    const a = workflow("id-a", "SDLC: Development");
+    const b = workflow("id-b", "SDLC: Review");
+    const graph = buildPipelineGraph(
+      [a, b],
+      {
+        "id-a": [chainedTrigger("t1", "id-a", "runinator.sdlc.review", "complete")],
+        "id-b": [],
+      },
+      {
+        memberIds: ["id-a", "id-b"],
+        memberKeysByWorkflowId: {
+          "id-a": "runinator.sdlc.development",
+          "id-b": "runinator.sdlc.review",
+        },
+      },
+    );
+
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0]).toMatchObject({ source: "id-a", target: "id-b" });
+    expect(graph.unresolved).toHaveLength(0);
+  });
+
   it("ignores non-chained triggers and normalizes the on-selector", () => {
     const a = workflow("id-a", "Deploy");
     const b = workflow("id-b", "Rollback");

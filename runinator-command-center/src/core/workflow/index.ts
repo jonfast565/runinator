@@ -109,8 +109,15 @@ export function buildGraphNodeModels(
   const layout = workflowLayoutNodes(definition);
   const fallbackLayout = autoArrangeWorkflowLayout(definition);
   const detailNodes = detail?.nodes ?? [];
-  const runByNode = new Map(detailNodes.map((run) => [run.node_id, run]));
+  const runByNode = latestWorkflowNodeRuns(detailNodes);
   const executionCounts = workflowRunExecutionCounts(detailNodes);
+  const retryingEffectIds = new Set(
+    detailNodes.flatMap((node) => {
+      const effectId = node.status === "retrying" ? node.state?.effect_id : null;
+      return typeof effectId === "string" ? [effectId] : [];
+    }),
+  );
+  const passedWithoutHistory = inferredLinearPassedNodes(workflow, detail, runByNode);
   const debug = coerceDebugFrame(detail?.execution_state?.debug);
   const breakpointSet = new Set<string>(debug?.breakpoints ?? []);
   // one lookup built once, so a node carrying two cursors draws two markers rather than the
@@ -132,11 +139,17 @@ export function buildGraphNodeModels(
       ? layoutPosition
       : { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
     const run = runByNode.get(id);
-    const inferredStatus = inferredNodeStatus(node, id, detail);
+    const currentEffectId = typeof run?.state?.effect_id === "string" ? run.state.effect_id : null;
+    const currentEffectIsRetrying =
+      currentEffectId != null && retryingEffectIds.has(currentEffectId);
+    const inferredStatus =
+      inferredNodeStatus(node, id, detail) ??
+      (passedWithoutHistory.has(id) ? "succeeded" : undefined);
     const terminalEndpointStatus =
       detail &&
       isTerminalWorkflowRunStatus(detail.run.status) &&
-      ["end", "fail"].includes(String(node.kind ?? ""))
+      typeof node.kind === "string" &&
+      ["end", "fail"].includes(node.kind)
         ? inferredStatus
         : undefined;
     // The run row advances before a node-run row necessarily exists (or before its queued row has
@@ -146,7 +159,9 @@ export function buildGraphNodeModels(
       detail &&
       !isTerminalWorkflowRunStatus(detail.run.status) &&
       detail.run.active_node_id === id
-        ? (inferredStatus ?? run?.status)
+        ? currentEffectIsRetrying
+          ? "retrying"
+          : (inferredStatus ?? run?.status)
         : (terminalEndpointStatus ?? run?.status ?? inferredStatus);
     const kind = workflowNodeKind(node.kind);
     const interruptRegion = regions.get(id) ?? null;
@@ -164,11 +179,11 @@ export function buildGraphNodeModels(
         validationIssues: issuesByNode.get(id) ?? [],
         validationCount: issuesByNode.get(id)?.length ?? 0,
         validationSeverity: validationSeverity(issuesByNode.get(id) ?? []),
-        statusLabel: run ? `${run.status} a${String(run.attempt)}` : status,
+        statusLabel: run ? `${status ?? run.status} a${String(run.attempt)}` : status,
         executionCount: executionCounts.get(id) ?? 0,
         approvalPrompt: approvalPrompt(node, run?.state),
         inputPrompt: inputPrompt(node, run?.state),
-        running: status === "running" || status === "queued",
+        running: status === "running" || status === "retrying" || status === "queued",
         status,
         protected: kind === "start" || kind === "end" || kind === "fail",
         locked: kind === "start" || kind === "end" || kind === "fail" || node.locked === true,
@@ -193,19 +208,48 @@ export function workflowRunSearchText(run: RunSummary, workflowName = ""): strin
 }
 
 function workflowRunExecutionCounts(nodes: WorkflowRunDetail["nodes"]): Map<string, number> {
-  const counts = new Map<string, number>();
+  const byNode = new Map<string, WorkflowRunDetail["nodes"]>();
 
   for (const node of nodes) {
-    const executions = workflowNodeRunExecutionCount(node);
+    const rows = byNode.get(node.node_id) ?? [];
+    rows.push(node);
+    byNode.set(node.node_id, rows);
+  }
 
-    if (executions <= 0) {
+  const counts = new Map<string, number>();
+
+  for (const [nodeId, rows] of byNode) {
+    const effects = new Map<string, number>();
+
+    for (const row of rows) {
+      const effectId = typeof row.state?.effect_id === "string" ? row.state.effect_id : null;
+
+      if (effectId) {
+        effects.set(effectId, Math.max(effects.get(effectId) ?? 0, normalizedAttempt(row.attempt)));
+      }
+    }
+
+    if (effects.size > 0) {
+      // VM effect attempts are zero-based. Retry-history rows repeat the same effect id, so taking
+      // the maximum per effect avoids counting attempt ordinals (1 + 2 + 3) as executions.
+      counts.set(nodeId, [...effects.values()].reduce((total, attempt) => total + attempt + 1, 0));
       continue;
     }
 
-    counts.set(node.node_id, (counts.get(node.node_id) ?? 0) + executions);
+    const journalVisits = rows.filter((row) => row.state?.journal_entry_id != null).length;
+    const legacyCount = Math.max(0, ...rows.map((row) => workflowNodeRunExecutionCount(row)));
+    const executions = Math.max(journalVisits, legacyCount);
+
+    if (executions > 0) {
+      counts.set(nodeId, executions);
+    }
   }
 
   return counts;
+}
+
+function normalizedAttempt(attempt: number): number {
+  return Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
 }
 
 function workflowNodeRunExecutionCount(node: WorkflowRunDetail["nodes"][number]): number {
@@ -214,6 +258,88 @@ function workflowNodeRunExecutionCount(node: WorkflowRunDetail["nodes"][number])
   }
 
   return node.status === "queued" ? 0 : 1;
+}
+
+function latestWorkflowNodeRuns(
+  nodes: WorkflowRunDetail["nodes"],
+): Map<string, WorkflowRunDetail["nodes"][number]> {
+  const latest = new Map<string, WorkflowRunDetail["nodes"][number]>();
+
+  for (const node of nodes) {
+    // The run-detail projection is chronological within each collection and appends mutable
+    // effects after immutable journal rows. Last visit wins, which matters when a loop revisits a
+    // node that succeeded earlier but is running or parked now.
+    latest.set(node.node_id, node);
+  }
+
+  return latest;
+}
+
+/**
+ * Older VM journals did not persist NodeEntered records. We can still prove that an unrecorded
+ * node ran when it lies on a single-edge chain between two recorded nodes. This deliberately does
+ * not guess across branches: ambiguous history stays uncolored.
+ */
+function inferredLinearPassedNodes(
+  workflow: WorkflowDefinition,
+  detail: WorkflowRunDetail | null,
+  runByNode: ReadonlyMap<string, WorkflowRunDetail["nodes"][number]>,
+): Set<string> {
+  const inferred = new Set<string>();
+
+  if (!detail || runByNode.size === 0) {
+    return inferred;
+  }
+
+  const visited = new Set(runByNode.keys());
+  const definitionNodes = recordArray(workflow.definition.nodes);
+  const startId =
+    displayValue(workflow.definition.start) ||
+    displayValue(definitionNodes.find((node) => node.kind === "start")?.id);
+
+  if (startId) {
+    visited.add(startId);
+  }
+
+  if (detail.run.active_node_id) {
+    visited.add(detail.run.active_node_id);
+  }
+
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+
+  for (const edge of buildGraphEdgeModels(workflow)) {
+    incoming.set(edge.target, [...(incoming.get(edge.target) ?? []), edge.source]);
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
+  }
+
+  for (const target of [...visited]) {
+    const chain: string[] = [];
+    const seen = new Set([target]);
+    let cursor = target;
+
+    while ((incoming.get(cursor)?.length ?? 0) === 1) {
+      const predecessor = incoming.get(cursor)?.[0];
+
+      if (!predecessor || seen.has(predecessor) || (outgoing.get(predecessor)?.length ?? 0) !== 1) {
+        break;
+      }
+
+      if (visited.has(predecessor)) {
+        for (const nodeId of chain) {
+          inferred.add(nodeId);
+        }
+
+        break;
+      }
+
+      chain.push(predecessor);
+      seen.add(predecessor);
+      cursor = predecessor;
+    }
+  }
+
+  return inferred;
 }
 
 // the set of `from->to` edges a run actually walked, reconstructed from the node-run

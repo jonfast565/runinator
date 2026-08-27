@@ -54,7 +54,7 @@ export function statusBadgeClass(status?: string) {
     return "status-succeeded";
   }
 
-  if (status === "running") {
+  if (status === "running" || status === "retrying") {
     return "status-running";
   }
 
@@ -84,7 +84,7 @@ export function statusClassForNode(status?: string) {
     return "node-danger";
   }
 
-  if (status === "running") {
+  if (status === "running" || status === "retrying") {
     return "node-running";
   }
 

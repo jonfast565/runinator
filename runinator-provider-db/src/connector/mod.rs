@@ -14,9 +14,23 @@ use crate::statement::StatementSpec;
 pub mod mongo;
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 pub mod sql;
+#[cfg(any(
+    feature = "mongo",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "sqlite"
+))]
 pub(crate) mod timeout;
 
 /// what `db.provision` should ensure exists before the workflow touches the database.
+// These shared request types deliberately retain the other backend's fields so a build without
+// that backend can still report a cross-dialect request as invalid instead of silently ignoring
+// it.  The feature-specific connector is the only production consumer of those fields.
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+    allow(dead_code)
+)]
 #[derive(Debug, Default)]
 pub struct ProvisionSpec {
     /// a maintenance connection used to issue `CREATE DATABASE`. postgres and mysql cannot
@@ -29,6 +43,7 @@ pub struct ProvisionSpec {
     pub collections: Vec<CollectionSpec>,
 }
 
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 #[derive(Clone, Debug, Deserialize)]
 pub struct CollectionSpec {
     pub name: String,
@@ -36,6 +51,7 @@ pub struct CollectionSpec {
     pub indexes: Vec<IndexSpec>,
 }
 
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 #[derive(Clone, Debug, Deserialize)]
 pub struct IndexSpec {
     pub keys: Value,
@@ -46,6 +62,11 @@ pub struct IndexSpec {
 }
 
 /// what a seed step inserts. `on_conflict` keeps re-running a provision step idempotent.
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+    allow(dead_code)
+)]
 #[derive(Clone, Debug, Deserialize)]
 pub struct SeedSpec {
     /// the sql table or the document collection to insert into.
@@ -129,7 +150,7 @@ pub fn connector_for(
         // with --no-default-features.
         #[cfg(not(feature = "mongo"))]
         Engine::Mongodb => {
-            let _ = runtime;
+            let _ = (connection, runtime);
             Err(crate::errors::UNSUPPORTED_ENGINE.error(
                 "this build opted out of mongodb support; drop --no-default-features, or re-add \
                  --features runinator-provider-db/mongo",

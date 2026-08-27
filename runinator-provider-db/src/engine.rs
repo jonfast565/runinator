@@ -26,6 +26,10 @@ impl Engine {
     }
 
     /// the placeholder style used when rendering positional parameters in errors and docs.
+    #[cfg_attr(
+        not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+        allow(dead_code)
+    )]
     pub fn placeholder(&self, index: usize) -> String {
         match self {
             Engine::Postgres => format!("${}", index + 1),

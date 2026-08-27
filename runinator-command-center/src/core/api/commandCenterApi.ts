@@ -710,7 +710,9 @@ function projectedEffectNodeId(
   return (
     effect.node_id ??
     journalNodesByEffect.get(effect.id) ??
-    cursorByContinuation.get(effect.continuation_id)?.node_id ??
+    (["requested", "running"].includes(effect.status)
+      ? cursorByContinuation.get(effect.continuation_id)?.node_id
+      : null) ??
     null
   );
 }

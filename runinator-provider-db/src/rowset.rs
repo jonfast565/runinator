@@ -30,6 +30,15 @@ pub struct ColumnInfo {
 }
 
 impl ColumnInfo {
+    #[cfg_attr(
+        not(any(
+            feature = "mongo",
+            feature = "postgres",
+            feature = "mysql",
+            feature = "sqlite"
+        )),
+        allow(dead_code)
+    )]
     pub fn new(name: impl Into<String>, kind: ColumnKind) -> Self {
         Self {
             name: name.into(),
@@ -38,6 +47,10 @@ impl ColumnInfo {
         }
     }
 
+    #[cfg_attr(
+        not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+        allow(dead_code)
+    )]
     pub fn with_native_type(mut self, native_type: impl Into<String>) -> Self {
         self.native_type = Some(native_type.into());
         self
@@ -53,6 +66,10 @@ pub struct RowSet {
 }
 
 impl RowSet {
+    #[cfg_attr(
+        not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+        allow(dead_code)
+    )]
     pub fn new(columns: Vec<ColumnInfo>, rows: Vec<Vec<Value>>) -> Self {
         Self { columns, rows }
     }
@@ -63,6 +80,7 @@ impl RowSet {
 
     /// build a row set from documents whose keys are not known up front, unioning the keys in
     /// first-seen order so document stores and `select *` behave the same way downstream.
+    #[cfg_attr(not(feature = "mongo"), allow(dead_code))]
     pub fn from_objects(documents: Vec<Map<String, Value>>) -> Self {
         let mut columns: Vec<String> = Vec::new();
         for document in &documents {
@@ -159,6 +177,15 @@ impl ExecOutcome {
 }
 
 /// one entry in a script's result list. a step either returned rows or affected them.
+#[cfg_attr(
+    not(any(
+        feature = "mongo",
+        feature = "postgres",
+        feature = "mysql",
+        feature = "sqlite"
+    )),
+    allow(dead_code)
+)]
 #[derive(Clone, Debug)]
 pub enum StepOutcome {
     Rows(RowSet),
@@ -195,6 +222,7 @@ fn stringify(value: &Value) -> String {
 
 /// pick a column kind from the values actually present, ignoring nulls. mixed types fall back
 /// to `Json` because that is the only shape that can hold all of them.
+#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 fn infer_kind<'a>(values: impl Iterator<Item = &'a Value>) -> ColumnKind {
     let mut kind: Option<ColumnKind> = None;
     for value in values {

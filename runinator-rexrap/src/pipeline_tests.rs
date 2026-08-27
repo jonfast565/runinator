@@ -80,8 +80,10 @@ fn link_selector_defaults_from_failure_policy() {
 
 #[test]
 fn rejects_link_to_undeclared_member() {
-    let err = parse_pipeline_str(r#"pipeline "P" { workflow "acme.test.a" "acme.test.a" -> "acme.test.ghost" on success }"#)
-        .unwrap_err();
+    let err = parse_pipeline_str(
+        r#"pipeline "P" { workflow "acme.test.a" "acme.test.a" -> "acme.test.ghost" on success }"#,
+    )
+    .unwrap_err();
     assert!(
         err.to_string()
             .to_lowercase()
