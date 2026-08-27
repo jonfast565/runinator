@@ -72,6 +72,7 @@ fn test_jira_provider_missing_base_url() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider.execute_service(
@@ -99,6 +100,7 @@ fn test_jira_search_placeholder_base_url_is_clear() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let err = provider
@@ -130,6 +132,7 @@ fn test_jira_search_empty_base_url_is_clear() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let err = provider
@@ -141,4 +144,34 @@ fn test_jira_search_empty_base_url_is_clear() {
         .expect_err("empty base_url should fail");
     let message = err.to_string();
     assert!(message.contains("jira base_url is empty"), "got: {message}");
+}
+
+#[test]
+fn metadata_advertises_orchestration_safe_actions() {
+    use runinator_models::orchestration::DeliverySemantics;
+
+    let metadata = JiraProvider.metadata();
+    for (name, semantics) in [
+        ("ensure_comment", DeliverySemantics::Reconcilable),
+        ("ensure_transition", DeliverySemantics::Reconcilable),
+        ("search", DeliverySemantics::Idempotent),
+        ("fetch", DeliverySemantics::Idempotent),
+        ("comments", DeliverySemantics::Idempotent),
+        ("poll", DeliverySemantics::Idempotent),
+    ] {
+        let action = metadata
+            .actions
+            .iter()
+            .find(|action| action.function_name == name)
+            .unwrap_or_else(|| panic!("{name} action is advertised"));
+        assert_eq!(action.delivery_semantics, semantics);
+    }
+    for name in ["comment", "transition"] {
+        let action = metadata
+            .actions
+            .iter()
+            .find(|action| action.function_name == name)
+            .unwrap_or_else(|| panic!("{name} action is advertised"));
+        assert_eq!(action.delivery_semantics, DeliverySemantics::AtLeastOnce);
+    }
 }

@@ -13,6 +13,7 @@ fn request(parameters: runinator_models::value::Value) -> ProviderExecutionReque
         artifact_dir: String::new(),
         events_jsonl_path: String::new(),
         idempotency_key: None,
+        workspace_path: None,
     }
 }
 

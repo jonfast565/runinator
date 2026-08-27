@@ -61,6 +61,36 @@ pub(crate) struct AddCommentParams {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct EnsureCommentParams {
+    #[serde(flatten)]
+    pub base: GitHubBaseParams,
+    pub issue_number: String,
+    pub body: String,
+    pub operation_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ExactRevisionParams {
+    #[serde(flatten)]
+    pub base: GitHubBaseParams,
+    pub revision: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WorkflowRunParams {
+    #[serde(flatten)]
+    pub base: GitHubBaseParams,
+    pub run_id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CheckRunParams {
+    #[serde(flatten)]
+    pub base: GitHubBaseParams,
+    pub check_run_id: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct RequestReviewersParams {
     #[serde(flatten)]
     pub base: GitHubBaseParams,

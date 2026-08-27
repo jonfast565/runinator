@@ -9,12 +9,31 @@ use runinator_plugin::cancel::CancellationToken;
 
 use crate::errors::{CANCELED, NONZERO_EXIT, TIMEOUT};
 
+pub(crate) struct CommandOutput {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 pub(crate) fn run_command(
     program: &str,
     args: &[&str],
     timeout_secs: i64,
     token: &CancellationToken,
 ) -> Result<String, SendableError> {
+    let output = run_command_output(program, args, timeout_secs, token)?;
+    if !output.success {
+        return Err(NONZERO_EXIT.error(output.stderr));
+    }
+    Ok(output.stdout)
+}
+
+pub(crate) fn run_command_output(
+    program: &str,
+    args: &[&str],
+    timeout_secs: i64,
+    token: &CancellationToken,
+) -> Result<CommandOutput, SendableError> {
     let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
     let started = Instant::now();
     let mut child = Command::new(program)
@@ -43,8 +62,9 @@ pub(crate) fn run_command(
     }
 
     let output = child.wait_with_output()?;
-    if !output.status.success() {
-        return Err(NONZERO_EXIT.error(String::from_utf8_lossy(&output.stderr)));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(CommandOutput {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
 }

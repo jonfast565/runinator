@@ -28,6 +28,11 @@ pub(crate) const IO_ERROR: ErrorDescriptor = ErrorDescriptor::new(
     "jira.io",
     "Failed to write a downloaded attachment",
 );
+pub(crate) const MISSING_OPERATION_KEY: ErrorDescriptor = ErrorDescriptor::new(
+    "JIRA010",
+    "jira.missing_operation_key",
+    "Reconcilable action needs an operation key",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CONFIG,
@@ -39,6 +44,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
     UNSUPPORTED_ACTION,
     IO_ERROR,
+    MISSING_OPERATION_KEY,
 ];
 
 impl ProviderErrors for JiraProvider {

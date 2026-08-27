@@ -5,7 +5,7 @@ use runinator_models::{
 };
 use serde_json::{Value, json};
 
-use crate::errors::{HTTP_ERROR, INVALID_JSON};
+use crate::errors::{HTTP_ERROR, INVALID_JSON, REVISION_MISMATCH};
 
 runinator_provider_support::provider_parse_params!(crate::errors::INVALID_PARAMS);
 
@@ -42,6 +42,58 @@ pub(crate) fn checks_summary_response(
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
+}
+
+pub(crate) fn exact_revision_checks_summary_response(
+    response: reqwest::blocking::Response,
+    expected_revision: &str,
+) -> Result<TaskExecutionResult, SendableError> {
+    let status = response.status();
+    let text = response.text()?;
+    if !status.is_success() {
+        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
+    }
+    let raw: Value = serde_json::from_str(&text).map_err(|err| {
+        INVALID_JSON.error(format!("GitHub check-runs response was not JSON: {err}"))
+    })?;
+    let mismatched = raw
+        .get("check_runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|run| run.get("head_sha").and_then(Value::as_str))
+        .find(|head_sha| *head_sha != expected_revision);
+    if let Some(actual) = mismatched {
+        return Err(
+            REVISION_MISMATCH.error(format!("expected {expected_revision}, received {actual}"))
+        );
+    }
+    let mut summary = summarize_check_runs(raw);
+    if let Value::Object(fields) = &mut summary {
+        fields.insert("revision".into(), json!(expected_revision));
+    }
+    Ok(TaskExecutionResult {
+        message: Some(format!(
+            "github checks summary completed for {expected_revision}"
+        )),
+        output_json: Some(summary.into()),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
+}
+
+pub(crate) fn response_json(response: reqwest::blocking::Response) -> Result<Value, SendableError> {
+    let status = response.status();
+    let text = response.text()?;
+    if !status.is_success() {
+        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
+    }
+    if text.trim().is_empty() {
+        Ok(json!({ "status": status.as_u16() }))
+    } else {
+        serde_json::from_str(&text)
+            .map_err(|err| INVALID_JSON.error(format!("GitHub response was not JSON: {err}")))
+    }
 }
 
 pub(crate) fn summarize_check_runs(raw: Value) -> Value {

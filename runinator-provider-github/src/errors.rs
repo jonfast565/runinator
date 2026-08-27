@@ -26,6 +26,16 @@ pub(crate) const MISSING_REVIEWERS: ErrorDescriptor = ErrorDescriptor::new(
     "github.missing_reviewers",
     "request_reviewers needs at least one reviewer or team_reviewer",
 );
+pub(crate) const MISSING_OPERATION_KEY: ErrorDescriptor = ErrorDescriptor::new(
+    "GITHUB006",
+    "github.missing_operation_key",
+    "Reconcilable action needs an operation key",
+);
+pub(crate) const REVISION_MISMATCH: ErrorDescriptor = ErrorDescriptor::new(
+    "GITHUB007",
+    "github.revision_mismatch",
+    "GitHub returned a check run for a different revision",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -33,6 +43,8 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     HTTP_ERROR,
     UNSUPPORTED_ACTION,
     MISSING_REVIEWERS,
+    MISSING_OPERATION_KEY,
+    REVISION_MISMATCH,
 ];
 
 impl ProviderErrors for GitHubProvider {

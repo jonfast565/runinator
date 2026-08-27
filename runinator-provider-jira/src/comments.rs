@@ -133,7 +133,7 @@ pub(crate) fn jira_fetch_comments(
 }
 
 // pages through the comment endpoint until every comment is collected.
-fn fetch_all_comments(
+pub(crate) fn fetch_all_comments(
     client: &reqwest::blocking::Client,
     base: &str,
     auth_user: &str,

@@ -15,6 +15,7 @@ fn test_approval_provider_execution() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider

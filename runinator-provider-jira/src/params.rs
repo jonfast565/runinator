@@ -30,11 +30,30 @@ pub(crate) struct JiraCommentParams {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct JiraEnsureCommentParams {
+    #[serde(flatten)]
+    pub base: JiraBaseParams,
+    pub key: String,
+    pub body: String,
+    pub operation_key: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct JiraTransitionParams {
     #[serde(flatten)]
     pub base: JiraBaseParams,
     pub key: String,
     pub transition_id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct JiraEnsureTransitionParams {
+    #[serde(flatten)]
+    pub base: JiraBaseParams,
+    pub key: String,
+    pub transition_id: String,
+    pub target_status: String,
+    pub operation_key: Option<String>,
 }
 
 #[derive(Deserialize)]

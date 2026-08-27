@@ -287,7 +287,15 @@ fn build_provider_request(
         artifact_dir: artifact_dir.to_string_lossy().into_owned(),
         events_jsonl_path: base_dir.join("events.jsonl").to_string_lossy().into_owned(),
         idempotency_key,
+        workspace_path: resolved_workspace_path(action.workspace_affinity.as_ref()),
     }
+}
+
+fn resolved_workspace_path(affinity: Option<&Value>) -> Option<String> {
+    affinity
+        .and_then(|affinity| affinity.get("resolved_path"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn run_work_dir(run_id: Option<Uuid>) -> PathBuf {
@@ -297,4 +305,27 @@ fn run_work_dir(run_id: Option<Uuid>) -> PathBuf {
     app_data::app_data_path("worker/runs")
         .unwrap_or_else(|_| std::env::temp_dir().join("runinator-worker"))
         .join(suffix)
+}
+
+#[cfg(test)]
+mod workspace_request_tests {
+    use super::resolved_workspace_path;
+    use runinator_models::json;
+
+    #[test]
+    fn only_worker_resolved_affinity_path_is_exposed() {
+        let affinity = json!({
+            "local_key": "bindings/example/source/1",
+            "resolved_path": "/worker-root/bindings/example/source/1"
+        });
+        assert_eq!(
+            resolved_workspace_path(Some(&affinity)).as_deref(),
+            Some("/worker-root/bindings/example/source/1")
+        );
+        assert_eq!(
+            resolved_workspace_path(Some(&json!({ "local_key": "x" }))),
+            None
+        );
+        assert_eq!(resolved_workspace_path(None), None);
+    }
 }

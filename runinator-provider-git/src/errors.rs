@@ -16,6 +16,18 @@ pub(crate) const NONZERO_EXIT: ErrorDescriptor = ErrorDescriptor::new(
     "command.nonzero_exit",
     "Command exited with a non-zero status",
 );
+pub(crate) const WORKSPACE_SAFETY: ErrorDescriptor = ErrorDescriptor::new(
+    "GIT006",
+    "git.workspace_safety",
+    "Workspace failed a safety check",
+);
+pub(crate) const REVISION_MISMATCH: ErrorDescriptor = ErrorDescriptor::new(
+    "GIT007",
+    "git.revision_mismatch",
+    "Git revision guard did not match",
+);
+pub(crate) const IO_ERROR: ErrorDescriptor =
+    ErrorDescriptor::new("GIT008", "git.io", "Git artifact I/O failed");
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -23,6 +35,9 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CANCELED,
     TIMEOUT,
     NONZERO_EXIT,
+    WORKSPACE_SAFETY,
+    REVISION_MISMATCH,
+    IO_ERROR,
 ];
 
 impl ProviderErrors for GitProvider {

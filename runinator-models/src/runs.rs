@@ -84,6 +84,11 @@ pub struct ProviderExecutionRequest {
     /// platform cannot absorb still lands once. `None` for non-idempotent actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// Worker-resolved path for a currently fenced workspace-affined effect. The engine validates
+    /// the opaque affinity before dispatch and the worker guarantees this path remains beneath its
+    /// configured workspace root. Providers never receive orchestration ownership details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 impl ProviderExecutionRequest {

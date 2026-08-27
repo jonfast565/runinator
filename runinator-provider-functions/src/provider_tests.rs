@@ -58,6 +58,7 @@ fn execution_request(package: &std::path::Path, parameters: Value) -> ProviderEx
         artifact_dir: package.to_string_lossy().into(),
         events_jsonl_path: String::new(),
         idempotency_key: None,
+        workspace_path: None,
     }
 }
 

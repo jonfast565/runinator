@@ -15,6 +15,7 @@ fn test_github_provider_missing_token() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider.execute_service(
@@ -102,6 +103,7 @@ fn request_reviewers_requires_a_reviewer() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider.execute_service(
@@ -139,4 +141,35 @@ fn summarizes_check_runs() {
     }));
     assert_eq!(failed["status"], "failed");
     assert_eq!(failed["failed"], 1);
+}
+
+#[test]
+fn metadata_advertises_orchestration_safe_actions() {
+    use runinator_models::orchestration::DeliverySemantics;
+
+    let metadata = GitHubProvider.metadata();
+    for (name, semantics) in [
+        ("ensure_pr", DeliverySemantics::Reconcilable),
+        ("ensure_comment", DeliverySemantics::Reconcilable),
+        (
+            "exact_revision_check_summary",
+            DeliverySemantics::Idempotent,
+        ),
+        ("checks", DeliverySemantics::Idempotent),
+    ] {
+        let action = metadata
+            .actions
+            .iter()
+            .find(|action| action.function_name == name)
+            .unwrap_or_else(|| panic!("{name} action is advertised"));
+        assert_eq!(action.delivery_semantics, semantics);
+    }
+    for name in ["rerun_workflow", "rerequest_check"] {
+        let action = metadata
+            .actions
+            .iter()
+            .find(|action| action.function_name == name)
+            .unwrap_or_else(|| panic!("{name} action is advertised"));
+        assert_eq!(action.delivery_semantics, DeliverySemantics::AtLeastOnce);
+    }
 }

@@ -41,6 +41,7 @@ fn notification_action_posts_notification_record() {
         artifact_dir: String::new(),
         events_jsonl_path: String::new(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = runtime.block_on(send_notification(&request)).unwrap();

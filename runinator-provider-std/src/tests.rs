@@ -31,6 +31,7 @@ fn request_for(
         artifact_dir: String::new(),
         events_jsonl_path: String::new(),
         idempotency_key: None,
+        workspace_path: None,
     }
 }
 

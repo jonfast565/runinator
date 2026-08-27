@@ -15,6 +15,7 @@ fn test_ai_command_provider_execution() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider
@@ -43,6 +44,7 @@ fn test_ai_command_fails_on_nonzero_exit() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider.execute_service(
@@ -73,6 +75,7 @@ fn test_claude_code_stub_binary_passes_argv() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider
@@ -141,6 +144,7 @@ fn test_claude_code_nonzero_exit() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider.execute_service(
@@ -165,6 +169,7 @@ fn test_claude_code_invalid_params_missing_prompt() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let err = provider
@@ -199,6 +204,7 @@ fn test_claude_code_json_output_parsed() {
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
         idempotency_key: None,
+        workspace_path: None,
     };
 
     let result = provider
