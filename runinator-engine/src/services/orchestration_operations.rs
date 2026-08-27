@@ -327,6 +327,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                         source_event_ids.push(event.id);
                     }
                     let now = Utc::now();
+                    let wake_at = now + Duration::seconds(seconds as i64);
                     self.store
                         .upsert_orchestration_pending_intent(OrchestrationPendingIntent {
                             id: existing
@@ -337,10 +338,26 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                             priority: intent.priority,
                             source_event_ids,
                             latest_payload: effective_payload,
-                            wake_at: now + Duration::seconds(seconds as i64),
+                            wake_at,
                             created_at: now,
                             updated_at: now,
                         })
+                        .await?;
+                    self.store
+                        .enqueue_orchestration_command(
+                            NewOrchestrationCommand {
+                                id: Uuid::now_v7(),
+                                binding_id: binding.id,
+                                epoch: binding.current_epoch,
+                                command_type: "arm_intent_wake".into(),
+                                operation_key: format!("intent:{winner}:wake:{}", event.id),
+                                payload: runinator_models::json!({
+                                    "intent": winner,
+                                    "wake_at_ms": wake_at.timestamp_millis(),
+                                }),
+                            },
+                            now,
+                        )
                         .await?;
                     disposition = if self_origin_operation.is_some() {
                         "self_originated_coalesced".into()
@@ -869,6 +886,13 @@ mod tests {
                     predicates: vec![],
                     intent: Some("stop".into()),
                 },
+                IngressRoute {
+                    event_type: "scope_changed".into(),
+                    lifecycle: IngressLifecycle::Active,
+                    action: IngressAction::Dispatch,
+                    predicates: vec![],
+                    intent: Some("rework".into()),
+                },
             ],
         };
         let now = Utc::now();
@@ -914,6 +938,19 @@ mod tests {
                 effect: ControlEffect::Terminate,
                 priority: 100,
                 coalesce_seconds: None,
+                stop: Default::default(),
+                restart: Default::default(),
+                subject_revision_pointer: None,
+                allow_self_originated: false,
+                signal_name: None,
+            },
+        );
+        policy.intents.insert(
+            "rework".into(),
+            IntentPolicy {
+                effect: ControlEffect::Supersede,
+                priority: 80,
+                coalesce_seconds: Some(300),
                 stop: Default::default(),
                 restart: Default::default(),
                 subject_revision_pointer: None,
@@ -1026,6 +1063,89 @@ mod tests {
             binding.admission_id,
             binding.generation,
             IngressEvent {
+                source: "adapter:test".into(),
+                event_id: "scope-change".into(),
+                event_type: "scope_changed".into(),
+                correlation_key: binding.correlation_key.clone(),
+                payload: runinator_models::json!({ "revision": "r2" }),
+                provenance: Value::Null,
+                occurred_at: Some(now),
+            },
+            IngressEventDisposition::Recorded,
+            false,
+            now,
+        )
+        .await
+        .unwrap();
+        let reduced = OrchestrationOperations::new(db.clone())
+            .reduce_binding(reduced, "self-origin-reducer")
+            .await
+            .unwrap();
+        let pending = db
+            .fetch_orchestration_pending_intents(binding.id)
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].intent, "rework");
+        let commands = db.fetch_orchestration_commands(binding.id).await.unwrap();
+        let wake = commands
+            .iter()
+            .find(|command| command.command_type == "arm_intent_wake")
+            .expect("coalescing should arm the broker waker through the command outbox");
+        assert_eq!(
+            wake.payload.get("intent").and_then(Value::as_str),
+            Some("rework")
+        );
+
+        db.record_ingress_event(
+            binding.admission_id,
+            binding.generation,
+            IngressEvent {
+                source: "adapter:test".into(),
+                event_id: "scope-change-newer".into(),
+                event_type: "scope_changed".into(),
+                correlation_key: binding.correlation_key.clone(),
+                payload: runinator_models::json!({ "revision": "r3" }),
+                provenance: Value::Null,
+                occurred_at: Some(now),
+            },
+            IngressEventDisposition::Recorded,
+            false,
+            now,
+        )
+        .await
+        .unwrap();
+        let reduced = OrchestrationOperations::new(db.clone())
+            .reduce_binding(reduced, "self-origin-reducer")
+            .await
+            .unwrap();
+        let pending = db
+            .fetch_orchestration_pending_intents(binding.id)
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].source_event_ids.len(), 2);
+        assert_eq!(
+            pending[0]
+                .latest_payload
+                .get("revision")
+                .and_then(Value::as_str),
+            Some("r3")
+        );
+        assert_eq!(
+            db.fetch_orchestration_commands(binding.id)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|command| command.command_type == "arm_intent_wake")
+                .count(),
+            2
+        );
+
+        db.record_ingress_event(
+            binding.admission_id,
+            binding.generation,
+            IngressEvent {
                 source: "runinator.manual".into(),
                 event_id: "manual-stop".into(),
                 event_type: "manual_intent".into(),
@@ -1049,6 +1169,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reduced.status, OrchestrationStatus::Terminated);
+        assert!(
+            db.fetch_orchestration_pending_intents(binding.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         let commands = db.fetch_orchestration_commands(binding.id).await.unwrap();
         assert_eq!(
             commands

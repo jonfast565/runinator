@@ -202,6 +202,54 @@ async fn a_relayed_settle_carries_the_armed_result_verbatim() {
 }
 
 #[tokio::test]
+async fn a_due_orchestration_deadline_is_relayed_as_an_opaque_nudge() {
+    use runinator_broker::{Broker, WakeCommand, WakeMessage, WsIngressCommand};
+    use std::sync::Arc;
+
+    let broker: Arc<dyn Broker> = Arc::new(runinator_broker::in_memory::InMemoryBroker::new());
+    let due_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+    let binding_id = uuid::Uuid::now_v7();
+    broker
+        .publish_wake(WakeMessage {
+            command: WakeCommand::orchestration_intent(
+                due_at,
+                binding_id,
+                "rework",
+                uuid::Uuid::now_v7(),
+            ),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let config = Config::try_parse_from(["runinator-waker"]).unwrap();
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let loop_broker = broker.clone();
+    let loop_shutdown = shutdown.clone();
+    let handle =
+        tokio::spawn(async move { crate::waker_loop(loop_broker, loop_shutdown, &config).await });
+    let delivery = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        broker.receive_ingress("test"),
+    )
+    .await
+    .expect("orchestration wake should be relayed")
+    .unwrap();
+    assert!(matches!(
+        delivery.command,
+        WsIngressCommand::OrchestrationIntent { wake, .. }
+            if wake.binding_id == binding_id && wake.intent == "rework"
+    ));
+
+    shutdown.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("waker loop should stop after shutdown")
+        .unwrap();
+}
+
+#[tokio::test]
 async fn spawn_liveness_is_disabled_for_a_blank_path() {
     let mut config = Config::try_parse_from(["runinator-waker"]).unwrap();
     config.liveness_file = String::new();

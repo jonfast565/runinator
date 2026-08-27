@@ -29,6 +29,18 @@ pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmSto
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
 ) {
+    run_ingress_consumer_with_orchestration_nudge(db, broker, Arc::new(Notify::new()), shutdown)
+        .await;
+}
+
+pub async fn run_ingress_consumer_with_orchestration_nudge<
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    orchestration_nudge: Arc<Notify>,
+    shutdown: Arc<Notify>,
+) {
     info!("workflow ingress consumer started");
     loop {
         let delivery = tokio::select! {
@@ -46,7 +58,14 @@ pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmSto
             }
         };
 
-        match apply(db.clone(), broker.as_ref(), &delivery).await {
+        match apply(
+            db.clone(),
+            broker.as_ref(),
+            orchestration_nudge.as_ref(),
+            &delivery,
+        )
+        .await
+        {
             Ok(()) => {
                 crate::stability::ingress_applied();
                 if let Err(err) = broker
@@ -73,6 +92,7 @@ pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmSto
 async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
     db: Arc<T>,
     broker: &dyn Broker,
+    orchestration_nudge: &Notify,
     delivery: &IngressDelivery,
 ) -> Result<(), SendableError> {
     match &delivery.command {
@@ -123,6 +143,21 @@ async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
                 chrono::Utc::now(),
             )
             .await?;
+            Ok(())
+        }
+        WsIngressCommand::OrchestrationIntent {
+            wake,
+            due_at,
+            trace_id,
+        } => {
+            info!(
+                binding_id = %wake.binding_id,
+                intent = %wake.intent,
+                due_at = %due_at,
+                trace_id = %trace_id,
+                "nudging the correlated orchestration reducer",
+            );
+            orchestration_nudge.notify_one();
             Ok(())
         }
         // a worker asked for run control from inside an executing action.

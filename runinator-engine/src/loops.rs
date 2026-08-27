@@ -42,6 +42,7 @@ pub async fn run_correlated_orchestration_reducer<
     broker: Arc<dyn Broker>,
     publisher: crate::events::EventSender,
     instance: String,
+    nudge: Arc<Notify>,
     settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
@@ -148,6 +149,7 @@ pub async fn run_correlated_orchestration_reducer<
 
         tokio::select! {
             _ = shutdown.notified() => return,
+            _ = nudge.notified() => {}
             _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.correlated_reducer_poll_interval_ms)) => {}
         }
     }
@@ -291,6 +293,49 @@ async fn execute_orchestration_command<
                 Ok(runinator_models::json!({ "workflow_run_id": workflow_run_id }))
             } else {
                 Ok(runinator_models::json!({ "ignored": "no active member" }))
+            }
+        }
+        "arm_intent_wake" => {
+            let intent = command
+                .payload
+                .get("intent")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "orchestration wake command is missing its intent",
+                    )) as runinator_models::errors::SendableError
+                })?;
+            let wake_at_ms = command
+                .payload
+                .get("wake_at_ms")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "orchestration wake command is missing its deadline",
+                    )) as runinator_models::errors::SendableError
+                })?;
+            let due_at = chrono::DateTime::from_timestamp_millis(wake_at_ms).ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "orchestration wake command has an invalid deadline",
+                )) as runinator_models::errors::SendableError
+            })?;
+            let wake =
+                WakeCommand::orchestration_intent(due_at, binding.id, intent, uuid::Uuid::now_v7());
+            match broker
+                .publish_wake(WakeMessage {
+                    dedupe_key: Some(wake.dedupe_key()),
+                    command: wake,
+                    enqueued_at: chrono::Utc::now(),
+                })
+                .await
+            {
+                Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
+                    Ok(runinator_models::json!({ "armed": due_at, "intent": intent }))
+                }
+                Err(error) => Err(Box::new(error)),
             }
         }
         other => Err(Box::new(std::io::Error::new(

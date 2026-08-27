@@ -113,6 +113,29 @@ fn wake_command_dedupes_per_effect_attempt_and_carries_its_result() {
 }
 
 #[test]
+fn orchestration_wakes_round_trip_without_effect_semantics() {
+    let binding_id = Uuid::now_v7();
+    let due_at = chrono::Utc::now() + chrono::Duration::seconds(30);
+    let wake =
+        WakeCommand::orchestration_intent(due_at, binding_id, "scope_changed", Uuid::now_v7());
+    let decoded = WakeCommand::from_wire(&wake.to_wire().unwrap()).unwrap();
+    let intent = decoded.orchestration_intent.as_ref().unwrap();
+    assert_eq!(intent.binding_id, binding_id);
+    assert_eq!(intent.intent, "scope_changed");
+    assert_eq!(decoded.dedupe_key(), wake.dedupe_key());
+
+    let ingress =
+        WsIngressCommand::orchestration_intent(intent.clone(), decoded.due_at, decoded.trace_id);
+    let round_trip = WsIngressCommand::from_wire(&ingress.to_wire().unwrap()).unwrap();
+    assert_eq!(round_trip.dedupe_key(), ingress.dedupe_key());
+    assert!(matches!(
+        round_trip,
+        WsIngressCommand::OrchestrationIntent { wake, .. }
+            if wake.binding_id == binding_id && wake.intent == "scope_changed"
+    ));
+}
+
+#[test]
 fn control_command_round_trips_its_target_and_defaults_older_messages_to_any() {
     let workflow_run_id = Uuid::now_v7();
     let replica_id = Uuid::now_v7();

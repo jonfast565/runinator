@@ -141,6 +141,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     // A standalone engine owns no HTTP-side signals; its durable loops continue polling normally.
     let local_signals = local_signals.unwrap_or_default();
     let server_settings = ServerSettingsHandle::load(pool.as_ref()).await?;
+    let orchestration_nudge = Arc::new(Notify::new());
 
     let mut loops: JoinSet<()> = JoinSet::new();
     loops.spawn(run_server_settings_refresher(
@@ -159,11 +160,14 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         broker.clone(),
         shutdown.clone(),
     ));
-    loops.spawn(crate::run_ingress_consumer(
-        pool.clone(),
-        broker.clone(),
-        shutdown.clone(),
-    ));
+    loops.spawn(
+        crate::ingress_consumer::run_ingress_consumer_with_orchestration_nudge(
+            pool.clone(),
+            broker.clone(),
+            orchestration_nudge.clone(),
+            shutdown.clone(),
+        ),
+    );
     loops.spawn(run_trigger_loop(
         pool.clone(),
         publisher.clone(),
@@ -191,6 +195,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         broker.clone(),
         publisher.clone(),
         instance.clone(),
+        orchestration_nudge,
         server_settings.clone(),
         shutdown.clone(),
     ));

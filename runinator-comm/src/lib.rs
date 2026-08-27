@@ -489,6 +489,10 @@ pub struct WakeCommand {
     /// with effect wakes and is intentionally ignored by the timer-interrupt path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer_interrupt: Option<TimerInterruptWake>,
+    /// A provider-neutral nudge for a durable coalescing window. The pending-intent row remains
+    /// authoritative; the waker merely tells an engine replica that its deadline has arrived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_intent: Option<OrchestrationIntentWake>,
 }
 
 /// A due occurrence of one configured workflow timer. The timer id names a frozen interrupt
@@ -500,6 +504,12 @@ pub struct TimerInterruptWake {
     pub interval_seconds: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationIntentWake {
+    pub binding_id: Uuid,
+    pub intent: String,
+}
+
 impl WakeCommand {
     pub fn new(due_at: DateTime<Utc>, result: EffectResult, trace_id: Uuid) -> Self {
         Self {
@@ -507,6 +517,7 @@ impl WakeCommand {
             result,
             trace_id,
             timer_interrupt: None,
+            orchestration_intent: None,
         }
     }
 
@@ -543,6 +554,42 @@ impl WakeCommand {
                 timer_id: timer_id.into(),
                 interval_seconds,
             }),
+            orchestration_intent: None,
+        }
+    }
+
+    /// Build an opaque coalescing-deadline wake. The compatibility result is never settled: the
+    /// waker recognizes `orchestration_intent` and relays the typed ingress nudge instead.
+    pub fn orchestration_intent(
+        due_at: DateTime<Utc>,
+        binding_id: Uuid,
+        intent: impl Into<String>,
+        trace_id: Uuid,
+    ) -> Self {
+        Self {
+            due_at,
+            result: EffectResult {
+                version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+                event_id: Uuid::now_v7(),
+                effect_id: Uuid::nil(),
+                workflow_run_id: Uuid::nil(),
+                continuation_id: Uuid::nil(),
+                attempt: 0,
+                kind: EffectResultKind::Status {
+                    status: WorkflowEffectStatus::Succeeded,
+                    output: None,
+                    message: None,
+                },
+                timestamp: due_at,
+                trace_id,
+                notification_delivery_id: None,
+            },
+            trace_id,
+            timer_interrupt: None,
+            orchestration_intent: Some(OrchestrationIntentWake {
+                binding_id,
+                intent: intent.into(),
+            }),
         }
     }
 
@@ -559,6 +606,14 @@ impl WakeCommand {
     /// stable identity for broker deduplication while a wake is in flight. keyed on the attempt so
     /// a retried effect arms a new timer rather than colliding with the one it replaced.
     pub fn dedupe_key(&self) -> String {
+        if let Some(intent) = &self.orchestration_intent {
+            return format!(
+                "orchestration-intent:{}:{}:{}",
+                intent.binding_id,
+                intent.intent,
+                self.due_at.timestamp_millis()
+            );
+        }
         if let Some(timer) = &self.timer_interrupt {
             return format!(
                 "timer-interrupt:{}:{}:{}",
@@ -614,6 +669,14 @@ pub enum WsIngressCommand {
         #[serde(default = "Uuid::now_v7")]
         trace_id: Uuid,
     },
+    /// waker -> engine: a durable coalescing deadline arrived. The reducer reloads pending state
+    /// and decides whether this wake is current, superseded, or already consumed.
+    OrchestrationIntent {
+        wake: OrchestrationIntentWake,
+        due_at: DateTime<Utc>,
+        #[serde(default = "Uuid::now_v7")]
+        trace_id: Uuid,
+    },
     /// worker -> WS: a control request from an executing action.
     Control {
         workflow_run_id: Uuid,
@@ -639,6 +702,18 @@ impl WsIngressCommand {
     ) -> Self {
         Self::TimerInterrupt {
             timer,
+            due_at,
+            trace_id,
+        }
+    }
+
+    pub fn orchestration_intent(
+        wake: OrchestrationIntentWake,
+        due_at: DateTime<Utc>,
+        trace_id: Uuid,
+    ) -> Self {
+        Self::OrchestrationIntent {
+            wake,
             due_at,
             trace_id,
         }
@@ -683,6 +758,12 @@ impl WsIngressCommand {
                 timer.workflow_run_id,
                 timer.timer_id,
                 due_at.timestamp()
+            ),
+            Self::OrchestrationIntent { wake, due_at, .. } => format!(
+                "orchestration-intent:{}:{}:{}",
+                wake.binding_id,
+                wake.intent,
+                due_at.timestamp_millis()
             ),
             Self::Control {
                 workflow_run_id,

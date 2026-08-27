@@ -279,20 +279,29 @@ async fn settle(broker: &dyn Broker, group: &str, delivery: &runinator_broker::W
             .num_milliseconds()
             .max(0) as f64,
     );
-    let command = match &delivery.command.timer_interrupt {
-        Some(timer) => WsIngressCommand::timer_interrupt(
+    let command = if let Some(wake) = &delivery.command.orchestration_intent {
+        WsIngressCommand::orchestration_intent(
+            wake.clone(),
+            delivery.command.due_at,
+            delivery.command.trace_id,
+        )
+    } else if let Some(timer) = &delivery.command.timer_interrupt {
+        WsIngressCommand::timer_interrupt(
             timer.clone(),
             delivery.command.due_at,
             delivery.command.trace_id,
-        ),
-        None => WsIngressCommand::settle_effect(
-            delivery.command.result.clone(),
-            delivery.command.trace_id,
-        ),
+        )
+    } else {
+        WsIngressCommand::settle_effect(delivery.command.result.clone(), delivery.command.trace_id)
     };
+    let dedupe_key = delivery
+        .command
+        .orchestration_intent
+        .as_ref()
+        .map(|_| delivery.command.dedupe_key());
     let message = IngressMessage {
         command,
-        dedupe_key: None,
+        dedupe_key,
         enqueued_at: Utc::now(),
     };
     // a duplicate means the settle is already in flight; treat it as success and ack the wake.

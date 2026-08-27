@@ -637,7 +637,9 @@ async fn handle_waker_relay_request<T: DatabaseImpl>(
         | TcpRequest::AckWake { .. }
         | TcpRequest::NackWake { .. } => dispatch(broker, request).await,
         TcpRequest::PublishIngress { message } => match &message.command {
-            runinator_comm::WsIngressCommand::SettleEffect { .. } => {
+            runinator_comm::WsIngressCommand::SettleEffect { .. }
+            | runinator_comm::WsIngressCommand::TimerInterrupt { .. }
+            | runinator_comm::WsIngressCommand::OrchestrationIntent { .. } => {
                 dispatch(broker, request).await
             }
             runinator_comm::WsIngressCommand::ReplicaAvailability { availability } => {

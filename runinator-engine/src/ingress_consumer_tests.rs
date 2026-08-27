@@ -83,6 +83,43 @@ async fn a_due_timer_wake_is_relayed_onto_the_effect_result_channel() {
 }
 
 #[tokio::test]
+async fn an_orchestration_deadline_nudges_the_shared_reducer_signal() {
+    let (db, path) = store().await;
+    let broker: Arc<dyn Broker> = Arc::new(InMemoryBroker::new());
+    let shutdown = Arc::new(Notify::new());
+    let nudge = Arc::new(Notify::new());
+    let consumer = tokio::spawn(run_ingress_consumer_with_orchestration_nudge(
+        db,
+        broker.clone(),
+        nudge.clone(),
+        shutdown.clone(),
+    ));
+    let binding_id = Uuid::now_v7();
+    broker
+        .publish_ingress(IngressMessage {
+            command: WsIngressCommand::orchestration_intent(
+                runinator_comm::OrchestrationIntentWake {
+                    binding_id,
+                    intent: "rework".into(),
+                },
+                chrono::Utc::now(),
+                Uuid::now_v7(),
+            ),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), nudge.notified())
+        .await
+        .expect("the ingress consumer should wake the correlated reducer");
+    shutdown.notify_waiters();
+    consumer.await.unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn an_agent_directive_reply_completes_its_durable_record() {
     let (db, path) = store().await;
     let replica = db
