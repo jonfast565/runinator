@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
+use runinator_broker_core::{UiEventPublisher, emit_external_operation, emit_orchestration};
 use runinator_engine::services::OrchestrationOperations;
 use runinator_models::{
     auth::{AuthContext, Permission},
@@ -234,6 +235,7 @@ pub async fn workspaces<T: AuthorizationStore + OrchestrationStore + WorkspaceSt
 
 pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path((id, operation_id)): Path<(Uuid, Uuid)>,
     Json(request): Json<ExternalOperationResolutionRequest>,
@@ -360,6 +362,7 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
     {
         return api_error(error.to_string());
     }
+    emit_external_operation(&publisher, updated.id, binding.id, binding.org_id);
     (
         StatusCode::OK,
         Json(ApiResponse::ExternalOperation(updated)),
@@ -368,6 +371,7 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
 
 pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(request): Json<OrchestrationIntentRequest>,
@@ -404,10 +408,13 @@ pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
         )
         .await
     {
-        Ok(record) => (
-            StatusCode::ACCEPTED,
-            Json(ApiResponse::IngressTimeline(vec![record.entry])),
-        ),
+        Ok(record) => {
+            emit_orchestration(&publisher, binding.id, binding.org_id);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::IngressTimeline(vec![record.entry])),
+            )
+        }
         Err(error) => api_error(error.to_string()),
     }
 }
@@ -416,6 +423,7 @@ pub async fn requeue<
     T: AuthorizationStore + DefinitionStore + OrchestrationStore + IngressStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(request): Json<OrchestrationRequeueRequest>,
@@ -507,20 +515,24 @@ pub async fn requeue<
         .admit_with_adapter(&next_admission, &pipeline, adapter)
         .await
     {
-        Ok(Some(next)) => (
-            if record.duplicate {
-                StatusCode::OK
-            } else {
-                StatusCode::ACCEPTED
-            },
-            Json(ApiResponse::OrchestrationBinding(next)),
-        ),
+        Ok(Some(next)) => {
+            emit_orchestration(&publisher, binding.id, binding.org_id);
+            emit_orchestration(&publisher, next.id, next.org_id);
+            (
+                if record.duplicate {
+                    StatusCode::OK
+                } else {
+                    StatusCode::ACCEPTED
+                },
+                Json(ApiResponse::OrchestrationBinding(next)),
+            )
+        }
         Ok(None) => bad_request("pipeline no longer has orchestration policy"),
         Err(error) => api_error(error.to_string()),
     }
 }
 
-pub fn routes<T>(pool: Arc<T>) -> axum::Router
+pub fn routes<T>(pool: Arc<T>, publisher: UiEventPublisher) -> axum::Router
 where
     T: AuthorizationStore
         + DefinitionStore
@@ -548,4 +560,5 @@ where
         .route("/orchestrations/{id}/intents", post(intent::<T>))
         .route("/orchestrations/{id}/requeue", post(requeue::<T>))
         .layer(Extension(pool))
+        .layer(Extension(publisher))
 }

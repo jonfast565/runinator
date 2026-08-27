@@ -764,6 +764,9 @@ pub async fn delete_pipeline_run<
     {
         return reply;
     }
+    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+        return reply;
+    }
     match service.delete_run(pipeline_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
@@ -782,6 +785,9 @@ pub async fn cancel_pipeline_run<
         .require_pipeline_run(pipeline_run_id, Permission::Run)
         .await
     {
+        return reply;
+    }
+    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
         return reply;
     }
     match service.cancel_run(pipeline_run_id).await {
@@ -804,6 +810,9 @@ pub async fn pause_pipeline_run<
     {
         return reply;
     }
+    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+        return reply;
+    }
     match service.pause_run(pipeline_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
@@ -822,6 +831,9 @@ pub async fn resume_pipeline_run<
         .require_pipeline_run(pipeline_run_id, Permission::Run)
         .await
     {
+        return reply;
+    }
+    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
         return reply;
     }
     match service.resume_run(pipeline_run_id).await {
@@ -846,6 +858,9 @@ pub async fn resolve_pipeline_run<
         .require_pipeline_run(pipeline_run_id, Permission::Run)
         .await
     {
+        return reply;
+    }
+    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
         return reply;
     }
     let continue_pipeline = request.decision == PipelineRunInquiryDecision::Continue;
@@ -878,6 +893,9 @@ pub async fn retry_pipeline_member<
     {
         return reply;
     }
+    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+        return reply;
+    }
     match service
         .retry_member(pipeline_run_id, member_key, request.parameters)
         .await
@@ -892,6 +910,22 @@ pub async fn retry_pipeline_member<
                 runinator_ws_core::models::ApiError::new(err.to_string()),
             )),
         ),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+async fn require_unmanaged_pipeline_run<
+    T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    service: &PipelineOperations<T>,
+    pipeline_run_id: Uuid,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    match service.fetch_run_detail(pipeline_run_id).await {
+        Ok(Some(detail)) if detail.run.orchestration_binding_id.is_some() => Err(bad_request(
+            "This pipeline run is managed by a correlated orchestration; send a named intent to the orchestration instead",
+        )),
+        Ok(_) => Ok(()),
+        Err(error) => Err(api_error(error.to_string())),
     }
 }
 

@@ -189,6 +189,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     loops.spawn(crate::loops::run_correlated_orchestration_reducer(
         pool.clone(),
         broker.clone(),
+        publisher.clone(),
         instance.clone(),
         server_settings.clone(),
         shutdown.clone(),
@@ -202,6 +203,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     loops.spawn(run_workflow_effect_dispatcher(
         pool.clone(),
         broker.clone(),
+        publisher.clone(),
         instance.clone(),
         server_settings.clone(),
         shutdown.clone(),

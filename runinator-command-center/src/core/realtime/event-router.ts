@@ -20,6 +20,8 @@ export interface EventStreamRouterDeps {
   refreshSchedulesIfActive: () => void;
   refreshPipelineRunsIfActive: () => void;
   refreshPipelineDetailIfMember: (runId: string) => void;
+  refreshOrchestrationsIfActive: (orchestrationId?: string) => void;
+  refreshAdaptersIfActive: () => void;
 }
 
 export function createEventStreamRouter(deps: () => EventStreamRouterDeps): EventStreamRouter {
@@ -52,6 +54,18 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
         case "pipeline_run_changed":
         case "pipeline_run_activity":
           context.refreshPipelineRunsIfActive();
+          break;
+
+        case "orchestration_changed":
+          context.refreshOrchestrationsIfActive(event.orchestration_id as string);
+          break;
+
+        case "external_operation_changed":
+          context.refreshOrchestrationsIfActive(event.orchestration_id as string);
+          break;
+
+        case "adapter_changed":
+          context.refreshAdaptersIfActive();
           break;
 
         case "resources_changed":

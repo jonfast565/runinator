@@ -1,6 +1,7 @@
 <template>
   <div class="flex flex-wrap gap-1.5">
     <button
+      v-if="runtimeActions"
       type="button"
       class="btn btn-sm"
       :disabled="busy"
@@ -11,7 +12,7 @@
       <span>Rerun</span>
     </button>
     <button
-      v-if="canReplayFrom"
+      v-if="runtimeActions && canReplayFrom"
       type="button"
       class="btn btn-sm"
       :disabled="busy"
@@ -71,12 +72,15 @@ import type { RunSummary, WorkflowNodeRun } from "../../../core/domain/models";
 
 export type RunNodeActionType = "replay-run" | "replay-from" | "open-editor" | "open-provider";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   node: WorkflowNodeRun;
   run: RunSummary;
   busy?: boolean;
   showEditorActions?: boolean;
-}>();
+  runtimeActions?: boolean;
+}>(), { runtimeActions: true });
+
+const runtimeActions = computed(() => props.runtimeActions);
 
 const emit = defineEmits<{
   action: [payload: { type: RunNodeActionType; node: WorkflowNodeRun }];

@@ -11,7 +11,8 @@ use runinator_store::RuntimeStore;
 use crate::repository;
 
 pub use runinator_broker_core::{
-    AppEvent, AppEventKind, emit, emit_pipeline_run, emit_workflow_run, emit_workflows_changed,
+    AppEvent, AppEventKind, emit, emit_adapter, emit_external_operation, emit_orchestration,
+    emit_pipeline_run, emit_workflow_run, emit_workflows_changed,
 };
 
 // Keep the threaded handle named EventSender so engine loop signatures remain descriptive without

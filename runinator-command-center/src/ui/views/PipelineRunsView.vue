@@ -101,6 +101,15 @@
                 <StatusBadge :status="store.detail.run.status" />
               </div>
               <button
+                v-if="managedBindingId"
+                class="btn btn-primary btn-sm"
+                @click="openOrchestration"
+              >
+                <Icon name="branch" />
+                <span>Open orchestration</span>
+              </button>
+              <button
+                v-if="!managedBindingId"
                 class="btn btn-sm"
                 :disabled="store.detail.run.status === 'paused' || !isActiveRunStatus(store.detail.run.status) || runControlBusy"
                 title="Pause after the current member workflow run finishes"
@@ -110,6 +119,7 @@
                 <span>Pause</span>
               </button>
               <button
+                v-if="!managedBindingId"
                 class="btn btn-sm"
                 :disabled="store.detail.run.status !== 'paused' || runControlBusy"
                 title="Resume a paused pipeline run"
@@ -119,6 +129,7 @@
                 <span>Resume</span>
               </button>
               <button
+                v-if="!managedBindingId"
                 class="btn btn-danger btn-sm"
                 :disabled="!isActiveRunStatus(store.detail.run.status) || runControlBusy"
                 title="Cancel pipeline run immediately"
@@ -128,6 +139,7 @@
                 <span>Cancel</span>
               </button>
               <button
+                v-if="!managedBindingId"
                 class="btn btn-danger btn-sm"
                 :disabled="runControlBusy"
                 title="Permanently delete run"
@@ -168,10 +180,51 @@
                   {{ formatDate(store.detail.run.finished_at) }}
                 </dd>
               </div>
+              <div
+                v-if="store.detail.run.start_member"
+                class="grid gap-0.5 rounded-md border border-border-subtle bg-surface-subtle px-2.5 py-2"
+              >
+                <dt class="text-xs text-fg-muted">Starting member</dt>
+                <dd class="m-0 text-[13px] text-fg">{{ store.detail.run.start_member }}</dd>
+              </div>
             </dl>
             <p v-if="store.detail.run.message" class="m-0 text-[13px] text-fg-muted">
               {{ store.detail.run.message }}
             </p>
+
+            <section
+              v-if="managedBindingId"
+              class="grid gap-3 rounded-md border border-accent/30 bg-accent/5 px-3 py-3"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <strong class="text-sm text-fg">Managed execution</strong>
+                <span class="badge">Generation {{ managedBinding?.generation ?? "-" }}</span>
+                <span class="badge">Epoch {{ store.detail.run.execution_epoch ?? "-" }}</span>
+                <span class="badge">Phase {{ managedBinding?.current_phase ?? "-" }}</span>
+                <span class="badge">Attempt {{ managedBinding?.current_attempt ?? "-" }}</span>
+              </div>
+              <p class="m-0 text-xs text-fg-muted">
+                This immutable pipeline run is controlled by its correlated orchestration. Direct
+                pause, cancel, retry, and deletion are disabled so the binding remains authoritative.
+              </p>
+              <div class="flex flex-wrap items-end gap-2">
+                <label class="grid min-w-[260px] flex-1 gap-1 text-xs text-fg-muted">
+                  <span>Reason for intent</span>
+                  <input v-model="managedReason" class="input" placeholder="Required operator reason" />
+                </label>
+                <button
+                  v-for="control in managedControls"
+                  :key="control.name"
+                  class="btn btn-sm"
+                  :class="{ 'btn-danger': control.effect === 'terminate' }"
+                  :disabled="!managedReason.trim() || managedIntentBusy"
+                  @click="dispatchManagedIntent(control.name)"
+                >
+                  <span>{{ control.name }}</span>
+                </button>
+                <button class="btn btn-sm" @click="openOrchestration">Full timeline</button>
+              </div>
+            </section>
 
             <section class="grid gap-2 border-t border-border-subtle pt-3">
               <div class="flex items-baseline justify-between gap-2">
@@ -195,7 +248,11 @@
                 run now.
               </p>
               <div class="flex gap-2">
+                <button v-if="managedBindingId" class="btn btn-primary btn-sm" @click="openOrchestration">
+                  <span>Resolve through orchestration</span>
+                </button>
                 <button
+                  v-else
                   class="btn btn-primary btn-sm"
                   :disabled="resolving"
                   @click="resolveInquiry('continue')"
@@ -204,6 +261,7 @@
                   <span>Continue</span>
                 </button>
                 <button
+                  v-if="!managedBindingId"
                   class="btn btn-danger btn-sm"
                   :disabled="resolving"
                   @click="resolveInquiry('abort')"
@@ -286,7 +344,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
@@ -300,6 +358,7 @@ import StatusBadge from "../components/shared/StatusBadge.vue";
 import { usePipelineRunsStore } from "../../ui/adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOrchestrationsStore } from "../../ui/adapters/pinia/orchestrations";
 import type {
   PipelineMemberAttempt,
   PipelineRunDetail,
@@ -311,11 +370,25 @@ import { countActiveRuns, isActiveRunStatus } from "../../core/utils/status";
 const store = usePipelineRunsStore();
 const workflows = useWorkflowsStore();
 const app = useAppStore();
+const orchestrations = useOrchestrationsStore();
 const selectedPipelineId = ref("");
 const starting = ref(false);
 const resolving = ref(false);
 const retrying = ref<string | null>(null);
 const runControlBusy = ref(false);
+const managedIntentBusy = ref(false);
+const managedReason = ref("");
+
+const managedBindingId = computed(() => store.detail?.run.orchestration_binding_id ?? null);
+const managedBinding = computed(() =>
+  orchestrations.selected?.id === managedBindingId.value ? orchestrations.selected : null,
+);
+const managedControls = computed(() =>
+  Object.entries(managedBinding.value?.policy.intents ?? {})
+    .filter(([, policy]) => ["terminate", "suspend", "resume", "supersede", "signal"].includes(policy.effect))
+    .sort(([, left], [, right]) => right.priority - left.priority)
+    .map(([name, policy]) => ({ name, effect: policy.effect })),
+);
 
 // a member with the `inquire` failure mode paused the run; see PipelineDefaults.default_failure_mode
 // Recorded on `state.pending_inquiry` while status is
@@ -419,10 +492,40 @@ function openMemberRunById(workflowRunId: string): void {
 }
 
 function isRetryableAttempt(attempt: PipelineMemberAttempt): boolean {
+  if (managedBindingId.value) {return false;}
   if (!store.detail || !["failed", "timed_out"].includes(attempt.status)) {return false;}
   return !store.detail.attempts.some(
     (candidate) => candidate.member_key === attempt.member_key && candidate.attempt > attempt.attempt,
   );
+}
+
+async function openOrchestration(): Promise<void> {
+  if (!managedBindingId.value) {return;}
+  await orchestrations.select(managedBindingId.value);
+  app.activeTab = "Orchestrations";
+}
+
+async function dispatchManagedIntent(intent: string): Promise<void> {
+  if (!managedBindingId.value || !managedReason.value.trim() || managedIntentBusy.value) {return;}
+  managedIntentBusy.value = true;
+
+  try {
+    if (orchestrations.selectedId !== managedBindingId.value) {
+      await orchestrations.select(managedBindingId.value);
+    }
+
+    await orchestrations.dispatch(intent, managedReason.value.trim());
+    managedReason.value = "";
+    const pipelineRunId = store.detail?.run.id;
+
+    if (pipelineRunId) {
+      await store.selectRun(pipelineRunId);
+    }
+  } catch (err) {
+    app.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    managedIntentBusy.value = false;
+  }
 }
 
 async function retryAttempt(attempt: PipelineMemberAttempt): Promise<void> {
@@ -499,4 +602,12 @@ onMounted(() => {
 
   void store.refresh();
 });
+
+watch(managedBindingId, (bindingId) => {
+  managedReason.value = "";
+
+  if (bindingId) {
+    void orchestrations.select(bindingId);
+  }
+}, { immediate: true });
 </script>

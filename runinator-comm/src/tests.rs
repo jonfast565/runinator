@@ -207,6 +207,32 @@ fn ui_event_round_trips_org_scope_and_accepts_legacy_unscoped_json() {
 }
 
 #[test]
+fn orchestration_ui_events_keep_target_identifiers() {
+    let orchestration_id = Uuid::now_v7();
+    let operation_id = Uuid::now_v7();
+    let adapter_id = Uuid::now_v7();
+    let events = [
+        UiEventKind::OrchestrationChanged { orchestration_id },
+        UiEventKind::ExternalOperationChanged {
+            operation_id,
+            orchestration_id,
+        },
+        UiEventKind::AdapterChanged { adapter_id },
+    ];
+
+    let values = events
+        .into_iter()
+        .map(|kind| serde_json::to_value(UiEvent::global(kind)).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(values[0]["type"], "orchestration_changed");
+    assert_eq!(values[0]["orchestration_id"], orchestration_id.to_string());
+    assert_eq!(values[1]["type"], "external_operation_changed");
+    assert_eq!(values[1]["operation_id"], operation_id.to_string());
+    assert_eq!(values[2]["type"], "adapter_changed");
+    assert_eq!(values[2]["adapter_id"], adapter_id.to_string());
+}
+
+#[test]
 fn legacy_web_service_announcements_get_safe_defaults() {
     let service_id = Uuid::now_v7();
     let raw = format!(

@@ -5,6 +5,8 @@
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { usePipelineRunsStore } from "../../../ui/adapters/pinia/pipeline-runs";
+import { useOrchestrationsStore } from "../../../ui/adapters/pinia/orchestrations";
 import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
@@ -17,11 +19,14 @@ import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, formatErrorMessage, pretty } from "../../../core/utils/format";
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type {
   ActionResultMetadata,
   DebugFrame,
+  ExternalOperation,
+  OrchestrationBinding,
   WorkflowNodeRun,
+  WorkspaceLease,
 } from "../../../core/domain/models";
 import { coerceDebugFrame } from "../../../core/domain/models/workflow-state";
 import {
@@ -36,6 +41,49 @@ import { useWorkflowTransitionStats } from "./useWorkflowTransitionStats";
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
 const app = useAppStore();
+const pipelineRuns = usePipelineRunsStore();
+const orchestrations = useOrchestrationsStore();
+
+const parentPipelineRunId = computed(() => workflows.workflowRunDetail?.run.pipeline_run_id ?? null);
+const parentPipelineRun = computed(() =>
+  pipelineRuns.detail?.run.id === parentPipelineRunId.value ? pipelineRuns.detail.run : null,
+);
+const managedBindingId = computed(() => parentPipelineRun.value?.orchestration_binding_id ?? null);
+const managedBinding = computed<OrchestrationBinding | null>(() => {
+  const selected = orchestrations.selected;
+  return selected?.id === managedBindingId.value ? selected : null;
+});
+const managedWorkspaces = computed<WorkspaceLease[]>(() =>
+  orchestrations.selectedId === managedBindingId.value
+    ? orchestrations.workspaces
+    : [],
+);
+const managedOperations = computed<ExternalOperation[]>(() => {
+  const runId = workflows.workflowRunDetail?.run.id;
+  const operations = orchestrations.operations as unknown as ExternalOperation[];
+
+  return orchestrations.selectedId === managedBindingId.value
+    ? operations.filter((operation) => operation.workflow_run_id === runId)
+    : [];
+});
+
+async function openOrchestration(): Promise<void> {
+  if (!managedBindingId.value) {return;}
+  await orchestrations.select(managedBindingId.value);
+  app.activeTab = "Orchestrations";
+}
+
+watch(parentPipelineRunId, (pipelineRunId) => {
+  if (pipelineRunId) {
+    void pipelineRuns.selectRun(pipelineRunId);
+  }
+}, { immediate: true });
+
+watch(managedBindingId, (bindingId) => {
+  if (bindingId) {
+    void orchestrations.select(bindingId);
+  }
+}, { immediate: true });
 
 const renaming = ref(false);
 const renameDraft = ref("");

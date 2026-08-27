@@ -3,7 +3,7 @@
       <h2 class="run-detail-heading">
         <template v-if="!renaming">
           <span>{{ runHeadingLabel }}</span>
-          <button class="btn btn-danger btn-sm" @click="deleteRun" title="Permanently delete run">
+          <button v-if="!managedBindingId" class="btn btn-danger btn-sm" @click="deleteRun" title="Permanently delete run">
             Delete
           </button>
           <button
@@ -38,6 +38,38 @@
       </div>
     </div>
 
+    <div v-if="managedBindingId" class="run-summary-card">
+      <div class="summary-row">
+        <span class="summary-label">Managed by orchestration</span>
+        <span>{{ managedBindingId }}</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-label">Execution</span>
+        <span>
+          Generation {{ managedBinding?.generation ?? "-" }} · Epoch
+          {{ parentPipelineRun?.execution_epoch ?? "-" }} · Phase
+          {{ managedBinding?.current_phase ?? "-" }} · Attempt
+          {{ managedBinding?.current_attempt ?? "-" }}
+        </span>
+      </div>
+      <div v-if="parentPipelineRun?.start_member" class="summary-row">
+        <span class="summary-label">Starting member</span>
+        <span>{{ parentPipelineRun.start_member }}</span>
+      </div>
+      <div v-if="managedWorkspaces.length" class="summary-row">
+        <span class="summary-label">Workspace affinity</span>
+        <span>{{ managedWorkspaces.map((workspace) => `${workspace.scope}:${workspace.status}`).join(", ") }}</span>
+      </div>
+      <div v-if="managedOperations.length" class="summary-row">
+        <span class="summary-label">External operations</span>
+        <span>{{ managedOperations.map((operation) => `${operation.provider}.${operation.action}:${operation.status}`).join(", ") }}</span>
+      </div>
+      <div class="summary-row">
+        <span class="text-xs text-fg-muted">Runtime controls are routed through named intents on the binding.</span>
+        <button class="btn btn-primary btn-sm" @click="openOrchestration">Open orchestration</button>
+      </div>
+    </div>
+
     <div v-if="isTerminalRun && workflows.workflowRunDetail" class="run-summary-card">
       <div class="summary-row">
         <span class="summary-label">Final status</span>
@@ -64,14 +96,14 @@
         </span>
       </div>
       <div class="summary-row">
-        <button class="btn" @click="workflows.replaySelectedWorkflowRun()">
+        <button v-if="!managedBindingId" class="btn" @click="workflows.replaySelectedWorkflowRun()">
           <Icon name="replay" />
           <span>Replay in Debug</span>
         </button>
       </div>
     </div>
 
-    <RunControlBar v-if="!isTerminalRun && workflows.workflowRunDetail" />
+    <RunControlBar v-if="!managedBindingId && !isTerminalRun && workflows.workflowRunDetail" />
 
     <div v-if="debugState?.enabled && !isTerminalRun" class="debug-panel">
       <div class="debug-panel-header">
@@ -133,6 +165,7 @@
           :node="node"
           :run="workflows.workflowRunDetail.run"
           show-editor-actions
+          :runtime-actions="!managedBindingId"
           @action="onNodeAction"
         />
       </template>

@@ -664,6 +664,9 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
+    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+        return reply;
+    }
     match operations.cancel(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
@@ -693,6 +696,9 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
+    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+        return reply;
+    }
     match operations.pause(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
@@ -720,6 +726,9 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
+        return reply;
+    }
+    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
         return reply;
     }
     match operations.resume(workflow_run_id).await {
@@ -753,6 +762,9 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
+    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+        return reply;
+    }
     let from_step_id = body.and_then(|Json(request)| request.from_step_id);
     match operations.replay(workflow_run_id, from_step_id).await {
         Ok(run) => (
@@ -763,6 +775,27 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
             ))),
         ),
         Err(err) => bad_request(err.to_string()),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    let workflow_run = match db.fetch_workflow_run(workflow_run_id).await {
+        Ok(run) => run,
+        Err(error) => return Err(api_error(error.to_string())),
+    };
+    let Some(pipeline_run_id) = workflow_run.and_then(|run| run.pipeline_run_id) else {
+        return Ok(());
+    };
+    match db.fetch_pipeline_run(pipeline_run_id).await {
+        Ok(Some(run)) if run.orchestration_binding_id.is_some() => Err(bad_request(
+            "This workflow run belongs to a correlated orchestration; send a named intent to the orchestration instead",
+        )),
+        Ok(_) => Ok(()),
+        Err(error) => Err(api_error(error.to_string())),
     }
 }
 
@@ -1033,6 +1066,9 @@ pub async fn delete_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Edit)
         .await
     {
+        return reply;
+    }
+    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
         return reply;
     }
     match operations.delete(workflow_run_id).await {

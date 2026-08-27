@@ -798,6 +798,16 @@ pub enum UiEventKind {
         run_id: Uuid,
     },
     PipelineRunActivity,
+    OrchestrationChanged {
+        orchestration_id: Uuid,
+    },
+    AdapterChanged {
+        adapter_id: Uuid,
+    },
+    ExternalOperationChanged {
+        operation_id: Uuid,
+        orchestration_id: Uuid,
+    },
     NotificationCreated {
         notification_id: Uuid,
     },

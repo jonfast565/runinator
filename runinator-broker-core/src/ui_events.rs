@@ -96,6 +96,41 @@ pub fn emit_pipeline_run(events: &UiEventPublisher, run_id: Uuid, org_id: Option
     );
 }
 
+pub fn emit_orchestration(events: &UiEventPublisher, orchestration_id: Uuid, org_id: Option<Uuid>) {
+    emit(
+        events,
+        AppEvent::new(
+            org_id,
+            AppEventKind::OrchestrationChanged { orchestration_id },
+        ),
+    );
+}
+
+pub fn emit_adapter(events: &UiEventPublisher, adapter_id: Uuid, org_id: Option<Uuid>) {
+    emit(
+        events,
+        AppEvent::new(org_id, AppEventKind::AdapterChanged { adapter_id }),
+    );
+}
+
+pub fn emit_external_operation(
+    events: &UiEventPublisher,
+    operation_id: Uuid,
+    orchestration_id: Uuid,
+    org_id: Option<Uuid>,
+) {
+    emit(
+        events,
+        AppEvent::new(
+            org_id,
+            AppEventKind::ExternalOperationChanged {
+                operation_id,
+                orchestration_id,
+            },
+        ),
+    );
+}
+
 pub fn emit_workflows_changed(events: &UiEventPublisher, org_id: Option<Uuid>) {
     emit(events, AppEvent::new(org_id, UiEventKind::WorkflowsChanged));
 }

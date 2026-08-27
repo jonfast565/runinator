@@ -110,7 +110,8 @@ pub async fn run_effect_result_consumer<
         };
         if hold_ambiguity {
             match record_external_operation_result(db.as_ref(), &delivery.result).await {
-                Ok(()) => {
+                Ok(changed) => {
+                    emit_external_operation_change(db.as_ref(), &publisher, changed).await;
                     if let Err(err) = broker
                         .ack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
                         .await
@@ -208,17 +209,20 @@ pub async fn run_effect_result_consumer<
 
         match settled {
             Ok(applied) => {
-                if let Err(err) =
-                    record_external_operation_result(db.as_ref(), &delivery.result).await
-                {
-                    error!(error = %err, effect_id = %delivery.result.effect_id, "failed to record external operation receipt");
-                    if let Err(err) = broker
-                        .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
-                        .await
-                    {
-                        warn!(error = %err, "failed to requeue external operation receipt");
+                match record_external_operation_result(db.as_ref(), &delivery.result).await {
+                    Ok(changed) => {
+                        emit_external_operation_change(db.as_ref(), &publisher, changed).await;
                     }
-                    continue;
+                    Err(err) => {
+                        error!(error = %err, effect_id = %delivery.result.effect_id, "failed to record external operation receipt");
+                        if let Err(err) = broker
+                            .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                            .await
+                        {
+                            warn!(error = %err, "failed to requeue external operation receipt");
+                        }
+                        continue;
+                    }
                 }
                 if applied {
                     info!(effect_id = %delivery.result.effect_id, "settled workflow VM effect");
@@ -271,15 +275,15 @@ async fn hold_ambiguous_at_least_once<T: OrchestrationStore>(
 async fn record_external_operation_result<T: OrchestrationStore>(
     db: &T,
     result: &runinator_comm::EffectResult,
-) -> Result<(), runinator_models::errors::SendableError> {
+) -> Result<Option<(uuid::Uuid, uuid::Uuid)>, runinator_models::errors::SendableError> {
     let Some(operation) = db
         .fetch_external_operation_for_effect(result.effect_id)
         .await?
     else {
-        return Ok(());
+        return Ok(None);
     };
     if operation.attempt > i64::from(result.attempt) {
-        return Ok(());
+        return Ok(None);
     }
     let current = db
         .fetch_current_orchestration_binding_for_workflow_run(result.workflow_run_id)
@@ -326,7 +330,7 @@ async fn record_external_operation_result<T: OrchestrationStore>(
                 }),
             )
         }
-        EffectResultKind::Chunk { .. } | EffectResultKind::Artifact { .. } => return Ok(()),
+        EffectResultKind::Chunk { .. } | EffectResultKind::Artifact { .. } => return Ok(None),
     };
     let updated = db
         .update_external_operation(
@@ -354,7 +358,20 @@ async fn record_external_operation_result<T: OrchestrationStore>(
         })
         .await?;
     }
-    Ok(())
+    Ok(updated.map(|operation| (operation.id, operation.binding_id)))
+}
+
+async fn emit_external_operation_change<T: OrchestrationStore>(
+    db: &T,
+    publisher: &crate::events::EventSender,
+    changed: Option<(uuid::Uuid, uuid::Uuid)>,
+) {
+    let Some((operation_id, binding_id)) = changed else {
+        return;
+    };
+    if let Ok(Some(binding)) = db.fetch_orchestration_binding(binding_id).await {
+        crate::events::emit_external_operation(publisher, operation_id, binding_id, binding.org_id);
+    }
 }
 
 /// Re-arm `effect_id` under its node's retry policy, returning whether it was re-armed.

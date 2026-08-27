@@ -40,6 +40,7 @@ pub async fn run_correlated_orchestration_reducer<
 >(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
+    publisher: crate::events::EventSender,
     instance: String,
     settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
@@ -63,6 +64,7 @@ pub async fn run_correlated_orchestration_reducer<
             Ok(bindings) => {
                 for binding in bindings {
                     let binding_id = binding.id;
+                    let org_id = binding.org_id;
                     match service.reduce_binding(binding, &instance).await {
                         Ok(binding) => {
                             if let Err(err) =
@@ -76,6 +78,7 @@ pub async fn run_correlated_orchestration_reducer<
                             warn!(%binding_id, error = %err, "failed to reduce orchestration binding")
                         }
                     }
+                    crate::events::emit_orchestration(&publisher, binding_id, org_id);
                     if let Err(err) = db
                         .release_orchestration_binding_lease(binding_id, instance.clone())
                         .await
@@ -118,6 +121,11 @@ pub async fn run_correlated_orchestration_reducer<
                         .await
                     {
                         warn!(command_id = %command.id, error = %err, "failed to settle orchestration command");
+                    }
+                    if let Ok(Some(binding)) =
+                        db.fetch_orchestration_binding(command.binding_id).await
+                    {
+                        crate::events::emit_orchestration(&publisher, binding.id, binding.org_id);
                     }
                 }
             }
@@ -1105,6 +1113,7 @@ pub async fn run_workflow_effect_dispatcher<
 >(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
+    publisher: crate::events::EventSender,
     instance: String,
     settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
@@ -1201,8 +1210,10 @@ pub async fn run_workflow_effect_dispatcher<
                         .await
                     {
                         Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
-                            if let Some(operation) = operation
-                                && let Err(error) = db
+                            if let Some(operation) = operation {
+                                let operation_id = operation.id;
+                                let binding_id = operation.binding_id;
+                                if let Err(error) = db
                                     .update_external_operation(
                                         operation.id,
                                         ExternalOperationUpdate {
@@ -1215,8 +1226,18 @@ pub async fn run_workflow_effect_dispatcher<
                                         now,
                                     )
                                     .await
-                            {
-                                warn!(error = %error, operation_id = %operation.id, "failed to mark external operation running");
+                                {
+                                    warn!(error = %error, %operation_id, "failed to mark external operation running");
+                                } else if let Ok(Some(binding)) =
+                                    db.fetch_orchestration_binding(binding_id).await
+                                {
+                                    crate::events::emit_external_operation(
+                                        &publisher,
+                                        operation_id,
+                                        binding_id,
+                                        binding.org_id,
+                                    );
+                                }
                             }
                             // armed after publication, never before: the backstop must not be able
                             // to stop the work it protects.

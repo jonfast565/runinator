@@ -11,6 +11,7 @@ use axum::{
 };
 use chrono::Utc;
 use runinator_adapter_contract::{AdapterRequest, AdapterResponse};
+use runinator_broker_core::{UiEventPublisher, emit_adapter};
 use runinator_engine::services::PipelineOperations;
 use runinator_models::{
     auth::AuthContext,
@@ -378,6 +379,7 @@ pub async fn revisions<T: OrchestrationStore + RbacStore>(
 
 pub async fn create<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<AdapterApplyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -419,16 +421,20 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
         )
         .await
     {
-        Ok((adapter, _)) => (
-            StatusCode::CREATED,
-            Json(ApiResponse::OrchestrationAdapter(adapter)),
-        ),
+        Ok((adapter, _)) => {
+            emit_adapter(&publisher, adapter.id, Some(org_id));
+            (
+                StatusCode::CREATED,
+                Json(ApiResponse::OrchestrationAdapter(adapter)),
+            )
+        }
         Err(error) => bad_request(error.to_string()),
     }
 }
 
 pub async fn update<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(request): Json<AdapterApplyRequest>,
@@ -473,10 +479,13 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
         )
         .await
     {
-        Ok(Some((adapter, _))) => (
-            StatusCode::OK,
-            Json(ApiResponse::OrchestrationAdapter(adapter)),
-        ),
+        Ok(Some((adapter, _))) => {
+            emit_adapter(&publisher, adapter.id, Some(adapter.org_id));
+            (
+                StatusCode::OK,
+                Json(ApiResponse::OrchestrationAdapter(adapter)),
+            )
+        }
         Ok(None) => (
             StatusCode::CONFLICT,
             Json(ApiResponse::ApiError(runinator_ws_core::models::ApiError {
@@ -492,21 +501,26 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
 
 pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(request): Json<AdapterEnableRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_adapter(db.as_ref(), &ctx, id, Action::Edit).await {
-        return reply;
-    }
+    let authorized = match authorized_adapter(db.as_ref(), &ctx, id, Action::Edit).await {
+        Ok(adapter) => adapter,
+        Err(reply) => return reply,
+    };
     match db
         .set_orchestration_adapter_enabled(id, request.enabled, Utc::now())
         .await
     {
-        Ok(Some(adapter)) => (
-            StatusCode::OK,
-            Json(ApiResponse::OrchestrationAdapter(adapter)),
-        ),
+        Ok(Some(adapter)) => {
+            emit_adapter(&publisher, adapter.id, Some(authorized.org_id));
+            (
+                StatusCode::OK,
+                Json(ApiResponse::OrchestrationAdapter(adapter)),
+            )
+        }
         Ok(None) => not_found("adapter not found"),
         Err(error) => api_error(error.to_string()),
     }
@@ -514,20 +528,25 @@ pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
 
 pub async fn remove<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_adapter(db.as_ref(), &ctx, id, Action::Own).await {
-        return reply;
-    }
+    let adapter = match authorized_adapter(db.as_ref(), &ctx, id, Action::Own).await {
+        Ok(adapter) => adapter,
+        Err(reply) => return reply,
+    };
     match db.delete_orchestration_adapter(id).await {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(ApiResponse::TaskResponse(TaskResponse {
-                success: true,
-                message: "adapter deleted".into(),
-            })),
-        ),
+        Ok(true) => {
+            emit_adapter(&publisher, id, Some(adapter.org_id));
+            (
+                StatusCode::OK,
+                Json(ApiResponse::TaskResponse(TaskResponse {
+                    success: true,
+                    message: "adapter deleted".into(),
+                })),
+            )
+        }
         Ok(false) => {
             bad_request("an adapter that admitted bindings cannot be deleted; disable or clone it")
         }
@@ -726,7 +745,7 @@ pub async fn webhook<
     )
 }
 
-pub fn routes<T>(pool: Arc<T>) -> axum::Router
+pub fn routes<T>(pool: Arc<T>, publisher: UiEventPublisher) -> axum::Router
 where
     T: OrchestrationStore
         + RbacStore
@@ -757,4 +776,5 @@ where
         .route("/orchestrations/adapters/{id}/test", post(test::<T>))
         .route("/webhooks/orchestration/{adapter_id}", post(webhook::<T>))
         .layer(Extension(pool))
+        .layer(Extension(publisher))
 }

@@ -19,4 +19,7 @@ export interface PipelineRun {
   trigger_actor_replica_id?: string | null;
   trigger_actor_display_name?: string | null;
   trigger_metadata?: JsonRecord;
+  orchestration_binding_id?: string | null;
+  execution_epoch?: number | null;
+  start_member?: string | null;
 }

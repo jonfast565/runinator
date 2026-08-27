@@ -19,4 +19,6 @@ export interface RunSummary {
   name?: string | null;
   /** optional correlation key, matched by `await workflow ... key` joins. */
   correlation_key?: string | null;
+  /** Parent pipeline execution when this workflow is a pipeline member. */
+  pipeline_run_id?: string | null;
 }

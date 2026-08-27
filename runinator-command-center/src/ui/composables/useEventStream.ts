@@ -6,6 +6,7 @@ import { useSchedulesStore } from "../../ui/adapters/pinia/schedules";
 import { usePipelineRunsStore } from "../../ui/adapters/pinia/pipeline-runs";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import { useOrchestrationsStore } from "../../ui/adapters/pinia/orchestrations";
 import { createEventStreamRouter } from "../../core/realtime/event-router";
 import { EventStreamClient } from "../../core/realtime/event-stream-client";
 
@@ -16,6 +17,7 @@ export function useEventStream() {
   const notifications = useNotificationsStore();
   const schedules = useSchedulesStore();
   const pipelineRuns = usePipelineRunsStore();
+  const orchestrations = useOrchestrationsStore();
   const auth = useAuthStore();
 
   function refreshResourcesIfActive() {
@@ -49,6 +51,11 @@ export function useEventStream() {
 
     if (app.activeTab === "PipelineRuns") {
       void pipelineRuns.refresh();
+    }
+
+    if (app.activeTab === "Orchestrations") {
+      void orchestrations.refresh();
+      void orchestrations.refreshAdapters();
     }
 
     refreshResourcesIfActive();
@@ -91,6 +98,22 @@ export function useEventStream() {
     refreshPipelineDetailIfMember: (runId: string) => {
       if (app.activeTab === "PipelineRuns") {
         void pipelineRuns.refreshDetailIfMember(runId);
+      }
+    },
+    refreshOrchestrationsIfActive: (orchestrationId?: string) => {
+      if (app.activeTab !== "Orchestrations") {
+        return;
+      }
+
+      if (orchestrationId && orchestrations.selectedId === orchestrationId) {
+        void orchestrations.select(orchestrationId);
+      } else {
+        void orchestrations.refresh();
+      }
+    },
+    refreshAdaptersIfActive: () => {
+      if (app.activeTab === "Orchestrations") {
+        void orchestrations.refreshAdapters();
       }
     },
   }));
