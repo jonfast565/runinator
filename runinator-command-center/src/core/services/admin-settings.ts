@@ -7,6 +7,7 @@ import {
   saveAuthSettings,
   saveServerSettings,
   type ServerSettingDefinition,
+  type RuntimeSettingDefinition,
   type ServerSettingsValues,
 } from "../api/commandCenterApi";
 import { createStore } from "./event-bus";
@@ -73,6 +74,7 @@ export interface AdminSettingsState {
   maxRefreshes: number;
   serverValues: ServerSettingsValues;
   serverCatalog: ServerSettingDefinition[];
+  runtimeCatalog: RuntimeSettingDefinition[];
 }
 
 export function createAdminSettingsService(app: AppService) {
@@ -82,6 +84,7 @@ export function createAdminSettingsService(app: AppService) {
     maxRefreshes: 100,
     serverValues: {},
     serverCatalog: [],
+    runtimeCatalog: [],
   });
 
   const service = {
@@ -138,6 +141,7 @@ export function createAdminSettingsService(app: AppService) {
         ...state,
         serverValues: server.values,
         serverCatalog: server.catalog,
+        runtimeCatalog: server.runtime_catalog ?? [],
         maxRefreshes: server.values.authentication.max_refreshes,
       }));
     },
@@ -239,6 +243,7 @@ export function createAdminSettingsService(app: AppService) {
         maxRefreshes: 100,
         serverValues: {},
         serverCatalog: [],
+        runtimeCatalog: [],
       }));
     },
   };

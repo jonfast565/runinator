@@ -56,6 +56,8 @@ pub struct OrchestrationSettings {
     pub agent_directive_poll_interval_ms: u64,
     pub workflow_vm_poll_interval_ms: u64,
     pub effect_dispatch_poll_interval_ms: u64,
+    pub correlated_reducer_poll_interval_ms: u64,
+    pub correlated_reducer_lease_seconds: u64,
     pub action_dispatch_lease_seconds: u64,
     pub action_deadline_grace_seconds: u64,
     pub timer_arm_horizon_ms: u64,
@@ -75,6 +77,8 @@ impl Default for OrchestrationSettings {
             agent_directive_poll_interval_ms: 1_000,
             workflow_vm_poll_interval_ms: 250,
             effect_dispatch_poll_interval_ms: 250,
+            correlated_reducer_poll_interval_ms: 250,
+            correlated_reducer_lease_seconds: 60,
             action_dispatch_lease_seconds: 60,
             action_deadline_grace_seconds: 30,
             timer_arm_horizon_ms: 1_000,
@@ -146,6 +150,21 @@ pub struct ServerSettingDefinition {
     pub maximum: u64,
     pub usual_minimum: u64,
     pub usual_maximum: u64,
+}
+
+/// Read-only process/bootstrap configuration shown beside persisted operating policy. Sensitive
+/// values are represented only by their configuration state; changing these requires restarting
+/// the process that owns them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeSettingDefinition {
+    pub key: String,
+    pub section: String,
+    pub label: String,
+    pub description: String,
+    pub value: String,
+    pub source: String,
+    pub restart_required: bool,
+    pub sensitive: bool,
 }
 
 macro_rules! setting {
@@ -240,6 +259,30 @@ pub fn server_setting_catalog() -> Vec<ServerSettingDefinition> {
             10_000,
             50,
             1_000
+        ),
+        setting!(
+            "orchestration.correlated_reducer_poll_interval_ms",
+            "Orchestration",
+            "Correlated reducer poll interval",
+            "Backstop delay between correlated-binding and internal command outbox scans.",
+            "ms",
+            250,
+            10,
+            10_000,
+            50,
+            1_000
+        ),
+        setting!(
+            "orchestration.correlated_reducer_lease_seconds",
+            "Orchestration",
+            "Correlated reducer lease",
+            "Lease held while one engine replica reduces a binding or executes its internal command.",
+            "seconds",
+            60,
+            5,
+            3_600,
+            30,
+            300
         ),
         setting!(
             "orchestration.action_dispatch_lease_seconds",
@@ -525,6 +568,12 @@ impl ServerSettings {
             }
             "orchestration.effect_dispatch_poll_interval_ms" => {
                 self.orchestration.effect_dispatch_poll_interval_ms
+            }
+            "orchestration.correlated_reducer_poll_interval_ms" => {
+                self.orchestration.correlated_reducer_poll_interval_ms
+            }
+            "orchestration.correlated_reducer_lease_seconds" => {
+                self.orchestration.correlated_reducer_lease_seconds
             }
             "orchestration.action_dispatch_lease_seconds" => {
                 self.orchestration.action_dispatch_lease_seconds

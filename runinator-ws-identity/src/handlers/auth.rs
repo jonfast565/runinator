@@ -19,7 +19,9 @@ use runinator_models::auth::{
     UpdateUserRequest, User,
 };
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
-use runinator_models::server_settings::{ServerSettings, server_setting_catalog};
+use runinator_models::server_settings::{
+    RuntimeSettingDefinition, ServerSettings, server_setting_catalog,
+};
 use runinator_models::value::Value;
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
@@ -466,6 +468,128 @@ pub async fn update_auth_settings<T: AuthStore + RbacStore + RuntimeStore + Sett
 struct ServerSettingsResponse {
     values: ServerSettings,
     catalog: Vec<runinator_models::server_settings::ServerSettingDefinition>,
+    runtime_catalog: Vec<RuntimeSettingDefinition>,
+}
+
+fn runtime_setting_catalog() -> Vec<RuntimeSettingDefinition> {
+    fn setting(
+        key: &str,
+        label: &str,
+        description: &str,
+        env_name: &str,
+        default: &str,
+        sensitive: bool,
+    ) -> RuntimeSettingDefinition {
+        let configured = std::env::var(env_name)
+            .ok()
+            .filter(|value| !value.is_empty());
+        let value = if sensitive {
+            if configured.is_some() {
+                "configured".into()
+            } else {
+                "not configured".into()
+            }
+        } else {
+            configured.clone().unwrap_or_else(|| default.into())
+        };
+        RuntimeSettingDefinition {
+            key: key.into(),
+            section: "Adapter & Workspace Runtime".into(),
+            label: label.into(),
+            description: description.into(),
+            value,
+            source: if configured.is_some() {
+                env_name.into()
+            } else {
+                "default".into()
+            },
+            restart_required: true,
+            sensitive,
+        }
+    }
+
+    vec![
+        setting(
+            "runtime.adapter_host_url",
+            "Adapter host URL",
+            "Loopback URL used by the web service to reach the isolated adapter host.",
+            "RUNINATOR_ADAPTER_HOST_URL",
+            "http://127.0.0.1:8790",
+            false,
+        ),
+        setting(
+            "runtime.adapter_host_token",
+            "Adapter host token",
+            "Loopback authentication token. Its value is never returned by the settings API.",
+            "RUNINATOR_ADAPTER_HOST_TOKEN",
+            "not configured",
+            true,
+        ),
+        setting(
+            "runtime.adapter_plugin_paths",
+            "Adapter plugin paths",
+            "Filesystem search paths read by the adapter host during startup and reload.",
+            "RUNINATOR_ADAPTER_PLUGIN_PATHS",
+            "none (built-ins only)",
+            false,
+        ),
+        setting(
+            "runtime.adapter_webhook_body_limit",
+            "Webhook body limit",
+            "Maximum raw provider request size accepted by the web service, in bytes.",
+            "RUNINATOR_ADAPTER_WEBHOOK_BODY_LIMIT",
+            "1048576",
+            false,
+        ),
+        setting(
+            "runtime.adapter_webhook_header_allowlist",
+            "Webhook header allowlist",
+            "Only these lower-cased request headers are forwarded to adapter verification.",
+            "RUNINATOR_ADAPTER_WEBHOOK_HEADER_ALLOWLIST",
+            "authorization,content-type,x-runinator-signature,x-hub-signature-256,x-github-delivery,x-github-event,x-atlassian-webhook-identifier",
+            false,
+        ),
+        setting(
+            "runtime.adapter_plugin_timeout_ms",
+            "Adapter plugin timeout",
+            "Maximum lifetime of one disposable plugin child process, in milliseconds.",
+            "RUNINATOR_ADAPTER_PLUGIN_TIMEOUT_MS",
+            "5000",
+            false,
+        ),
+        setting(
+            "runtime.adapter_body_limit_bytes",
+            "Adapter request limit",
+            "Maximum serialized request size accepted by the adapter host, in bytes.",
+            "RUNINATOR_ADAPTER_BODY_LIMIT_BYTES",
+            "1048576",
+            false,
+        ),
+        setting(
+            "runtime.adapter_output_limit_bytes",
+            "Adapter output limit",
+            "Maximum metadata or normalized output accepted from a plugin child, in bytes.",
+            "RUNINATOR_ADAPTER_OUTPUT_LIMIT_BYTES",
+            "1048576",
+            false,
+        ),
+        setting(
+            "runtime.adapter_event_limit",
+            "Adapter event limit",
+            "Maximum normalized events accepted from one provider delivery.",
+            "RUNINATOR_ADAPTER_EVENT_LIMIT",
+            "16",
+            false,
+        ),
+        setting(
+            "runtime.workspace_root",
+            "Worker workspace root",
+            "Root beneath which each worker resolves opaque workspace keys. A missing value uses that worker's platform app-data directory.",
+            "RUNINATOR_WORKSPACE_ROOT",
+            "worker platform default",
+            false,
+        ),
+    ]
 }
 
 pub async fn server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
@@ -479,6 +603,7 @@ pub async fn server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingSt
         Ok(values) => ok_value(&ServerSettingsResponse {
             values,
             catalog: server_setting_catalog(),
+            runtime_catalog: runtime_setting_catalog(),
         }),
         Err(err) => api_error(err.to_string()),
     }
@@ -499,6 +624,7 @@ pub async fn update_server_settings<T: AuthStore + RbacStore + RuntimeStore + Se
         Ok(()) => ok_value(&ServerSettingsResponse {
             values: settings,
             catalog: server_setting_catalog(),
+            runtime_catalog: runtime_setting_catalog(),
         }),
         Err(err) => api_error(err.to_string()),
     }

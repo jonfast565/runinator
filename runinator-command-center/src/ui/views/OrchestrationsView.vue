@@ -17,6 +17,7 @@
         <select v-model="filters.status" class="input" @change="refreshInstances"><option value="">All statuses</option><option v-for="item in statuses" :key="item" :value="item">{{ item }}</option></select>
         <input v-model="filters.scope" class="input" placeholder="Scope" @keyup.enter="refreshInstances" />
         <input v-model="filters.correlation_key" class="input min-w-56" placeholder="Correlation key" @keyup.enter="refreshInstances" />
+        <input v-model="filters.pipeline_id" class="input min-w-56" placeholder="Pipeline ID" @keyup.enter="refreshInstances" />
         <input v-model="filters.adapter_id" class="input min-w-56" placeholder="Adapter ID" @keyup.enter="refreshInstances" />
         <button class="button" :disabled="store.loading" @click="refreshInstances">Refresh</button>
       </div>
@@ -40,7 +41,17 @@
             <div v-if="activeInstanceTab === 'Timeline'" class="space-y-2">
               <article v-for="event in store.events" :key="event.id" class="rounded border border-border p-3 text-sm"><div class="flex justify-between gap-3"><strong>#{{ event.sequence }} {{ event.winner || "observed" }}</strong><span class="text-fg-muted">{{ event.disposition }}</span></div><p class="mt-1 text-xs text-fg-muted">matched: {{ event.matched_intents.join(", ") || "none" }} · suppressed: {{ event.suppressed_intents.join(", ") || "none" }}</p><pre class="mt-2 overflow-auto text-xs">{{ pretty(event.detail) }}</pre></article>
             </div>
-            <pre v-else-if="activeInstanceTab === 'Epochs'" class="overflow-auto text-xs">{{ pretty(store.epochs) }}</pre>
+            <div v-else-if="activeInstanceTab === 'Epochs'" class="space-y-2">
+              <article v-for="epoch in store.epochs" :key="epoch.id" class="rounded border border-border p-3 text-sm">
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                  <div><strong>Epoch {{ epoch.epoch }}</strong><p class="text-xs text-fg-muted">starts at {{ epoch.start_member || "pipeline entry" }} · {{ epoch.reason }}</p></div>
+                  <span class="rounded bg-surface-raised px-2 py-1 text-xs">{{ epoch.status }}</span>
+                </div>
+                <button v-if="epoch.pipeline_run_id" class="button mt-3" @click="openPipelineRun(epoch.pipeline_run_id)">Open pipeline run</button>
+                <details class="mt-2"><summary class="cursor-pointer text-xs text-fg-muted">Epoch parameters</summary><pre class="mt-2 overflow-auto text-xs">{{ pretty(epoch.parameters) }}</pre></details>
+              </article>
+              <p v-if="store.epochs.length === 0" class="text-sm text-fg-muted">No execution epoch has been created.</p>
+            </div>
             <pre v-else-if="activeInstanceTab === 'Evidence'" class="overflow-auto text-xs">{{ pretty(store.evidence) }}</pre>
             <pre v-else-if="activeInstanceTab === 'Resources'" class="overflow-auto text-xs">{{ pretty(store.selected.resources) }}</pre>
             <pre v-else-if="activeInstanceTab === 'Budgets'" class="overflow-auto text-xs">{{ pretty({ consumed: store.selected.budgets, policy: store.selected.policy.budgets }) }}</pre>
@@ -112,7 +123,7 @@
       </div>
     </template>
 
-    <div v-if="intentName" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="intentName = null"><form class="w-full max-w-md rounded border border-border bg-surface p-4 shadow-xl" @submit.prevent="submitIntent"><h2 class="font-semibold">Dispatch {{ intentName }}</h2><label class="mt-3 block text-sm text-fg-muted">Reason</label><textarea v-model="reason" required class="input mt-1 min-h-24 w-full" /><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="intentName = null">Cancel</button><button class="button" type="submit">Dispatch</button></div></form></div>
+    <div v-if="intentName" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="intentName = null"><form class="w-full max-w-md rounded border border-border bg-surface p-4 shadow-xl" @submit.prevent="submitIntent"><h2 class="font-semibold">Dispatch {{ intentName }}</h2><label class="mt-3 block text-sm text-fg-muted">Reason</label><textarea v-model="reason" required class="input mt-1 min-h-24 w-full" /><label class="mt-3 block text-sm text-fg-muted">Payload JSON</label><textarea v-model="intentPayload" class="input mt-1 min-h-28 w-full font-mono text-xs" /><p v-if="intentPayloadError" class="mt-2 text-sm text-danger">{{ intentPayloadError }}</p><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="intentName = null">Cancel</button><button class="button" type="submit">Dispatch</button></div></form></div>
     <div v-if="requeueOpen" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="requeueOpen = false"><form class="w-full max-w-md rounded border border-border bg-surface p-4 shadow-xl" @submit.prevent="submitRequeue"><h2 class="font-semibold">Requeue next generation</h2><p class="mt-1 text-xs text-fg-muted">The next generation snapshots the current immutable pipeline and adapter revisions.</p><label class="mt-3 block text-sm text-fg-muted">Reason</label><textarea v-model="reason" required class="input mt-1 min-h-24 w-full" /><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="requeueOpen = false">Cancel</button><button class="button" type="submit">Requeue</button></div></form></div>
     <div v-if="resolvingOperation" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="resolvingOperation = null"><form class="w-full max-w-lg rounded border border-border bg-surface p-4" @submit.prevent="submitResolution"><h2 class="font-semibold">Resolve {{ resolvingOperation.provider }}.{{ resolvingOperation.action }}</h2><p class="mt-1 text-xs text-fg-muted">{{ resolution }} · {{ resolvingOperation.semantics }}</p><label class="mt-3 block text-sm">Reason<textarea v-model="resolutionReason" required class="input mt-1 min-h-20 w-full" /></label><label class="mt-3 block text-sm">Receipt JSON<textarea v-model="resolutionReceipt" class="input mt-1 min-h-28 w-full font-mono text-xs" /></label><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="resolvingOperation = null">Cancel</button><button class="button" type="submit">Apply resolution</button></div></form></div>
     <div v-if="adapterFormOpen" class="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" @click.self="adapterFormOpen = false"><form class="my-8 w-full max-w-2xl rounded border border-border bg-surface p-4" @submit.prevent="saveAdapter"><h2 class="font-semibold">{{ editingAdapterId ? 'Edit adapter' : 'New adapter' }}</h2><div class="mt-3 grid gap-3 md:grid-cols-2"><label class="text-sm">Name<input v-model="adapterForm.name" required class="input mt-1 w-full" /></label><label class="text-sm">Kind<select v-model="adapterForm.kind" required class="input mt-1 w-full" :disabled="!!editingAdapterId" @change="initializeKind"><option value="" disabled>Select a loaded kind</option><option v-for="kind in store.adapterKinds" :key="kind.kind" :value="kind.kind">{{ kind.display_name }} v{{ kind.version }}</option></select></label></div>
@@ -132,10 +143,14 @@ import type {
   JsonValue,
 } from "../../core/domain/models";
 import { fetchAdapterHealth, fetchAdapterKinds, reloadAdapterHost } from "../../core/services/orchestrations";
+import { useAppStore } from "../adapters/pinia/app";
 import { useOrchestrationsStore } from "../adapters/pinia/orchestrations";
+import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useSecretsStore } from "../adapters/pinia/secrets";
 
 const store = useOrchestrationsStore();
+const app = useAppStore();
+const pipelineRuns = usePipelineRunsStore();
 const secrets = useSecretsStore();
 const modes = ["Instances", "Adapters"] as const;
 type Mode = (typeof modes)[number];
@@ -145,8 +160,10 @@ const instanceTabs = ["Timeline", "Epochs", "Evidence", "Resources", "Budgets", 
 const adapterTabs = ["Configuration", "Revisions", "Test"];
 const activeInstanceTab = ref("Timeline");
 const activeAdapterTab = ref("Configuration");
-const filters = reactive({ status: "", scope: "", correlation_key: "", adapter_id: "" });
+const filters = reactive({ status: "", scope: "", correlation_key: "", pipeline_id: "", adapter_id: "" });
 const intentName = ref<string | null>(null);
+const intentPayload = ref("{}");
+const intentPayloadError = ref<string | null>(null);
 const requeueOpen = ref(false);
 const reason = ref("");
 const resolvingOperation = ref<ExternalOperation | null>(null);
@@ -274,6 +291,8 @@ function switchMode(next: Mode): void {
 function openIntent(name: string): void {
   intentName.value = name;
   reason.value = "";
+  intentPayload.value = "{}";
+  intentPayloadError.value = null;
 }
 
 function openRequeue(): void {
@@ -286,8 +305,22 @@ async function submitIntent(): Promise<void> {
     return;
   }
 
-  await store.dispatch(intentName.value, reason.value.trim());
+  let payload: unknown;
+
+  try {
+    payload = parseJson(intentPayload.value || "{}");
+  } catch (cause) {
+    intentPayloadError.value = cause instanceof Error ? cause.message : "Payload must be valid JSON.";
+    return;
+  }
+
+  await store.dispatch(intentName.value, reason.value.trim(), payload);
   intentName.value = null;
+}
+
+async function openPipelineRun(id: string): Promise<void> {
+  await pipelineRuns.selectRun(id);
+  app.activeTab = "PipelineRuns";
 }
 
 async function submitRequeue(): Promise<void> {

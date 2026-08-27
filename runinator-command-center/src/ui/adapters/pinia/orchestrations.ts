@@ -88,12 +88,12 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     return selected.value;
   }
 
-  async function dispatch(intent: string, reason: string): Promise<void> {
+  async function dispatch(intent: string, reason: string, payload: unknown = {}): Promise<void> {
     if (!selectedId.value) {
       return;
     }
 
-    await sendOrchestrationIntent(selectedId.value, intent, reason);
+    await sendOrchestrationIntent(selectedId.value, intent, reason, payload);
     await select(selectedId.value);
   }
 

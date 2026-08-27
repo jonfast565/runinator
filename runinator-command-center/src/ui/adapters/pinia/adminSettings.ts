@@ -14,6 +14,7 @@ export const useAdminSettingsStore = defineStore("adminSettings", () => {
     maxRefreshes: computed(() => state.value.maxRefreshes),
     serverValues: computed(() => state.value.serverValues),
     serverCatalog: computed(() => state.value.serverCatalog),
+    runtimeCatalog: computed(() => state.value.runtimeCatalog),
     refresh: () => adminSettingsService.refresh(),
     refreshServerSettings: () => adminSettingsService.refreshServerSettings(),
     refreshAuthSettings: () => adminSettingsService.refreshAuthSettings(),

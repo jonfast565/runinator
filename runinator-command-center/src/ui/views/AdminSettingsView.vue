@@ -38,7 +38,7 @@
               :class="{ 'rotate-90': serverOpen }"
             />
             <span>Server</span>
-            <span class="ml-auto rounded-[10px] border border-border bg-surface-muted px-1.5 py-px text-[0.74rem] text-fg-muted">{{ settings.serverCatalog.length }}</span>
+            <span class="ml-auto rounded-[10px] border border-border bg-surface-muted px-1.5 py-px text-[0.74rem] text-fg-muted">{{ settings.serverCatalog.length + settings.runtimeCatalog.length }}</span>
           </button>
           <ul v-show="serverOpen" class="m-0 flex list-none flex-col gap-0.5 py-0 pl-[18px]">
             <li v-for="section in serverSections" :key="section">
@@ -175,7 +175,13 @@
                 default {{ definition.default.toLocaleString() }}.
               </span>
             </label>
-            <button class="btn btn-primary justify-self-start" type="submit">
+            <article v-for="definition in activeRuntimeDefinitions" :key="definition.key" class="grid gap-1.5 rounded-lg border border-border p-4">
+              <span class="font-semibold text-fg">{{ definition.label }}</span>
+              <span class="text-[0.84rem] text-fg-muted">{{ definition.description }}</span>
+              <code class="break-all rounded bg-surface-muted px-2 py-1.5 text-sm">{{ definition.value }}</code>
+              <span class="text-[0.78rem] text-fg-muted">Source: {{ definition.source }}<template v-if="definition.restart_required"> · restart required to change</template><template v-if="definition.sensitive"> · sensitive value hidden</template></span>
+            </article>
+            <button v-if="activeServerDefinitions.length" class="btn btn-primary justify-self-start" type="submit">
               <Icon name="save" />
               <span>Save server settings</span>
             </button>
@@ -286,11 +292,18 @@ const activeLanguage = computed(() =>
 );
 
 const serverSections = computed(() => [
-  ...new Set(settings.serverCatalog.map((definition) => definition.section)),
+  ...new Set([
+    ...settings.serverCatalog.map((definition) => definition.section),
+    ...settings.runtimeCatalog.map((definition) => definition.section),
+  ]),
 ]);
 
 const activeServerDefinitions = computed(() =>
   settings.serverCatalog.filter((definition) => definition.section === selectedServerSection.value),
+);
+
+const activeRuntimeDefinitions = computed(() =>
+  settings.runtimeCatalog.filter((definition) => definition.section === selectedServerSection.value),
 );
 
 function selectSection(section: ActiveSection) {

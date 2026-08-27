@@ -51,7 +51,9 @@ pub async fn run_correlated_orchestration_reducer<
         let policy = settings.current();
         let now = chrono::Utc::now();
         let lease = now
-            + chrono::Duration::seconds(policy.orchestration.action_dispatch_lease_seconds as i64);
+            + chrono::Duration::seconds(
+                policy.orchestration.correlated_reducer_lease_seconds as i64,
+            );
         match db
             .claim_orchestration_bindings(
                 instance.clone(),
@@ -146,7 +148,7 @@ pub async fn run_correlated_orchestration_reducer<
 
         tokio::select! {
             _ = shutdown.notified() => return,
-            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.workflow_vm_poll_interval_ms)) => {}
+            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.correlated_reducer_poll_interval_ms)) => {}
         }
     }
 }

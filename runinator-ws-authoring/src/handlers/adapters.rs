@@ -265,14 +265,7 @@ fn webhook_body_limit() -> usize {
 }
 
 fn allowed_webhook_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
-    let configured = std::env::var("RUNINATOR_ADAPTER_WEBHOOK_HEADER_ALLOWLIST")
-        .unwrap_or_else(|_| {
-            "authorization,content-type,x-runinator-signature,x-hub-signature-256,x-github-delivery,x-github-event,x-atlassian-webhook-identifier".into()
-        });
-    let allowed = configured
-        .split(',')
-        .map(|name| name.trim().to_ascii_lowercase())
-        .collect::<std::collections::BTreeSet<_>>();
+    let allowed = webhook_header_allowlist();
     headers
         .iter()
         .filter_map(|(name, value)| {
@@ -281,6 +274,17 @@ fn allowed_webhook_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
                 .then(|| value.to_str().ok().map(|value| (name, value.to_owned())))
                 .flatten()
         })
+        .collect()
+}
+
+fn webhook_header_allowlist() -> std::collections::BTreeSet<String> {
+    let configured = std::env::var("RUNINATOR_ADAPTER_WEBHOOK_HEADER_ALLOWLIST")
+        .unwrap_or_else(|_| {
+            "authorization,content-type,x-runinator-signature,x-hub-signature-256,x-github-delivery,x-github-event,x-atlassian-webhook-identifier".into()
+        });
+    configured
+        .split(',')
+        .map(|name| name.trim().to_ascii_lowercase())
         .collect()
 }
 
@@ -831,7 +835,21 @@ pub async fn health<T: RbacStore>(
         return forbidden();
     }
     match host_get("/health").await {
-        Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value.into()))),
+        Ok(value) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                serde_json::json!({
+                    "host": value,
+                    "web_service": {
+                        "adapter_host_url": host_url(),
+                        "adapter_host_token_configured": host_token().is_ok(),
+                        "webhook_body_limit_bytes": webhook_body_limit(),
+                        "webhook_header_allowlist": webhook_header_allowlist(),
+                    }
+                })
+                .into(),
+            )),
+        ),
         Err(error) => api_error(error),
     }
 }

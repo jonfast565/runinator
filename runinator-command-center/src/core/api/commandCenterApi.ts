@@ -184,6 +184,18 @@ export type ServerSettingsValues = Record<string, Record<string, number>>;
 export interface ServerSettingsResponse {
   values: ServerSettingsValues;
   catalog: ServerSettingDefinition[];
+  runtime_catalog?: RuntimeSettingDefinition[];
+}
+
+export interface RuntimeSettingDefinition {
+  key: string;
+  section: string;
+  label: string;
+  description: string;
+  value: string;
+  source: string;
+  restart_required: boolean;
+  sensitive: boolean;
 }
 
 export async function fetchServerSettings() {

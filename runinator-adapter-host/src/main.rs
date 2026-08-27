@@ -33,10 +33,50 @@ const DEFAULT_OUTPUT_LIMIT: usize = 1024 * 1024;
 const DEFAULT_EVENT_LIMIT: usize = 16;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Copy)]
+struct HostLimits {
+    body_bytes: usize,
+    output_bytes: usize,
+    event_count: usize,
+    timeout: Duration,
+}
+
+impl HostLimits {
+    fn from_env() -> Self {
+        Self {
+            body_bytes: positive_env_usize("RUNINATOR_ADAPTER_BODY_LIMIT_BYTES")
+                .unwrap_or(DEFAULT_BODY_LIMIT),
+            output_bytes: positive_env_usize("RUNINATOR_ADAPTER_OUTPUT_LIMIT_BYTES")
+                .unwrap_or(DEFAULT_OUTPUT_LIMIT),
+            event_count: positive_env_usize("RUNINATOR_ADAPTER_EVENT_LIMIT")
+                .unwrap_or(DEFAULT_EVENT_LIMIT),
+            timeout: Duration::from_millis(
+                positive_env_u64("RUNINATOR_ADAPTER_PLUGIN_TIMEOUT_MS")
+                    .unwrap_or(DEFAULT_TIMEOUT.as_millis() as u64),
+            ),
+        }
+    }
+}
+
+fn positive_env_usize(name: &str) -> Option<usize> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+}
+
+fn positive_env_u64(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+}
+
 #[derive(Clone)]
 struct HostState {
     token: Arc<String>,
     paths: Arc<Vec<PathBuf>>,
+    limits: HostLimits,
     catalog: Arc<RwLock<BTreeMap<String, AdapterKindCatalogEntry>>>,
 }
 
@@ -71,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = HostState {
         token: Arc::new(token),
         paths: Arc::new(paths),
+        limits: HostLimits::from_env(),
         catalog: Arc::new(RwLock::new(BTreeMap::new())),
     };
     reload_catalog(&state).await;
@@ -106,6 +147,13 @@ async fn health(State(state): State<HostState>, headers: HeaderMap) -> (StatusCo
         Json(json!({
             "healthy": catalog.values().all(|entry| entry.healthy),
             "kinds": catalog.len(),
+            "plugin_paths": state.paths.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>(),
+            "limits": {
+                "body_bytes": state.limits.body_bytes,
+                "output_bytes": state.limits.output_bytes,
+                "event_count": state.limits.event_count,
+                "timeout_ms": state.limits.timeout.as_millis(),
+            }
         })),
     )
 }
@@ -143,7 +191,7 @@ async fn invoke(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    if request.request.body_base64.len() > DEFAULT_BODY_LIMIT.saturating_mul(2) {
+    if request.request.body_base64.len() > state.limits.body_bytes.saturating_mul(2) {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(json!({ "error": "request body exceeds limit" })),
@@ -157,22 +205,26 @@ async fn invoke(
         );
     };
     let response = if entry.origin == "builtin" {
-        builtin_handle(&request.kind, request.request)
+        builtin_handle(&request.kind, request.request, state.limits.body_bytes)
     } else {
-        invoke_dynamic(Path::new(&entry.origin), &request.request)
+        invoke_dynamic(Path::new(&entry.origin), &request.request, state.limits)
             .await
             .unwrap_or_else(|error| AdapterResponse::rejected(error))
     };
-    if response.events.len() > DEFAULT_EVENT_LIMIT {
+    if response.events.len() > state.limits.event_count {
         return (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "error": "adapter emitted too many events" })),
         );
     }
-    (
-        StatusCode::OK,
-        Json(serde_json::to_value(response).unwrap_or_default()),
-    )
+    let value = serde_json::to_value(response).unwrap_or_default();
+    if serde_json::to_vec(&value).is_ok_and(|bytes| bytes.len() > state.limits.output_bytes) {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "adapter output exceeds limit" })),
+        );
+    }
+    (StatusCode::OK, Json(value))
 }
 
 fn authorized(state: &HostState, headers: &HeaderMap) -> bool {
@@ -203,7 +255,7 @@ async fn reload_catalog(state: &HostState) {
             if !is_library(&path) {
                 continue;
             }
-            match dynamic_metadata(&path).await {
+            match dynamic_metadata(&path, state.limits).await {
                 Ok(metadata) => {
                     catalog.insert(
                         metadata.kind.clone(),
@@ -249,10 +301,10 @@ fn is_library(path: &Path) -> bool {
     path.extension().and_then(|value| value.to_str()) == Some(expected)
 }
 
-async fn dynamic_metadata(path: &Path) -> Result<AdapterKindMetadata, String> {
+async fn dynamic_metadata(path: &Path, limits: HostLimits) -> Result<AdapterKindMetadata, String> {
     let temp = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
     let status = timeout(
-        DEFAULT_TIMEOUT,
+        limits.timeout,
         Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .arg("--child-metadata")
             .arg(path)
@@ -266,7 +318,7 @@ async fn dynamic_metadata(path: &Path) -> Result<AdapterKindMetadata, String> {
         return Err(format!("metadata child exited with {status}"));
     }
     let bytes = std::fs::read(temp.path()).map_err(|error| error.to_string())?;
-    if bytes.len() > DEFAULT_OUTPUT_LIMIT {
+    if bytes.len() > limits.output_bytes {
         return Err("metadata output exceeds limit".into());
     }
     let envelope: AdapterMetadataEnvelope =
@@ -277,11 +329,15 @@ async fn dynamic_metadata(path: &Path) -> Result<AdapterKindMetadata, String> {
     Ok(envelope.metadata)
 }
 
-async fn invoke_dynamic(path: &Path, request: &AdapterRequest) -> Result<AdapterResponse, String> {
+async fn invoke_dynamic(
+    path: &Path,
+    request: &AdapterRequest,
+    limits: HostLimits,
+) -> Result<AdapterResponse, String> {
     let request_file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
     let response_file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
     let request_bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
-    if request_bytes.len() > DEFAULT_BODY_LIMIT {
+    if request_bytes.len() > limits.body_bytes {
         return Err("adapter request exceeds limit".into());
     }
     std::fs::write(request_file.path(), request_bytes).map_err(|error| error.to_string())?;
@@ -293,7 +349,7 @@ async fn invoke_dynamic(path: &Path, request: &AdapterRequest) -> Result<Adapter
         .kill_on_drop(true)
         .spawn()
         .map_err(|error| error.to_string())?;
-    let status = timeout(DEFAULT_TIMEOUT, child.wait())
+    let status = timeout(limits.timeout, child.wait())
         .await
         .map_err(|_| "adapter invocation timed out".to_string())?
         .map_err(|error| error.to_string())?;
@@ -301,7 +357,7 @@ async fn invoke_dynamic(path: &Path, request: &AdapterRequest) -> Result<Adapter
         return Err(format!("adapter child exited with {status}"));
     }
     let bytes = std::fs::read(response_file.path()).map_err(|error| error.to_string())?;
-    if bytes.len() > DEFAULT_OUTPUT_LIMIT {
+    if bytes.len() > limits.output_bytes {
         return Err("adapter output exceeds limit".into());
     }
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
@@ -486,21 +542,21 @@ fn github_metadata() -> AdapterKindMetadata {
     }
 }
 
-fn builtin_handle(kind: &str, request: AdapterRequest) -> AdapterResponse {
+fn builtin_handle(kind: &str, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
     match kind {
-        "generic_webhook" => handle_generic(request),
-        "github" => handle_github(request),
-        "jira" => handle_jira(request),
+        "generic_webhook" => handle_generic(request, body_limit),
+        "github" => handle_github(request, body_limit),
+        "jira" => handle_jira(request, body_limit),
         _ => AdapterResponse::rejected("unknown built-in adapter"),
     }
 }
 
-fn decode_body(request: &AdapterRequest) -> Result<(Vec<u8>, Value), String> {
+fn decode_body(request: &AdapterRequest, body_limit: usize) -> Result<(Vec<u8>, Value), String> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&request.body_base64)
         .map_err(|e| e.to_string())?;
-    if bytes.len() > DEFAULT_BODY_LIMIT {
+    if bytes.len() > body_limit {
         return Err("request body exceeds limit".into());
     }
     let json = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
@@ -606,8 +662,8 @@ fn hex_decode(value: &str) -> Result<Vec<u8>, ()> {
         .collect()
 }
 
-fn handle_generic(request: AdapterRequest) -> AdapterResponse {
-    let Ok((bytes, payload)) = decode_body(&request) else {
+fn handle_generic(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
+    let Ok((bytes, payload)) = decode_body(&request, body_limit) else {
         return AdapterResponse::rejected("invalid JSON body");
     };
     let mode = configured_string(&request.configuration, "authentication").unwrap_or("hmac_sha256");
@@ -686,8 +742,8 @@ fn handle_generic(request: AdapterRequest) -> AdapterResponse {
     }
 }
 
-fn handle_github(request: AdapterRequest) -> AdapterResponse {
-    let Ok((bytes, payload)) = decode_body(&request) else {
+fn handle_github(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
+    let Ok((bytes, payload)) = decode_body(&request, body_limit) else {
         return AdapterResponse::rejected("invalid GitHub JSON body");
     };
     let secret = configured_string(&request.secrets, "secret")
@@ -770,8 +826,8 @@ fn handle_github(request: AdapterRequest) -> AdapterResponse {
     }
 }
 
-fn handle_jira(request: AdapterRequest) -> AdapterResponse {
-    let Ok((_, payload)) = decode_body(&request) else {
+fn handle_jira(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
+    let Ok((_, payload)) = decode_body(&request, body_limit) else {
         return AdapterResponse::rejected("invalid Jira JSON body");
     };
     let secret = configured_string(&request.secrets, "secret")
@@ -889,26 +945,29 @@ mod tests {
     #[test]
     fn generic_webhook_verifies_and_normalizes_configured_identity() {
         let body = br#"{"delivery":"d-1","tenant":"acme","object":{"id":"42","revision":"abc"},"event":"changed","occurred_at":"2026-08-27T12:34:56Z","data":{"value":7},"origin":{"operation_key":"operation-1"}}"#;
-        let response = handle_generic(AdapterRequest {
-            method: "POST".into(),
-            headers: BTreeMap::from([(
-                "x-runinator-signature".into(),
-                signature("test-secret", body),
-            )]),
-            body_base64: base64::engine::general_purpose::STANDARD.encode(body),
-            configuration: json!({
-                "authentication": "hmac_sha256",
-                "delivery_id_pointer": "/delivery",
-                "scope_pointer": "/tenant",
-                "correlation_pointer": "/object/id",
-                "event_pointer": "/event",
-                "occurred_at_pointer": "/occurred_at",
-                "payload_pointer": "/data",
-                "subject_revision_pointer": "/object/revision",
-                "provenance_pointer": "/origin"
-            }),
-            secrets: json!({ "secret": "test-secret" }),
-        });
+        let response = handle_generic(
+            AdapterRequest {
+                method: "POST".into(),
+                headers: BTreeMap::from([(
+                    "x-runinator-signature".into(),
+                    signature("test-secret", body),
+                )]),
+                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                configuration: json!({
+                    "authentication": "hmac_sha256",
+                    "delivery_id_pointer": "/delivery",
+                    "scope_pointer": "/tenant",
+                    "correlation_pointer": "/object/id",
+                    "event_pointer": "/event",
+                    "occurred_at_pointer": "/occurred_at",
+                    "payload_pointer": "/data",
+                    "subject_revision_pointer": "/object/revision",
+                    "provenance_pointer": "/origin"
+                }),
+                secrets: json!({ "secret": "test-secret" }),
+            },
+            DEFAULT_BODY_LIMIT,
+        );
         assert!(response.verified);
         assert_eq!(response.events[0].delivery_id, "d-1");
         assert_eq!(response.events[0].scope, "acme");
@@ -931,20 +990,23 @@ mod tests {
     #[test]
     fn github_rejects_a_signature_for_different_bytes() {
         let body = br#"{"repository":{"id":1}}"#;
-        let response = handle_github(AdapterRequest {
-            method: "POST".into(),
-            headers: BTreeMap::from([
-                (
-                    "x-hub-signature-256".into(),
-                    signature("secret", b"different"),
-                ),
-                ("x-github-delivery".into(), "delivery".into()),
-                ("x-github-event".into(), "push".into()),
-            ]),
-            body_base64: base64::engine::general_purpose::STANDARD.encode(body),
-            configuration: Value::Null,
-            secrets: json!({ "secret": "secret" }),
-        });
+        let response = handle_github(
+            AdapterRequest {
+                method: "POST".into(),
+                headers: BTreeMap::from([
+                    (
+                        "x-hub-signature-256".into(),
+                        signature("secret", b"different"),
+                    ),
+                    ("x-github-delivery".into(), "delivery".into()),
+                    ("x-github-event".into(), "push".into()),
+                ]),
+                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                configuration: Value::Null,
+                secrets: json!({ "secret": "secret" }),
+            },
+            DEFAULT_BODY_LIMIT,
+        );
         assert!(!response.verified);
         assert!(response.events.is_empty());
     }
@@ -954,17 +1016,20 @@ mod tests {
         let pull_request_body = br#"{"repository":{"id":10},"pull_request":{"id":20,"head":{"sha":"abc"},"updated_at":"2026-08-27T12:00:00Z"}}"#;
         let check_body = br#"{"repository":{"id":10},"check_run":{"id":30,"head_sha":"abc","pull_requests":[{"id":20}],"completed_at":"2026-08-27T12:05:00Z"}}"#;
         let normalize = |body: &[u8], event: &str| {
-            handle_github(AdapterRequest {
-                method: "POST".into(),
-                headers: BTreeMap::from([
-                    ("x-hub-signature-256".into(), signature("secret", body)),
-                    ("x-github-delivery".into(), format!("{event}-delivery")),
-                    ("x-github-event".into(), event.into()),
-                ]),
-                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
-                configuration: Value::Null,
-                secrets: json!({ "secret": "secret" }),
-            })
+            handle_github(
+                AdapterRequest {
+                    method: "POST".into(),
+                    headers: BTreeMap::from([
+                        ("x-hub-signature-256".into(), signature("secret", body)),
+                        ("x-github-delivery".into(), format!("{event}-delivery")),
+                        ("x-github-event".into(), event.into()),
+                    ]),
+                    body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                    configuration: Value::Null,
+                    secrets: json!({ "secret": "secret" }),
+                },
+                DEFAULT_BODY_LIMIT,
+            )
         };
         let pull_request = normalize(pull_request_body, "pull_request");
         let check = normalize(check_body, "check_run");
@@ -981,16 +1046,19 @@ mod tests {
     #[test]
     fn jira_identity_includes_the_instance_and_project() {
         let body = br#"{"timestamp":1787832000000,"webhookEvent":"jira:issue_updated","issue":{"id":"20","fields":{"project":{"id":"10"}}}}"#;
-        let response = handle_jira(AdapterRequest {
-            method: "POST".into(),
-            headers: BTreeMap::from([
-                ("authorization".into(), "Bearer secret".into()),
-                ("x-atlassian-webhook-identifier".into(), "delivery".into()),
-            ]),
-            body_base64: base64::engine::general_purpose::STANDARD.encode(body),
-            configuration: json!({ "instance_id": "acme.atlassian.net" }),
-            secrets: json!({ "secret": "secret" }),
-        });
+        let response = handle_jira(
+            AdapterRequest {
+                method: "POST".into(),
+                headers: BTreeMap::from([
+                    ("authorization".into(), "Bearer secret".into()),
+                    ("x-atlassian-webhook-identifier".into(), "delivery".into()),
+                ]),
+                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                configuration: json!({ "instance_id": "acme.atlassian.net" }),
+                secrets: json!({ "secret": "secret" }),
+            },
+            DEFAULT_BODY_LIMIT,
+        );
         assert!(response.verified);
         assert_eq!(response.events[0].event_type, "issue_updated");
         assert_eq!(
@@ -1012,5 +1080,28 @@ mod tests {
                 Some("operation-42")
             );
         }
+    }
+
+    #[test]
+    fn builtins_enforce_the_configured_body_limit() {
+        let body = br#"{"delivery":"d-1"}"#;
+        let response = handle_generic(
+            AdapterRequest {
+                method: "POST".into(),
+                headers: BTreeMap::new(),
+                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                configuration: Value::Null,
+                secrets: Value::Null,
+            },
+            body.len() - 1,
+        );
+        assert!(!response.verified);
+        assert!(response.events.is_empty());
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.contains("JSON body"))
+        );
     }
 }
