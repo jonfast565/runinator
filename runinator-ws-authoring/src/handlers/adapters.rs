@@ -12,12 +12,13 @@ use axum::{
 use chrono::Utc;
 use runinator_adapter_contract::{AdapterRequest, AdapterResponse};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
-use runinator_engine::services::PipelineOperations;
+use runinator_engine::services::{PipelineOperations, choose_intent};
 use runinator_models::{
     auth::AuthContext,
     orchestration::{
-        AdapterDefinition, AdapterKindMetadata, AdapterRevision, IngressAction, IngressLifecycle,
-        IngressPolicy, IngressTargetKind,
+        AdapterDefinition, AdapterKindMetadata, AdapterRevision, IngressAction,
+        IngressAdmissionStatus, IngressLifecycle, IngressPolicy, IngressTargetKind,
+        NormalizedAdapterEvent, OrchestrationPolicy,
     },
     rbac::Action,
     settings::SettingKind,
@@ -288,8 +289,11 @@ async fn pipeline_for_event<T: DefinitionStore + IngressStore>(
                 )
             })?;
         if policy.scope == event.scope
-            && policy.action_for(&event.event_type, IngressLifecycle::Unbound)
-                == Some(IngressAction::Start)
+            && policy.action_for_payload(
+                &event.event_type,
+                IngressLifecycle::Unbound,
+                &event.payload,
+            ) == Some(IngressAction::Start)
         {
             if let Some(id) = pipeline.id {
                 candidates.push(id);
@@ -307,6 +311,154 @@ async fn pipeline_for_event<T: DefinitionStore + IngressStore>(
             event.scope, event.event_type
         )),
     }
+}
+
+async fn preview_adapter_event<
+    T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore,
+>(
+    db: &T,
+    adapter: &AdapterDefinition,
+    event: &NormalizedAdapterEvent,
+) -> Result<serde_json::Value, String> {
+    let admission = db
+        .fetch_ingress_admission(
+            Some(adapter.org_id),
+            event.scope.clone(),
+            event.correlation_key.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let lifecycle = admission
+        .as_ref()
+        .map(|admission| match admission.status {
+            IngressAdmissionStatus::Active => IngressLifecycle::Active,
+            IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,
+        })
+        .unwrap_or(IngressLifecycle::Unbound);
+    let mut validation_errors = Vec::new();
+    let mut pipelines = if let Some(admission) = &admission {
+        match admission.target.kind {
+            IngressTargetKind::Pipeline => db
+                .fetch_pipeline(admission.target.id)
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .collect::<Vec<_>>(),
+            IngressTargetKind::Workflow => {
+                validation_errors
+                    .push("correlation key is owned by a workflow ingress target".to_string());
+                Vec::new()
+            }
+        }
+    } else {
+        db.fetch_pipelines()
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|pipeline| pipeline.org_id == Some(adapter.org_id))
+            .collect::<Vec<_>>()
+    };
+    pipelines.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let binding = if let Some(admission) = &admission {
+        match admission.id {
+            Some(id) => db
+                .fetch_orchestration_binding_for_admission(id, admission.generation)
+                .await
+                .map_err(|error| error.to_string())?,
+            None => None,
+        }
+    } else {
+        None
+    };
+    let mut matches = Vec::new();
+    let mut start_matches = 0usize;
+    for pipeline in pipelines {
+        let pipeline_id = match pipeline.id {
+            Some(id) => id,
+            None => continue,
+        };
+        let ingress = if admission
+            .as_ref()
+            .is_some_and(|admission| admission.target.id == pipeline_id)
+        {
+            admission
+                .as_ref()
+                .and_then(|admission| serde_json::from_value(admission.policy.clone().into()).ok())
+        } else {
+            pipeline.metadata.get("ingress").and_then(|value| {
+                serde_json::from_value::<IngressPolicy>(value.clone().into()).ok()
+            })
+        };
+        let Some(ingress) = ingress else {
+            continue;
+        };
+        if ingress.scope != event.scope {
+            continue;
+        }
+        let routes = ingress.routes_for_payload(&event.event_type, lifecycle, &event.payload);
+        if routes.is_empty() {
+            continue;
+        }
+        if routes
+            .iter()
+            .any(|route| route.action == IngressAction::Start)
+        {
+            start_matches += 1;
+        }
+        let candidate_intents = routes
+            .iter()
+            .filter(|route| route.action == IngressAction::Dispatch)
+            .filter_map(|route| route.intent.clone())
+            .collect::<Vec<_>>();
+        let orchestration = binding
+            .as_ref()
+            .filter(|binding| binding.pipeline_id == pipeline_id)
+            .map(|binding| binding.policy.clone())
+            .or_else(|| {
+                pipeline.metadata.get("orchestration").and_then(|value| {
+                    serde_json::from_value::<OrchestrationPolicy>(value.clone().into()).ok()
+                })
+            });
+        let decision = orchestration
+            .as_ref()
+            .map(|policy| choose_intent(candidate_intents.iter().map(String::as_str), policy));
+        matches.push(serde_json::json!({
+            "pipeline_id": pipeline_id,
+            "pipeline_name": pipeline.name,
+            "lifecycle": lifecycle.as_str(),
+            "routes": routes,
+            "candidate_intents": candidate_intents,
+            "winner": decision.as_ref().and_then(|decision| decision.winner.clone()),
+            "suppressed_intents": decision.map(|decision| decision.suppressed).unwrap_or_default(),
+            "managed": orchestration.is_some(),
+        }));
+    }
+    if matches.is_empty() {
+        validation_errors.push(format!(
+            "no pipeline route matched scope '{}' and event '{}' for lifecycle '{}'",
+            event.scope,
+            event.event_type,
+            lifecycle.as_str()
+        ));
+    } else if lifecycle == IngressLifecycle::Unbound && start_matches == 0 {
+        validation_errors.push("matching routes do not admit a new pipeline generation".into());
+    } else if lifecycle == IngressLifecycle::Unbound && start_matches > 1 {
+        validation_errors.push(
+            "multiple pipeline admission routes matched; admission would be rejected as ambiguous"
+                .into(),
+        );
+    }
+    Ok(serde_json::json!({
+        "delivery_id": event.delivery_id,
+        "scope": event.scope,
+        "correlation_key": event.correlation_key,
+        "event_type": event.event_type,
+        "lifecycle": lifecycle.as_str(),
+        "existing_admission": admission,
+        "pipeline_matches": matches,
+        "validation_errors": validation_errors,
+    }))
 }
 
 pub async fn kinds<T: RbacStore>(
@@ -554,7 +706,9 @@ pub async fn remove<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn test<T: OrchestrationStore + RbacStore + SettingStore + RuntimeStore>(
+pub async fn test<
+    T: OrchestrationStore + RbacStore + SettingStore + RuntimeStore + DefinitionStore + IngressStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
@@ -594,7 +748,35 @@ pub async fn test<T: OrchestrationStore + RbacStore + SettingStore + RuntimeStor
     )
     .await
     {
-        Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value.into()))),
+        Ok(value) => {
+            let normalized: AdapterResponse = match serde_json::from_value(value) {
+                Ok(value) => value,
+                Err(error) => {
+                    return api_error(format!("adapter host returned malformed output: {error}"));
+                }
+            };
+            let mut previews = Vec::new();
+            if normalized.verified {
+                for event in &normalized.events {
+                    match preview_adapter_event(db.as_ref(), &adapter, event).await {
+                        Ok(preview) => previews.push(preview),
+                        Err(error) => return api_error(error),
+                    }
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::JsonValue(
+                    serde_json::json!({
+                        "verified": normalized.verified,
+                        "events": normalized.events,
+                        "errors": normalized.errors,
+                        "previews": previews,
+                    })
+                    .into(),
+                )),
+            )
+        }
         Err(error) => api_error(error),
     }
 }
@@ -706,7 +888,15 @@ pub async fn webhook<
         );
     }
     let mut outcomes = Vec::new();
-    for event in normalized.events {
+    for mut event in normalized.events {
+        if let Some(payload) = event.payload.as_object_mut() {
+            if let Some(subject_revision) = event.subject_revision.clone() {
+                payload.insert("subject_revision".into(), subject_revision.into());
+            }
+            if !event.provenance.is_null() {
+                payload.insert("provenance".into(), event.provenance.clone());
+            }
+        }
         let pipeline_id = match pipeline_for_event(db.as_ref(), &adapter, &event).await {
             Ok(value) => value,
             Err(error) => return bad_request(error),
@@ -722,6 +912,7 @@ pub async fn webhook<
                 event_type: event.event_type,
                 correlation_key: event.correlation_key,
                 payload: event.payload,
+                provenance: event.provenance,
                 occurred_at: event.occurred_at,
             },
             Some((adapter.id, revision.revision)),

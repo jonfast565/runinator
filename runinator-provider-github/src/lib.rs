@@ -53,6 +53,7 @@ impl Provider for GitHubProvider {
                         ParameterMetadata::optional("base", RuninatorType::String)
                             .with_default(json!("main")),
                         ParameterMetadata::optional("body", RuninatorType::String),
+                        ParameterMetadata::optional("operation_key", RuninatorType::String),
                     ])
                     .with_results(pull_request_results())
                     .with_delivery_semantics(DeliverySemantics::Reconcilable),
@@ -271,6 +272,24 @@ impl Provider for GitHubProvider {
             "create_or_update_pr" | "create_pr" | "ensure_pr" => {
                 let p: CreatePrParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
+                let body = if function == "ensure_pr" {
+                    let operation_key = p
+                        .operation_key
+                        .or_else(|| request.idempotency_key.clone())
+                        .filter(|key| !key.trim().is_empty())
+                        .ok_or_else(|| errors::MISSING_OPERATION_KEY.bare())?;
+                    let marker = format!("<!-- runinator-operation:{operation_key} -->");
+                    let body = p.body.as_deref().unwrap_or_default();
+                    if body.contains(&marker) {
+                        body.to_string()
+                    } else if body.is_empty() {
+                        marker
+                    } else {
+                        format!("{body}\n\n{marker}")
+                    }
+                } else {
+                    p.body.unwrap_or_default()
+                };
                 let head = if p.head.contains(':') {
                     p.head.clone()
                 } else {
@@ -298,7 +317,7 @@ impl Provider for GitHubProvider {
                         .json(&json!({
                             "title": p.title,
                             "base": p.base_branch.as_deref().unwrap_or("main"),
-                            "body": p.body.as_deref().unwrap_or("")
+                            "body": body
                         }))
                         .send()?
                 } else {
@@ -313,7 +332,7 @@ impl Provider for GitHubProvider {
                             "title": p.title,
                             "head": p.head,
                             "base": p.base_branch.as_deref().unwrap_or("main"),
-                            "body": p.body.as_deref().unwrap_or("")
+                            "body": body
                         }))
                         .send()?
                 }

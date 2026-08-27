@@ -302,6 +302,8 @@ pub struct IngressEventRequest {
     #[serde(default)]
     pub payload: Value,
     #[serde(default)]
+    pub provenance: Value,
+    #[serde(default)]
     pub occurred_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 

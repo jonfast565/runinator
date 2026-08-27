@@ -83,7 +83,30 @@
           <div v-if="selectedKind" class="mt-3 grid gap-2 text-xs md:grid-cols-3"><div><strong>Capabilities</strong><p class="text-fg-muted">{{ selectedKind.capabilities.join(', ') || 'normalize' }}</p></div><div><strong>Canonical events</strong><p class="text-fg-muted">{{ selectedKind.event_names.join(', ') || 'provider-defined' }}</p></div><div><strong>Canonical pointers</strong><p class="break-all text-fg-muted">{{ selectedKind.canonical_pointers.join(', ') || 'provider-defined' }}</p></div></div>
           <nav class="mt-5 flex gap-1 border-b border-border"><button v-for="tab in adapterTabs" :key="tab" class="px-3 py-2 text-sm" :class="tab === activeAdapterTab ? 'border-b-2 border-accent' : 'text-fg-muted'" @click="activeAdapterTab = tab">{{ tab }}</button></nav>
           <pre v-if="activeAdapterTab === 'Configuration'" class="mt-4 overflow-auto text-xs">{{ pretty(currentAdapterRevision) }}</pre><pre v-else-if="activeAdapterTab === 'Revisions'" class="mt-4 overflow-auto text-xs">{{ pretty(store.adapterRevisions) }}</pre>
-          <div v-else class="mt-4 grid gap-3"><label class="text-sm">Headers JSON<textarea v-model="testHeaders" class="input mt-1 min-h-24 w-full font-mono text-xs" /></label><label class="text-sm">Sample request body<textarea v-model="testBody" class="input mt-1 min-h-40 w-full font-mono text-xs" /></label><button class="button w-fit" @click="runTest">Verify and normalize</button><pre v-if="testResult" class="overflow-auto rounded bg-surface-raised p-3 text-xs">{{ pretty(testResult) }}</pre></div>
+          <div v-else class="mt-4 grid gap-3">
+            <label class="text-sm">Headers JSON<textarea v-model="testHeaders" class="input mt-1 min-h-24 w-full font-mono text-xs" /></label>
+            <label class="text-sm">Sample request body<textarea v-model="testBody" class="input mt-1 min-h-40 w-full font-mono text-xs" /></label>
+            <button class="button w-fit" @click="runTest">Verify, normalize, and preview routes</button>
+            <section v-if="testResult" class="grid gap-3">
+              <div class="flex items-center gap-2 rounded border border-border p-3 text-sm">
+                <span class="rounded px-2 py-1 text-xs" :class="testResult.verified ? 'bg-success/15 text-success' : 'bg-danger/15 text-danger'">{{ testResult.verified ? "Verified" : "Rejected" }}</span>
+                <span class="text-fg-muted">{{ testResult.events.length }} normalized event(s)</span>
+              </div>
+              <ul v-if="testResult.errors.length" class="rounded border border-danger/40 bg-danger/10 p-3 text-sm text-danger"><li v-for="error in testResult.errors" :key="error">{{ error }}</li></ul>
+              <article v-for="preview in testResult.previews" :key="preview.delivery_id" class="rounded border border-border p-3">
+                <div class="flex flex-wrap items-start justify-between gap-2"><div><strong>{{ preview.event_type }}</strong><p class="text-xs text-fg-muted">{{ preview.scope }}/{{ preview.correlation_key }}</p></div><span class="rounded bg-surface-raised px-2 py-1 text-xs">{{ preview.lifecycle }}</span></div>
+                <ul v-if="preview.validation_errors.length" class="mt-3 rounded bg-warning/10 p-2 text-xs text-warning"><li v-for="error in preview.validation_errors" :key="error">{{ error }}</li></ul>
+                <div v-for="match in preview.pipeline_matches" :key="match.pipeline_id" class="mt-3 rounded bg-surface-raised p-3 text-sm">
+                  <div class="flex flex-wrap justify-between gap-2"><strong>{{ match.pipeline_name }}</strong><span class="text-xs text-fg-muted">{{ match.managed ? "managed" : "unmanaged" }}</span></div>
+                  <p class="mt-2 text-xs text-fg-muted">Matched actions: {{ match.routes.map((route) => route.action).join(", ") }}</p>
+                  <p class="mt-1 text-xs">Candidate intents: {{ match.candidate_intents.join(", ") || "none" }}</p>
+                  <p v-if="match.winner" class="mt-1 text-xs"><strong>Winner:</strong> {{ match.winner }}<template v-if="match.suppressed_intents.length"> · suppressed {{ match.suppressed_intents.join(", ") }}</template></p>
+                  <details class="mt-2"><summary class="cursor-pointer text-xs text-fg-muted">Matched route details</summary><pre class="mt-2 overflow-auto text-xs">{{ pretty(match.routes) }}</pre></details>
+                </div>
+              </article>
+              <details><summary class="cursor-pointer text-xs text-fg-muted">Raw normalized response</summary><pre class="mt-2 overflow-auto rounded bg-surface-raised p-3 text-xs">{{ pretty(testResult) }}</pre></details>
+            </section>
+          </div>
         </main>
         <main v-else class="rounded border border-border bg-surface p-6 text-sm text-fg-muted">Select an adapter or create one.</main>
       </div>
@@ -132,7 +155,36 @@ const resolutionReceipt = ref("null");
 const hostResult = ref<unknown>(null);
 const testHeaders = ref("{}");
 const testBody = ref("{}");
-const testResult = ref<unknown>(null);
+interface AdapterTestRoute {
+  action: string;
+  intent?: string | null;
+  predicates: unknown[];
+}
+interface AdapterTestPipelineMatch {
+  pipeline_id: string;
+  pipeline_name: string;
+  managed: boolean;
+  routes: AdapterTestRoute[];
+  candidate_intents: string[];
+  winner?: string | null;
+  suppressed_intents: string[];
+}
+interface AdapterEventPreview {
+  delivery_id: string;
+  scope: string;
+  correlation_key: string;
+  event_type: string;
+  lifecycle: string;
+  pipeline_matches: AdapterTestPipelineMatch[];
+  validation_errors: string[];
+}
+interface AdapterTestResult {
+  verified: boolean;
+  events: unknown[];
+  errors: string[];
+  previews: AdapterEventPreview[];
+}
+const testResult = ref<AdapterTestResult | null>(null);
 const adapterFormOpen = ref(false);
 const editingAdapterId = ref<string | null>(null);
 const identityText = ref("{}");
@@ -324,7 +376,7 @@ async function runTest(): Promise<void> {
     store.selectedAdapter.id,
     headers,
     toBase64(testBody.value),
-  );
+  ) as AdapterTestResult;
 }
 
 function initializeKind(): void {

@@ -17,6 +17,7 @@ pub(crate) struct CreatePrParams {
     #[serde(alias = "base")]
     pub base_branch: Option<String>,
     pub body: Option<String>,
+    pub operation_key: Option<String>,
 }
 
 #[derive(Deserialize)]

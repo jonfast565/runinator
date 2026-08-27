@@ -126,6 +126,41 @@ impl IngressPolicy {
             .map(|route| route.action)
     }
 
+    /// Resolve an action while honoring every predicate on the route. Callers handling a concrete
+    /// event must use this form; `action_for` remains for compatibility and policy introspection.
+    pub fn action_for_payload(
+        &self,
+        event_type: &str,
+        lifecycle: IngressLifecycle,
+        payload: &Value,
+    ) -> Option<IngressAction> {
+        self.routes_for_payload(event_type, lifecycle, payload)
+            .into_iter()
+            .next()
+            .map(|route| route.action)
+    }
+
+    /// Return each route matching the concrete event in author order. Orchestration evaluates all
+    /// dispatch matches; legacy one-action ingress behavior consumes the first match.
+    pub fn routes_for_payload<'a>(
+        &'a self,
+        event_type: &str,
+        lifecycle: IngressLifecycle,
+        payload: &Value,
+    ) -> Vec<&'a IngressRoute> {
+        self.routes
+            .iter()
+            .filter(|route| {
+                route.event_type == event_type
+                    && route.lifecycle == lifecycle
+                    && route
+                        .predicates
+                        .iter()
+                        .all(|predicate| predicate.matches(payload))
+            })
+            .collect()
+    }
+
     /// Return every matching named intent. The orchestration policy owns precedence; ingress only
     /// identifies candidates and never chooses control outcomes itself.
     pub fn dispatches_for(
@@ -134,17 +169,9 @@ impl IngressPolicy {
         lifecycle: IngressLifecycle,
         payload: &Value,
     ) -> Vec<&str> {
-        self.routes
-            .iter()
-            .filter(|route| {
-                route.event_type == event_type
-                    && route.lifecycle == lifecycle
-                    && route.action == IngressAction::Dispatch
-                    && route
-                        .predicates
-                        .iter()
-                        .all(|predicate| predicate.matches(payload))
-            })
+        self.routes_for_payload(event_type, lifecycle, payload)
+            .into_iter()
+            .filter(|route| route.action == IngressAction::Dispatch)
             .filter_map(|route| route.intent.as_deref())
             .collect()
     }
@@ -744,6 +771,8 @@ pub struct IngressEvent {
     #[serde(default)]
     pub payload: Value,
     #[serde(default)]
+    pub provenance: Value,
+    #[serde(default)]
     pub occurred_at: Option<DateTime<Utc>>,
 }
 
@@ -834,6 +863,8 @@ pub struct IngressInboxEntry {
     pub event_type: String,
     pub correlation_key: String,
     pub payload: Value,
+    #[serde(default)]
+    pub provenance: Value,
     pub occurred_at: Option<DateTime<Utc>>,
     pub received_at: DateTime<Utc>,
     pub disposition: IngressEventDisposition,
@@ -898,6 +929,40 @@ mod ingress_policy_tests {
             }],
         };
         assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn concrete_event_actions_honor_route_predicates() {
+        let policy = IngressPolicy {
+            scope: "items".into(),
+            routes: vec![IngressRoute {
+                event_type: "changed".into(),
+                lifecycle: IngressLifecycle::Unbound,
+                action: IngressAction::Start,
+                predicates: vec![IngressPredicate {
+                    pointer: "/labels".into(),
+                    operator: IngressPredicateOperator::Contains,
+                    value: Some(Value::String("auto".into())),
+                }],
+                intent: None,
+            }],
+        };
+        assert_eq!(
+            policy.action_for_payload(
+                "changed",
+                IngressLifecycle::Unbound,
+                &crate::json!({ "labels": ["auto"] }),
+            ),
+            Some(IngressAction::Start)
+        );
+        assert_eq!(
+            policy.action_for_payload(
+                "changed",
+                IngressLifecycle::Unbound,
+                &crate::json!({ "labels": ["manual"] }),
+            ),
+            None
+        );
     }
 }
 

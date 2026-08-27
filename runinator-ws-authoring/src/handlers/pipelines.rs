@@ -354,6 +354,7 @@ pub async fn process_pipeline_ingress<
         event_type: request.event_type,
         correlation_key: request.correlation_key,
         payload: request.payload,
+        provenance: request.provenance,
         occurred_at: request.occurred_at,
     };
     let ingress = IngressOperations::new(db.clone());
@@ -438,7 +439,7 @@ pub async fn process_pipeline_ingress<
                 Err(err) => api_error(err.to_string()),
             };
         }
-        match snapshot_policy.action_for(&event.event_type, lifecycle) {
+        match snapshot_policy.action_for_payload(&event.event_type, lifecycle, &event.payload) {
             Some(IngressAction::Record) => {
                 return match ingress
                     .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)

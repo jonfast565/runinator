@@ -55,7 +55,7 @@ impl<T: IngressStore> IngressOperations<T> {
                 "ingress source, event_id, and correlation_key are required",
             )));
         }
-        if policy.action_for(&event.event_type, IngressLifecycle::Unbound)
+        if policy.action_for_payload(&event.event_type, IngressLifecycle::Unbound, &event.payload)
             != Some(IngressAction::Start)
         {
             return Ok(None);
@@ -198,8 +198,11 @@ impl<T: IngressStore> IngressOperations<T> {
         event: &IngressEvent,
     ) -> Result<Option<IngressEventRecord>, SendableError> {
         if existing.status != IngressAdmissionStatus::Terminal
-            || policy.action_for(&event.event_type, IngressLifecycle::Terminal)
-                != Some(IngressAction::Requeue)
+            || policy.action_for_payload(
+                &event.event_type,
+                IngressLifecycle::Terminal,
+                &event.payload,
+            ) != Some(IngressAction::Requeue)
         {
             return Ok(None);
         }
@@ -272,6 +275,7 @@ mod tests {
             event_type: "created".into(),
             correlation_key: "release-42".into(),
             payload: Value::Object(Default::default()),
+            provenance: Value::Null,
             occurred_at: None,
         };
         let target = IngressTarget {
@@ -371,6 +375,7 @@ mod tests {
             event_type: "created".into(),
             correlation_key: "deploy-7".into(),
             payload: Value::Null,
+            provenance: Value::Null,
             occurred_at: None,
         };
         let target = IngressTarget {

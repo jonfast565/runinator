@@ -7,7 +7,7 @@ use runinator_models::orchestration::{
 };
 
 const INGRESS_ADMISSION_COLUMNS: &str = "id, org_id, scope, correlation_key, generation, target_kind, target_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at";
-const INGRESS_EVENT_COLUMNS: &str = "id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, occurred_at, received_at, disposition, queue_state, claim_token, promoted_generation, workflow_run_id, pipeline_run_id";
+const INGRESS_EVENT_COLUMNS: &str = "id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state, claim_token, promoted_generation, workflow_run_id, pipeline_run_id";
 
 fn disposition_name(value: IngressEventDisposition) -> &'static str {
     match value {
@@ -161,10 +161,11 @@ where
         let claim = if saved.id == Some(id) {
             if let Some(event) = initial_event {
                 sqlx::query(&self.render(
-                    "INSERT INTO ingress_events (id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, occurred_at, received_at, disposition, queue_state) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 'started', 'none')",
+                    "INSERT INTO ingress_events (id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', 'none')",
                 )).bind(Uuid::now_v7()).bind(id).bind(saved.generation)
                 .bind(event.source).bind(event.event_id).bind(event.event_type).bind(event.correlation_key)
-                .bind(event.payload.to_string()).bind(event.occurred_at.map(|value| value.timestamp()))
+                .bind(event.payload.to_string()).bind(event.provenance.to_string())
+                .bind(event.occurred_at.map(|value| value.timestamp()))
                 .bind(saved.created_at.timestamp()).execute(&mut *tx).await?;
             }
             IngressAdmissionClaim::Acquired(saved)
@@ -237,11 +238,12 @@ where
         )).bind(admission_id).fetch_one(&mut *tx).await?;
         let sequence = row.get::<i64, _>("max_sequence") + 1;
         sqlx::query(&self.render(
-            "INSERT INTO ingress_events (id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, occurred_at, received_at, disposition, queue_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ingress_events (id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
             .bind(id).bind(admission_id).bind(sequence).bind(generation)
             .bind(event.source.as_str()).bind(event.event_id.as_str()).bind(event.event_type.as_str())
             .bind(event.correlation_key.as_str()).bind(event.payload.to_string())
+            .bind(event.provenance.to_string())
             .bind(event.occurred_at.map(|value| value.timestamp())).bind(now.timestamp())
             .bind(disposition_name(disposition)).bind(queue_state)
             .execute(&mut *tx).await?;
@@ -578,11 +580,12 @@ where
         let next_generation = expected_generation + 1;
         let entry_id = Uuid::now_v7();
         sqlx::query(&self.render(
-            "INSERT INTO ingress_events (id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, occurred_at, received_at, disposition, queue_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requeued', 'none')",
+            "INSERT INTO ingress_events (id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requeued', 'none')",
         ))
         .bind(entry_id).bind(admission_id).bind(sequence).bind(next_generation)
         .bind(event.source).bind(event.event_id).bind(event.event_type).bind(event.correlation_key)
-        .bind(event.payload.to_string()).bind(event.occurred_at.map(|value| value.timestamp()))
+        .bind(event.payload.to_string()).bind(event.provenance.to_string())
+        .bind(event.occurred_at.map(|value| value.timestamp()))
         .bind(now.timestamp()).execute(&mut *tx).await?;
         let target_kind = match target.kind {
             runinator_models::orchestration::IngressTargetKind::Workflow => "workflow",

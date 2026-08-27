@@ -427,6 +427,7 @@ fn generic_metadata() -> AdapterKindMetadata {
             field("scope_pointer", RuninatorType::String, true, false),
             field("correlation_pointer", RuninatorType::String, true, false),
             field("event_pointer", RuninatorType::String, true, false),
+            field("provenance_pointer", RuninatorType::String, false, false),
         ],
         event_names: vec![],
         canonical_pointers: vec![
@@ -584,6 +585,13 @@ fn handle_generic(request: AdapterRequest) -> AdapterResponse {
             &payload,
             configured_string(&request.configuration, "event_pointer")?,
         )?;
+        let provenance = request
+            .configuration
+            .get("provenance_pointer")
+            .and_then(Value::as_str)
+            .and_then(|pointer| payload.pointer(pointer))
+            .cloned()
+            .unwrap_or(Value::Null);
         Ok::<_, String>(NormalizedAdapterEvent {
             source: "generic_webhook".into(),
             delivery_id,
@@ -597,7 +605,7 @@ fn handle_generic(request: AdapterRequest) -> AdapterResponse {
                 .and_then(|pointer| pointer_string(&payload, pointer).ok()),
             occurred_at: None,
             payload: payload.into(),
-            provenance: Value::Null.into(),
+            provenance: provenance.into(),
         })
     })();
     match result {
@@ -653,6 +661,9 @@ fn handle_github(request: AdapterRequest) -> AdapterResponse {
         .or_else(|| payload.pointer("/workflow_run/head_sha"))
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let provenance = extract_runinator_operation_key(&payload)
+        .map(|operation_key| json!({ "operation_key": operation_key }))
+        .unwrap_or(Value::Null);
     AdapterResponse {
         verified: true,
         events: vec![NormalizedAdapterEvent {
@@ -664,7 +675,7 @@ fn handle_github(request: AdapterRequest) -> AdapterResponse {
             subject_revision,
             occurred_at: None,
             payload: payload.into(),
-            provenance: Value::Null.into(),
+            provenance: provenance.into(),
         }],
         errors: vec![],
     }
@@ -712,6 +723,9 @@ fn handle_jira(request: AdapterRequest) -> AdapterResponse {
     if delivery_id.is_empty() || issue_id.is_empty() {
         return AdapterResponse::rejected("Jira event lacks stable delivery or issue identity");
     }
+    let provenance = extract_runinator_operation_key(&payload)
+        .map(|operation_key| json!({ "operation_key": operation_key }))
+        .unwrap_or(Value::Null);
     AdapterResponse {
         verified: true,
         events: vec![NormalizedAdapterEvent {
@@ -723,9 +737,29 @@ fn handle_jira(request: AdapterRequest) -> AdapterResponse {
             subject_revision: None,
             occurred_at: None,
             payload: payload.into(),
-            provenance: Value::Null.into(),
+            provenance: provenance.into(),
         }],
         errors: vec![],
+    }
+}
+
+fn extract_runinator_operation_key(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => {
+            let marker = "runinator-operation:";
+            let start = value.find(marker)? + marker.len();
+            let key = value[start..]
+                .split(|character: char| {
+                    character.is_whitespace() || matches!(character, ']' | '<' | '>' | '"')
+                })
+                .next()
+                .unwrap_or_default()
+                .trim_matches('-');
+            (!key.is_empty()).then(|| key.to_string())
+        }
+        Value::Array(values) => values.iter().find_map(extract_runinator_operation_key),
+        Value::Object(values) => values.values().find_map(extract_runinator_operation_key),
+        _ => None,
     }
 }
 
@@ -792,5 +826,18 @@ mod tests {
         });
         assert!(!response.verified);
         assert!(response.events.is_empty());
+    }
+
+    #[test]
+    fn provider_markers_are_normalized_as_operation_provenance() {
+        for marker in [
+            "<!-- runinator-operation:operation-42 -->",
+            "[runinator-operation:operation-42]",
+        ] {
+            assert_eq!(
+                extract_runinator_operation_key(&json!({ "body": marker })).as_deref(),
+                Some("operation-42")
+            );
+        }
     }
 }

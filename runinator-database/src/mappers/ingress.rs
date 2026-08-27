@@ -49,6 +49,7 @@ fallible_row_mapper!(row_to_ingress_event(row) -> IngressInboxEntry {
         generation: row.get("generation"), source: row.get("source"), event_id: row.get("event_id"),
         event_type: row.get("event_type"), correlation_key: row.get("correlation_key"),
         payload: parse_json(row.get("payload")),
+        provenance: parse_json(row.get("provenance")),
         occurred_at: row.get::<Option<i64>, _>("occurred_at").and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
         received_at: DateTime::<Utc>::from_timestamp(row.get("received_at"), 0).unwrap_or_else(Utc::now),
         disposition, queue_state, queue_position: None,

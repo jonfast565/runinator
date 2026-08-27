@@ -1797,6 +1797,7 @@ async fn record_workspace_abandonment<
                 "epoch": binding.current_epoch,
                 "evidence": workspace.evidence,
             }),
+            provenance: Default::default(),
             occurred_at: Some(now),
         },
         runinator_models::orchestration::IngressEventDisposition::Recorded,

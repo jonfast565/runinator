@@ -131,6 +131,34 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
     assert_eq!(binding.status, OrchestrationStatus::Pending);
     assert_eq!(binding.version, 0);
 
+    let ingress_event = db
+        .record_ingress_event(
+            admission_id,
+            1,
+            runinator_models::orchestration::IngressEvent {
+                source: "adapter:test".into(),
+                event_id: "event-with-provenance".into(),
+                event_type: "updated".into(),
+                correlation_key: "object-7".into(),
+                payload: runinator_models::json!({ "value": 1 }),
+                provenance: runinator_models::json!({ "operation_key": "operation-7" }),
+                occurred_at: Some(now),
+            },
+            runinator_models::orchestration::IngressEventDisposition::Recorded,
+            false,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ingress_event
+            .entry
+            .provenance
+            .get("operation_key")
+            .and_then(Value::as_str),
+        Some("operation-7")
+    );
+
     let duplicate = db
         .create_orchestration_binding(NewOrchestrationBinding {
             id: Uuid::now_v7(),
@@ -176,7 +204,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         subject_revision: Some("r1".into()),
         resources: runinator_models::json!({ "candidate": "r1" }),
         budgets: BTreeMap::new(),
-        last_reduced_sequence: 1,
+        last_reduced_sequence: ingress_event.entry.sequence,
         finished_at: None,
     };
     let updated = db

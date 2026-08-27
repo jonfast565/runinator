@@ -216,18 +216,36 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             binding.status = OrchestrationStatus::Running;
         }
         let internal_disposition = self.apply_internal_event(&mut binding, event).await?;
+        let self_origin_operation = self
+            .self_origin_operation(&binding, &event.provenance)
+            .await?;
         let mut decision = IntentDecision {
             matched: Vec::new(),
             winner: None,
             suppressed: Vec::new(),
         };
-        let mut disposition = internal_disposition.unwrap_or_else(|| "observed".into());
+        let mut disposition = internal_disposition.unwrap_or_else(|| {
+            if self_origin_operation.is_some() {
+                "self_originated".into()
+            } else {
+                "observed".into()
+            }
+        });
         if !event.source.starts_with("runinator.workspace") {
             let manual_intent = (event.source == "runinator.manual")
                 .then(|| event.payload.get("intent").and_then(Value::as_str))
                 .flatten();
-            let routed =
-                ingress.dispatches_for(&event.event_type, IngressLifecycle::Active, &event.payload);
+            let routed = ingress
+                .dispatches_for(&event.event_type, IngressLifecycle::Active, &event.payload)
+                .into_iter()
+                .filter(|name| {
+                    self_origin_operation.is_none()
+                        || binding
+                            .policy
+                            .intents
+                            .get(*name)
+                            .is_some_and(|intent| intent.allow_self_originated)
+                });
             decision = choose_intent(manual_intent.into_iter().chain(routed), &binding.policy);
             if let Some(winner) = decision.winner.as_deref() {
                 let intent = binding.policy.intents[winner].clone();
@@ -261,7 +279,11 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                             updated_at: now,
                         })
                         .await?;
-                    disposition = "coalesced".into();
+                    disposition = if self_origin_operation.is_some() {
+                        "self_originated_coalesced".into()
+                    } else {
+                        "coalesced".into()
+                    };
                 } else {
                     self.store
                         .delete_orchestration_pending_intents_below(binding.id, intent.priority)
@@ -275,9 +297,34 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                             Some(event.id),
                         )
                         .await?;
-                    disposition = "applied".into();
+                    disposition = if self_origin_operation.is_some() {
+                        "self_originated_applied".into()
+                    } else {
+                        "applied".into()
+                    };
                 }
             }
+        }
+
+        if let Some(operation) = &self_origin_operation {
+            self.store
+                .append_orchestration_evidence(OrchestrationEvidence {
+                    id: Uuid::now_v7(),
+                    binding_id: binding.id,
+                    epoch: Some(binding.current_epoch),
+                    kind: "self_originated_event".into(),
+                    subject_revision: binding.subject_revision.clone(),
+                    payload: runinator_models::json!({
+                        "event_id": event.id,
+                        "event_type": event.event_type,
+                        "payload": event.payload,
+                        "provenance": event.provenance,
+                        "external_operation_id": operation.id,
+                    }),
+                    source_event_id: Some(event.id),
+                    created_at: Utc::now(),
+                })
+                .await?;
         }
 
         let now = Utc::now();
@@ -313,7 +360,11 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 suppressed_intents: decision.suppressed,
                 binding_version: updated.version,
                 disposition,
-                detail: Value::Null,
+                detail: runinator_models::json!({
+                    "self_originated": self_origin_operation.is_some(),
+                    "external_operation_id": self_origin_operation.map(|operation| operation.id),
+                    "provenance": event.provenance,
+                }),
                 created_at: now,
             })
             .await?;
@@ -323,6 +374,33 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 .await?;
         }
         Ok(updated)
+    }
+
+    async fn self_origin_operation(
+        &self,
+        binding: &OrchestrationBinding,
+        provenance: &Value,
+    ) -> Result<Option<runinator_models::orchestration::ExternalOperation>, SendableError> {
+        let Some(operation_key) = provenance
+            .get("operation_key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty())
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .fetch_external_operations(binding.id)
+            .await?
+            .into_iter()
+            .find(|operation| {
+                operation.operation_key == operation_key
+                    || operation
+                        .provenance
+                        .get("provider_idempotency_key")
+                        .and_then(Value::as_str)
+                        == Some(operation_key)
+            }))
     }
 
     async fn apply_internal_event(
@@ -635,5 +713,199 @@ mod tests {
                 suppressed: vec!["redo".into(), "audit".into()],
             }
         );
+    }
+
+    #[tokio::test]
+    async fn self_originated_echo_is_evidence_without_dispatch_by_default() {
+        use runinator_database::sqlite::SqliteDb;
+        use runinator_models::{
+            orchestration::{
+                DeliverySemantics, ExternalOperation, ExternalOperationStatus, IngressAction,
+                IngressAdmissionStatus, IngressEvent, IngressEventDisposition, IngressRoute,
+                IngressTarget, IngressTargetKind,
+            },
+            pipelines::{Pipeline, PipelineGraph},
+        };
+        use runinator_store::prelude::*;
+
+        let path =
+            std::env::temp_dir().join(format!("runinator-self-originated-{}.db", Uuid::now_v7()));
+        let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+        let pipeline = db
+            .upsert_pipeline(&Pipeline {
+                id: None,
+                name: "self-origin test".into(),
+                key: None,
+                namespace: None,
+                description: None,
+                org_id: None,
+                graph: PipelineGraph {
+                    version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
+                    ..Default::default()
+                },
+                concurrency: Default::default(),
+                defaults: Default::default(),
+                metadata: Value::Null,
+                created_at: None,
+                updated_at: None,
+            })
+            .await
+            .unwrap();
+        let pipeline_id = pipeline.id.unwrap();
+        let ingress = IngressPolicy {
+            scope: "objects".into(),
+            routes: vec![
+                IngressRoute {
+                    event_type: "created".into(),
+                    lifecycle: IngressLifecycle::Unbound,
+                    action: IngressAction::Start,
+                    predicates: vec![],
+                    intent: None,
+                },
+                IngressRoute {
+                    event_type: "updated".into(),
+                    lifecycle: IngressLifecycle::Active,
+                    action: IngressAction::Dispatch,
+                    predicates: vec![],
+                    intent: Some("stop".into()),
+                },
+            ],
+        };
+        let now = Utc::now();
+        let admission = match db
+            .claim_ingress_admission(
+                IngressAdmission {
+                    id: Some(Uuid::now_v7()),
+                    org_id: None,
+                    scope: ingress.scope.clone(),
+                    correlation_key: "object-1".into(),
+                    generation: 1,
+                    target: IngressTarget {
+                        kind: IngressTargetKind::Pipeline,
+                        id: pipeline_id,
+                    },
+                    status: IngressAdmissionStatus::Active,
+                    workflow_run_id: None,
+                    pipeline_run_id: None,
+                    policy: serde_json::to_value(&ingress).unwrap().into(),
+                    created_at: now,
+                    updated_at: now,
+                },
+                Some(IngressEvent {
+                    source: "adapter:test".into(),
+                    event_id: "created".into(),
+                    event_type: "created".into(),
+                    correlation_key: "object-1".into(),
+                    payload: Value::Null,
+                    provenance: Value::Null,
+                    occurred_at: Some(now),
+                }),
+            )
+            .await
+            .unwrap()
+        {
+            runinator_models::orchestration::IngressAdmissionClaim::Acquired(value) => value,
+            _ => panic!("admission must be acquired"),
+        };
+        let mut policy = OrchestrationPolicy::default();
+        policy.intents.insert(
+            "stop".into(),
+            IntentPolicy {
+                effect: ControlEffect::Terminate,
+                priority: 100,
+                coalesce_seconds: None,
+                stop: Default::default(),
+                restart: Default::default(),
+                subject_revision_pointer: None,
+                allow_self_originated: false,
+                signal_name: None,
+            },
+        );
+        let binding = db
+            .create_orchestration_binding(NewOrchestrationBinding {
+                id: Uuid::now_v7(),
+                admission_id: admission.id.unwrap(),
+                org_id: None,
+                scope: admission.scope.clone(),
+                correlation_key: admission.correlation_key.clone(),
+                generation: 1,
+                pipeline_id,
+                pipeline_revision: 1,
+                pipeline_digest: "test".into(),
+                adapter_id: None,
+                adapter_revision: None,
+                policy,
+            })
+            .await
+            .unwrap();
+        db.create_external_operation(ExternalOperation {
+            id: Uuid::now_v7(),
+            binding_id: binding.id,
+            epoch: 1,
+            workflow_run_id: None,
+            effect_id: None,
+            operation_key: "effect-key".into(),
+            provider: "example".into(),
+            action: "ensure".into(),
+            semantics: DeliverySemantics::Reconcilable,
+            attempt: 1,
+            status: ExternalOperationStatus::Succeeded,
+            ambiguous: false,
+            provenance: runinator_models::json!({
+                "provider_idempotency_key": "provider-key"
+            }),
+            receipt: Value::Null,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+        db.record_ingress_event(
+            binding.admission_id,
+            binding.generation,
+            IngressEvent {
+                source: "adapter:test".into(),
+                event_id: "echo".into(),
+                event_type: "updated".into(),
+                correlation_key: binding.correlation_key.clone(),
+                payload: Value::Null,
+                provenance: runinator_models::json!({ "operation_key": "provider-key" }),
+                occurred_at: Some(now),
+            },
+            IngressEventDisposition::Recorded,
+            false,
+            now,
+        )
+        .await
+        .unwrap();
+        let claimed = db
+            .claim_orchestration_bindings(
+                "self-origin-reducer".into(),
+                now,
+                now + Duration::minutes(1),
+                1,
+            )
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let reduced = OrchestrationOperations::new(db.clone())
+            .reduce_binding(claimed, "self-origin-reducer")
+            .await
+            .unwrap();
+        assert_eq!(reduced.status, OrchestrationStatus::Running);
+        let reductions = db.fetch_orchestration_reductions(binding.id).await.unwrap();
+        assert_eq!(reductions.last().unwrap().disposition, "self_originated");
+        assert!(reductions.last().unwrap().winner.is_none());
+        let evidence = db.fetch_orchestration_evidence(binding.id).await.unwrap();
+        assert!(
+            evidence
+                .iter()
+                .any(|item| item.kind == "self_originated_event")
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(path);
     }
 }

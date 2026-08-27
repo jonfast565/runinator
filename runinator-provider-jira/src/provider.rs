@@ -315,7 +315,28 @@ impl Provider for JiraProvider {
                     client
                         .post(format!("{base}/rest/api/3/issue/{}/transitions", p.key))
                         .basic_auth(auth_user, Some(&p.base.token))
-                        .json(&json!({ "transition": { "id": p.transition_id } }))
+                        .json(&json!({
+                            "transition": { "id": p.transition_id },
+                            "update": {
+                                "comment": [{
+                                    "add": {
+                                        "body": {
+                                            "type": "doc",
+                                            "version": 1,
+                                            "content": [{
+                                                "type": "paragraph",
+                                                "content": [{
+                                                    "type": "text",
+                                                    "text": format!(
+                                                        "[runinator-operation:{operation_key}]"
+                                                    )
+                                                }]
+                                            }]
+                                        }
+                                    }
+                                }]
+                            }
+                        }))
                         .send()
                         .map_err(|e| http_error("jira ensure transition request failed", e))?,
                 )?;

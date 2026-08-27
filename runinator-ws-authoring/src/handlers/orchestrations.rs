@@ -395,6 +395,7 @@ pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
             "intent": request.intent, "payload": request.payload, "reason": request.reason,
             "actor_id": ctx.principal_id,
         }),
+        provenance: Default::default(),
         occurred_at: Some(Utc::now()),
     };
     match db
@@ -464,6 +465,7 @@ pub async fn requeue<
             "actor_id": ctx.principal_id,
             "previous_binding_id": binding.id,
         }),
+        provenance: Default::default(),
         occurred_at: Some(Utc::now()),
     };
     let record = match db
