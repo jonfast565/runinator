@@ -4,45 +4,92 @@ Comments keep short names when the name is part of the code or protocol. This li
 plain-English meaning.
 
 - **ADF** — Atlassian Document Format, the tree-shaped format used for Jira text.
+- **action** — a provider function invoked by a workflow action node. Its execution is represented by an effect.
+- **admission** — the durable record that tracks how a workflow or pipeline handles related external ingress events under one scope and correlation key.
 - **AMQP** — Advanced Message Queuing Protocol; a standard for message brokers.
+- **arm** — create a pending effect or wake so the runtime can act on it later; **re-arm** creates its next retry attempt without resuming the workflow yet.
 - **API** — application programming interface; the way one program talks to another.
+- **attempt** — one execution try of an effect. Retries create later attempts of the same logical effect.
 - **AST** — abstract syntax tree; the structured form of parsed source code.
 - **AWS** — Amazon Web Services.
 - **backoff** — waiting longer between repeated attempts.
+- **backfill** — deliberately create runs for cron slots in a past time range.
+- **blocked** — an open run whose current workflow flow cannot advance, for example because no condition route matched. It counts as parked for alerting.
 - **broker** — a service that passes messages between producers and consumers.
 - **CLI** — command-line interface; a program controlled from a terminal.
+- **claim** — atomically take eligible durable work for one scheduler or worker. The claim is protected by a temporary **lease** so another replica does not take the same work at once.
+- **compensation** — a best-effort undo action run in reverse order when a later workflow step fails.
+- **continuation** — the durable VM record for one live thread of workflow execution. It retains instruction position, local state, frames, and any effect it is awaiting.
+- **control plane** — the API and operator-facing services that configure, observe, and direct the runtime rather than execute provider work.
+- **correlation key** — a caller-supplied value that groups related ingress events so one admission can track their lifecycle.
 - **CRUD** — create, read, update, and delete.
+- **cursor** — the graph-facing position of a live workflow thread. Current VM APIs project a continuation as a cursor; older graph-runtime code also uses cursor for its durable thread record.
+- **debounce** — delay completion until a quiet period has passed; each new relevant event resets that delay.
+- **deduplicate / dedupe** — recognize repeated delivery of the same logical event or request and apply it only once.
 - **DNS** — Domain Name System; turns host names into network addresses.
+- **dispatch** — the durable instruction to deliver an effect to its executor, usually followed by publication on a broker channel.
+- **drive** — advance a runnable continuation through VM instructions until it reaches a durable boundary such as an effect, fork, join, or terminal result.
+- **durable** — persisted so the state survives process restarts and can be recovered by another replica.
 - **egress** — data leaving a service or network.
+- **effect** — one durable request for work or coordination that the VM yields. An effect may call a provider, wait for a timer or external input, acquire a lock, or start/await another run.
+- **effect host** — the engine-side component that turns VM effect requests into durable records, arranges their execution, and applies their results.
+- **effect receipt** — the immutable durable record of an effect request, its attempts, executor attribution, and eventual result.
+- **effect settlement** — see **settle**.
 - **ETag** — a value used to identify a particular version of stored data.
 - **fan-out** — sending one message to every subscriber.
+- **fork / join** — a fork splits workflow control into independent fibers; a join waits for its required fibers and combines control back into one continuation.
+- **fiber** — an independently schedulable thread of workflow control, represented durably by a continuation or cursor. Parallel and race branches create separate fibers.
+- **freeze window** — a time range during which matching schedules do not fire; catch-up policy decides what happens to the missed slots afterward.
 - **gRPC** — Google’s remote procedure call framework.
 - **HMAC** — hash-based message authentication code; a way to prove a message was not changed.
 - **idempotent** — safe to repeat because later repeats have the same result.
-- **ingress** — data entering a service or network.
+- **in-flight** — started but not yet terminal; for a run, this includes work that is executing or parked.
+- **ingress** — data entering a service or network. In Runinator, it is also the broker path that carries external events and results into the engine.
+- **infrastructure effect** — an effect owned by the engine's coordination host rather than a provider worker, such as a timer, approval, gate, signal, or mutex wait.
 - **JSON-RPC** — a remote procedure call format that uses JSON messages.
 - **JSON** — JavaScript Object Notation; a text format for structured data.
+- **journal** — the append-only execution history for a workflow run. It records events such as node entry, effect requests and settlements, forks, and completion.
+- **joined** — a continuation that has reached a join and is waiting for the required sibling fibers to arrive or for the join policy to be met.
 - **JWT** — JSON Web Token; a signed set of claims.
 - **Kubernetes** — a system for running and managing containers.
+- **lease** — see **claim**.
 - **LSP** — Language Server Protocol; the protocol used by code editors for language features.
+- **materialize** — turn an authored declaration into the durable runtime records that enact it; importing a pack materializes its managed triggers and notification policies.
 - **MCP** — Model Context Protocol; a protocol for exposing tools and resources to a model.
 - **MIME** — the type label that describes a file or message body.
 - **NAT** — network address translation; a gateway that rewrites network addresses.
+- **node** — one authored step in a workflow graph. A node can perform inline work, yield an effect, or control graph flow.
+- **node run** — one visit to an authored workflow node. VM execution history now records node entries alongside continuations and effect receipts rather than inferring them from mutable state.
 - **OIDC** — OpenID Connect; an identity layer built on OAuth.
 - **OAuth** — an authorization protocol that lets one service grant limited access to another.
 - **OpenTelemetry** — a standard for collecting traces, metrics, and logs.
+- **outbox** — durable pending work that has been recorded before it is published to a broker, so a crash cannot lose it between persistence and delivery.
+- **park / parked** — pause an open workflow run or continuation because it is waiting for an external condition or result. A parked run has a waiting, approval-required, input-required, or blocked status; it is not progressing but has not ended.
+- **pause / paused** — an operator or debugger has intentionally stopped a run or continuation. It will not progress until explicitly resumed; this is distinct from waiting for an effect or being suspended by an interrupt handler.
 - **payload** — the data carried by a message or request.
+- **pin / pinned** — bind a run, effect, or function call to an immutable revision, version, or digest so later edits cannot change what it executes.
+- **poison message** — a broker message that repeatedly cannot be processed and must be retained or surfaced rather than silently discarded.
+- **provider** — an integration that implements named actions, such as an API connector or local capability. Workers resolve provider effects to these implementations.
 - **RBAC** — role-based access control; permissions assigned through roles.
 - **replica** — one running copy of a service or worker.
+- **reconcile** — compare managed durable records with their source declaration and create, update, or remove records to make them match.
 - **REXRAP** — Runinator’s expression and workflow language.
+- **rejected** — an approval or input was explicitly declined. This is separate from failure so the graph can take an `on_reject` route.
 - **RPC** — remote procedure call; calling a function in another process or service.
+- **runnable** — eligible for a scheduler to claim and drive. A continuation becomes runnable when it starts, is resumed, or its awaited effect has settled.
+- **run** — one execution of a workflow, including its runtime state, continuations, effects, history, outputs, and terminal result.
 - **S3** — Amazon Simple Storage Service, or a compatible object-storage interface.
 - **SDK** — software development kit; libraries and tools for using a service.
+- **settle / settled / settlement** — durably record an effect's terminal outcome and make its waiting continuation eligible to resume. A run is settled when it reaches a terminal status. A retryable failed attempt is re-armed instead of settled, so the continuation stays parked.
 - **SigV4** — AWS Signature Version 4; the method used to sign AWS requests.
 - **SMTP** — Simple Mail Transfer Protocol; the standard protocol for sending email.
 - **SPA** — single-page application; a web app that updates one page without full reloads.
 - **SSO** — single sign-on; one login shared across services.
+- **suspend / suspended** — freeze a continuation behind an interrupt handler. Unlike a parked continuation awaiting an effect, it cannot be scheduled until that handler resumes it.
 - **TCP** — Transmission Control Protocol; a reliable network connection.
+- **terminal** — a state that cannot transition further. Workflow runs are terminal when succeeded, failed, timed out, or canceled; effects and continuations have their own terminal status sets.
+- **transition** — the selected edge that moves workflow control from one node to the next.
+- **trigger** — a rule that starts a workflow or links workflow runs, such as a cron schedule, chained completion, or external event.
 - **TLS** — Transport Layer Security; encryption for a network connection.
 - **TUI** — terminal user interface; an interactive screen drawn in a terminal.
 - **UDP** — User Datagram Protocol; a connectionless network protocol.
@@ -50,6 +97,12 @@ plain-English meaning.
 - **URI** — uniform resource identifier; a name for a resource.
 - **URL** — uniform resource locator; a URI that gives a web location.
 - **UUID** — universally unique identifier; a value designed to be unique across systems.
-- **VM** — virtual machine; a program that runs instructions in a controlled environment.
+- **VM** — virtual machine; Runinator's VM executes compiled workflow instructions and stops at durable boundaries.
+- **wake** — a broker message with a due time and an already-prepared effect settlement. The waker relays it to ingress when due; it does not decide the outcome itself.
 - **WebSocket / WS** — a long-lived, two-way connection over the web.
+- **waker** — the stateless broker consumer that waits for wakes and relays their carried settlements to the engine.
+- **worker** — a process that claims provider effects, executes the resolved provider action, and publishes the result.
+- **workflow** — an authored graph of nodes, transitions, and runtime metadata. A workflow definition can produce many runs.
+- **waiting** — an open continuation or run is awaiting an effect result, such as a provider action, timer, approval, signal, or child run.
 - **YAML** — a human-readable format often used for configuration.
+- **yield** — stop VM execution at a durable boundary and return an effect request to the host; the continuation resumes only after the effect settles.
