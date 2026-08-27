@@ -98,6 +98,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                     watches: Vec::new(),
                     interrupts: Vec::new(),
                     correlation: None,
+                    ingress: None,
                     type_decls: Vec::new(),
                     body: Vec::new(),
                     joins: Vec::new(),
@@ -159,6 +160,16 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
             Rule::correlate_decl => {
                 let workflow = require_active(&mut active, &inner)?;
                 workflow.correlation = Some(parse_correlate_decl(inner)?);
+            }
+            Rule::ingress_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                if workflow.ingress.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one ingress header",
+                    ));
+                }
+                workflow.ingress = Some(parse_ingress_decl(inner)?);
             }
             Rule::alias_decl => {
                 let workflow = require_active(&mut active, &inner)?;
@@ -538,6 +549,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
     let mut links = Vec::new();
     let mut joins = Vec::new();
     let mut concurrency = None;
+    let mut ingress = None;
     let mut triggers = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -593,6 +605,15 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
                     Rule::pipeline_link => links.push(parse_pipeline_link(item)?),
                     Rule::pipeline_join => joins.push(parse_pipeline_join(item)?),
                     Rule::concurrency_decl => concurrency = Some(parse_concurrency_decl(item)?),
+                    Rule::ingress_decl => {
+                        if ingress.is_some() {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare one ingress header",
+                            ));
+                        }
+                        ingress = Some(parse_ingress_decl(item)?);
+                    }
                     Rule::pipeline_trigger => triggers.push(parse_pipeline_trigger(item)?),
                     _ => {}
                 }
@@ -611,7 +632,51 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
         links,
         joins,
         concurrency,
+        ingress,
         triggers,
+        span,
+    })
+}
+
+fn parse_ingress_decl(pair: Pair<Rule>) -> Result<IngressDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut scope = None;
+    let mut routes = Vec::new();
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::string => scope = Some(plain_string(part)?),
+            Rule::ingress_route => {
+                let route_span = span_of(&part);
+                let mut event_type = None;
+                let mut lifecycle = None;
+                let mut action = None;
+                for item in part.into_inner() {
+                    match item.as_rule() {
+                        Rule::string => event_type = Some(plain_string(item)?),
+                        Rule::ingress_lifecycle => lifecycle = Some(item.as_str().to_string()),
+                        Rule::ingress_action => action = Some(item.as_str().to_string()),
+                        _ => {}
+                    }
+                }
+                routes.push(IngressRouteDecl {
+                    event_type: event_type.ok_or_else(|| {
+                        RexRapError::syntax(route_span, "ingress route missing event type")
+                    })?,
+                    lifecycle: lifecycle.ok_or_else(|| {
+                        RexRapError::syntax(route_span, "ingress route missing lifecycle")
+                    })?,
+                    action: action.ok_or_else(|| {
+                        RexRapError::syntax(route_span, "ingress route missing action")
+                    })?,
+                    span: route_span,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(IngressDecl {
+        scope: scope.ok_or_else(|| RexRapError::syntax(span, "ingress missing scope"))?,
+        routes,
         span,
     })
 }
@@ -760,6 +825,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     let mut watches = Vec::new();
     let mut interrupts = Vec::new();
     let mut correlation = None;
+    let mut ingress = None;
     let mut type_decls = Vec::new();
     let mut body = Vec::new();
     let mut joins: Vec<JoinDecl> = Vec::new();
@@ -808,6 +874,15 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
             Rule::watch_decl => watches.push(parse_watch_decl(inner)?),
             Rule::interrupt_decl => interrupts.push(parse_interrupt_decl(inner)?),
             Rule::correlate_decl => correlation = Some(parse_correlate_decl(inner)?),
+            Rule::ingress_decl => {
+                if ingress.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one ingress header",
+                    ));
+                }
+                ingress = Some(parse_ingress_decl(inner)?);
+            }
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
@@ -850,6 +925,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         watches,
         interrupts,
         correlation,
+        ingress,
         type_decls,
         body,
         joins,

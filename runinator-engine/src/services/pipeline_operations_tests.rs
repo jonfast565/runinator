@@ -164,6 +164,16 @@ async fn import_uses_canonical_members_and_resolves_same_pack_pipeline_sources()
         links: Vec::new(),
         joins: Vec::new(),
         concurrency: Default::default(),
+        metadata: runinator_models::json!({
+            "ingress": {
+                "scope": "acme.release",
+                "routes": [{
+                    "event_type": "created",
+                    "lifecycle": "unbound",
+                    "action": "start"
+                }]
+            }
+        }),
         triggers: Vec::new(),
     };
     let target = PipelineSpec {
@@ -176,6 +186,7 @@ async fn import_uses_canonical_members_and_resolves_same_pack_pipeline_sources()
         links: Vec::new(),
         joins: Vec::new(),
         concurrency: Default::default(),
+        metadata: runinator_models::json!({}),
         triggers: vec![
             PipelineTriggerSpec {
                 kind: WorkflowTriggerKind::Chained,
@@ -210,6 +221,21 @@ async fn import_uses_canonical_members_and_resolves_same_pack_pipeline_sources()
     let source_id = imported[0].id.unwrap();
     let target_id = imported[1].id.unwrap();
     assert_eq!(imported[1].graph.members[0].workflow_id, beta_id);
+    assert_eq!(
+        imported[0]
+            .metadata
+            .get("ingress")
+            .and_then(|value| value.get("scope"))
+            .and_then(Value::as_str),
+        Some("acme.release")
+    );
+    assert_eq!(
+        imported[0]
+            .metadata
+            .get("managed_by")
+            .and_then(Value::as_str),
+        Some("rexrap")
+    );
 
     let triggers = db.fetch_pipeline_triggers(target_id).await.unwrap();
     assert_eq!(triggers.len(), 2);

@@ -300,6 +300,24 @@ impl Formatter {
                 self.out.push('\n');
             }
         }
+        if let Some(ingress) = &workflow.ingress {
+            self.line(&format!("ingress scope {:?} {{", ingress.scope));
+            self.indent += 1;
+            for route in &ingress.routes {
+                self.line(&format!(
+                    "on {:?} when {} -> {}",
+                    route.event_type, route.lifecycle, route.action
+                ));
+            }
+            self.indent -= 1;
+            self.line("}");
+            if !workflow.type_decls.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty()
+            {
+                self.out.push('\n');
+            }
+        }
         // preserve named `type <Name>` declarations; struct types render each field on its own line.
         for (index, decl) in workflow.type_decls.iter().enumerate() {
             if index > 0 {

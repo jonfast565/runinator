@@ -3,6 +3,274 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// The lifecycle state of a correlation-key admission when an ingress event arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressLifecycle {
+    Unbound,
+    Active,
+    Terminal,
+}
+
+/// The provider-neutral disposition selected by an ingress policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressAction {
+    Start,
+    Interrupt,
+    Queue,
+    Record,
+    Requeue,
+}
+
+/// One static event-type route in a workflow or pipeline ingress policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngressRoute {
+    pub event_type: String,
+    pub lifecycle: IngressLifecycle,
+    pub action: IngressAction,
+}
+
+/// Authored, provider-neutral policy carried in workflow/pipeline metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngressPolicy {
+    pub scope: String,
+    #[serde(default)]
+    pub routes: Vec<IngressRoute>,
+}
+
+impl IngressPolicy {
+    /// Resolve the one policy action for an event in the admission's current lifecycle.
+    /// A missing route intentionally means that the event is recorded nowhere and starts nothing.
+    pub fn action_for(
+        &self,
+        event_type: &str,
+        lifecycle: IngressLifecycle,
+    ) -> Option<IngressAction> {
+        self.routes
+            .iter()
+            .find(|route| route.event_type == event_type && route.lifecycle == lifecycle)
+            .map(|route| route.action)
+    }
+
+    /// Validate the policy independently of any provider or target kind.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.scope.trim().is_empty() {
+            return Err("ingress scope must not be empty".into());
+        }
+        for route in &self.routes {
+            if route.event_type.trim().is_empty() {
+                return Err("ingress event type must not be empty".into());
+            }
+            if !route.action.is_allowed_when(route.lifecycle) {
+                return Err(format!(
+                    "ingress action '{}' is not valid when the admission is {}",
+                    route.action.as_str(),
+                    route.lifecycle.as_str()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl IngressLifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unbound => "unbound",
+            Self::Active => "active",
+            Self::Terminal => "terminal",
+        }
+    }
+}
+
+impl IngressAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Interrupt => "interrupt",
+            Self::Queue => "queue",
+            Self::Record => "record",
+            Self::Requeue => "requeue",
+        }
+    }
+
+    pub fn is_allowed_when(self, lifecycle: IngressLifecycle) -> bool {
+        matches!(
+            (lifecycle, self),
+            (IngressLifecycle::Unbound, Self::Start | Self::Record)
+                | (
+                    IngressLifecycle::Active,
+                    Self::Interrupt | Self::Queue | Self::Record
+                )
+                | (IngressLifecycle::Terminal, Self::Requeue | Self::Record)
+        )
+    }
+}
+
+/// Opaque event accepted by the generic workflow/pipeline ingress surface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressEvent {
+    pub source: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub correlation_key: String,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub occurred_at: Option<DateTime<Utc>>,
+}
+
+/// The artifact kind currently owning a correlation-key admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressTargetKind {
+    Workflow,
+    Pipeline,
+}
+
+/// Stable target identity retained with an admission generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IngressTarget {
+    pub kind: IngressTargetKind,
+    pub id: Uuid,
+}
+
+/// Durable state of one correlation-key generation. The store owns its atomic transitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressAdmissionStatus {
+    Active,
+    Terminal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressAdmission {
+    pub id: Option<Uuid>,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    pub scope: String,
+    pub correlation_key: String,
+    pub generation: i64,
+    pub target: IngressTarget,
+    pub status: IngressAdmissionStatus,
+    #[serde(default)]
+    pub workflow_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub pipeline_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub policy: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Result of atomically creating the active admission for one `(org, scope, correlation key)`.
+/// The caller that receives `Acquired` is the only one permitted to start a new target run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", content = "admission", rename_all = "snake_case")]
+pub enum IngressAdmissionClaim {
+    Acquired(IngressAdmission),
+    Existing(IngressAdmission),
+}
+
+/// Durable outcome of one provider-neutral ingress event.  The value is returned unchanged for
+/// retries carrying the same `(source, event_id)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressEventDisposition {
+    Started,
+    Recorded,
+    Queued,
+    InterruptRequested,
+    Requeued,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressQueueState {
+    None,
+    Queued,
+    Claimed,
+    Promoted,
+}
+
+/// One immutable event in an admission's ordered timeline.  Result references are filled as the
+/// event starts (or is promoted into) a generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressInboxEntry {
+    pub id: Uuid,
+    pub admission_id: Uuid,
+    pub sequence: i64,
+    pub generation: i64,
+    pub source: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub correlation_key: String,
+    pub payload: Value,
+    pub occurred_at: Option<DateTime<Utc>>,
+    pub received_at: DateTime<Utc>,
+    pub disposition: IngressEventDisposition,
+    pub queue_state: IngressQueueState,
+    pub queue_position: Option<i64>,
+    pub promoted_generation: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
+    pub pipeline_run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressEventRecord {
+    pub entry: IngressInboxEntry,
+    pub duplicate: bool,
+}
+
+/// Atomic settlement result handed to the engine when the oldest queued event became the next
+/// active generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressPromotion {
+    pub admission: IngressAdmission,
+    pub event: IngressInboxEntry,
+    pub claim_token: Uuid,
+}
+
+#[cfg(test)]
+mod ingress_policy_tests {
+    use super::*;
+
+    #[test]
+    fn resolves_routes_by_event_and_lifecycle() {
+        let policy = IngressPolicy {
+            scope: "issue.lifecycle".into(),
+            routes: vec![IngressRoute {
+                event_type: "changed".into(),
+                lifecycle: IngressLifecycle::Active,
+                action: IngressAction::Queue,
+            }],
+        };
+        assert_eq!(
+            policy.action_for("changed", IngressLifecycle::Active),
+            Some(IngressAction::Queue)
+        );
+        assert_eq!(
+            policy.action_for("changed", IngressLifecycle::Terminal),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_lifecycle_action_pairs() {
+        let policy = IngressPolicy {
+            scope: "issue.lifecycle".into(),
+            routes: vec![IngressRoute {
+                event_type: "changed".into(),
+                lifecycle: IngressLifecycle::Unbound,
+                action: IngressAction::Interrupt,
+            }],
+        };
+        assert!(policy.validate().is_err());
+    }
+}
+
 /// one edge walked by a workflow run, derived from the node-run chain (`prev_node_run_id`).
 /// `from_node` is `None` for the run's first node.
 #[derive(Debug, Clone, Serialize, Deserialize)]

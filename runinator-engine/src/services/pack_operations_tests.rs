@@ -115,6 +115,7 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
             links: Vec::new(),
             joins: Vec::new(),
             concurrency: Default::default(),
+            metadata: runinator_models::json!({}),
             triggers: Vec::new(),
         }],
     };

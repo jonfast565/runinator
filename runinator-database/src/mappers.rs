@@ -22,6 +22,10 @@ use runinator_models::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
         NotificationEvent, NotificationPolicy, NotificationSeverity,
     },
+    orchestration::{
+        IngressAdmission, IngressAdmissionStatus, IngressEventDisposition, IngressInboxEntry,
+        IngressQueueState, IngressTarget, IngressTargetKind,
+    },
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{
         Pipeline, PipelineDefaults, PipelineMemberAttempt, PipelineMemberAttemptStatus,
@@ -117,6 +121,8 @@ mod replicas;
 pub use replicas::*;
 mod notifications;
 pub use notifications::*;
+mod ingress;
+pub use ingress::*;
 
 #[cfg(test)]
 #[path = "mappers_tests.rs"]

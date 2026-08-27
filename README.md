@@ -821,6 +821,36 @@ node per workflow, one edge per chained trigger — and lets you author them by
 dragging between workflows, editing an edge's `on` selector, or enabling/disabling
 and deleting chains through the normal trigger CRUD.
 
+#### Generic ingress lifecycle
+
+Workflows and pipelines can declare a provider-neutral admission policy. Runinator only receives
+an already-authenticated opaque event; Jira/GitHub signatures and payload interpretation remain in
+the caller or provider adapter. The policy selects an action from the event type and the durable
+admission lifecycle:
+
+```rexrap
+ingress scope "release.lifecycle" {
+    on "created"  when unbound  -> start
+    on "observed" when active   -> record
+    on "updated"  when active   -> queue
+    on "canceled" when active   -> interrupt
+    on "observed" when terminal -> record
+    on "reopened" when terminal -> requeue
+}
+```
+
+`start` creates generation one. `record` appends audit provenance without changing the active run.
+`queue` appends to the admission's durable FIFO; terminal settlement promotes exactly one head event
+into the next generation and startup failures release that claim without reordering. `interrupt`
+uses the workflow external-interrupt path, while a pipeline interrupt cancels the pipeline and every
+active member. `requeue` compare-and-swaps a terminal admission into its next generation. A missing
+route is an explicit no-op/rejection and never starts work. `(source, event_id)` is deduplicated in
+the admission ledger, so retries receive the original disposition and run reference.
+
+Submit events to `POST /workflows/{id}/ingress` or `POST /pipelines/{id}/ingress`. Authenticated
+operators can inspect the owner at `GET /ingress/admission?scope=…&correlation_key=…` and its ordered
+timeline at `GET /ingress/admission/events?scope=…&correlation_key=…`.
+
 #### Failure alerting
 
 Workflows declare alerting policies in the REXRAP header, materialized from

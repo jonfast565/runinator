@@ -59,6 +59,13 @@ impl<T> RunOperations<T> {
 }
 
 impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> RunOperations<T> {
+    pub async fn fetch_workflow_definition(
+        &self,
+        workflow_id: Uuid,
+    ) -> Result<Option<runinator_models::workflows::WorkflowDefinition>, SendableError> {
+        self.store.fetch_workflow(workflow_id).await
+    }
+
     /// Start a run from a workflow definition and publish its invalidation after it is durable.
     pub async fn create(
         &self,

@@ -459,7 +459,7 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
         },
         concurrency: spec.concurrency,
         defaults: spec.defaults.clone(),
-        metadata: runinator_models::json!({ "managed_by": "rexrap", "requires_reimport": false }),
+        metadata: imported_pipeline_metadata(&spec.metadata)?,
         created_at: None,
         updated_at: None,
     };
@@ -468,6 +468,16 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
         upsert_pipeline_with_author(db, &pipeline, &RevisionAuthor::system(RevisionSource::Pack))
             .await?;
     Ok(saved)
+}
+
+fn imported_pipeline_metadata(metadata: &Value) -> Result<Value, SendableError> {
+    let mut metadata = metadata.clone();
+    let object = metadata
+        .as_object_mut()
+        .ok_or_else(|| invalid_pipeline("pipeline metadata must be an object"))?;
+    object.insert("managed_by".into(), Value::String("rexrap".into()));
+    object.insert("requires_reimport".into(), Value::Bool(false));
+    Ok(metadata)
 }
 
 // realize a pipeline's header triggers as managed `pipeline_triggers`. reconciles idempotently: drop

@@ -5,6 +5,9 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use runinator_models::orchestration::{
+    IngressAction, IngressLifecycle, IngressPolicy, IngressRoute,
+};
 use runinator_models::pipelines::{
     PipelineBundle, PipelineDefaults, PipelineFailurePolicy, PipelineJoinMode, PipelineJoinSpec,
     PipelineLinkSelector, PipelineLinkSpec, PipelineMemberFailureMode, PipelineMemberSpec,
@@ -89,6 +92,7 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         .iter()
         .map(lower_member)
         .collect::<Result<Vec<_>, RexRapError>>()?;
+    let metadata = lower_ingress_metadata(decl.ingress.as_ref())?;
     Ok(PipelineSpec {
         name: decl.name.clone(),
         key: decl.key.clone(),
@@ -113,8 +117,61 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
                 },
             })
             .unwrap_or_default(),
+        metadata,
         triggers,
     })
+}
+
+fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<Value, RexRapError> {
+    let Some(ingress) = ingress else {
+        return Ok(Value::Object(Map::new()));
+    };
+    let mut routes = Vec::with_capacity(ingress.routes.len());
+    for route in &ingress.routes {
+        let lifecycle = match route.lifecycle.as_str() {
+            "unbound" => IngressLifecycle::Unbound,
+            "active" => IngressLifecycle::Active,
+            "terminal" => IngressLifecycle::Terminal,
+            _ => unreachable!("parser restricts ingress lifecycle"),
+        };
+        let action = match route.action.as_str() {
+            "start" => IngressAction::Start,
+            "interrupt" => IngressAction::Interrupt,
+            "queue" => IngressAction::Queue,
+            "record" => IngressAction::Record,
+            "requeue" => IngressAction::Requeue,
+            _ => unreachable!("parser restricts ingress action"),
+        };
+        if !action.is_allowed_when(lifecycle) {
+            return Err(RexRapError::syntax(
+                route.span,
+                format!(
+                    "ingress action '{}' is not valid when the admission is {}",
+                    route.action, route.lifecycle
+                ),
+            ));
+        }
+        routes.push(IngressRoute {
+            event_type: route.event_type.clone(),
+            lifecycle,
+            action,
+        });
+    }
+    let policy = IngressPolicy {
+        scope: ingress.scope.clone(),
+        routes,
+    };
+    policy
+        .validate()
+        .map_err(|message| RexRapError::syntax(ingress.span, message))?;
+    let mut metadata = Map::new();
+    metadata.insert(
+        "ingress".into(),
+        serde_json::to_value(policy)
+            .expect("ingress policy serializes")
+            .into(),
+    );
+    Ok(Value::Object(metadata))
 }
 
 /// lower a `workflow "Name" [on_failure <mode>]` member decl. `on_failure` is `None` when the member
@@ -429,6 +486,23 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
                 spec.concurrency.on_conflict.as_str()
             ));
         }
+        if let Some(ingress) = spec
+            .metadata
+            .get("ingress")
+            .and_then(|value| serde_json::from_value::<IngressPolicy>(value.clone().into()).ok())
+        {
+            out.push('\n');
+            out.push_str(&format!("    ingress scope {} {{\n", quote(&ingress.scope)));
+            for route in ingress.routes {
+                out.push_str(&format!(
+                    "        on {} when {} -> {}\n",
+                    quote(&route.event_type),
+                    ingress_lifecycle_name(route.lifecycle),
+                    ingress_action_name(route.action),
+                ));
+            }
+            out.push_str("    }\n");
+        }
         if !spec.triggers.is_empty() {
             out.push('\n');
             for trigger in &spec.triggers {
@@ -494,6 +568,14 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
         out.push_str("}\n");
     }
     out
+}
+
+fn ingress_lifecycle_name(lifecycle: IngressLifecycle) -> &'static str {
+    lifecycle.as_str()
+}
+
+fn ingress_action_name(action: IngressAction) -> &'static str {
+    action.as_str()
 }
 
 /// render a pipeline trigger spec back to `.rexrapp` source. mirrors `lower_trigger` so files round-trip.

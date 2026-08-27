@@ -45,8 +45,6 @@ import type {
   EnumCatalogMetadata,
   ReplicaListResponse,
   ReplicaProviderRegistration,
-  RunArtifact,
-  RunChunk,
   RunSummary,
   SettingKind,
   ServiceStatus,
@@ -79,7 +77,34 @@ import type {
   PipelineRun,
   PipelineRunDetail,
   PipelineTrigger,
+  IngressAdmission,
+  IngressInboxEntry,
 } from "../domain/models";
+
+async function fetchIngressJson<T>(path: string): Promise<T> {
+  const token = httpAuthToken();
+  const response = await fetch(`${apiBaseUrl()}/${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { message?: string };
+
+    throw new Error(body.message ?? `Ingress request failed (${String(response.status)})`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export async function fetchIngressAdmission(scope: string, correlationKey: string) {
+  const query = new URLSearchParams({ scope, correlation_key: correlationKey });
+  return fetchIngressJson<IngressAdmission>(`ingress/admission?${query}`);
+}
+
+export async function fetchIngressTimeline(scope: string, correlationKey: string) {
+  const query = new URLSearchParams({ scope, correlation_key: correlationKey });
+  return fetchIngressJson<IngressInboxEntry[]>(`ingress/admission/events?${query}`);
+}
 
 export interface WorkflowRexRapSaveRequest {
   source: string;

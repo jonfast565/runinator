@@ -111,6 +111,8 @@ pub struct Workflow {
     /// optional header `correlate key <expr>`: the value this workflow's runs are awaitable by. rides
     /// in `metadata.correlation` and is stamped onto each run's correlation key as it progresses.
     pub correlation: Option<Expr>,
+    /// provider-neutral correlation-key ingress policy.
+    pub ingress: Option<IngressDecl>,
     /// header `type <Name> ...` declarations: reusable named types.
     pub type_decls: Vec<TypeDecl>,
     /// the statements of the workflow's `do { … }` runtime block.
@@ -122,6 +124,21 @@ pub struct Workflow {
     pub leading_comments: Vec<Comment>,
     /// comments after the last body statement, before the closing brace.
     pub dangling_comments: Vec<Comment>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IngressDecl {
+    pub scope: String,
+    pub routes: Vec<IngressRouteDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IngressRouteDecl {
+    pub event_type: String,
+    pub lifecycle: String,
+    pub action: String,
+    pub span: Span,
 }
 
 /// a `join <name> { … }` named continuation: a labelled region a `continue <name>` route enters.

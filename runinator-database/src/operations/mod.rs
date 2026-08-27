@@ -1033,6 +1033,7 @@ mod delivery;
 mod execution_state_sql;
 mod files;
 mod functions;
+mod ingress;
 mod notifications;
 mod orgs;
 mod pack_transaction;

@@ -267,6 +267,10 @@ impl<'a> MetadataReader<'a> {
         self.value("/correlation").filter(|value| !value.is_null())
     }
 
+    pub(super) fn ingress(&self) -> Option<&Value> {
+        self.value("/ingress").filter(|value| !value.is_null())
+    }
+
     fn value(&self, pointer: &str) -> Option<&'a Value> {
         self.metadata.pointer(pointer)
     }

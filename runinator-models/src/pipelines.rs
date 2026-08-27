@@ -177,6 +177,10 @@ pub struct PipelineSpec {
     pub joins: Vec<PipelineJoinSpec>,
     #[serde(default)]
     pub concurrency: WorkflowConcurrency,
+    /// Portable pipeline metadata authored with the pack.  Importers add their managed markers
+    /// without replacing this object, so generic policies can travel with the declaration.
+    #[serde(default)]
+    pub metadata: Value,
     /// pipeline-level triggers (cron / manual / chained) declared in the `.rexrapp` header. materialized
     /// on import as managed `pipeline_triggers` reconciled by pipeline id.
     #[serde(default)]

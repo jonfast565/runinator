@@ -181,6 +181,41 @@ fn round_trips_pipeline_triggers() {
     assert_eq!(bundle, reparsed);
 }
 
+#[test]
+fn pipeline_ingress_policy_round_trips() {
+    let source = r#"
+pipeline "Release" {
+    ingress scope "release.lifecycle" {
+        on "created" when unbound -> start
+        on "changed" when active -> queue
+        on "reopened" when terminal -> requeue
+    }
+
+    workflow "acme.release.build"
+}
+"#;
+    let bundle = parse_pipeline_str(source).expect("parse");
+    let ingress = bundle.pipelines[0]
+        .metadata
+        .get("ingress")
+        .expect("ingress metadata");
+    assert_eq!(
+        ingress.get("scope").and_then(|value| value.as_str()),
+        Some("release.lifecycle")
+    );
+    assert_eq!(
+        ingress
+            .get("routes")
+            .and_then(|value| value.as_array())
+            .map(Vec::len),
+        Some(3)
+    );
+    assert_eq!(
+        bundle,
+        parse_pipeline_str(&pipeline_to_rexrapp(&bundle)).expect("reparse")
+    );
+}
+
 const MEMBER_FAILURE_MODES: &str = r#"
 pipeline "Deploy" {
     workflow "acme.deploy.build" on_failure stop

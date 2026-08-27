@@ -117,6 +117,9 @@ pub enum ApiResponse {
     PipelineRunDetail(PipelineRunDetail),
     PipelineRunList(Vec<PipelineRun>),
     PipelineMemberAttempt(PipelineMemberAttempt),
+    Ingress(IngressResponse),
+    IngressAdmission(runinator_models::orchestration::IngressAdmission),
+    IngressTimeline(Vec<runinator_models::orchestration::IngressInboxEntry>),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
@@ -215,6 +218,40 @@ pub struct PipelineRunRequest {
     /// Run an immutable historical pipeline definition instead of the current head.
     #[serde(default)]
     pub revision: Option<i64>,
+}
+
+/// Opaque provider-neutral event submitted to a workflow or pipeline ingress policy.
+#[derive(Debug, Deserialize)]
+pub struct IngressEventRequest {
+    pub source: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub correlation_key: String,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub occurred_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IngressAdmissionQuery {
+    pub scope: String,
+    pub correlation_key: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IngressResponse {
+    pub admission_id: Uuid,
+    pub generation: i64,
+    pub disposition: String,
+    pub duplicate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_position: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_run_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_run_id: Option<Uuid>,
+    pub message: String,
 }
 
 #[derive(Debug, Default, Deserialize)]

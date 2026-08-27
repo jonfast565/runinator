@@ -57,6 +57,7 @@ fn pack_zip_round_trips() {
             }],
             joins: vec![],
             concurrency: Default::default(),
+            metadata: runinator_models::json!({}),
             triggers: vec![],
         }],
     };

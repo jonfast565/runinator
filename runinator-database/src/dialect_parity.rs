@@ -19,6 +19,10 @@ use runinator_comm::{
 use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
     json,
+    orchestration::{
+        IngressAdmission, IngressAdmissionClaim, IngressAdmissionStatus, IngressTarget,
+        IngressTargetKind,
+    },
     revisions::{RevisionSource, WorkflowRevision},
     settings::SettingKind,
     types::RuninatorType,
@@ -84,6 +88,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_revision_history(db, &after).await;
     assert_trigger_upsert(db, id).await;
     assert_idempotency_keys(db).await;
+    assert_ingress_admission_claim(db).await;
     assert_notifications(db).await;
     assert_settings(db).await;
     assert_catalog_upsert(db).await;
@@ -978,6 +983,41 @@ async fn assert_idempotency_keys<T: DatabaseImpl>(db: &T) {
         Some(1),
         "first writer wins"
     );
+}
+
+async fn assert_ingress_admission_claim<T: DatabaseImpl>(db: &T) {
+    let admission = IngressAdmission {
+        id: None,
+        org_id: None,
+        scope: "release.lifecycle".into(),
+        correlation_key: "release-42".into(),
+        generation: 1,
+        target: IngressTarget {
+            kind: IngressTargetKind::Pipeline,
+            id: Uuid::now_v7(),
+        },
+        status: IngressAdmissionStatus::Active,
+        workflow_run_id: None,
+        pipeline_run_id: None,
+        policy: json!({ "scope": "release.lifecycle", "routes": [] }),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let first = db
+        .claim_ingress_admission(admission.clone(), None)
+        .await
+        .unwrap();
+    let saved = match first {
+        IngressAdmissionClaim::Acquired(saved) => saved,
+        IngressAdmissionClaim::Existing(_) => panic!("first ingress claim must acquire"),
+    };
+    let second = db.claim_ingress_admission(admission, None).await.unwrap();
+    let existing = match second {
+        IngressAdmissionClaim::Existing(existing) => existing,
+        IngressAdmissionClaim::Acquired(_) => panic!("second ingress claim must be rejected"),
+    };
+    assert_eq!(existing.id, saved.id);
+    assert_eq!(existing.target.kind, IngressTargetKind::Pipeline);
 }
 
 async fn assert_notifications<T: DatabaseImpl>(db: &T) {

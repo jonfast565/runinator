@@ -100,6 +100,7 @@ pub struct PipelineDecl {
     pub links: Vec<PipelineLinkDecl>,
     pub joins: Vec<PipelineJoinDecl>,
     pub concurrency: Option<super::ConcurrencyDecl>,
+    pub ingress: Option<super::IngressDecl>,
     pub triggers: Vec<PipelineTriggerDecl>,
     pub span: Span,
 }

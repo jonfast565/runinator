@@ -30,6 +30,10 @@ pub enum Example {
     WorkflowRunStatus,
     WorkflowRunReplay,
     WorkflowRunRename,
+    IngressEvent,
+    IngressResponse,
+    IngressAdmission,
+    IngressTimeline,
     Artifact,
     RexRapSource,
     RexRapCompile,
@@ -127,6 +131,37 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::WorkflowRunReplay => json!({ "from_step_id": "deploy" }),
         Example::WorkflowRunRename => json!({ "name": "nightly deploy" }),
+        Example::IngressEvent => json!({
+            "source": "generic-webhook", "event_id": "delivery-123", "event_type": "updated",
+            "correlation_key": "release-42", "payload": { "revision": "abc123" },
+            "occurred_at": TIMESTAMP_EXAMPLE
+        }),
+        Example::IngressResponse => json!({
+            "admission_id": UUID_EXAMPLE, "generation": 2, "disposition": "queued",
+            "duplicate": false, "queue_position": 1, "workflow_run_id": null,
+            "pipeline_run_id": null, "message": "ingress event queued"
+        }),
+        Example::IngressAdmission => json!({
+            "id": UUID_EXAMPLE, "org_id": null, "scope": "release.lifecycle",
+            "correlation_key": "release-42", "generation": 2,
+            "target": { "kind": "workflow", "id": UUID_EXAMPLE }, "status": "active",
+            "workflow_run_id": UUID_EXAMPLE, "pipeline_run_id": null,
+            "policy": { "scope": "release.lifecycle", "routes": [
+                { "event_type": "created", "lifecycle": "unbound", "action": "start" },
+                { "event_type": "updated", "lifecycle": "active", "action": "queue" },
+                { "event_type": "canceled", "lifecycle": "active", "action": "interrupt" },
+                { "event_type": "observed", "lifecycle": "active", "action": "record" },
+                { "event_type": "reopened", "lifecycle": "terminal", "action": "requeue" }
+            ]}, "created_at": TIMESTAMP_EXAMPLE, "updated_at": TIMESTAMP_EXAMPLE
+        }),
+        Example::IngressTimeline => json!([{
+            "id": UUID_EXAMPLE, "admission_id": UUID_EXAMPLE, "sequence": 1, "generation": 1,
+            "source": "generic-webhook", "event_id": "delivery-123", "event_type": "created",
+            "correlation_key": "release-42", "payload": {}, "occurred_at": null,
+            "received_at": TIMESTAMP_EXAMPLE, "disposition": "started", "queue_state": "none",
+            "queue_position": null, "promoted_generation": null,
+            "workflow_run_id": UUID_EXAMPLE, "pipeline_run_id": null
+        }]),
         Example::Artifact => {
             json!({ "id": UUID_EXAMPLE, "name": "report.json", "content_type": "application/json", "size": 42 })
         }

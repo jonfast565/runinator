@@ -149,6 +149,7 @@ pub fn decompile_definition(
     let interrupt_regions = decompiler.interrupt_regions(graph, metadata.interrupts())?;
     decompiler.emit_interrupts(&interrupt_regions)?;
     decompiler.emit_correlation(metadata.correlation())?;
+    decompiler.emit_ingress(metadata.ingress())?;
     decompiler.emit_type_decls(&metadata.type_declarations())?;
     decompiler.emit_alias_decls()?;
 
@@ -675,6 +676,43 @@ impl<'a> Decompiler<'a> {
             return Ok(());
         };
         self.line(&format!("correlate key {}", self.expr(expression)?));
+        self.out.push('\n');
+        Ok(())
+    }
+
+    fn emit_ingress(&mut self, value: Option<&Value>) -> Result<(), RexRapError> {
+        let Some(value) = value else {
+            return Ok(());
+        };
+        let policy: runinator_models::orchestration::IngressPolicy =
+            serde_json::from_value(value.clone().into()).map_err(|error| {
+                RexRapError::Decompile(format!("invalid ingress metadata: {error}"))
+            })?;
+        self.line(&format!(
+            "ingress scope {} {{",
+            serde_json::to_string(&policy.scope).unwrap_or_default()
+        ));
+        self.indent += 1;
+        for route in policy.routes {
+            let lifecycle = match route.lifecycle {
+                runinator_models::orchestration::IngressLifecycle::Unbound => "unbound",
+                runinator_models::orchestration::IngressLifecycle::Active => "active",
+                runinator_models::orchestration::IngressLifecycle::Terminal => "terminal",
+            };
+            let action = match route.action {
+                runinator_models::orchestration::IngressAction::Start => "start",
+                runinator_models::orchestration::IngressAction::Interrupt => "interrupt",
+                runinator_models::orchestration::IngressAction::Queue => "queue",
+                runinator_models::orchestration::IngressAction::Record => "record",
+                runinator_models::orchestration::IngressAction::Requeue => "requeue",
+            };
+            self.line(&format!(
+                "on {} when {lifecycle} -> {action}",
+                serde_json::to_string(&route.event_type).unwrap_or_default()
+            ));
+        }
+        self.indent -= 1;
+        self.line("}");
         self.out.push('\n');
         Ok(())
     }

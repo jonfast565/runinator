@@ -218,6 +218,36 @@ fn correlate_header_lowers_to_metadata_and_round_trips() {
     "#,
     );
 }
+
+#[test]
+fn ingress_header_lowers_to_metadata_and_round_trips() {
+    let source = r#"
+        workflow "Ingress" v1 {
+            interrupt on external {
+                resume
+            }
+            ingress scope "example.lifecycle" {
+                on "created" when unbound -> start
+                on "changed" when active -> interrupt
+                on "reopened" when terminal -> requeue
+            }
+
+            do {
+                let work = console.run(command: "echo work")
+            }
+        }
+    "#;
+    let definition = compile(source);
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/ingress/scope")
+            .and_then(Value::as_str),
+        Some("example.lifecycle")
+    );
+    assert_round_trips_unordered(source);
+}
 #[test]
 fn signal_correlation_key_lowers_and_round_trips() {
     let definition = compile(

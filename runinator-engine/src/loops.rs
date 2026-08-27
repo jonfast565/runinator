@@ -4,10 +4,15 @@ use runinator_broker_core::{Broker, WakeMessage};
 use runinator_comm::WakeCommand;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
+use runinator_models::{
+    orchestration::{IngressPromotion, IngressTargetKind},
+    replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
+};
 use runinator_store::{
     RuntimeStore,
     roles::{
-        DefinitionStore, NotificationStore, OrgStore, ReplicaStore, ScheduleStore, WorkflowVmStore,
+        DefinitionStore, IngressStore, NotificationStore, OrgStore, ReplicaStore, ScheduleStore,
+        WorkflowVmStore,
     },
 };
 use tokio::sync::Notify;
@@ -42,7 +47,9 @@ fn queue_age(
 
 /// Drive compiled workflow continuations. Effect publication is intentionally separate: the VM
 /// host writes an effect outbox record which the generic dispatcher drains.
-pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
+pub async fn run_workflow_vm_driver<
+    T: RuntimeStore + WorkflowVmStore + IngressStore + DefinitionStore,
+>(
     db: Arc<T>,
     instance: String,
     ready_nudge: Arc<Notify>,
@@ -76,6 +83,18 @@ pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
                         _ => None,
                     };
                     if let Some(run_id) = settled_run_id {
+                        match db
+                            .settle_and_promote_ingress_workflow_run(run_id, chrono::Utc::now())
+                            .await
+                        {
+                            Ok(Some(promotion)) => {
+                                start_ingress_promotion(db.as_ref(), promotion).await
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                warn!(workflow_run_id = %run_id, error = %err, "ingress workflow settlement failed")
+                            }
+                        }
                         if let Err(err) =
                             repository::advance_pipeline_from_vm_terminal(db.as_ref(), run_id).await
                         {
@@ -83,6 +102,34 @@ pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
                         }
                         match db.fetch_workflow_run(run_id).await {
                             Ok(Some(run)) => {
+                                if let Some(pipeline_run_id) = run.pipeline_run_id {
+                                    match db.fetch_pipeline_run(pipeline_run_id).await {
+                                        Ok(Some(pipeline_run))
+                                            if pipeline_run.status.is_terminal() =>
+                                        {
+                                            match db
+                                                .settle_and_promote_ingress_pipeline_run(
+                                                    pipeline_run_id,
+                                                    chrono::Utc::now(),
+                                                )
+                                                .await
+                                            {
+                                                Ok(Some(promotion)) => {
+                                                    start_ingress_promotion(db.as_ref(), promotion)
+                                                        .await
+                                                }
+                                                Ok(None) => {}
+                                                Err(err) => {
+                                                    warn!(pipeline_run_id = %pipeline_run_id, error = %err, "ingress pipeline settlement failed")
+                                                }
+                                            }
+                                        }
+                                        Ok(_) => {}
+                                        Err(err) => {
+                                            warn!(pipeline_run_id = %pipeline_run_id, error = %err, "failed to load pipeline run for ingress settlement")
+                                        }
+                                    }
+                                }
                                 if let Err(err) =
                                     repository::maybe_start_chained_pipelines(db.as_ref(), &run)
                                         .await
@@ -119,12 +166,119 @@ pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
                 warn!(error = %err, "failed to reconcile VM pipeline members");
             }
         }
+        // A startup failure releases its claim back to the FIFO head. Reconciliation retries one
+        // such head each driver pass, including after process restart.
+        match db.claim_queued_ingress_event(chrono::Utc::now()).await {
+            Ok(Some(promotion)) => start_ingress_promotion(db.as_ref(), promotion).await,
+            Ok(None) => {}
+            Err(err) => warn!(error = %err, "failed to reconcile queued ingress event"),
+        }
         stability::record_vm_drive_duration_ms(started.elapsed().as_secs_f64() * 1000.0);
         stability::loop_iteration("workflow_vm_driver", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => return,
             _ = ready_nudge.notified() => {}
             _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
+        }
+    }
+}
+
+async fn start_ingress_promotion<
+    T: RuntimeStore + WorkflowVmStore + IngressStore + DefinitionStore,
+>(
+    db: &T,
+    promotion: IngressPromotion,
+) {
+    let event_id = promotion.event.id;
+    let admission_id = promotion.admission.id.expect("stored admission id");
+    let result = match promotion.admission.target.kind {
+        IngressTargetKind::Workflow => {
+            let provenance = WorkflowRunProvenance {
+                source_kind: Some(TriggerSourceKind::Api),
+                actor_type: Some(TriggerActorType::System),
+                actor_replica_id: None,
+                actor_display_name: Some("ingress queue".into()),
+                request_host: None,
+                request_ip: None,
+                metadata: runinator_models::json!({
+                    "ingress_source": promotion.event.source,
+                    "ingress_event_id": promotion.event.event_id,
+                    "ingress_generation": promotion.admission.generation,
+                }),
+            };
+            match repository::create_workflow_run(
+                db,
+                promotion.admission.target.id,
+                promotion.event.payload.clone(),
+                false,
+                Some(format!("ingress:{}", promotion.event.event_id)),
+                provenance,
+            )
+            .await
+            {
+                Ok(run) => db
+                    .bind_ingress_workflow_run(admission_id, run.id, chrono::Utc::now())
+                    .await
+                    .and_then(|bound| {
+                        if bound {
+                            Ok(Some((Some(run.id), None)))
+                        } else {
+                            Err(Box::new(std::io::Error::other(
+                                "promoted workflow admission bind lost",
+                            )))
+                        }
+                    }),
+                Err(err) => Err(err),
+            }
+        }
+        IngressTargetKind::Pipeline => match repository::create_manual_pipeline_run(
+            db,
+            promotion.admission.target.id,
+            promotion.event.payload.clone(),
+            None,
+            None,
+            Some("ingress queue".into()),
+        )
+        .await
+        {
+            Ok(run) => db
+                .bind_ingress_pipeline_run(admission_id, run.id, chrono::Utc::now())
+                .await
+                .and_then(|bound| {
+                    if bound {
+                        Ok(Some((None, Some(run.id))))
+                    } else {
+                        Err(Box::new(std::io::Error::other(
+                            "promoted pipeline admission bind lost",
+                        )))
+                    }
+                }),
+            Err(err) => Err(err),
+        },
+    };
+    match result {
+        Ok(Some((workflow_run_id, pipeline_run_id))) => {
+            if let Err(err) = db
+                .bind_ingress_event_result(
+                    event_id,
+                    workflow_run_id,
+                    pipeline_run_id,
+                    chrono::Utc::now(),
+                )
+                .await
+            {
+                warn!(ingress_event_id = %event_id, error = %err, "failed to bind promoted ingress event result");
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            warn!(ingress_event_id = %event_id, error = %err, "queued ingress startup failed; releasing FIFO claim");
+            if let Err(release_err) = db
+                .release_ingress_promotion(promotion.claim_token, chrono::Utc::now())
+                .await
+            {
+                warn!(ingress_event_id = %event_id, error = %release_err, "failed to release queued ingress claim");
+            }
         }
     }
 }

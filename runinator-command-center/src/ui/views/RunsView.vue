@@ -101,6 +101,7 @@
             <template #second>
               <div class="panel details min-h-0 overflow-auto">
                 <WorkflowRunDetail />
+                <IngressTimeline />
                 <section class="grid gap-2 border-t border-border-subtle pt-3">
                   <div class="flex items-baseline justify-between gap-2">
                     <h2 class="m-0 text-base font-semibold text-fg">Structured Result</h2>
@@ -224,6 +225,7 @@ import BulkActionBar, { type BulkAction } from "../components/shared/BulkActionB
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import IngressTimeline from "../components/shared/IngressTimeline.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";

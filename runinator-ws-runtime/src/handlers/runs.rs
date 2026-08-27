@@ -6,20 +6,29 @@ use axum::{
     extract::{ConnectInfo, Path, Query},
     http::{HeaderMap, StatusCode},
 };
-use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
+use runinator_models::{
+    interrupt::InterruptSource,
+    orchestration::{
+        IngressAction, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
+        IngressEventDisposition, IngressInboxEntry, IngressLifecycle, IngressPolicy, IngressTarget,
+        IngressTargetKind,
+    },
+    replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
+};
 use runinator_store::{
     RuntimeStore,
-    roles::{FileStore, RunStore, ScheduleStore, WorkflowVmStore},
+    roles::{FileStore, IngressStore, RunStore, ScheduleStore, WorkflowVmStore},
 };
 
-use runinator_engine::services::RunOperations;
+use runinator_engine::services::{IngressOperations, RunOperations};
 use runinator_ws_core::models::{
-    self, ApiResponse, SchedulerRunClaimReleaseRequest, SchedulerRunClaimRenewRequest,
-    SchedulerRunClaimRequest, TaskResponseSchema, WorkflowRunRequest, WorkflowRunStatusQuery,
-    WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
+    self, ApiError, ApiResponse, IngressAdmissionQuery, IngressEventRequest, IngressResponse,
+    SchedulerRunClaimReleaseRequest, SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest,
+    TaskResponseSchema, WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
+    WorkflowTriggerRunRequest,
 };
 use runinator_ws_core::openapi::docs::{
-    EndpointDoc, Example, WORKFLOW_RUN_FILTERS, endpoint, json_body,
+    EndpointDoc, Example, ParamDoc, WORKFLOW_RUN_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -29,12 +38,24 @@ use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 /// notifications, functions, and replica management while keeping the cross-domain run commands
 /// atomic at the handler boundary.
 pub trait RunOperationsStore:
-    AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore
+    AuthorizationStore
+    + RuntimeStore
+    + WorkflowVmStore
+    + RunStore
+    + ScheduleStore
+    + FileStore
+    + IngressStore
 {
 }
 
 impl<T> RunOperationsStore for T where
-    T: AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore
+    T: AuthorizationStore
+        + RuntimeStore
+        + WorkflowVmStore
+        + RunStore
+        + ScheduleStore
+        + FileStore
+        + IngressStore
 {
 }
 
@@ -114,6 +135,376 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
                 Vec::new(),
             ))),
         ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// Admit an opaque ingress event before creating a workflow run. The durable admission is shared
+/// with pipeline ingress, so targets that intentionally name the same scope exclude one another.
+pub async fn ingress_workflow_run<T: RunOperationsStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    headers: HeaderMap,
+    ConnectInfo(connect): ConnectInfo<SocketAddr>,
+    Path(workflow_id): Path<Uuid>,
+    Json(request): Json<IngressEventRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, runinator_models::auth::Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    let workflow = match operations.fetch_workflow_definition(workflow_id).await {
+        Ok(Some(workflow)) => workflow,
+        Ok(None) => return not_found("workflow not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let policy = match workflow.definition.metadata.get("ingress") {
+        Some(value) => match serde_json::from_value::<IngressPolicy>(value.clone().into()) {
+            Ok(policy) => policy,
+            Err(error) => return bad_request(format!("invalid workflow ingress policy: {error}")),
+        },
+        None => return bad_request("workflow has no ingress policy"),
+    };
+    let event = IngressEvent {
+        source: request.source,
+        event_id: request.event_id,
+        event_type: request.event_type,
+        correlation_key: request.correlation_key,
+        payload: request.payload,
+        occurred_at: request.occurred_at,
+    };
+    let ingress = IngressOperations::new(db.clone());
+    let requested_target = IngressTarget {
+        kind: IngressTargetKind::Workflow,
+        id: workflow_id,
+    };
+    let org_id = workflow.org_id.or(ctx.org_id);
+    let mut admission = match ingress
+        .fetch(org_id, policy.scope.clone(), event.correlation_key.clone())
+        .await
+    {
+        Ok(value) => value,
+        Err(err) => return api_error(err.to_string()),
+    };
+    let mut start_record = None;
+    if admission.is_none() {
+        match ingress
+            .claim_start(org_id, requested_target.clone(), policy.clone(), &event)
+            .await
+        {
+            Ok(Some(IngressAdmissionClaim::Acquired(value))) => {
+                start_record = match ingress
+                    .persist_event(&value, &event, IngressEventDisposition::Started, false)
+                    .await
+                {
+                    Ok(record) => Some(record.entry),
+                    Err(err) => {
+                        let _ = ingress.release_unbound(value.id.unwrap()).await;
+                        return api_error(err.to_string());
+                    }
+                };
+                admission = Some(value);
+            }
+            Ok(Some(IngressAdmissionClaim::Existing(value))) => admission = Some(value),
+            Ok(None) => {
+                return bad_request(
+                    "ingress event has no configured unbound start route; no run was started",
+                );
+            }
+            Err(err) => return bad_request(err.to_string()),
+        }
+    }
+    let mut admission = admission.expect("ingress admission resolved");
+    let admission_id = admission.id.expect("stored admission id");
+    if start_record.is_none() {
+        match ingress.duplicate(admission_id, &event).await {
+            Ok(Some(entry)) => return ingress_event_reply(&entry, true, "duplicate ingress event"),
+            Ok(None) => {}
+            Err(err) => return api_error(err.to_string()),
+        }
+        if admission.target.kind != IngressTargetKind::Workflow
+            || admission.target.id != workflow_id
+        {
+            return conflict(
+                "this scope and correlation key is owned by a different ingress target",
+            );
+        }
+        let snapshot_policy: IngressPolicy =
+            match serde_json::from_value(admission.policy.clone().into()) {
+                Ok(value) => value,
+                Err(err) => return api_error(format!("stored ingress policy is invalid: {err}")),
+            };
+        let lifecycle = match admission.status {
+            IngressAdmissionStatus::Active => IngressLifecycle::Active,
+            IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,
+        };
+        match snapshot_policy.action_for(&event.event_type, lifecycle) {
+            Some(IngressAction::Record) => {
+                return match ingress
+                    .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)
+                    .await
+                {
+                    Ok(record) => ingress_event_reply(
+                        &record.entry,
+                        record.duplicate,
+                        "ingress event recorded",
+                    ),
+                    Err(err) => api_error(err.to_string()),
+                };
+            }
+            Some(IngressAction::Queue) if lifecycle == IngressLifecycle::Active => {
+                return match ingress
+                    .persist_event(&admission, &event, IngressEventDisposition::Queued, true)
+                    .await
+                {
+                    Ok(record) => {
+                        ingress_event_reply(&record.entry, record.duplicate, "ingress event queued")
+                    }
+                    Err(err) => api_error(err.to_string()),
+                };
+            }
+            Some(IngressAction::Interrupt) if lifecycle == IngressLifecycle::Active => {
+                let Some(run_id) = admission.workflow_run_id else {
+                    return api_error("active ingress admission is not bound to a workflow run");
+                };
+                let record = match ingress
+                    .persist_event(
+                        &admission,
+                        &event,
+                        IngressEventDisposition::InterruptRequested,
+                        false,
+                    )
+                    .await
+                {
+                    Ok(record) => record,
+                    Err(err) => return api_error(err.to_string()),
+                };
+                if record.duplicate {
+                    return ingress_event_reply(
+                        &record.entry,
+                        true,
+                        "duplicate workflow interrupt event",
+                    );
+                }
+                let _ = ingress
+                    .bind_event_workflow_run(record.entry.id, run_id)
+                    .await;
+                return match operations
+                    .request_interrupt(
+                        run_id,
+                        InterruptSource::External,
+                        event.payload.clone(),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => ingress_event_reply(
+                        &record.entry,
+                        record.duplicate,
+                        "workflow interrupt requested",
+                    ),
+                    Err(err) => bad_request(err.to_string()),
+                };
+            }
+            Some(IngressAction::Requeue) if lifecycle == IngressLifecycle::Terminal => {
+                match ingress
+                    .requeue_terminal_event(&admission, &snapshot_policy, &event)
+                    .await
+                {
+                    Ok(Some(record)) if record.duplicate => {
+                        return ingress_event_reply(
+                            &record.entry,
+                            true,
+                            "duplicate terminal requeue event",
+                        );
+                    }
+                    Ok(Some(record)) => {
+                        admission = match ingress
+                            .fetch(
+                                org_id,
+                                snapshot_policy.scope.clone(),
+                                event.correlation_key.clone(),
+                            )
+                            .await
+                        {
+                            Ok(Some(value)) => value,
+                            Ok(None) => return api_error("requeued ingress admission disappeared"),
+                            Err(err) => return api_error(err.to_string()),
+                        };
+                        start_record = Some(record.entry);
+                    }
+                    Ok(None) => {
+                        return conflict(
+                            "another ingress event already started the next generation",
+                        );
+                    }
+                    Err(err) => return api_error(err.to_string()),
+                }
+            }
+            _ => {
+                let _ = ingress
+                    .persist_event(&admission, &event, IngressEventDisposition::Rejected, false)
+                    .await;
+                return conflict(
+                    "ingress event has no configured route for the admission lifecycle; no run was started",
+                );
+            }
+        }
+    }
+    let start_entry = start_record.expect("start event record");
+    match operations
+        .create(
+            admission.target.id,
+            event.payload.clone(),
+            false,
+            Some(format!("ingress:{}", event.event_id)),
+            request_provenance(
+                TriggerSourceKind::Api,
+                &headers,
+                connect,
+                runinator_models::json!({
+                    "ingress_source": event.source,
+                    "ingress_event_id": event.event_id,
+                }),
+            ),
+            Vec::new(),
+            workflow.org_id.or(ctx.org_id),
+            ctx.principal_id,
+        )
+        .await
+    {
+        Ok(run) => match ingress.bind_workflow_run(admission_id, run.id).await {
+            Ok(true) => {
+                let _ = ingress
+                    .bind_event_workflow_run(start_entry.id, run.id)
+                    .await;
+                let mut entry = start_entry;
+                entry.workflow_run_id = Some(run.id);
+                ingress_event_reply(&entry, false, "workflow ingress generation started")
+            }
+            Ok(false) => api_error("ingress admission could not be bound to the workflow run"),
+            Err(err) => api_error(err.to_string()),
+        },
+        Err(err) => {
+            let _ = ingress.release_unbound(admission_id).await;
+            api_error(err.to_string())
+        }
+    }
+}
+
+fn ingress_event_reply(
+    entry: &IngressInboxEntry,
+    duplicate: bool,
+    message: &str,
+) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::Ingress(IngressResponse {
+            admission_id: entry.admission_id,
+            generation: entry.promoted_generation.unwrap_or(entry.generation),
+            disposition: format!("{:?}", entry.disposition).to_ascii_lowercase(),
+            duplicate,
+            queue_position: entry.queue_position,
+            workflow_run_id: entry.workflow_run_id,
+            pipeline_run_id: entry.pipeline_run_id,
+            message: message.into(),
+        })),
+    )
+}
+
+fn conflict(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::CONFLICT,
+        Json(ApiResponse::ApiError(ApiError::new(message))),
+    )
+}
+
+pub async fn get_ingress_admission<T: RunOperationsStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Query(query): Query<IngressAdmissionQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let ingress = IngressOperations::new(db.clone());
+    let admission = match ingress
+        .fetch(ctx.org_id, query.scope, query.correlation_key)
+        .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => return not_found("ingress admission not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let checker = AuthzChecker::new(db.as_ref(), &ctx);
+    let authorized = match admission.target.kind {
+        IngressTargetKind::Workflow => {
+            checker
+                .require_workflow(
+                    admission.target.id,
+                    runinator_models::auth::Permission::View,
+                )
+                .await
+        }
+        IngressTargetKind::Pipeline => {
+            checker
+                .require_pipeline(
+                    admission.target.id,
+                    runinator_models::auth::Permission::View,
+                )
+                .await
+        }
+    };
+    if let Err(reply) = authorized {
+        return reply;
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::IngressAdmission(admission)),
+    )
+}
+
+pub async fn get_ingress_timeline<T: RunOperationsStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Query(query): Query<IngressAdmissionQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let ingress = IngressOperations::new(db.clone());
+    let admission = match ingress
+        .fetch(ctx.org_id, query.scope, query.correlation_key)
+        .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => return not_found("ingress admission not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let checker = AuthzChecker::new(db.as_ref(), &ctx);
+    let authorized = match admission.target.kind {
+        IngressTargetKind::Workflow => {
+            checker
+                .require_workflow(
+                    admission.target.id,
+                    runinator_models::auth::Permission::View,
+                )
+                .await
+        }
+        IngressTargetKind::Pipeline => {
+            checker
+                .require_pipeline(
+                    admission.target.id,
+                    runinator_models::auth::Permission::View,
+                )
+                .await
+        }
+    };
+    if let Err(reply) = authorized {
+        return reply;
+    }
+    match ingress
+        .timeline(admission.id.expect("stored admission id"))
+        .await
+    {
+        Ok(events) => (StatusCode::OK, Json(ApiResponse::IngressTimeline(events))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -690,6 +1081,18 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
             post(create_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflows/{id}/ingress",
+            post(ingress_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ingress/admission",
+            get(get_ingress_admission::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ingress/admission/events",
+            get(get_ingress_timeline::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_runs/{id}",
             get(get_workflow_run::<T>)
                 .patch(update_workflow_run::<T>)
@@ -794,6 +1197,58 @@ pub const DOCS: &[EndpointDoc] = &[
         202,
         "workflow run accepted",
         Example::WorkflowRun,
+    ),
+    endpoint(
+        "post",
+        "/workflows/{id}/ingress",
+        "Ingress",
+        "Admit a workflow event",
+        "Applies the stored provider-neutral lifecycle policy. Events may start, record, queue, interrupt, or requeue a generation; durable source/event-id retries return the original disposition.",
+        false,
+        json_body("Opaque ingress event.", Example::IngressEvent),
+        &[],
+        202,
+        "event accepted",
+        Example::IngressResponse,
+    ),
+    endpoint(
+        "post",
+        "/pipelines/{id}/ingress",
+        "Ingress",
+        "Admit a pipeline event",
+        "Applies the pipeline admission snapshot. Interrupt cancels the pipeline and all active member workflows; queued events are promoted FIFO after settlement.",
+        false,
+        json_body("Opaque ingress event.", Example::IngressEvent),
+        &[],
+        202,
+        "event accepted",
+        Example::IngressResponse,
+    ),
+    endpoint(
+        "get",
+        "/ingress/admission",
+        "Ingress",
+        "Inspect an ingress admission",
+        "Returns the sole owner and active generation for an organization, scope, and correlation key.",
+        false,
+        None,
+        INGRESS_LOOKUP_PARAMS,
+        200,
+        "ingress admission",
+        Example::IngressAdmission,
+    ),
+    endpoint(
+        "get",
+        "/ingress/admission/events",
+        "Ingress",
+        "Inspect an ingress event timeline",
+        "Returns the ordered durable event ledger, including rejected, queued, claimed, and promoted events.",
+        false,
+        None,
+        INGRESS_LOOKUP_PARAMS,
+        200,
+        "ingress event timeline",
+        Example::IngressTimeline,
     ),
     endpoint(
         "get",
@@ -964,4 +1419,21 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run renamed",
         Example::TaskResponse,
     ),
+];
+
+const INGRESS_LOOKUP_PARAMS: &[ParamDoc] = &[
+    ParamDoc {
+        name: "scope",
+        location: "query",
+        description: "Admission policy scope.",
+        required: true,
+        example: "release.lifecycle",
+    },
+    ParamDoc {
+        name: "correlation_key",
+        location: "query",
+        description: "Provider-neutral correlation key.",
+        required: true,
+        example: "release-42",
+    },
 ];

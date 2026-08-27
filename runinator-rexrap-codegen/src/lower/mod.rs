@@ -12,6 +12,9 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use runinator_models::orchestration::{
+    IngressAction, IngressLifecycle, IngressPolicy, IngressRoute,
+};
 use runinator_models::providers::{ActionMetadata, ProviderMetadata};
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
@@ -418,6 +421,67 @@ fn lower_workflow(
     }
     if let Some(correlation) = correlation {
         metadata.insert("correlation".into(), correlation);
+    }
+    if let Some(ingress) = &workflow.ingress {
+        let mut routes = Vec::with_capacity(ingress.routes.len());
+        for route in &ingress.routes {
+            let lifecycle = match route.lifecycle.as_str() {
+                "unbound" => IngressLifecycle::Unbound,
+                "active" => IngressLifecycle::Active,
+                "terminal" => IngressLifecycle::Terminal,
+                _ => {
+                    return Err(RexRapError::semantic(
+                        route.span,
+                        "unknown ingress lifecycle",
+                    ));
+                }
+            };
+            let action = match route.action.as_str() {
+                "start" => IngressAction::Start,
+                "interrupt" => IngressAction::Interrupt,
+                "queue" => IngressAction::Queue,
+                "record" => IngressAction::Record,
+                "requeue" => IngressAction::Requeue,
+                _ => return Err(RexRapError::semantic(route.span, "unknown ingress action")),
+            };
+            if !action.is_allowed_when(lifecycle) {
+                return Err(RexRapError::semantic(
+                    route.span,
+                    "ingress action is not valid for this lifecycle",
+                ));
+            }
+            routes.push(IngressRoute {
+                event_type: route.event_type.clone(),
+                lifecycle,
+                action,
+            });
+        }
+        if routes
+            .iter()
+            .any(|route| route.action == IngressAction::Interrupt)
+            && !workflow
+                .interrupts
+                .iter()
+                .any(|handler| handler.enabled && handler.source == "external")
+        {
+            return Err(RexRapError::semantic(
+                ingress.span,
+                "ingress interrupt routes require an enabled `interrupt on external` handler",
+            ));
+        }
+        let policy = IngressPolicy {
+            scope: ingress.scope.clone(),
+            routes,
+        };
+        policy
+            .validate()
+            .map_err(|message| RexRapError::semantic(ingress.span, message))?;
+        metadata.insert(
+            "ingress".into(),
+            serde_json::to_value(policy)
+                .map(Value::from)
+                .map_err(|error| RexRapError::lower(error.to_string()))?,
+        );
     }
     if !functions.is_empty() {
         metadata.insert("functions".into(), Value::Array(functions));

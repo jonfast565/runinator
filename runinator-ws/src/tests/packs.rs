@@ -167,11 +167,14 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
 
     let (db, path) = test_db().await;
     // import the two member workflows first so the pipeline can resolve their names to ids.
+    let mut development = workflow(None, "SDLC: Development");
+    development.namespace = Some("sdlc".into());
+    development.key = Some("development".into());
+    let mut review = workflow(None, "SDLC: Review");
+    review.namespace = Some("sdlc".into());
+    review.key = Some("review".into());
     let members = WorkflowBundle {
-        workflows: vec![
-            workflow(None, "SDLC: Development"),
-            workflow(None, "SDLC: Review"),
-        ],
+        workflows: vec![development, review],
         triggers: vec![],
     };
     crate::repository::import_workflow_bundle(&db, members)
@@ -181,20 +184,21 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
     let bundle = PipelineBundle {
         pipelines: vec![PipelineSpec {
             name: "Core SDLC".into(),
-            key: None,
-            namespace: None,
+            key: Some("core_sdlc".into()),
+            namespace: Some("test".into()),
             description: Some("test".into()),
             defaults: Default::default(),
-            members: vec!["SDLC: Development".into(), "SDLC: Review".into()],
+            members: vec!["sdlc.development".into(), "sdlc.review".into()],
             links: vec![PipelineLinkSpec {
-                from: "SDLC: Development".into(),
-                to: "SDLC: Review".into(),
+                from: "sdlc.development".into(),
+                to: "sdlc.review".into(),
                 on: PipelineLinkSelector::Complete,
                 enabled: true,
                 parameters: Default::default(),
             }],
             joins: vec![],
             concurrency: Default::default(),
+            metadata: runinator_models::json!({}),
             triggers: vec![],
         }],
     };
@@ -236,8 +240,14 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
     use runinator_models::workflows::WorkflowStatus;
 
     let (db, path) = test_db().await;
+    let mut build = workflow(None, "Build");
+    build.namespace = Some("release".into());
+    build.key = Some("build".into());
+    let mut deploy = workflow(None, "Deploy");
+    deploy.namespace = Some("release".into());
+    deploy.key = Some("deploy".into());
     let members = WorkflowBundle {
-        workflows: vec![workflow(None, "Build"), workflow(None, "Deploy")],
+        workflows: vec![build, deploy],
         triggers: vec![],
     };
     crate::repository::import_workflow_bundle(&db, members)
@@ -248,20 +258,21 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
     let bundle = PipelineBundle {
         pipelines: vec![PipelineSpec {
             name: "Release".into(),
-            key: None,
-            namespace: None,
+            key: Some("release".into()),
+            namespace: Some("test".into()),
             description: None,
             defaults: Default::default(),
-            members: vec!["Build".into(), "Deploy".into()],
+            members: vec!["release.build".into(), "release.deploy".into()],
             links: vec![PipelineLinkSpec {
-                from: "Build".into(),
-                to: "Deploy".into(),
+                from: "release.build".into(),
+                to: "release.deploy".into(),
                 on: PipelineLinkSelector::Complete,
                 enabled: true,
                 parameters: Default::default(),
             }],
             joins: vec![],
             concurrency: Default::default(),
+            metadata: runinator_models::json!({}),
             triggers: vec![],
         }],
     };

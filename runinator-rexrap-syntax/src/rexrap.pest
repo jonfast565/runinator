@@ -52,7 +52,7 @@ secret_kind      = { "secret" | "config" }
 // the grammar only expresses well-formed pipelines; the lowering rejects empty/danging references.
 pipeline_document       = { SOI ~ pipeline_decl* ~ EOI }
 pipeline_decl           = { "pipeline" ~ string ~ "{" ~ pipeline_item* ~ "}" }
-pipeline_item           = { key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
+pipeline_item           = { key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | ingress_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
 pipeline_desc           = { "description" ~ string }
 pipeline_on_failure     = { "on_failure" ~ pipeline_failure_policy }
 pipeline_failure_policy = { "halt" | "continue" }
@@ -114,7 +114,7 @@ join_kw   = @{ "join" ~ !(ASCII_ALPHANUMERIC | "_") }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
 workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ workflow_item* ~ "}" }
-workflow_item = _{ key_decl | import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
+workflow_item = _{ key_decl | import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | ingress_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
 returns_decl = { "returns" ~ type_expr }
 
 // the required namespace this workflow's identity lives in. a dotted path qualifying the workflow
@@ -183,6 +183,13 @@ interrupt_source = {
 // output, etc.) is resolved as the run progresses and stamped write-once onto the run's correlation
 // key, so `await workflow ... key <expr>` in another workflow can match it. `correlate key input.batch_id`.
 correlate_decl = { "correlate" ~ "key" ~ expr }
+
+// generic, correlation-keyed ingress. Event names and scope names are static strings so policy
+// matching never evaluates an untrusted ingress payload inside the control plane.
+ingress_decl = { "ingress" ~ "scope" ~ string ~ "{" ~ ingress_route* ~ "}" }
+ingress_route = { "on" ~ string ~ "when" ~ ingress_lifecycle ~ "->" ~ ingress_action }
+ingress_lifecycle = { "unbound" | "active" | "terminal" }
+ingress_action = { "start" | "interrupt" | "queue" | "record" | "requeue" }
 
 // a `trigger cron "<expr>"` schedules this workflow; a `trigger on_success workflow "<name>"`
 // (or on_failure/on_complete) starts another workflow when this one reaches that terminal state.
