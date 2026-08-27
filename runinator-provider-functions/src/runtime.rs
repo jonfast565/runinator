@@ -9,6 +9,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use runinator_models::errors::SendableError;
 use runinator_models::value::Value;
 use runinator_plugin::cancel::CancellationToken;
@@ -113,7 +116,7 @@ impl InvocationRuntime for DockerInvocationRuntime {
         write_file(&runtime_dir.join(INPUT_FILE), &encoded)?;
         // pre-created so a handler returning nothing still leaves a readable (empty) file rather
         // than a missing-file error that reads like the container never ran.
-        write_file(&runtime_dir.join(OUTPUT_FILE), b"")?;
+        write_output_file(&runtime_dir.join(OUTPUT_FILE))?;
 
         let command = match &request.runtime.setup_script {
             Some(script) if !script.trim().is_empty() => {
@@ -211,6 +214,13 @@ fn staging_dir(package_path: &Path) -> Result<std::path::PathBuf, SendableError>
     fs::create_dir_all(&directory).map_err(|err| {
         PACKAGE_UNREADABLE.error(format!("failed to create invocation directory: {err}"))
     })?;
+    // The sandbox runs as an unprivileged uid that is different from the worker's. It only needs
+    // to traverse this private, UUID-named directory to read the staged files and replace the
+    // pre-created output; it must not be able to list or add unrelated files to it.
+    #[cfg(unix)]
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o711)).map_err(|err| {
+        PACKAGE_UNREADABLE.error(format!("failed to prepare invocation directory: {err}"))
+    })?;
     Ok(directory)
 }
 
@@ -218,6 +228,18 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), SendableError> {
     fs::write(path, bytes).map_err(|err| {
         PACKAGE_UNREADABLE.error(format!("failed to write {}: {err}", path.display()))
     })
+}
+
+// The output file is created by the worker but replaced by the sandbox's unprivileged uid. A
+// bind mount preserves the host uid, so the normal 0644 mode would make it read-only in a hardened
+// container even though the mount itself is writable.
+fn write_output_file(path: &Path) -> Result<(), SendableError> {
+    write_file(path, b"")?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o666)).map_err(|err| {
+        PACKAGE_UNREADABLE.error(format!("failed to prepare {}: {err}", path.display()))
+    })?;
+    Ok(())
 }
 
 fn read_output(path: &Path) -> Result<Value, SendableError> {
@@ -249,4 +271,32 @@ fn map_sandbox_error(error: SandboxError, handler: &str) -> SendableError {
 fn tail(text: &str) -> String {
     let lines: Vec<&str> = text.lines().rev().take(5).collect();
     lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_runtime_keeps_the_directory_private_and_the_output_writable() {
+        let parent = std::env::temp_dir().join(format!("runi-function-runtime-{}", Uuid::new_v4()));
+        let package = parent.join("package");
+        fs::create_dir_all(&package).unwrap();
+
+        let runtime = staging_dir(&package).unwrap();
+        let output = runtime.join(OUTPUT_FILE);
+        write_output_file(&output).unwrap();
+
+        assert_eq!(
+            fs::metadata(&runtime).unwrap().permissions().mode() & 0o777,
+            0o711
+        );
+        assert_eq!(
+            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o666
+        );
+
+        let _ = fs::remove_dir_all(parent);
+    }
 }
