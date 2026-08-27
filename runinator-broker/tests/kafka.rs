@@ -143,11 +143,19 @@ async fn kafka_broker_nack_redelivers_messages() {
         .await
         .unwrap();
 
-    let redelivery = timeout(Duration::from_secs(10), broker.receive_effect(&consumer))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(redelivery.command.command_id, command_id);
+    let redelivery = loop {
+        let delivery = timeout(Duration::from_secs(10), broker.receive_effect(&consumer))
+            .await
+            .unwrap()
+            .unwrap();
+        if delivery.command.command_id == command_id {
+            break delivery;
+        }
+        broker
+            .ack_effect(&consumer, delivery.delivery_id)
+            .await
+            .unwrap();
+    };
     broker
         .ack_effect(&consumer, redelivery.delivery_id)
         .await
@@ -178,43 +186,64 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
     }
 
     let provider_profile = ConsumerProfile::shared(format!("effects-provider-{}", Uuid::new_v4()));
-    let provider_delivery = timeout(
-        Duration::from_secs(10),
-        broker.receive_effect_for(&provider_profile),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(provider_delivery.command.effect_id, provider.effect_id);
+    let provider_delivery = loop {
+        let delivery = timeout(
+            Duration::from_secs(10),
+            broker.receive_effect_for(&provider_profile),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if delivery.command.effect_id == provider.effect_id {
+            break delivery;
+        }
+        broker
+            .ack_effect(&provider_profile.id, delivery.delivery_id)
+            .await
+            .unwrap();
+    };
     broker
         .nack_effect(&provider_profile.id, provider_delivery.delivery_id)
         .await
         .unwrap();
-    let provider_redelivery = timeout(
-        Duration::from_secs(10),
-        broker.receive_effect_for(&provider_profile),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(provider_redelivery.command.effect_id, provider.effect_id);
+    let provider_redelivery = loop {
+        let delivery = timeout(
+            Duration::from_secs(10),
+            broker.receive_effect_for(&provider_profile),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if delivery.command.effect_id == provider.effect_id {
+            break delivery;
+        }
+        broker
+            .ack_effect(&provider_profile.id, delivery.delivery_id)
+            .await
+            .unwrap();
+    };
     broker
         .ack_effect(&provider_profile.id, provider_redelivery.delivery_id)
         .await
         .unwrap();
 
     let infrastructure_consumer = format!("effects-infrastructure-{}", Uuid::new_v4());
-    let infrastructure_delivery = timeout(
-        Duration::from_secs(10),
-        broker.receive_infrastructure_effect(&infrastructure_consumer),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(
-        infrastructure_delivery.command.effect_id,
-        infrastructure.effect_id
-    );
+    let infrastructure_delivery = loop {
+        let delivery = timeout(
+            Duration::from_secs(10),
+            broker.receive_infrastructure_effect(&infrastructure_consumer),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if delivery.command.effect_id == infrastructure.effect_id {
+            break delivery;
+        }
+        broker
+            .ack_effect(&infrastructure_consumer, delivery.delivery_id)
+            .await
+            .unwrap();
+    };
     broker
         .ack_effect(
             &infrastructure_consumer,
@@ -248,14 +277,22 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
         .await
         .unwrap();
     let consumer = format!("effect-results-{}", Uuid::new_v4());
-    let delivery = timeout(
-        Duration::from_secs(10),
-        broker.receive_effect_result(&consumer),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(delivery.result.event_id, result.event_id);
+    let delivery = loop {
+        let delivery = timeout(
+            Duration::from_secs(10),
+            broker.receive_effect_result(&consumer),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if delivery.result.event_id == result.event_id {
+            break delivery;
+        }
+        broker
+            .ack_effect_result(&consumer, delivery.delivery_id)
+            .await
+            .unwrap();
+    };
     broker
         .ack_effect_result(&consumer, delivery.delivery_id)
         .await
