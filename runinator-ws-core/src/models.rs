@@ -132,7 +132,7 @@ pub enum ApiResponse {
     OrchestrationAdapterList(Vec<runinator_models::orchestration::AdapterDefinition>),
     OrchestrationAdapterRevision(runinator_models::orchestration::AdapterRevision),
     OrchestrationAdapterRevisionList(Vec<runinator_models::orchestration::AdapterRevision>),
-    AdapterKindList(Vec<runinator_models::orchestration::AdapterKindMetadata>),
+    AdapterKindList(Vec<runinator_models::orchestration::AdapterKindCatalogEntry>),
     ExternalOperationList(Vec<runinator_models::orchestration::ExternalOperation>),
     ExternalOperation(runinator_models::orchestration::ExternalOperation),
     WorkflowRun(WorkflowRunResponse),

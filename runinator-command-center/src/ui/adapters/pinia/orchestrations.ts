@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, shallowRef } from "vue";
 import type {
   AdapterDefinition,
   AdapterKindMetadata,
@@ -37,14 +37,14 @@ import type { AdapterApplyInput } from "../../../core/api/commandCenterApi";
 export const useOrchestrationsStore = defineStore("orchestrations", () => {
   const bindings = ref<OrchestrationBinding[]>([]);
   const selectedId = ref<string | null>(null);
-  const selected = ref<OrchestrationBinding | null>(null);
+  const selected = shallowRef<OrchestrationBinding | null>(null);
   const epochs = ref<OrchestrationEpoch[]>([]);
   const events = ref<OrchestrationReduction[]>([]);
   const evidence = ref<OrchestrationEvidence[]>([]);
   const commands = ref<OrchestrationCommand[]>([]);
   const operations = ref<ExternalOperation[]>([]);
   const workspaces = ref<WorkspaceLease[]>([]);
-  const adapterKinds = ref<AdapterKindMetadata[]>([]);
+  const adapterKinds = shallowRef<AdapterKindMetadata[]>([]);
   const adapters = ref<AdapterDefinition[]>([]);
   const selectedAdapterId = ref<string | null>(null);
   const selectedAdapter = ref<AdapterDefinition | null>(null);
@@ -84,6 +84,10 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     ]);
   }
 
+  function currentBinding(): OrchestrationBinding | null {
+    return selected.value;
+  }
+
   async function dispatch(intent: string, reason: string): Promise<void> {
     if (!selectedId.value) {
       return;
@@ -108,10 +112,14 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     error.value = null;
 
     try {
-      [adapterKinds.value, adapters.value] = await Promise.all([
+      const [catalog, definitions] = await Promise.all([
         fetchAdapterKinds(),
         fetchAdapters(),
       ]);
+      adapters.value = definitions;
+      adapterKinds.value = catalog
+        .filter((entry) => entry.healthy && !entry.error)
+        .map((entry) => entry.metadata);
 
       if (selectedAdapterId.value && adapters.value.some((item) => item.id === selectedAdapterId.value)) {
         await selectAdapter(selectedAdapterId.value);
@@ -172,7 +180,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   return {
     bindings, selectedId, selected, epochs, events, evidence, commands, operations, workspaces,
     adapterKinds, adapters, selectedAdapterId, selectedAdapter, adapterRevisions,
-    loading, error, refresh, select, dispatch, requeue, refreshAdapters, selectAdapter, saveAdapter,
+    loading, error, refresh, select, currentBinding, dispatch, requeue, refreshAdapters, selectAdapter, saveAdapter,
     toggleAdapter, removeAdapter, runAdapterTest, resolveOperation,
   };
 });

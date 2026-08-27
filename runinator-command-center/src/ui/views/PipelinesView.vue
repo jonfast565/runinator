@@ -356,7 +356,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import { usePipelineStore } from "../adapters/pinia/pipeline";
 import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
@@ -508,7 +508,7 @@ const validPipelineIdentity = computed(() =>
 );
 const defaultsModalOpen = ref(false);
 const orchestrationModalOpen = ref(false);
-const adapterKinds = ref<AdapterKindMetadata[]>([]);
+const adapterKinds = shallowRef<AdapterKindMetadata[]>([]);
 const starting = ref(false);
 
 function choosePipeline(item: Pipeline) {
@@ -619,7 +619,9 @@ function openDefaults() {
 
 async function openOrchestration() {
   try {
-    adapterKinds.value = await fetchAdapterKinds();
+    adapterKinds.value = (await fetchAdapterKinds())
+      .filter((entry) => entry.healthy && !entry.error)
+      .map((entry) => entry.metadata);
   } catch (error) {
     adapterKinds.value = [];
     app.setError(error instanceof Error ? error.message : String(error));

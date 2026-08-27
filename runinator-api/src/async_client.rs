@@ -41,7 +41,7 @@ use runinator_models::{
         ARTIFACT_MEDIA_TYPE,
     },
     orchestration::{
-        AdapterDefinition, AdapterKindMetadata, AdapterRevision, IdempotencyClaim,
+        AdapterDefinition, AdapterKindCatalogEntry, AdapterRevision, IdempotencyClaim,
         IdempotencyClaimRequest, IdempotencyCompleteRequest, IdempotencyReleaseRequest,
         OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
         OrchestrationEventReduction, OrchestrationEvidence, ACTION_IDEMPOTENCY_SCOPE,
@@ -385,7 +385,7 @@ where
         Ok(response.json().await?)
     }
 
-    pub async fn fetch_orchestration_adapter_kinds(&self) -> Result<Vec<AdapterKindMetadata>> {
+    pub async fn fetch_orchestration_adapter_kinds(&self) -> Result<Vec<AdapterKindCatalogEntry>> {
         self.get_json_path("/orchestrations/adapters/kinds").await
     }
 

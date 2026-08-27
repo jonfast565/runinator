@@ -693,7 +693,7 @@ export async function resolveExternalOperation(
 }
 
 export async function fetchAdapterKinds() {
-  return command<import("../domain/models").AdapterKindMetadata[]>("fetch_adapter_kinds");
+  return command<import("../domain/models").AdapterKindCatalogEntry[]>("fetch_adapter_kinds");
 }
 
 export async function fetchAdapters() {

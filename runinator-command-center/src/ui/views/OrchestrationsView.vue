@@ -72,7 +72,7 @@
       <div class="flex flex-wrap items-center gap-2"><button class="button" @click="openAdapterForm()">New adapter</button><button class="button" :disabled="store.loading" @click="refreshAdapters">Refresh</button><button class="button" @click="checkHost">Host health</button><button class="button" @click="reloadHost">Reload plugins</button><pre v-if="hostResult" class="max-w-xl overflow-auto text-xs">{{ pretty(hostResult) }}</pre></div>
       <div class="grid min-h-0 flex-1 gap-3 lg:grid-cols-[22rem_minmax(0,1fr)]">
         <aside class="min-h-0 overflow-auto rounded border border-border bg-surface">
-          <div class="border-b border-border p-3"><h3 class="text-xs font-semibold uppercase tracking-wide text-fg-muted">Loaded kinds</h3><div class="mt-2 flex flex-wrap gap-1"><span v-for="kind in store.adapterKinds" :key="kind.kind" class="rounded bg-surface-raised px-2 py-1 text-xs" :title="kind.description || ''">{{ kind.display_name }} v{{ kind.version }}</span></div></div>
+          <div class="border-b border-border p-3"><h3 class="text-xs font-semibold uppercase tracking-wide text-fg-muted">Adapter kinds</h3><div class="mt-2 grid gap-1"><div v-for="entry in adapterCatalog" :key="`${entry.metadata.kind}:${entry.origin}`" class="rounded bg-surface-raised px-2 py-1 text-xs" :title="entry.error || entry.metadata.description || ''"><div class="flex items-center justify-between gap-2"><span>{{ entry.metadata.display_name }} v{{ entry.metadata.version }}</span><span :class="entry.healthy ? 'text-success' : 'text-danger'">{{ entry.healthy ? 'healthy' : 'error' }}</span></div><p class="truncate text-fg-muted">{{ entry.origin }}</p><p v-if="entry.error" class="mt-1 text-danger">{{ entry.error }}</p></div></div></div>
           <button v-for="adapter in store.adapters" :key="adapter.id" class="block w-full border-b border-border p-3 text-left hover:bg-surface-raised" :class="{ 'bg-surface-raised': adapter.id === store.selectedAdapterId }" @click="store.selectAdapter(adapter.id)"><div class="flex justify-between gap-2"><span class="truncate font-medium">{{ adapter.name }}</span><span class="text-xs" :class="adapter.enabled ? 'text-success' : 'text-fg-muted'">{{ adapter.enabled ? 'enabled' : 'disabled' }}</span></div><p class="mt-1 text-xs text-fg-muted">{{ adapter.kind }} · revision {{ adapter.current_revision }}</p></button>
           <p v-if="store.adapters.length === 0" class="p-4 text-sm text-fg-muted">No adapters configured for this organization.</p>
         </aside>
@@ -121,16 +121,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, shallowRef } from "vue";
 import type {
   AdapterConfigurationField,
   AdapterDefinition,
+  AdapterKindCatalogEntry,
   AdapterKindMetadata,
   AdapterRevision,
   ExternalOperation,
   JsonValue,
 } from "../../core/domain/models";
-import { fetchAdapterHealth, reloadAdapterHost } from "../../core/services/orchestrations";
+import { fetchAdapterHealth, fetchAdapterKinds, reloadAdapterHost } from "../../core/services/orchestrations";
 import { useOrchestrationsStore } from "../adapters/pinia/orchestrations";
 import { useSecretsStore } from "../adapters/pinia/secrets";
 
@@ -153,6 +154,7 @@ const resolution = ref<"succeeded" | "failed" | "retry">("succeeded");
 const resolutionReason = ref("");
 const resolutionReceipt = ref("null");
 const hostResult = ref<unknown>(null);
+const adapterCatalog = shallowRef<AdapterKindCatalogEntry[]>([]);
 const testHeaders = ref("{}");
 const testBody = ref("{}");
 interface AdapterTestRoute {
@@ -251,7 +253,12 @@ function refreshInstances(): void {
 }
 
 async function refreshAdapters(): Promise<void> {
-  await Promise.all([store.refreshAdapters(), secrets.refreshSecrets()]);
+  const [, , catalog] = await Promise.all([
+    store.refreshAdapters(),
+    secrets.refreshSecrets(),
+    fetchAdapterKinds(),
+  ]);
+  adapterCatalog.value = catalog;
 }
 
 function switchMode(next: Mode): void {
@@ -385,7 +392,7 @@ function initializeKind(): void {
 
   for (const field of formKind.value?.fields ?? []) {
     if (!field.secret) {
-      adapterForm.configuration[field.name] = field.default;
+      adapterForm.configuration[field.name] = field.default as JsonValue;
     }
   }
 }

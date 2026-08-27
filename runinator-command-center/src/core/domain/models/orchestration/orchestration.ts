@@ -180,7 +180,7 @@ export interface AdapterConfigurationField {
   required: boolean;
   secret: boolean;
   description?: string | null;
-  default: JsonValue;
+  default: unknown;
 }
 
 export interface AdapterKindMetadata {
@@ -192,6 +192,13 @@ export interface AdapterKindMetadata {
   event_names: string[];
   canonical_pointers: string[];
   capabilities: string[];
+}
+
+export interface AdapterKindCatalogEntry {
+  metadata: AdapterKindMetadata;
+  origin: string;
+  healthy: boolean;
+  error?: string | null;
 }
 
 export interface AdapterDefinition {

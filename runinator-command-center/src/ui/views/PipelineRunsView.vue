@@ -360,6 +360,7 @@ import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrchestrationsStore } from "../../ui/adapters/pinia/orchestrations";
 import type {
+  OrchestrationBinding,
   PipelineMemberAttempt,
   PipelineRunDetail,
   RunSummary,
@@ -380,9 +381,10 @@ const managedIntentBusy = ref(false);
 const managedReason = ref("");
 
 const managedBindingId = computed(() => store.detail?.run.orchestration_binding_id ?? null);
-const managedBinding = computed(() =>
-  orchestrations.selected?.id === managedBindingId.value ? orchestrations.selected : null,
-);
+const managedBinding = computed<OrchestrationBinding | null>(() => {
+  const selected = orchestrations.currentBinding();
+  return selected?.id === managedBindingId.value ? selected : null;
+});
 const managedControls = computed(() =>
   Object.entries(managedBinding.value?.policy.intents ?? {})
     .filter(([, policy]) => ["terminate", "suspend", "resume", "supersede", "signal"].includes(policy.effect))

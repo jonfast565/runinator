@@ -115,6 +115,7 @@ export type { PipelineRun } from "./pipeline/pipeline-run";
 export type {
   AdapterConfigurationField,
   AdapterDefinition,
+  AdapterKindCatalogEntry,
   AdapterKindMetadata,
   AdapterRevision,
   DeliverySemantics,

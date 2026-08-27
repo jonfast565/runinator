@@ -18,10 +18,13 @@ use runinator_adapter_contract::{
     HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn,
 };
 use runinator_models::{
-    orchestration::{AdapterConfigurationField, AdapterKindMetadata, NormalizedAdapterEvent},
+    orchestration::{
+        AdapterConfigurationField, AdapterKindCatalogEntry, AdapterKindMetadata,
+        NormalizedAdapterEvent,
+    },
     types::RuninatorType,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::RwLock, time::timeout};
 
@@ -30,19 +33,11 @@ const DEFAULT_OUTPUT_LIMIT: usize = 1024 * 1024;
 const DEFAULT_EVENT_LIMIT: usize = 16;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone, Serialize)]
-struct CatalogEntry {
-    metadata: AdapterKindMetadata,
-    origin: String,
-    healthy: bool,
-    error: Option<String>,
-}
-
 #[derive(Clone)]
 struct HostState {
     token: Arc<String>,
     paths: Arc<Vec<PathBuf>>,
-    catalog: Arc<RwLock<BTreeMap<String, CatalogEntry>>>,
+    catalog: Arc<RwLock<BTreeMap<String, AdapterKindCatalogEntry>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,7 +207,7 @@ async fn reload_catalog(state: &HostState) {
                 Ok(metadata) => {
                     catalog.insert(
                         metadata.kind.clone(),
-                        CatalogEntry {
+                        AdapterKindCatalogEntry {
                             metadata,
                             origin: path.to_string_lossy().into_owned(),
                             healthy: true,
@@ -229,7 +224,7 @@ async fn reload_catalog(state: &HostState) {
                     );
                     catalog.insert(
                         key,
-                        CatalogEntry {
+                        AdapterKindCatalogEntry {
                             metadata: placeholder_metadata(&path),
                             origin: path.to_string_lossy().into_owned(),
                             healthy: false,
@@ -368,13 +363,13 @@ unsafe fn invoke_file_operation(
     Ok(())
 }
 
-fn builtin_catalog() -> BTreeMap<String, CatalogEntry> {
+fn builtin_catalog() -> BTreeMap<String, AdapterKindCatalogEntry> {
     [generic_metadata(), jira_metadata(), github_metadata()]
         .into_iter()
         .map(|metadata| {
             (
                 metadata.kind.clone(),
-                CatalogEntry {
+                AdapterKindCatalogEntry {
                     metadata,
                     origin: "builtin".into(),
                     healthy: true,

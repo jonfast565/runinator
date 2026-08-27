@@ -123,20 +123,32 @@ async fn orchestration_adapters(
             }
             let rows = kinds
                 .into_iter()
-                .map(|kind| {
+                .map(|entry| {
                     vec![
-                        kind.kind,
-                        kind.version,
-                        kind.display_name,
-                        kind.capabilities.join(","),
-                        kind.event_names.join(","),
+                        entry.metadata.kind,
+                        entry.metadata.version,
+                        entry.metadata.display_name,
+                        entry.origin,
+                        entry.healthy.to_string(),
+                        entry.error.unwrap_or_default(),
+                        entry.metadata.capabilities.join(","),
+                        entry.metadata.event_names.join(","),
                     ]
                 })
                 .collect::<Vec<_>>();
             print!(
                 "{}",
                 output::table(
-                    &["KIND", "VERSION", "NAME", "CAPABILITIES", "EVENTS"],
+                    &[
+                        "KIND",
+                        "VERSION",
+                        "NAME",
+                        "ORIGIN",
+                        "HEALTHY",
+                        "ERROR",
+                        "CAPABILITIES",
+                        "EVENTS",
+                    ],
                     &rows
                 )
             );

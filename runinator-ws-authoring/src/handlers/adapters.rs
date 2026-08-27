@@ -40,19 +40,9 @@ use runinator_ws_core::{
     responses::{api_error, bad_request, not_found},
 };
 use runinator_ws_middleware::authz::AuthContextExt;
-use serde::Deserialize;
 use uuid::Uuid;
 
 use super::pipelines::process_pipeline_ingress;
-
-#[derive(Debug, Clone, Deserialize)]
-struct HostCatalogEntry {
-    metadata: AdapterKindMetadata,
-    #[allow(dead_code)]
-    origin: String,
-    healthy: bool,
-    error: Option<String>,
-}
 
 fn host_url() -> String {
     std::env::var("RUNINATOR_ADAPTER_HOST_URL")
@@ -97,7 +87,8 @@ async fn host_post(path: &str, body: serde_json::Value) -> Result<serde_json::Va
     response.json().await.map_err(|error| error.to_string())
 }
 
-async fn catalog() -> Result<Vec<HostCatalogEntry>, String> {
+async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String>
+{
     serde_json::from_value(host_get("/kinds").await?).map_err(|error| error.to_string())
 }
 
@@ -155,15 +146,32 @@ fn validate_definition(
         ));
     }
     for field in &kind.fields {
-        if !field.required {
-            continue;
-        }
         if field.secret {
-            if !request.secret_bindings.contains_key(&field.name) {
+            if field.required && !request.secret_bindings.contains_key(&field.name) {
                 return Err(format!("secret binding '{}' is required", field.name));
             }
-        } else if request.configuration.get(&field.name).is_none() {
+            continue;
+        }
+        let Some(value) = request.configuration.get(&field.name) else {
+            if !field.required {
+                continue;
+            }
             return Err(format!("configuration field '{}' is required", field.name));
+        };
+        if value.is_null() && !field.required {
+            continue;
+        }
+        field.value_type.validate_value(value).map_err(|error| {
+            format!(
+                "configuration field '{}' does not match its declared type: {error}",
+                field.name
+            )
+        })?;
+        if field.required && value.as_str().is_some_and(|value| value.trim().is_empty()) {
+            return Err(format!(
+                "configuration field '{}' cannot be empty",
+                field.name
+            ));
         }
     }
     Ok(())
@@ -496,14 +504,7 @@ pub async fn kinds<T: RbacStore>(
         return reply;
     }
     match catalog().await {
-        Ok(entries) => {
-            let kinds = entries
-                .into_iter()
-                .filter(|entry| entry.healthy && entry.error.is_none())
-                .map(|entry| entry.metadata)
-                .collect();
-            (StatusCode::OK, Json(ApiResponse::AdapterKindList(kinds)))
-        }
+        Ok(entries) => (StatusCode::OK, Json(ApiResponse::AdapterKindList(entries))),
         Err(error) => api_error(error),
     }
 }
@@ -1012,8 +1013,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::identity_projection;
-    use runinator_models::json;
+    use std::collections::BTreeMap;
+
+    use super::{identity_projection, validate_definition};
+    use runinator_models::{
+        json,
+        orchestration::{AdapterConfigurationField, AdapterKindMetadata},
+        types::RuninatorType,
+        value::Value,
+    };
+    use runinator_ws_core::models::AdapterApplyRequest;
 
     #[test]
     fn generic_identity_projection_ignores_non_identity_configuration() {
@@ -1059,6 +1068,41 @@ mod tests {
         assert_ne!(
             identity_projection("jira", &json!({ "instance_id": "first" })),
             identity_projection("jira", &json!({ "instance_id": "second" }))
+        );
+    }
+
+    #[test]
+    fn adapter_configuration_is_validated_against_kind_metadata() {
+        let metadata = AdapterKindMetadata {
+            kind: "example".into(),
+            version: "1".into(),
+            display_name: "Example".into(),
+            description: None,
+            fields: vec![AdapterConfigurationField {
+                name: "pointer".into(),
+                value_type: RuninatorType::String,
+                required: true,
+                secret: false,
+                description: None,
+                default: Value::Null,
+            }],
+            event_names: vec![],
+            canonical_pointers: vec![],
+            capabilities: vec![],
+        };
+        let request = AdapterApplyRequest {
+            name: "adapter".into(),
+            kind: "example".into(),
+            kind_version: "1".into(),
+            configuration: json!({ "pointer": 42 }),
+            secret_bindings: BTreeMap::new(),
+            identity_configuration: Value::Null,
+            expected_revision: None,
+        };
+        assert!(
+            validate_definition(&request, &metadata)
+                .unwrap_err()
+                .contains("declared type")
         );
     }
 }

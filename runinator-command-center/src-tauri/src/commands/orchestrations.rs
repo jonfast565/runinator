@@ -1,5 +1,5 @@
 use runinator_models::orchestration::{
-    AdapterDefinition, AdapterKindMetadata, AdapterRevision, ExternalOperation,
+    AdapterDefinition, AdapterKindCatalogEntry, AdapterRevision, ExternalOperation,
     OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch, OrchestrationEventReduction,
     OrchestrationEvidence,
 };
@@ -138,7 +138,7 @@ pub async fn resolve_external_operation(
 #[tauri::command]
 pub async fn fetch_adapter_kinds(
     state: State<'_, CommandCenterState>,
-) -> CommandResult<Vec<AdapterKindMetadata>> {
+) -> CommandResult<Vec<AdapterKindCatalogEntry>> {
     get_json(&state, "orchestrations/adapters/kinds").await
 }
 
