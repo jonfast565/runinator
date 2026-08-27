@@ -233,6 +233,38 @@ pub async fn delete_console_session<
     }
 }
 
+/// remove every persisted cell and scope entry while retaining the session.
+pub async fn clear_console_session<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(session_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
+        return reply;
+    }
+    match console.clear_session(session_id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "cleared": true,
+                "session_id": session_id,
+            }))),
+        ),
+        Ok(false) => not_found(format!("console session {session_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 /// append a cell to a session.
 pub async fn create_console_cell<
     T: AuthorizationStore
@@ -562,6 +594,10 @@ pub fn routes<
             post(create_console_cell::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/console/sessions/{id}/clear",
+            post(clear_console_session::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/console/cells/{id}",
             get(get_console_cell::<T>)
                 .patch(update_console_cell::<T>)
@@ -647,6 +683,19 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "session deleted",
+        Example::None,
+    ),
+    endpoint(
+        "post",
+        "/console/sessions/{id}/clear",
+        "Console",
+        "Clear a console session",
+        "Removes a session's cells, scope bindings, and function library but retains the session.",
+        false,
+        None,
+        &[],
+        200,
+        "session cleared",
         Example::None,
     ),
     endpoint(

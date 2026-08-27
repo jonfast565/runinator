@@ -2,6 +2,7 @@ import {
   cancelConsoleCell,
   createConsoleCell,
   createConsoleSession,
+  clearConsoleSession,
   deleteConsoleCell,
   deleteConsoleSession,
   fetchConsoleCell,
@@ -153,18 +154,56 @@ export function createConsoleService(app: AppService) {
       );
       await service.refreshSessions();
     },
-    async removeSession(sessionId: string, confirm: ConfirmContext) {
-      if (!confirm.confirm("Delete this console session, its cells, and its scope?")) {
-        return;
+    async clearSession(sessionId: string, confirm: ConfirmContext): Promise<boolean> {
+      if (!confirm.confirm("Clear this session's cells, variables, and function library?")) {
+        return false;
       }
 
-      await app
-        .runOperation("Deleting console session", () => deleteConsoleSession(sessionId))
-        .catch((error: unknown) => {
-          app.setError(String(error));
-        });
-      store.setState((state) => ({ ...state, activeSession: null }));
+      try {
+        await app.runOperation("Clearing console session", () => clearConsoleSession(sessionId));
+      } catch (error) {
+        app.setError(String(error));
+        return false;
+      }
+
+      // Make the reset immediate, including while a deleted running cell's poll is winding down.
+      // The re-read below supplies the authoritative session timestamps and empty collections.
+      store.setState((state) => {
+        if (state.activeSession?.id !== sessionId) {
+          return state;
+        }
+
+        return {
+          ...state,
+          activeSession: {
+            ...state.activeSession,
+            cells: [],
+            bindings: [],
+            functions: [],
+          },
+          pendingCellIds: [],
+        };
+      });
       await service.refreshSessions();
+      return true;
+    },
+    async removeSession(sessionId: string, confirm: ConfirmContext): Promise<boolean> {
+      if (!confirm.confirm("Delete this console session, its cells, and its scope?")) {
+        return false;
+      }
+
+      try {
+        await app.runOperation("Deleting console session", () => deleteConsoleSession(sessionId));
+      } catch (error) {
+        app.setError(String(error));
+        return false;
+      }
+
+      store.setState((state) =>
+        state.activeSession?.id === sessionId ? { ...state, activeSession: null } : state,
+      );
+      await service.refreshSessions();
+      return true;
     },
     // returns the created cell so a caller that means to run it immediately — the terminal does —
     // does not have to find it again in the refreshed session.

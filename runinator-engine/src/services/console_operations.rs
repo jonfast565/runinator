@@ -97,6 +97,10 @@ impl<
         repository::console::delete_session(self.store.as_ref(), session_id).await
     }
 
+    pub async fn clear_session(&self, session_id: Uuid) -> Result<bool, SendableError> {
+        repository::console::clear_session(self.store.as_ref(), session_id).await
+    }
+
     pub async fn upsert_cell(
         &self,
         session_id: Uuid,

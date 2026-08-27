@@ -23,6 +23,11 @@ export const useConsoleStore = defineStore("console", () => {
     newSession: (name?: string) => consoleService.newSession(name),
     renameSession: (sessionId: string, name: string) =>
       consoleService.renameSession(sessionId, name),
+    clearSession: (sessionId: string) =>
+      consoleService.clearSession(sessionId, {
+        confirm: (message) => window.confirm(message),
+        prompt: (message) => window.prompt(message),
+      }),
     removeSession: (sessionId: string) =>
       consoleService.removeSession(sessionId, {
         confirm: (message) => window.confirm(message),

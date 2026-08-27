@@ -82,6 +82,13 @@ pub async fn delete_session<T: ConsoleStore>(
     db.delete_console_session(session_id).await
 }
 
+pub async fn clear_session<T: ConsoleStore>(
+    db: &T,
+    session_id: Uuid,
+) -> Result<bool, SendableError> {
+    db.clear_console_session(session_id).await
+}
+
 pub async fn upsert_cell<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,

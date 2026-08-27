@@ -1801,6 +1801,10 @@ export async function deleteConsoleSession(sessionId: string) {
   return command<JsonRecord>("delete_console_session", { sessionId });
 }
 
+export async function clearConsoleSession(sessionId: string) {
+  return command<JsonRecord>("clear_console_session", { sessionId });
+}
+
 export async function createConsoleCell(sessionId: string, source: string, label?: string | null) {
   return command<ConsoleCell>("create_console_cell", {
     sessionId,

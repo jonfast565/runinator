@@ -685,6 +685,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}`,
   },
+  clear_console_session: {
+    method: "POST",
+    path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}/clear`,
+  },
   create_console_cell: {
     method: "POST",
     path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}/cells`,

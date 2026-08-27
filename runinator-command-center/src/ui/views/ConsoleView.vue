@@ -18,6 +18,13 @@
               <code v-if="notebook.activeSession" class="text-[11px] text-fg-muted">{{
                 notebook.activeSession.name
               }}</code>
+              <code
+                v-if="notebook.activeSession"
+                class="text-[10px] text-fg-muted"
+                title="Console session ID"
+              >
+                {{ notebook.activeSession.id }}
+              </code>
             </div>
             <div class="btn-row">
               <select
@@ -27,16 +34,40 @@
                 @change="openSession(($event.target as HTMLSelectElement).value)"
               >
                 <option v-for="session in notebook.sessions" :key="session.id" :value="session.id">
-                  {{ session.name }}
+                  {{ session.name }} · {{ session.id }}
                 </option>
               </select>
               <button class="btn" :disabled="!canUse" @click="newSession">
                 <Icon name="plus" />
                 <span>New</span>
               </button>
-              <button class="btn" :disabled="!canUse" @click="terminal.clear">
+              <button
+                class="btn"
+                :disabled="!canUse || !notebook.activeSession"
+                @click="renameSession"
+              >
+                <Icon name="edit" />
+                <span>Rename</span>
+              </button>
+              <button
+                class="btn"
+                :disabled="!canUse || !notebook.activeSession"
+                @click="clearSession"
+              >
                 <Icon name="trash" />
-                <span>Clear</span>
+                <span>Clear session</span>
+              </button>
+              <button
+                class="btn btn-danger"
+                :disabled="!canUse || !notebook.activeSession"
+                @click="deleteSession"
+              >
+                <Icon name="trash" />
+                <span>Delete</span>
+              </button>
+              <button class="btn" :disabled="!canUse" @click="terminal.clear">
+                <Icon name="x" />
+                <span>Clear screen</span>
               </button>
             </div>
           </div>
@@ -146,6 +177,43 @@ async function openSession(sessionId: string) {
 
 async function newSession() {
   await notebook.newSession();
+}
+
+async function renameSession() {
+  const session = notebook.activeSession;
+
+  if (!session) {
+    return;
+  }
+
+  const name = window.prompt("Session name", session.name);
+  const trimmed = name?.trim();
+
+  if (!trimmed || trimmed === session.name) {
+    return;
+  }
+
+  await notebook.renameSession(session.id, trimmed);
+}
+
+async function clearSession() {
+  const session = notebook.activeSession;
+
+  if (session && (await notebook.clearSession(session.id))) {
+    terminal.clear();
+  }
+}
+
+async function deleteSession() {
+  const session = notebook.activeSession;
+
+  if (!session) {
+    return;
+  }
+
+  if (await notebook.removeSession(session.id)) {
+    terminal.clear();
+  }
 }
 
 async function refresh() {

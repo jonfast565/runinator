@@ -8,6 +8,7 @@ vi.mock("../../api/commandCenterApi", () => ({
   fetchConsoleSession: vi.fn(),
   createConsoleSession: vi.fn(),
   renameConsoleSession: vi.fn(),
+  clearConsoleSession: vi.fn(),
   deleteConsoleSession: vi.fn(),
   createConsoleCell: vi.fn(),
   fetchConsoleCell: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("../../api/commandCenterApi", () => ({
 }));
 
 import {
+  clearConsoleSession,
   fetchConsoleCell,
   fetchConsoleSession,
   fetchConsoleSessions,
@@ -149,5 +151,23 @@ describe("console service", () => {
     const stored = service.getState().activeSession?.cells?.at(0);
     expect(stored?.status).toBe("succeeded");
     expect(stored?.result).toBe(3);
+  });
+
+  it("clears cells, variables, and functions from the active session", async () => {
+    const service = createConsoleService(app);
+    await service.openSession("session-1");
+    vi.mocked(clearConsoleSession).mockResolvedValue({ cleared: true, session_id: "session-1" });
+    vi.mocked(fetchConsoleSessions).mockResolvedValue([session()]);
+    vi.mocked(fetchConsoleSession).mockResolvedValue(session());
+
+    const cleared = await service.clearSession("session-1", {
+      confirm: () => true,
+      prompt: () => null,
+    });
+
+    expect(cleared).toBe(true);
+    expect(clearConsoleSession).toHaveBeenCalledWith("session-1");
+    expect(service.getState().activeSession?.cells).toEqual([]);
+    expect(service.getState().activeSession?.bindings).toEqual([]);
   });
 });

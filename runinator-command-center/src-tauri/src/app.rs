@@ -34,6 +34,7 @@ pub fn run() {
             crate::commands::fetch_console_session,
             crate::commands::rename_console_session,
             crate::commands::delete_console_session,
+            crate::commands::clear_console_session,
             crate::commands::create_console_cell,
             crate::commands::fetch_console_cell,
             crate::commands::update_console_cell,

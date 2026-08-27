@@ -3,6 +3,7 @@ import { setCommandRuntime } from "../runtime";
 import { apiBaseUrl, invokeViaHttp, wsBaseUrl } from "../httpRuntime";
 import {
   addTeamMember,
+  clearConsoleSession,
   createApiKey,
   createUser,
   deliverSignal,
@@ -201,7 +202,12 @@ describe("command center catalog metadata API", () => {
           },
         ],
         fetch_workflow_vm_cursors: [
-          { continuation_id: "continuation-1", instruction_pointer: 3, node_id: "end", status: "succeeded" },
+          {
+            continuation_id: "continuation-1",
+            instruction_pointer: 3,
+            node_id: "end",
+            status: "succeeded",
+          },
         ],
       };
       return Promise.resolve(responses[name]);
@@ -406,6 +412,15 @@ describe("command center permissions API in web mode", () => {
           platform_role: "admin",
         }),
       }),
+    );
+  });
+
+  it("clears persisted console state without deleting the session", async () => {
+    await clearConsoleSession("00000000-0000-0000-0000-000000000001");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/console/sessions/00000000-0000-0000-0000-000000000001/clear",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

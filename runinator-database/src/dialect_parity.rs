@@ -1567,6 +1567,62 @@ async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
             .is_empty()
     );
 
+    // Clearing keeps the named session, but fully resets its notebook and durable scope. This is
+    // deliberately stronger than clearing a terminal transcript: subsequent cells must not see a
+    // value or function from before the reset.
+    let reset_cell = db
+        .upsert_console_cell(
+            session.id,
+            None,
+            &NewConsoleCell {
+                source: "41 + 1".into(),
+                label: Some("answer".into()),
+                position: None,
+            },
+        )
+        .await
+        .unwrap();
+    db.upsert_console_binding(
+        session.id,
+        "answer",
+        Some(reset_cell.id),
+        &runinator_models::json!(42),
+    )
+    .await
+    .unwrap();
+    db.replace_console_functions(
+        session.id,
+        reset_cell.id,
+        &[NewConsoleFunction {
+            name: "answer".into(),
+            is_task: false,
+            source: "fn answer() = 42".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    assert!(db.clear_console_session(session.id).await.unwrap());
+    assert!(
+        db.fetch_console_session(session.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(db.fetch_console_cells(session.id).await.unwrap().is_empty());
+    assert!(
+        db.fetch_console_bindings(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!db.clear_console_session(Uuid::new_v4()).await.unwrap());
+
     // and deleting the session takes the rest, explicitly rather than by cascade.
     assert!(db.delete_console_session(session.id).await.unwrap());
     assert!(db.fetch_console_cells(session.id).await.unwrap().is_empty());

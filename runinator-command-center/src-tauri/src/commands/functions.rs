@@ -267,6 +267,19 @@ pub async fn delete_console_session(
 }
 
 #[tauri::command]
+pub async fn clear_console_session(
+    state: State<'_, CommandCenterState>,
+    session_id: Uuid,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("console/sessions/{session_id}/clear"),
+        &json!({}),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn create_console_cell(
     state: State<'_, CommandCenterState>,
     session_id: Uuid,

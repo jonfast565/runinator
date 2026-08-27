@@ -49,12 +49,13 @@ export function createConsoleTerminalService(consoleService: ConsoleService) {
     refresh: () => consoleService.refreshSessions(),
     open: (sessionId) => consoleService.openSession(sessionId),
     create: (name) => consoleService.newSession(name),
-    remove: (sessionId) =>
-      consoleService.removeSession(sessionId, {
+    remove: async (sessionId) => {
+      await consoleService.removeSession(sessionId, {
         // the terminal already asked by making the operator type the command.
         confirm: () => true,
         prompt: () => null,
-      }),
+      });
+    },
     cells: () => consoleService.getState().activeSession?.cells ?? [],
     cancelCell: (cellId) => consoleService.cancelCell(cellId),
     replayCell: (cellId) => consoleService.replayCell(cellId),

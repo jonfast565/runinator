@@ -191,6 +191,41 @@ where
         Ok(result.affected() > 0)
     }
 
+    async fn clear_console_session(&self, session_id: Uuid) -> Result<bool, SendableError> {
+        // Clearing has the same concurrency boundary as deleting a session, except the parent row
+        // remains. A late scratch-run settlement therefore finds no cell to revive after this
+        // transaction commits, and cannot repopulate a scope the operator intentionally emptied.
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(
+            &self.render(
+                "UPDATE console_cells SET updated_at = updated_at + 1 WHERE session_id = ?",
+            ),
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(&self.render("DELETE FROM console_bindings WHERE session_id = ?"))
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&self.render("DELETE FROM console_functions WHERE session_id = ?"))
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&self.render("DELETE FROM console_cells WHERE session_id = ?"))
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        let result =
+            sqlx::query(&self.render("UPDATE console_sessions SET updated_at = ? WHERE id = ?"))
+                .bind(Utc::now().timestamp())
+                .bind(session_id)
+                .execute(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        Ok(result.affected() > 0)
+    }
+
     async fn upsert_console_cell(
         &self,
         session_id: Uuid,

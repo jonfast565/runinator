@@ -54,6 +54,12 @@ pub trait ConsoleStore: Send + Sync + 'static {
         session_id: Uuid,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Remove a session's cells, scope, and function library while retaining the session itself.
+    fn clear_console_session(
+        &self,
+        session_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Append or replace a cell. A `position` in the request replaces the cell there; omitting it
     /// appends.
     fn upsert_console_cell(
