@@ -20,6 +20,8 @@ fallible_row_mapper!(row_to_workspace_lease(row) -> WorkspaceLease {
         leased_until: DateTime::<Utc>::from_timestamp(row.get("leased_until"), 0).unwrap_or_else(Utc::now),
         unavailable_since: row.get::<Option<i64>, _>("unavailable_since")
             .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        abandonment_notified_at: row.get::<Option<i64>, _>("abandonment_notified_at")
+            .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
         evidence: parse_json(row.get("evidence")),
         created_at: DateTime::<Utc>::from_timestamp(row.get("created_at"), 0).unwrap_or_else(Utc::now),
         updated_at: DateTime::<Utc>::from_timestamp(row.get("updated_at"), 0).unwrap_or_else(Utc::now),

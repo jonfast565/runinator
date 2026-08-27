@@ -274,6 +274,25 @@ where
         Ok(result.affected() > 0)
     }
 
+    async fn settle_orchestration_epoch(
+        &self,
+        binding_id: Uuid,
+        epoch: i64,
+        status: String,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE orchestration_epochs SET status = ?, finished_at = ? WHERE binding_id = ? AND epoch = ? AND status IN ('pending', 'running')",
+        ))
+        .bind(status)
+        .bind(now.timestamp())
+        .bind(binding_id)
+        .bind(epoch)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
+    }
+
     async fn fetch_orchestration_epochs(
         &self,
         binding_id: Uuid,
@@ -484,6 +503,25 @@ where
         let changed = sqlx::query(&self.render("UPDATE orchestration_commands SET status = ?, result = ?, claimed_until = NULL, updated_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?"))
             .bind(status).bind(result.to_string()).bind(now.timestamp()).bind(command_id).bind(owner)
             .execute(self.pool()).await?;
+        Ok(changed.affected() > 0)
+    }
+
+    async fn retry_orchestration_command(
+        &self,
+        command_id: Uuid,
+        owner: String,
+        result: Value,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let changed = sqlx::query(&self.render(
+            "UPDATE orchestration_commands SET status = 'pending', result = ?, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?",
+        ))
+        .bind(result.to_string())
+        .bind(now.timestamp())
+        .bind(command_id)
+        .bind(owner)
+        .execute(self.pool())
+        .await?;
         Ok(changed.affected() > 0)
     }
 

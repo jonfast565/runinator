@@ -9,7 +9,7 @@ use runinator_models::{
         ControlEffect, EpochStopAction, IngressAdmission, IngressInboxEntry, IngressLifecycle,
         IngressPolicy, NewOrchestrationBinding, OrchestrationBinding, OrchestrationEventReduction,
         OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationPolicy,
-        OrchestrationStatus, RestartSelector,
+        OrchestrationStatus, RestartSelector, WorkspaceRecovery,
     },
     pipelines::Pipeline,
     value::Value,
@@ -215,60 +215,68 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             binding.current_epoch = 1;
             binding.status = OrchestrationStatus::Running;
         }
-        let manual_intent = (event.source == "runinator.manual")
-            .then(|| event.payload.get("intent").and_then(Value::as_str))
-            .flatten();
-        let routed =
-            ingress.dispatches_for(&event.event_type, IngressLifecycle::Active, &event.payload);
-        let decision = choose_intent(manual_intent.into_iter().chain(routed), &binding.policy);
-        let mut disposition = "observed".to_string();
-        if let Some(winner) = decision.winner.as_deref() {
-            let intent = binding.policy.intents[winner].clone();
-            if let Some(seconds) = intent.coalesce_seconds {
-                let existing = self
-                    .store
-                    .fetch_orchestration_pending_intents(binding.id)
-                    .await?
-                    .into_iter()
-                    .find(|pending| pending.intent == winner);
-                let mut source_event_ids = existing
-                    .as_ref()
-                    .map(|pending| pending.source_event_ids.clone())
-                    .unwrap_or_default();
-                if !source_event_ids.contains(&event.id) {
-                    source_event_ids.push(event.id);
+        let internal_disposition = self.apply_internal_event(&mut binding, event).await?;
+        let mut decision = IntentDecision {
+            matched: Vec::new(),
+            winner: None,
+            suppressed: Vec::new(),
+        };
+        let mut disposition = internal_disposition.unwrap_or_else(|| "observed".into());
+        if !event.source.starts_with("runinator.workspace") {
+            let manual_intent = (event.source == "runinator.manual")
+                .then(|| event.payload.get("intent").and_then(Value::as_str))
+                .flatten();
+            let routed =
+                ingress.dispatches_for(&event.event_type, IngressLifecycle::Active, &event.payload);
+            decision = choose_intent(manual_intent.into_iter().chain(routed), &binding.policy);
+            if let Some(winner) = decision.winner.as_deref() {
+                let intent = binding.policy.intents[winner].clone();
+                if let Some(seconds) = intent.coalesce_seconds {
+                    let existing = self
+                        .store
+                        .fetch_orchestration_pending_intents(binding.id)
+                        .await?
+                        .into_iter()
+                        .find(|pending| pending.intent == winner);
+                    let mut source_event_ids = existing
+                        .as_ref()
+                        .map(|pending| pending.source_event_ids.clone())
+                        .unwrap_or_default();
+                    if !source_event_ids.contains(&event.id) {
+                        source_event_ids.push(event.id);
+                    }
+                    let now = Utc::now();
+                    self.store
+                        .upsert_orchestration_pending_intent(OrchestrationPendingIntent {
+                            id: existing
+                                .map(|pending| pending.id)
+                                .unwrap_or_else(Uuid::now_v7),
+                            binding_id: binding.id,
+                            intent: winner.to_string(),
+                            priority: intent.priority,
+                            source_event_ids,
+                            latest_payload: event.payload.clone(),
+                            wake_at: now + Duration::seconds(seconds as i64),
+                            created_at: now,
+                            updated_at: now,
+                        })
+                        .await?;
+                    disposition = "coalesced".into();
+                } else {
+                    self.store
+                        .delete_orchestration_pending_intents_below(binding.id, intent.priority)
+                        .await?;
+                    binding = self
+                        .apply_intent(
+                            binding,
+                            owner,
+                            winner,
+                            event.payload.clone(),
+                            Some(event.id),
+                        )
+                        .await?;
+                    disposition = "applied".into();
                 }
-                let now = Utc::now();
-                self.store
-                    .upsert_orchestration_pending_intent(OrchestrationPendingIntent {
-                        id: existing
-                            .map(|pending| pending.id)
-                            .unwrap_or_else(Uuid::now_v7),
-                        binding_id: binding.id,
-                        intent: winner.to_string(),
-                        priority: intent.priority,
-                        source_event_ids,
-                        latest_payload: event.payload.clone(),
-                        wake_at: now + Duration::seconds(seconds as i64),
-                        created_at: now,
-                        updated_at: now,
-                    })
-                    .await?;
-                disposition = "coalesced".into();
-            } else {
-                self.store
-                    .delete_orchestration_pending_intents_below(binding.id, intent.priority)
-                    .await?;
-                binding = self
-                    .apply_intent(
-                        binding,
-                        owner,
-                        winner,
-                        event.payload.clone(),
-                        Some(event.id),
-                    )
-                    .await?;
-                disposition = "applied".into();
             }
         }
 
@@ -309,7 +317,109 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 created_at: now,
             })
             .await?;
+        if updated.status.is_terminal() {
+            self.store
+                .settle_ingress_admission(updated.admission_id, updated.generation, now)
+                .await?;
+        }
         Ok(updated)
+    }
+
+    async fn apply_internal_event(
+        &self,
+        binding: &mut OrchestrationBinding,
+        event: &IngressInboxEntry,
+    ) -> Result<Option<String>, SendableError> {
+        if event.source != "runinator.workspace" || event.event_type != "workspace_abandoned" {
+            return Ok(None);
+        }
+        let epoch = event.payload.get("epoch").and_then(Value::as_i64);
+        let scope = event.payload.get("scope").and_then(Value::as_str);
+        self.store
+            .append_orchestration_evidence(OrchestrationEvidence {
+                id: Uuid::now_v7(),
+                binding_id: binding.id,
+                epoch,
+                kind: "workspace_abandoned".into(),
+                subject_revision: binding.subject_revision.clone(),
+                payload: event.payload.clone(),
+                source_event_id: Some(event.id),
+                created_at: Utc::now(),
+            })
+            .await?;
+        if binding.status.is_terminal() || epoch != Some(binding.current_epoch) {
+            return Ok(Some("stale_workspace_abandonment".into()));
+        }
+        let phase = binding
+            .current_phase
+            .as_deref()
+            .and_then(|member| binding.policy.phases.get_key_value(member))
+            .filter(|(_, phase)| {
+                phase
+                    .workspace
+                    .as_ref()
+                    .is_some_and(|workspace| Some(workspace.scope.as_str()) == scope)
+            })
+            .or_else(|| {
+                binding.policy.phases.iter().find(|(_, phase)| {
+                    phase
+                        .workspace
+                        .as_ref()
+                        .is_some_and(|workspace| Some(workspace.scope.as_str()) == scope)
+                })
+            });
+        let Some((member, phase)) = phase else {
+            binding.status = OrchestrationStatus::Waiting;
+            binding.resume_existing_epoch = false;
+            return Ok(Some("workspace_policy_missing".into()));
+        };
+        let member = member.clone();
+        let parameters = self
+            .store
+            .fetch_orchestration_epochs(binding.id)
+            .await?
+            .into_iter()
+            .find(|candidate| candidate.epoch == binding.current_epoch)
+            .map(|epoch| epoch.parameters)
+            .unwrap_or_else(|| event.payload.clone());
+        let recovery = phase
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.recovery)
+            .unwrap_or_default();
+        self.enqueue_control(binding, "cancel_epoch", event.payload.clone())
+            .await?;
+        match recovery {
+            WorkspaceRecovery::Replace => {
+                let next = binding.current_epoch + 1;
+                self.enqueue_epoch(
+                    binding,
+                    next,
+                    Some(member.clone()),
+                    parameters,
+                    "workspace recovery",
+                )
+                .await?;
+                binding.current_epoch = next;
+                binding.status = OrchestrationStatus::Running;
+                binding.restart_member = Some(member);
+                binding.resume_existing_epoch = false;
+                Ok(Some("workspace_replaced".into()))
+            }
+            WorkspaceRecovery::Wait => {
+                binding.status = OrchestrationStatus::Suspended;
+                binding.restart_member = Some(member);
+                binding.resume_existing_epoch = false;
+                Ok(Some("workspace_waiting".into()))
+            }
+            WorkspaceRecovery::Fail => {
+                binding.status = OrchestrationStatus::Failed;
+                binding.restart_member = Some(member);
+                binding.resume_existing_epoch = false;
+                binding.finished_at = Some(Utc::now());
+                Ok(Some("workspace_failed".into()))
+            }
+        }
     }
 
     async fn apply_intent(
@@ -349,7 +459,10 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 binding.resume_existing_epoch = intent.stop == EpochStopAction::Pause;
             }
             ControlEffect::Resume => {
-                if binding.status == OrchestrationStatus::Suspended {
+                if matches!(
+                    binding.status,
+                    OrchestrationStatus::Suspended | OrchestrationStatus::Waiting
+                ) {
                     if binding.resume_existing_epoch {
                         self.enqueue_control(&binding, "resume_epoch", payload.clone())
                             .await?;

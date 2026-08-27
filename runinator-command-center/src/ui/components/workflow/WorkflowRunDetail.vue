@@ -23,10 +23,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import type {
   ActionResultMetadata,
   DebugFrame,
-  ExternalOperation,
-  OrchestrationBinding,
   WorkflowNodeRun,
-  WorkspaceLease,
 } from "../../../core/domain/models";
 import { coerceDebugFrame } from "../../../core/domain/models/workflow-state";
 import {
@@ -43,27 +40,42 @@ const providersStore = useProvidersStore();
 const app = useAppStore();
 const pipelineRuns = usePipelineRunsStore();
 const orchestrations = useOrchestrationsStore();
+interface ManagedWorkspaceSummary { scope: string; status: string }
+interface ManagedOperationSummary { workflow_run_id?: string | null; provider: string; action: string; status: string }
+const orchestrationRuntime = orchestrations as unknown as {
+  workspaces: ManagedWorkspaceSummary[];
+  operations: ManagedOperationSummary[];
+};
 
 const parentPipelineRunId = computed(() => workflows.workflowRunDetail?.run.pipeline_run_id ?? null);
 const parentPipelineRun = computed(() =>
   pipelineRuns.detail?.run.id === parentPipelineRunId.value ? pipelineRuns.detail.run : null,
 );
 const managedBindingId = computed(() => parentPipelineRun.value?.orchestration_binding_id ?? null);
-const managedBinding = computed<OrchestrationBinding | null>(() => {
+const managedBinding = computed<{
+  generation: number;
+  current_phase?: string | null;
+  current_attempt: number;
+} | null>(() => {
   const selected = orchestrations.selected;
-  return selected?.id === managedBindingId.value ? selected : null;
+  return selected?.id === managedBindingId.value
+    ? {
+        generation: selected.generation,
+        current_phase: selected.current_phase,
+        current_attempt: selected.current_attempt,
+      }
+    : null;
 });
-const managedWorkspaces = computed<WorkspaceLease[]>(() =>
+const managedWorkspaces = computed<ManagedWorkspaceSummary[]>(() =>
   orchestrations.selectedId === managedBindingId.value
-    ? orchestrations.workspaces
+    ? orchestrationRuntime.workspaces
     : [],
 );
-const managedOperations = computed<ExternalOperation[]>(() => {
+const managedOperations = computed<ManagedOperationSummary[]>(() => {
   const runId = workflows.workflowRunDetail?.run.id;
-  const operations = orchestrations.operations as unknown as ExternalOperation[];
 
   return orchestrations.selectedId === managedBindingId.value
-    ? operations.filter((operation) => operation.workflow_run_id === runId)
+    ? orchestrationRuntime.operations.filter((operation) => operation.workflow_run_id === runId)
     : [];
 });
 

@@ -84,6 +84,9 @@ pub struct WorkspaceLease {
     pub leased_until: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unavailable_since: Option<DateTime<Utc>>,
+    /// Set only after the idempotent workspace-abandoned inbox event is durable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abandonment_notified_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub evidence: Value,
     pub created_at: DateTime<Utc>,

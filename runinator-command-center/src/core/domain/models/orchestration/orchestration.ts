@@ -87,6 +87,7 @@ export interface WorkspaceLease {
   version: number;
   leased_until: string;
   unavailable_since?: string | null;
+  abandonment_notified_at?: string | null;
   evidence: JsonValue;
   created_at: string;
   updated_at: string;

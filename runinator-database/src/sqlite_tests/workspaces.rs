@@ -163,4 +163,46 @@ async fn workspace_allocation_and_transitions_are_idempotent_and_cas_guarded() {
             .is_empty(),
         "terminal workspaces are never recovered"
     );
+
+    let abandoned_id = Uuid::now_v7();
+    let abandoned = db
+        .allocate_workspace(NewWorkspaceLease {
+            id: abandoned_id,
+            admission_id,
+            generation: 1,
+            scope: "recovery".into(),
+            attempt: 1,
+            worker_instance_id: "worker-lost".into(),
+            worker_replica_id: None,
+            local_key: "admissions/job-42/recovery/1".into(),
+            requirements: Value::Null,
+            leased_until: now,
+        })
+        .await
+        .unwrap();
+    assert!(
+        db.transition_workspace_cas(
+            abandoned_id,
+            abandoned.version,
+            WorkspaceStatus::Allocating,
+            WorkspaceStatus::Abandoned,
+            Some(runinator_models::json!({ "reason": "worker lost" })),
+            now,
+        )
+        .await
+        .unwrap()
+    );
+    let pending_notifications = db.fetch_abandoned_workspaces(10).await.unwrap();
+    assert_eq!(pending_notifications.len(), 1);
+    assert_eq!(pending_notifications[0].id, abandoned_id);
+    assert!(
+        db.mark_workspace_abandonment_notified(
+            abandoned_id,
+            pending_notifications[0].version,
+            now,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(db.fetch_abandoned_workspaces(10).await.unwrap().is_empty());
 }

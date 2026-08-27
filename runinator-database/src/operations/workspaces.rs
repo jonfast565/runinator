@@ -2,7 +2,7 @@
 
 use super::*;
 
-const WORKSPACE_COLUMNS: &str = "id, admission_id, generation, scope, attempt, worker_instance_id, worker_replica_id, local_key, requirements, status, version, leased_until, unavailable_since, evidence, created_at, updated_at";
+const WORKSPACE_COLUMNS: &str = "id, admission_id, generation, scope, attempt, worker_instance_id, worker_replica_id, local_key, requirements, status, version, leased_until, unavailable_since, abandonment_notified_at, evidence, created_at, updated_at";
 
 impl<B> WorkspaceStore for SqlStore<B>
 where
@@ -198,5 +198,36 @@ where
         .fetch_all(self.pool())
         .await?;
         rows.iter().map(mappers::row_to_workspace_lease).collect()
+    }
+
+    async fn fetch_abandoned_workspaces(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<WorkspaceLease>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM workspace_leases WHERE status = 'abandoned' AND abandonment_notified_at IS NULL ORDER BY updated_at, id LIMIT ?"
+        )))
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_workspace_lease).collect()
+    }
+
+    async fn mark_workspace_abandonment_notified(
+        &self,
+        workspace_id: Uuid,
+        expected_version: i64,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let changed = sqlx::query(&self.render(
+            "UPDATE workspace_leases SET abandonment_notified_at = ?, updated_at = ? WHERE id = ? AND version = ? AND status = 'abandoned' AND abandonment_notified_at IS NULL",
+        ))
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .bind(workspace_id)
+        .bind(expected_version)
+        .execute(self.pool())
+        .await?;
+        Ok(changed.affected() > 0)
     }
 }

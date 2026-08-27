@@ -222,6 +222,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     ));
     loops.spawn(run_workspace_reconciler(
         pool.clone(),
+        publisher.clone(),
         server_settings.clone(),
         shutdown.clone(),
     ));

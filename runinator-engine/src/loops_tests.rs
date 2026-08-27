@@ -130,6 +130,7 @@ fn workspace_fence_requires_current_version_attempt_and_instance() {
         version: 4,
         leased_until: now,
         unavailable_since: None,
+        abandonment_notified_at: None,
         evidence: Value::Null,
         created_at: now,
         updated_at: now,
@@ -137,7 +138,7 @@ fn workspace_fence_requires_current_version_attempt_and_instance() {
     let current = WorkspaceAffinity {
         workspace_id,
         worker_instance_id: "worker-a".into(),
-        local_key: "admissions/example/primary/3-workspace".into(),
+        local_key: "admissions/example/primary/3".into(),
         attempt: 3,
         version: 4,
     };

@@ -110,16 +110,28 @@ pub async fn run_correlated_orchestration_reducer<
                             (false, runinator_models::json!({ "error": err.to_string() }))
                         }
                     };
-                    if let Err(err) = db
-                        .complete_orchestration_command(
+                    let now = chrono::Utc::now();
+                    let settle = if succeeded {
+                        db.complete_orchestration_command(
                             command.id,
                             instance.clone(),
-                            succeeded,
-                            result,
-                            chrono::Utc::now(),
+                            true,
+                            result.clone(),
+                            now,
                         )
                         .await
-                    {
+                    } else {
+                        // Internal commands are operation-keyed and replay-safe. Keep retrying the
+                        // durable row instead of failing it and stranding a running binding.
+                        db.retry_orchestration_command(
+                            command.id,
+                            instance.clone(),
+                            result.clone(),
+                            now,
+                        )
+                        .await
+                    };
+                    if let Err(err) = settle {
                         warn!(command_id = %command.id, error = %err, "failed to settle orchestration command");
                     }
                     if let Ok(Some(binding)) =
@@ -299,7 +311,7 @@ async fn prepare_epoch_workspaces<T: DefinitionStore + WorkspaceStore + ReplicaS
             .map(|member| member.key.clone())
             .collect()
     };
-    let operations = WorkspaceOperations::new(db);
+    let operations = WorkspaceOperations::new(db.clone());
     let mut workspaces = runinator_models::value::Map::new();
     for member in members {
         let Some(policy) = binding
@@ -470,6 +482,13 @@ async fn settle_current_orchestration_epoch<
     }
 
     let now = chrono::Utc::now();
+    db.settle_orchestration_epoch(
+        binding.id,
+        binding.current_epoch,
+        run.status.as_str().to_string(),
+        now,
+    )
+    .await?;
     let mut status = OrchestrationStatus::Completed;
     let mut current_phase = binding.current_phase.clone();
     let mut current_attempt = binding.current_attempt;
@@ -1642,13 +1661,16 @@ fn bucket_to_interval(
 #[path = "loops_tests.rs"]
 mod tests;
 
-pub async fn run_workspace_reconciler<T: WorkspaceStore + ReplicaStore>(
+pub async fn run_workspace_reconciler<
+    T: WorkspaceStore + ReplicaStore + OrchestrationStore + IngressStore + RuntimeStore,
+>(
     db: Arc<T>,
+    publisher: crate::events::EventSender,
     settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("workspace locality reconciler started");
-    let operations = WorkspaceOperations::new(db);
+    let operations = WorkspaceOperations::new(db.clone());
     loop {
         let policy = settings.current();
         let started = std::time::Instant::now();
@@ -1673,13 +1695,47 @@ pub async fn run_workspace_reconciler<T: WorkspaceStore + ReplicaStore>(
                             worker_instance = %workspace.worker_instance_id,
                             "workspace waiting for its worker recovery grace"
                         ),
-                        WorkspaceRecovery::Abandoned(workspace) => warn!(
-                            workspace_id = %workspace.id,
-                            admission_id = %workspace.admission_id,
-                            scope = %workspace.scope,
-                            attempt = workspace.attempt,
-                            "workspace abandoned; admission coordinator must reschedule its scope"
-                        ),
+                        WorkspaceRecovery::Abandoned(workspace) => {
+                            warn!(
+                                workspace_id = %workspace.id,
+                                admission_id = %workspace.admission_id,
+                                scope = %workspace.scope,
+                                attempt = workspace.attempt,
+                                "workspace abandoned; notifying its orchestration binding"
+                            );
+                            if let Err(error) = record_workspace_abandonment(
+                                db.as_ref(),
+                                &publisher,
+                                &workspace,
+                                chrono::Utc::now(),
+                            )
+                            .await
+                            {
+                                warn!(workspace_id = %workspace.id, error = %error, "failed to enqueue workspace abandonment event");
+                            }
+                        }
+                    }
+                }
+                match db
+                    .fetch_abandoned_workspaces(policy.orchestration.claim_batch_size as i64)
+                    .await
+                {
+                    Ok(workspaces) => {
+                        for workspace in workspaces {
+                            if let Err(error) = record_workspace_abandonment(
+                                db.as_ref(),
+                                &publisher,
+                                &workspace,
+                                chrono::Utc::now(),
+                            )
+                            .await
+                            {
+                                warn!(workspace_id = %workspace.id, error = %error, "failed to replay workspace abandonment event");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "failed to scan abandoned workspaces for reducer delivery");
                     }
                 }
                 true
@@ -1695,6 +1751,96 @@ pub async fn run_workspace_reconciler<T: WorkspaceStore + ReplicaStore>(
             _ = tokio::time::sleep(Duration::from_secs(policy.orchestration.workspace_reconcile_interval_seconds)) => {}
         }
     }
+}
+
+async fn record_workspace_abandonment<
+    T: OrchestrationStore + IngressStore + RuntimeStore + WorkspaceStore,
+>(
+    db: &T,
+    publisher: &crate::events::EventSender,
+    workspace: &runinator_models::workspaces::WorkspaceLease,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), runinator_models::errors::SendableError> {
+    let Some(binding) = db
+        .fetch_orchestration_binding_for_admission(workspace.admission_id, workspace.generation)
+        .await?
+    else {
+        let _ = db
+            .mark_workspace_abandonment_notified(workspace.id, workspace.version, now)
+            .await?;
+        return Ok(());
+    };
+    if binding.status.is_terminal()
+        || !workspace_belongs_to_current_epoch(db, &binding, workspace.id).await?
+    {
+        let _ = db
+            .mark_workspace_abandonment_notified(workspace.id, workspace.version, now)
+            .await?;
+        return Ok(());
+    }
+    db.record_ingress_event(
+        binding.admission_id,
+        binding.generation,
+        runinator_models::orchestration::IngressEvent {
+            source: "runinator.workspace".into(),
+            event_id: format!(
+                "workspace:{}:abandoned:v{}",
+                workspace.id, workspace.version
+            ),
+            event_type: "workspace_abandoned".into(),
+            correlation_key: binding.correlation_key.clone(),
+            payload: runinator_models::json!({
+                "workspace_id": workspace.id,
+                "scope": workspace.scope,
+                "attempt": workspace.attempt,
+                "workspace_version": workspace.version,
+                "epoch": binding.current_epoch,
+                "evidence": workspace.evidence,
+            }),
+            occurred_at: Some(now),
+        },
+        runinator_models::orchestration::IngressEventDisposition::Recorded,
+        false,
+        now,
+    )
+    .await?;
+    let _ = db
+        .mark_workspace_abandonment_notified(workspace.id, workspace.version, now)
+        .await?;
+    crate::events::emit_orchestration(&publisher, binding.id, binding.org_id);
+    Ok(())
+}
+
+async fn workspace_belongs_to_current_epoch<T: OrchestrationStore + RuntimeStore>(
+    db: &T,
+    binding: &runinator_models::orchestration::OrchestrationBinding,
+    workspace_id: uuid::Uuid,
+) -> Result<bool, runinator_models::errors::SendableError> {
+    let run_id = db
+        .fetch_orchestration_epochs(binding.id)
+        .await?
+        .into_iter()
+        .find(|epoch| epoch.epoch == binding.current_epoch)
+        .and_then(|epoch| epoch.pipeline_run_id);
+    let Some(run) = (match run_id {
+        Some(run_id) => db.fetch_pipeline_run(run_id).await?,
+        None => None,
+    }) else {
+        return Ok(false);
+    };
+    let current = run
+        .parameters
+        .pointer("/orchestration/workspaces")
+        .and_then(Value::as_object)
+        .is_some_and(|workspaces| {
+            workspaces.values().any(|affinity| {
+                affinity
+                    .get("workspace_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id == workspace_id.to_string())
+            })
+        });
+    Ok(current)
 }
 
 pub async fn run_usage_sampler<T: OrgStore>(

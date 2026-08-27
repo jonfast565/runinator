@@ -221,6 +221,25 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .await
         .unwrap();
     assert_eq!(epoch.id, duplicate_epoch.id);
+    assert!(
+        db.settle_orchestration_epoch(binding_id, 1, "failed".into(), now)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db.settle_orchestration_epoch(binding_id, 1, "succeeded".into(), now)
+            .await
+            .unwrap()
+    );
+    let settled_epoch = db
+        .fetch_orchestration_epochs(binding_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.epoch == 1)
+        .unwrap();
+    assert_eq!(settled_epoch.status, "failed");
+    assert!(settled_epoch.finished_at.is_some());
 
     let operation_key = "binding:start:1".to_string();
     let command = db
@@ -252,6 +271,37 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .await
         .unwrap();
     assert_eq!(command.id, duplicate_command.id);
+    let claimed_command = db
+        .claim_orchestration_commands("command-a".into(), now, now + Duration::minutes(1), 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.id == command.id)
+        .unwrap();
+    assert_eq!(claimed_command.attempts, 1);
+    assert!(
+        db.retry_orchestration_command(
+            command.id,
+            "command-a".into(),
+            runinator_models::json!({ "error": "transient" }),
+            now,
+        )
+        .await
+        .unwrap()
+    );
+    let retried_command = db
+        .claim_orchestration_commands("command-b".into(), now, now + Duration::minutes(1), 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.id == command.id)
+        .unwrap();
+    assert_eq!(retried_command.attempts, 2);
+    assert!(
+        db.complete_orchestration_command(command.id, "command-b".into(), true, Value::Null, now,)
+            .await
+            .unwrap()
+    );
 
     assert!(
         db.mark_orchestration_adapter_admitted(adapter_id, now)

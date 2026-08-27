@@ -157,6 +157,16 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Settle an immutable epoch after its pipeline run reaches terminal. Repeated settlement is
+    /// idempotent and cannot rewrite a terminal epoch.
+    fn settle_orchestration_epoch(
+        &self,
+        binding_id: Uuid,
+        epoch: i64,
+        status: String,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     fn fetch_orchestration_epochs(
         &self,
         binding_id: Uuid,
@@ -224,6 +234,15 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         command_id: Uuid,
         owner: String,
         succeeded: bool,
+        result: Value,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Release a failed but safely replayable internal command back to the durable queue.
+    fn retry_orchestration_command(
+        &self,
+        command_id: Uuid,
+        owner: String,
         result: Value,
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
