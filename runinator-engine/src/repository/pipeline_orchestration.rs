@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use super::*;
 use runinator_models::pipelines::{
-    Pipeline, PipelineJoinMode, PipelineLink, PipelineLinkSelector, PipelineMember,
-    PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineMemberFailureMode, PipelineRun,
-    PipelineTrigger,
+    Pipeline, PipelineExecutionContext, PipelineJoinMode, PipelineLink, PipelineLinkSelector,
+    PipelineMember, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineMemberFailureMode,
+    PipelineRun, PipelineTrigger,
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::schedules::ConcurrencyPolicy;
@@ -26,6 +26,7 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     pipeline: &Pipeline,
     parameters: Value,
     provenance: WorkflowRunProvenance,
+    execution: PipelineExecutionContext,
 ) -> Result<PipelineRun, SendableError> {
     let Some(pipeline_id) = pipeline.id else {
         return Err(crate::errors::PIPELINE_NOT_FOUND.error("pipeline is missing an id"));
@@ -80,6 +81,7 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
                         parameters,
                         state,
                         provenance,
+                        execution,
                     )
                     .await;
             }
@@ -88,7 +90,14 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     }
     let state = runinator_models::json!({ "trigger": provenance.metadata.clone() });
     let run = db
-        .create_pipeline_run(pipeline_id, pipeline.clone(), parameters, state, provenance)
+        .create_pipeline_run(
+            pipeline_id,
+            pipeline.clone(),
+            parameters,
+            state,
+            provenance,
+            execution,
+        )
         .await?;
     if start_pipeline_run(db, &run).await? == PipelineStartOutcome::Skipped {
         return Err(crate::errors::PIPELINE_CONCURRENCY_REJECTED
@@ -195,7 +204,28 @@ pub async fn start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
             ConcurrencyPolicy::Allow => {}
         }
     }
-    let entry = pipeline_entry_members(&pipeline);
+    let entry = if let Some(start_member) = run.start_member.as_deref() {
+        let Some(member) = pipeline
+            .graph
+            .members
+            .iter()
+            .find(|member| member.key == start_member)
+        else {
+            db.update_pipeline_run_status(
+                run.id,
+                WorkflowStatus::Failed,
+                None,
+                Some(format!(
+                    "Pipeline start member '{start_member}' does not exist"
+                )),
+            )
+            .await?;
+            return Err(crate::errors::PIPELINE_NOT_FOUND.error(start_member));
+        };
+        vec![member]
+    } else {
+        pipeline_entry_members(&pipeline)
+    };
     if entry.is_empty() {
         db.update_pipeline_run_status(
             run.id,
@@ -1067,7 +1097,11 @@ async fn start_chained_pipeline<T: RuntimeStore + WorkflowVmStore>(
         }),
     };
     Box::pin(create_and_start_pipeline_run(
-        db, &pipeline, parameters, provenance,
+        db,
+        &pipeline,
+        parameters,
+        provenance,
+        PipelineExecutionContext::default(),
     ))
     .await?;
     Ok(())

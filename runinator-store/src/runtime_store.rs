@@ -14,7 +14,8 @@ use runinator_models::{
     errors::SendableError,
     orgs::Organization,
     pipelines::{
-        Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
+        Pipeline, PipelineExecutionContext, PipelineMemberAttempt, PipelineMemberAttemptStatus,
+        PipelineRun, PipelineTrigger,
     },
     replicas::WorkflowRunProvenance,
     settings::{SettingKind, SettingRecord},
@@ -271,6 +272,7 @@ pub trait RuntimeStore: Send + Sync + 'static {
         parameters: Value,
         state: Value,
         provenance: WorkflowRunProvenance,
+        execution: PipelineExecutionContext,
     ) -> impl Future<Output = Result<PipelineRun, SendableError>> + Send;
 
     /// Delete a still-queued pipeline run rejected by a concurrency `skip` decision.

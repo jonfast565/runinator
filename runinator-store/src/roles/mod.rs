@@ -26,6 +26,7 @@ pub mod files;
 pub mod functions;
 pub mod ingress;
 pub mod notifications;
+pub mod orchestrations;
 pub mod orgs;
 pub mod rbac;
 pub mod replicas;
@@ -45,6 +46,9 @@ pub use files::FileStore;
 pub use functions::FunctionStore;
 pub use ingress::IngressStore;
 pub use notifications::NotificationStore;
+pub use orchestrations::{
+    NewOrchestrationCommand, NewOrchestrationEpoch, OrchestrationBindingUpdate, OrchestrationStore,
+};
 pub use orgs::OrgStore;
 pub use rbac::RbacStore;
 pub use replicas::ReplicaStore;

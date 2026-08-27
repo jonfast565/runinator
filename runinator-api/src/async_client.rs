@@ -42,7 +42,8 @@ use runinator_models::{
     },
     orchestration::{
         IdempotencyClaim, IdempotencyClaimRequest, IdempotencyCompleteRequest,
-        IdempotencyReleaseRequest, ACTION_IDEMPOTENCY_SCOPE,
+        IdempotencyReleaseRequest, OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
+        OrchestrationEventReduction, OrchestrationEvidence, ACTION_IDEMPOTENCY_SCOPE,
     },
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
@@ -64,6 +65,7 @@ use runinator_models::{
         WorkflowTrigger,
     },
 };
+use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use crate::{
@@ -114,6 +116,13 @@ impl<L> AsyncApiClient<L>
 where
     L: ServiceLocator,
 {
+    async fn get_json_path<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let url = self.build_url(path).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
     /// List console sessions visible to the authenticated principal.
     pub async fn console_sessions(&self) -> Result<Vec<ConsoleSession>> {
         let url = self.build_url("/console/sessions").await?;
@@ -238,16 +247,117 @@ where
         parameters: Value,
         revision: Option<i64>,
     ) -> Result<PipelineRun> {
+        self.create_pipeline_run_with_context(pipeline_id, parameters, revision, None)
+            .await
+    }
+
+    pub async fn create_pipeline_run_with_context(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+        revision: Option<i64>,
+        start_member: Option<&str>,
+    ) -> Result<PipelineRun> {
         let url = self
             .build_url(&format!("/pipelines/{pipeline_id}/runs"))
             .await?;
         let response = self
             .http_post(url.clone())
-            .json(&json!({ "parameters": parameters, "revision": revision }))
+            .json(&json!({
+                "parameters": parameters,
+                "revision": revision,
+                "start_member": start_member,
+            }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRun>().await?)
+    }
+
+    pub async fn fetch_orchestrations(
+        &self,
+        status: Option<&str>,
+        pipeline_id: Option<Uuid>,
+        scope: Option<&str>,
+        correlation_key: Option<&str>,
+    ) -> Result<Vec<OrchestrationBinding>> {
+        let mut url = self.build_url("/orchestrations").await?;
+        {
+            let mut query = url.query_pairs_mut();
+            if let Some(status) = status {
+                query.append_pair("status", status);
+            }
+            if let Some(pipeline_id) = pipeline_id {
+                query.append_pair("pipeline_id", &pipeline_id.to_string());
+            }
+            if let Some(scope) = scope {
+                query.append_pair("scope", scope);
+            }
+            if let Some(key) = correlation_key {
+                query.append_pair("correlation_key", key);
+            }
+        }
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn fetch_orchestration(&self, id: Uuid) -> Result<OrchestrationBinding> {
+        self.get_json_path(&format!("/orchestrations/{id}")).await
+    }
+
+    pub async fn fetch_orchestration_epochs(&self, id: Uuid) -> Result<Vec<OrchestrationEpoch>> {
+        self.get_json_path(&format!("/orchestrations/{id}/epochs"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_events(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationEventReduction>> {
+        self.get_json_path(&format!("/orchestrations/{id}/events"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_evidence(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationEvidence>> {
+        self.get_json_path(&format!("/orchestrations/{id}/evidence"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_commands(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationCommand>> {
+        self.get_json_path(&format!("/orchestrations/{id}/commands"))
+            .await
+    }
+
+    pub async fn send_orchestration_intent(
+        &self,
+        id: Uuid,
+        intent: &str,
+        payload: Value,
+        reason: &str,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/intents"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({
+                "intent": intent,
+                "payload": payload,
+                "reason": reason,
+                "idempotency_key": idempotency_key,
+            }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
     }
 
     pub async fn fetch_pipeline_run(&self, run_id: Uuid) -> Result<PipelineRunDetail> {

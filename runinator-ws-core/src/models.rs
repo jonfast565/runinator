@@ -120,6 +120,12 @@ pub enum ApiResponse {
     Ingress(IngressResponse),
     IngressAdmission(runinator_models::orchestration::IngressAdmission),
     IngressTimeline(Vec<runinator_models::orchestration::IngressInboxEntry>),
+    OrchestrationBinding(runinator_models::orchestration::OrchestrationBinding),
+    OrchestrationBindingList(Vec<runinator_models::orchestration::OrchestrationBinding>),
+    OrchestrationEpochList(Vec<runinator_models::orchestration::OrchestrationEpoch>),
+    OrchestrationReductionList(Vec<runinator_models::orchestration::OrchestrationEventReduction>),
+    OrchestrationEvidenceList(Vec<runinator_models::orchestration::OrchestrationEvidence>),
+    OrchestrationCommandList(Vec<runinator_models::orchestration::OrchestrationCommand>),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
@@ -218,6 +224,18 @@ pub struct PipelineRunRequest {
     /// Run an immutable historical pipeline definition instead of the current head.
     #[serde(default)]
     pub revision: Option<i64>,
+    /// Start with this member as the sole frontier instead of the graph's entry members.
+    #[serde(default)]
+    pub start_member: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OrchestrationIntentRequest {
+    pub intent: String,
+    #[serde(default)]
+    pub payload: Value,
+    pub reason: String,
+    pub idempotency_key: String,
 }
 
 /// Opaque provider-neutral event submitted to a workflow or pipeline ingress policy.
@@ -251,6 +269,8 @@ pub struct IngressResponse {
     pub workflow_run_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline_run_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_binding_id: Option<Uuid>,
     pub message: String,
 }
 

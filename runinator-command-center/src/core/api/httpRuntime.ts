@@ -362,6 +362,55 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => ({ parameters: argOpt(args, "parameters") ?? {} }),
   },
   fetch_pipeline_runs: { method: "GET", path: () => "pipeline_runs" },
+  fetch_orchestrations: {
+    method: "GET",
+    path: (args) => {
+      const filters = (argOpt(args, "filters") ?? {}) as Record<string, unknown>;
+      const params = new URLSearchParams();
+
+      for (const [key, value] of Object.entries(filters)) {
+        if (typeof value === "string" && value !== "") {
+          params.set(key, value);
+        } else if (typeof value === "number" || typeof value === "boolean") {
+          params.set(key, String(value));
+        }
+      }
+
+      const query = params.toString();
+
+      return query ? `orchestrations?${query}` : "orchestrations";
+    },
+  },
+  fetch_orchestration: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}`,
+  },
+  fetch_orchestration_epochs: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/epochs`,
+  },
+  fetch_orchestration_events: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/events`,
+  },
+  fetch_orchestration_evidence: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/evidence`,
+  },
+  fetch_orchestration_commands: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/commands`,
+  },
+  send_orchestration_intent: {
+    method: "POST",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/intents`,
+    body: (args) => ({
+      intent: arg(args, "intent"),
+      reason: arg(args, "reason"),
+      payload: argOpt(args, "payload") ?? {},
+      idempotency_key: arg(args, "idempotencyKey"),
+    }),
+  },
   fetch_pipeline_run: {
     method: "GET",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}`,

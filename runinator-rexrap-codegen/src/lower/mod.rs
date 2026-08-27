@@ -13,7 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use runinator_models::orchestration::{
-    IngressAction, IngressLifecycle, IngressPolicy, IngressRoute,
+    IngressAction, IngressLifecycle, IngressPolicy, IngressPredicate, IngressPredicateOperator,
+    IngressRoute,
 };
 use runinator_models::providers::{ActionMetadata, ProviderMetadata};
 use runinator_models::value::{Map, Value};
@@ -442,6 +443,7 @@ fn lower_workflow(
                 "queue" => IngressAction::Queue,
                 "record" => IngressAction::Record,
                 "requeue" => IngressAction::Requeue,
+                "dispatch" => IngressAction::Dispatch,
                 _ => return Err(RexRapError::semantic(route.span, "unknown ingress action")),
             };
             if !action.is_allowed_when(lifecycle) {
@@ -450,10 +452,50 @@ fn lower_workflow(
                     "ingress action is not valid for this lifecycle",
                 ));
             }
+            let predicates = route
+                .predicates
+                .iter()
+                .map(|predicate| {
+                    let operator = match predicate.operator.as_str() {
+                        "==" => IngressPredicateOperator::Equal,
+                        "!=" => IngressPredicateOperator::NotEqual,
+                        "in" => IngressPredicateOperator::In,
+                        "contains" => IngressPredicateOperator::Contains,
+                        "exists" => IngressPredicateOperator::Exists,
+                        _ => {
+                            return Err(RexRapError::semantic(
+                                predicate.span,
+                                "unknown ingress predicate operator",
+                            ));
+                        }
+                    };
+                    let value = predicate
+                        .value
+                        .as_ref()
+                        .map(|expr| lower_expression_fragment(expr, options))
+                        .transpose()?;
+                    if value
+                        .as_ref()
+                        .is_some_and(contains_dynamic_ingress_expression)
+                    {
+                        return Err(RexRapError::semantic(
+                            predicate.span,
+                            "ingress predicate values must be literals",
+                        ));
+                    }
+                    Ok(IngressPredicate {
+                        pointer: predicate.pointer.clone(),
+                        operator,
+                        value,
+                    })
+                })
+                .collect::<Result<Vec<_>, RexRapError>>()?;
             routes.push(IngressRoute {
                 event_type: route.event_type.clone(),
                 lifecycle,
                 action,
+                predicates,
+                intent: route.intent.clone(),
             });
         }
         if routes
@@ -513,6 +555,16 @@ fn lower_workflow(
         },
         std::mem::take(&mut lowerer.spans),
     ))
+}
+
+fn contains_dynamic_ingress_expression(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_dynamic_ingress_expression),
+        Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| key.starts_with('$') || contains_dynamic_ingress_expression(value)),
+        _ => false,
+    }
 }
 
 /// Top-level functions are pack-wide. Source-module functions are embedded only in workflows that

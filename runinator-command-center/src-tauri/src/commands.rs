@@ -76,6 +76,8 @@ mod workflows;
 pub use workflows::*;
 mod pipelines;
 pub use pipelines::*;
+mod orchestrations;
+pub use orchestrations::*;
 mod runs;
 pub use runs::*;
 mod catalog;

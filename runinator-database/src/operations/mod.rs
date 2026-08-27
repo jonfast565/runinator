@@ -38,7 +38,8 @@ use runinator_models::{
     orchestration::IdempotencyClaim,
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{
-        Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
+        Pipeline, PipelineExecutionContext, PipelineMemberAttempt, PipelineMemberAttemptStatus,
+        PipelineRun, PipelineTrigger,
     },
     rbac::{
         ResourceOwnership, Role, RoleAssignment, ScopeKind, ScopeRef, ServiceAccount, TeamRole,
@@ -87,7 +88,7 @@ const AGENT_DIRECTIVE_COLUMNS: &str = "directive_id, replica_id, kind_json, stat
 const PIPELINE_COLUMNS: &str = "id, name, resource_key, namespace, description, org_id, defaults, metadata, graph, concurrency, created_at, updated_at";
 const PIPELINE_REVISION_COLUMNS: &str = "id, pipeline_id, revision, digest, name, description, graph, concurrency, defaults, metadata, source, actor_id, actor_kind, note, created_at";
 const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
-const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata";
+const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata, orchestration_binding_id, execution_epoch, start_member";
 const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at";
 
 const NOTIFICATION_POLICY_COLUMNS: &str = "id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
@@ -1036,6 +1037,7 @@ mod files;
 mod functions;
 mod ingress;
 mod notifications;
+mod orchestrations;
 mod orgs;
 mod pack_transaction;
 mod rbac;

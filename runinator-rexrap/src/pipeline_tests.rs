@@ -216,6 +216,91 @@ pipeline "Release" {
     );
 }
 
+#[test]
+fn generic_orchestration_policy_and_dispatch_predicates_round_trip() {
+    let source = r#"
+pipeline "Correlated work" {
+    ingress scope "work-items" {
+        on "updated" when active
+            if "/changes/labels/removed" contains "auto"
+            if "/active" == true
+            -> dispatch "stop"
+    }
+
+    orchestration {
+        intent "stop" effect terminate priority 100
+        intent "rework" effect supersede priority 80 coalesce 5m restart "acme.work.planning"
+        intent "pause" effect suspend priority 60 stop cancel restart current
+        intent "continue" effect resume priority 50
+        intent "revision_observed" effect signal priority 10 revision "/subject_revision"
+        budget "deterministic" attempts 2 exhausted pause
+        budget "transient" attempts 3 exhausted pause
+        phase "acme.work.implementation" {
+            subject_revision from "/candidate_revision"
+            resources from "/resources"
+            evidence from "/evidence"
+            failure_class from "/failure_class"
+            workspace scope "source" reuse labels { "capability": "git" }
+        }
+    }
+
+    workflow "acme.work.planning"
+    workflow "acme.work.implementation"
+    "acme.work.planning" -> "acme.work.implementation" on success
+}
+"#;
+    let bundle = parse_pipeline_str(source).expect("parse orchestration policy");
+    let policy = bundle.pipelines[0]
+        .metadata
+        .get("orchestration")
+        .expect("orchestration metadata");
+    assert_eq!(
+        policy
+            .pointer("/intents/stop/priority")
+            .and_then(|value| value.as_i64()),
+        Some(100)
+    );
+    assert_eq!(
+        policy
+            .pointer("/phases/acme.work.implementation/workspace/scope")
+            .and_then(|value| value.as_str()),
+        Some("source")
+    );
+    let rendered = pipeline_to_rexrapp(&bundle);
+    let reparsed = parse_pipeline_str(&rendered).expect("reparse orchestration policy");
+    assert_eq!(bundle, reparsed);
+}
+
+#[test]
+fn orchestration_policy_rejects_duplicate_priorities_and_unknown_members() {
+    let duplicate = parse_pipeline_str(
+        r#"
+pipeline "P" {
+    orchestration {
+        intent "a" effect observe priority 10
+        intent "b" effect signal priority 10
+    }
+    workflow "acme.test.member"
+}
+"#,
+    )
+    .unwrap_err();
+    assert!(duplicate.to_string().contains("priority"), "{duplicate}");
+
+    let unknown = parse_pipeline_str(
+        r#"
+pipeline "P" {
+    orchestration {
+        intent "rework" effect supersede priority 80 restart "acme.test.unknown"
+    }
+    workflow "acme.test.member"
+}
+"#,
+    )
+    .unwrap_err();
+    assert!(unknown.to_string().contains("does not exist"), "{unknown}");
+}
+
 const MEMBER_FAILURE_MODES: &str = r#"
 pipeline "Deploy" {
     workflow "acme.deploy.build" on_failure stop

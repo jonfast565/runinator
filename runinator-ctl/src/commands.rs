@@ -88,6 +88,9 @@ pub async fn run_command(
         Commands::Providers { command } => providers::providers(client, command, json_output).await,
         Commands::Functions { command } => functions::functions(client, command, json_output).await,
         Commands::Pipelines { command } => pipelines::pipelines(client, command, json_output).await,
+        Commands::Orchestrations { command } => {
+            orchestrations::orchestrations(client, command, json_output).await
+        }
         Commands::Mcp {
             workflow_tools,
             timeout,
@@ -153,6 +156,7 @@ pub use functions::functions_validate;
 pub(crate) mod catalog;
 mod console;
 mod mcp;
+mod orchestrations;
 mod pipelines;
 mod providers;
 pub(crate) mod repl;

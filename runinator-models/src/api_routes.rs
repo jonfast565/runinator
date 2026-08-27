@@ -53,6 +53,7 @@ pub const API_IDEMPOTENCY_KEYS_COMPLETE: &str = "/idempotency_keys/complete";
 pub const API_IDEMPOTENCY_KEYS_RELEASE: &str = "/idempotency_keys/release";
 pub const API_CREDENTIALS: &str = "/credentials";
 pub const API_REPLICAS: &str = "/replicas";
+pub const API_ORCHESTRATIONS: &str = "/orchestrations";
 
 pub fn api_workflow(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}")

@@ -52,6 +52,10 @@ const BLOCKED: &[Blocked] = &[
         path: &["runs", "watch"],
         reason: "`runs watch` refreshes until interrupted. use `runs show`, or poll it.",
     },
+    Blocked {
+        path: &["orchestrations", "watch"],
+        reason: "`orchestrations watch` refreshes until the instance settles. use `orchestrations show`, or poll it.",
+    },
 ];
 
 /// run one command line and return the tool result it produced.

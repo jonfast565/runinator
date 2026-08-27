@@ -5,8 +5,8 @@ use runinator_models::errors::SendableError;
 use runinator_store::{
     RuntimeStore,
     roles::{
-        DefinitionStore, IngressStore, NotificationStore, OrgStore, ReplicaStore, RunStore,
-        ScheduleStore, WorkflowVmStore, WorkspaceStore,
+        DefinitionStore, IngressStore, NotificationStore, OrchestrationStore, OrgStore,
+        ReplicaStore, RunStore, ScheduleStore, WorkflowVmStore, WorkspaceStore,
     },
 };
 use tokio::sync::Notify;
@@ -64,6 +64,7 @@ pub trait BackgroundEngineStore:
     + DefinitionStore
     + IngressStore
     + WorkspaceStore
+    + OrchestrationStore
 {
 }
 
@@ -78,6 +79,7 @@ impl<T> BackgroundEngineStore for T where
         + DefinitionStore
         + IngressStore
         + WorkspaceStore
+        + OrchestrationStore
 {
 }
 
@@ -181,6 +183,13 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         pool.clone(),
         instance.clone(),
         local_signals.workflow_vm_notifier(),
+        server_settings.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(crate::loops::run_correlated_orchestration_reducer(
+        pool.clone(),
+        broker.clone(),
+        instance.clone(),
         server_settings.clone(),
         shutdown.clone(),
     ));

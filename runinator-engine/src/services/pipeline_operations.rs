@@ -12,7 +12,10 @@ use runinator_broker_core::{
 };
 use runinator_models::{
     errors::SendableError,
-    pipelines::{Pipeline, PipelineMemberAttempt, PipelineRun, PipelineRunDetail, PipelineTrigger},
+    pipelines::{
+        Pipeline, PipelineExecutionContext, PipelineMemberAttempt, PipelineRun, PipelineRunDetail,
+        PipelineTrigger,
+    },
     value::Value,
     web::TaskResponse,
 };
@@ -188,6 +191,7 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         parameters: Value,
         revision: Option<i64>,
         actor_display_name: Option<String>,
+        start_member: Option<String>,
     ) -> Result<PipelineRun, SendableError> {
         let run = repository::create_manual_pipeline_run(
             self.store.as_ref(),
@@ -196,6 +200,10 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
             revision,
             None,
             actor_display_name,
+            PipelineExecutionContext {
+                start_member,
+                ..Default::default()
+            },
         )
         .await?;
         let org_id = self.publish_run_changed(run.id).await;

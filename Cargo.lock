@@ -1932,6 +1932,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7684,6 +7690,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-adapter-contract"
+version = "0.2.368"
+dependencies = [
+ "runinator-models",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runinator-adapter-host"
+version = "0.2.368"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "constant_time_eq",
+ "hmac 0.12.1",
+ "libloading 0.9.0",
+ "runinator-adapter-contract",
+ "runinator-models",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "runinator-adapter-sdk"
+version = "0.2.368"
+dependencies = [
+ "runinator-adapter-contract",
+ "runinator-models",
+ "serde_json",
+]
+
+[[package]]
 name = "runinator-api"
 version = "0.2.368"
 dependencies = [
@@ -8632,6 +8674,7 @@ name = "runinator-ws-authoring"
 version = "0.2.368"
 dependencies = [
  "axum",
+ "chrono",
  "log",
  "runinator-blob-core",
  "runinator-broker-core",

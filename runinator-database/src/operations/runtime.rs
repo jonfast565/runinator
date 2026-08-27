@@ -790,6 +790,7 @@ where
         parameters: Value,
         state: Value,
         provenance: WorkflowRunProvenance,
+        execution: PipelineExecutionContext,
     ) -> Result<PipelineRun, SendableError> {
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
@@ -799,7 +800,7 @@ where
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata, orchestration_binding_id, execution_epoch, start_member) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(pipeline_id)
@@ -813,6 +814,9 @@ where
             .bind(provenance.actor_replica_id)
             .bind(provenance.actor_display_name)
             .bind(provenance.metadata.to_string())
+            .bind(execution.orchestration_binding_id)
+            .bind(execution.execution_epoch)
+            .bind(execution.start_member)
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
@@ -824,8 +828,8 @@ where
             return Ok(mappers::row_to_pipeline_run(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata, orchestration_binding_id, execution_epoch, start_member)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {PIPELINE_RUN_COLUMNS}",
         )))
         .bind(id)
@@ -840,6 +844,9 @@ where
         .bind(provenance.actor_replica_id)
         .bind(provenance.actor_display_name)
         .bind(provenance.metadata.to_string())
+        .bind(execution.orchestration_binding_id)
+        .bind(execution.execution_epoch)
+        .bind(execution.start_member)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_pipeline_run(&row))

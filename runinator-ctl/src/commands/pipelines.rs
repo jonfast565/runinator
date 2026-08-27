@@ -34,13 +34,19 @@ pub(super) async fn pipelines(
             params,
             json_file,
             revision,
+            from,
             follow,
         } => {
             let pipeline = resolve_pipeline(client, pipeline).await?;
             let pipeline_id = pipeline_id(&pipeline)?;
             let parameters = params::load_object(json_file.as_deref(), params)?;
             let run = client
-                .create_pipeline_run_at_revision(pipeline_id, parameters, *revision)
+                .create_pipeline_run_with_context(
+                    pipeline_id,
+                    parameters,
+                    *revision,
+                    from.as_deref(),
+                )
                 .await?;
             let run = match follow {
                 true => follow_run(client, run.id).await?,

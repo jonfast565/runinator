@@ -298,6 +298,7 @@ async fn a_pinned_pipeline_start_snapshots_the_requested_revision() {
             Value::Object(Default::default()),
             Some(1),
             Some("test".into()),
+            None,
         )
         .await
         .unwrap();

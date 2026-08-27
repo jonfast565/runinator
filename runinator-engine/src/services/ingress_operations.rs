@@ -254,11 +254,15 @@ mod tests {
                     event_type: "created".into(),
                     lifecycle: IngressLifecycle::Unbound,
                     action: IngressAction::Start,
+                    predicates: vec![],
+                    intent: None,
                 },
                 IngressRoute {
                     event_type: "reopened".into(),
                     lifecycle: IngressLifecycle::Terminal,
                     action: IngressAction::Requeue,
+                    predicates: vec![],
+                    intent: None,
                 },
             ],
         };
@@ -349,11 +353,15 @@ mod tests {
                     event_type: "created".into(),
                     lifecycle: IngressLifecycle::Unbound,
                     action: IngressAction::Start,
+                    predicates: vec![],
+                    intent: None,
                 },
                 IngressRoute {
                     event_type: "updated".into(),
                     lifecycle: IngressLifecycle::Active,
                     action: IngressAction::Queue,
+                    predicates: vec![],
+                    intent: None,
                 },
             ],
         };

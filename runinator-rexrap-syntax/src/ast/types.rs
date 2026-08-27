@@ -101,7 +101,56 @@ pub struct PipelineDecl {
     pub joins: Vec<PipelineJoinDecl>,
     pub concurrency: Option<super::ConcurrencyDecl>,
     pub ingress: Option<super::IngressDecl>,
+    pub orchestration: Option<OrchestrationDecl>,
     pub triggers: Vec<PipelineTriggerDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationDecl {
+    pub intents: Vec<OrchestrationIntentDecl>,
+    pub budgets: Vec<OrchestrationBudgetDecl>,
+    pub phases: Vec<OrchestrationPhaseDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationIntentDecl {
+    pub name: String,
+    pub effect: String,
+    pub priority: i32,
+    pub coalesce_seconds: Option<u64>,
+    pub stop: Option<String>,
+    pub restart: Option<String>,
+    pub revision: Option<String>,
+    pub signal_name: Option<String>,
+    pub allow_self_originated: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationBudgetDecl {
+    pub name: String,
+    pub attempts: u32,
+    pub exhausted: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationPhaseDecl {
+    pub member: String,
+    pub mappings: Vec<(String, String)>,
+    pub workspace: Option<OrchestrationWorkspaceDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrchestrationWorkspaceDecl {
+    pub scope: String,
+    pub reuse: bool,
+    pub lease_seconds: Option<u64>,
+    pub recovery: Option<String>,
+    pub labels: Option<Expr>,
     pub span: Span,
 }
 

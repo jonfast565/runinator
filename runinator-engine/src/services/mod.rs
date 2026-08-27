@@ -11,6 +11,7 @@ mod function_invocations;
 mod function_packages;
 mod ingress_operations;
 mod notification_operations;
+mod orchestration_operations;
 mod pack_operations;
 mod pipeline_operations;
 mod replica_registry;
@@ -28,6 +29,7 @@ pub use function_invocations::FunctionInvocations;
 pub use function_packages::FunctionPackages;
 pub use ingress_operations::IngressOperations;
 pub use notification_operations::NotificationOperations;
+pub use orchestration_operations::{IntentDecision, OrchestrationOperations, choose_intent};
 pub use pack_operations::PackOperations;
 pub use pipeline_operations::PipelineOperations;
 pub use replica_registry::{

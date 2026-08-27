@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::orchestration::DeliverySemantics;
 use crate::types::RuninatorField;
 pub use crate::types::RuninatorType;
 use crate::value::{Map, Value};
@@ -34,6 +35,9 @@ pub struct ActionMetadata {
     /// (worker-only). defaults to false so existing providers stay effectful.
     #[serde(default)]
     pub pure: bool,
+    /// Delivery contract used when an effect is scoped to a correlated orchestration binding.
+    #[serde(default)]
+    pub delivery_semantics: DeliverySemantics,
 }
 
 impl ActionMetadata {
@@ -44,6 +48,7 @@ impl ActionMetadata {
             parameters: Vec::new(),
             results: Vec::new(),
             pure: false,
+            delivery_semantics: DeliverySemantics::AtLeastOnce,
         }
     }
 
@@ -86,6 +91,11 @@ impl ActionMetadata {
     /// mark this function as pure (reducer-evaluable in-process).
     pub fn pure(mut self) -> Self {
         self.pure = true;
+        self
+    }
+
+    pub fn with_delivery_semantics(mut self, semantics: DeliverySemantics) -> Self {
+        self.delivery_semantics = semantics;
         self
     }
 

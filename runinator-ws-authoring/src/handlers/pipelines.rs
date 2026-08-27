@@ -17,11 +17,11 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, IngressStore, ScheduleStore, WorkflowVmStore},
+    roles::{DefinitionStore, IngressStore, OrchestrationStore, ScheduleStore, WorkflowVmStore},
 };
 use serde::Deserialize;
 
-use runinator_engine::services::{IngressOperations, PipelineOperations};
+use runinator_engine::services::{IngressOperations, OrchestrationOperations, PipelineOperations};
 use runinator_ws_core::models::{
     ApiError, ApiResponse, IngressEventRequest, IngressResponse, PipelineMemberRetryRequest,
     PipelineRunInquiryDecision, PipelineRunRequest, PipelineRunResolutionRequest,
@@ -301,7 +301,8 @@ pub async fn ingress_pipeline_run<
         + RuntimeStore
         + ScheduleStore
         + WorkflowVmStore
-        + IngressStore,
+        + IngressStore
+        + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
@@ -402,6 +403,21 @@ pub async fn ingress_pipeline_run<
             IngressAdmissionStatus::Active => IngressLifecycle::Active,
             IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,
         };
+        let dispatched =
+            snapshot_policy.dispatches_for(&event.event_type, lifecycle, &event.payload);
+        if !dispatched.is_empty() {
+            return match ingress
+                .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)
+                .await
+            {
+                Ok(record) => pipeline_ingress_reply(
+                    &record.entry,
+                    record.duplicate,
+                    "orchestration intent event accepted",
+                ),
+                Err(err) => api_error(err.to_string()),
+            };
+        }
         match snapshot_policy.action_for(&event.event_type, lifecycle) {
             Some(IngressAction::Record) => {
                 return match ingress
@@ -510,12 +526,25 @@ pub async fn ingress_pipeline_run<
         }
     }
     let start_entry = start_record.expect("start event record");
+    if pipeline.metadata.get("orchestration").is_some() {
+        let orchestrations = OrchestrationOperations::new(db.clone());
+        return match orchestrations.admit(&admission, &pipeline).await {
+            Ok(Some(binding)) => pipeline_orchestration_ingress_reply(
+                &start_entry,
+                binding.id,
+                "managed orchestration generation admitted",
+            ),
+            Ok(None) => api_error("managed orchestration policy disappeared"),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
     match service
         .create_run(
             admission.target.id,
             event.payload.clone(),
             None,
             Some(format!("ingress:{}", event.event_id)),
+            None,
         )
         .await
     {
@@ -553,6 +582,28 @@ fn pipeline_ingress_reply(
             queue_position: entry.queue_position,
             workflow_run_id: entry.workflow_run_id,
             pipeline_run_id: entry.pipeline_run_id,
+            orchestration_binding_id: None,
+            message: message.into(),
+        })),
+    )
+}
+
+fn pipeline_orchestration_ingress_reply(
+    entry: &IngressInboxEntry,
+    binding_id: Uuid,
+    message: &str,
+) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::Ingress(IngressResponse {
+            admission_id: entry.admission_id,
+            generation: entry.promoted_generation.unwrap_or(entry.generation),
+            disposition: "started".into(),
+            duplicate: false,
+            queue_position: entry.queue_position,
+            workflow_run_id: None,
+            pipeline_run_id: None,
+            orchestration_binding_id: Some(binding_id),
             message: message.into(),
         })),
     )
@@ -586,6 +637,7 @@ pub async fn create_pipeline_run<
             request.parameters,
             request.revision,
             Some("api".into()),
+            request.start_member,
         )
         .await
     {
@@ -817,7 +869,8 @@ pub fn routes<
         + RuntimeStore
         + ScheduleStore
         + WorkflowVmStore
-        + IngressStore,
+        + IngressStore
+        + OrchestrationStore,
 >(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {

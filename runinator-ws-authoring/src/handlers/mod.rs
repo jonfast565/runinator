@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod console;
 pub mod credentials;
 pub mod functions;
+pub mod orchestrations;
 pub mod packs;
 pub mod pipelines;
 pub mod providers;

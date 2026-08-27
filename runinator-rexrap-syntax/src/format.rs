@@ -305,9 +305,32 @@ impl Formatter {
             self.indent += 1;
             for route in &ingress.routes {
                 self.line(&format!(
-                    "on {:?} when {} -> {}",
-                    route.event_type, route.lifecycle, route.action
+                    "on {:?} when {}",
+                    route.event_type, route.lifecycle
                 ));
+                self.indent += 1;
+                for predicate in &route.predicates {
+                    let value = predicate
+                        .value
+                        .as_ref()
+                        .map(format_expr)
+                        .unwrap_or_default();
+                    self.line(
+                        &format!(
+                            "if {:?} {} {}",
+                            predicate.pointer, predicate.operator, value
+                        )
+                        .trim_end()
+                        .to_string(),
+                    );
+                }
+                let action = if route.action == "dispatch" {
+                    format!("dispatch {:?}", route.intent.as_deref().unwrap_or_default())
+                } else {
+                    route.action.clone()
+                };
+                self.line(&format!("-> {action}"));
+                self.indent -= 1;
             }
             self.indent -= 1;
             self.line("}");

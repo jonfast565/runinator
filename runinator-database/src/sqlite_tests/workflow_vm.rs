@@ -258,6 +258,7 @@ async fn terminal_vm_pipeline_members_are_recoverable_until_the_attempt_settles(
             Value::Null,
             Value::Null,
             Default::default(),
+            Default::default(),
         )
         .await
         .unwrap();

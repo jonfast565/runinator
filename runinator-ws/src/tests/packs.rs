@@ -289,6 +289,7 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
         None,
         None,
         Some("test".into()),
+        Default::default(),
     )
     .await
     .unwrap();

@@ -550,6 +550,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
     let mut joins = Vec::new();
     let mut concurrency = None;
     let mut ingress = None;
+    let mut orchestration = None;
     let mut triggers = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -614,6 +615,15 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
                         }
                         ingress = Some(parse_ingress_decl(item)?);
                     }
+                    Rule::orchestration_decl => {
+                        if orchestration.is_some() {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare one orchestration block",
+                            ));
+                        }
+                        orchestration = Some(parse_orchestration_decl(item)?);
+                    }
                     Rule::pipeline_trigger => triggers.push(parse_pipeline_trigger(item)?),
                     _ => {}
                 }
@@ -633,6 +643,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
         joins,
         concurrency,
         ingress,
+        orchestration,
         triggers,
         span,
     })
@@ -650,11 +661,64 @@ fn parse_ingress_decl(pair: Pair<Rule>) -> Result<IngressDecl, RexRapError> {
                 let mut event_type = None;
                 let mut lifecycle = None;
                 let mut action = None;
+                let mut intent = None;
+                let mut predicates = Vec::new();
                 for item in part.into_inner() {
                     match item.as_rule() {
                         Rule::string => event_type = Some(plain_string(item)?),
                         Rule::ingress_lifecycle => lifecycle = Some(item.as_str().to_string()),
-                        Rule::ingress_action => action = Some(item.as_str().to_string()),
+                        Rule::ingress_route_action => {
+                            let action_pair = first_inner(item)?;
+                            match action_pair.as_rule() {
+                                Rule::ingress_action => {
+                                    action = Some(action_pair.as_str().to_string())
+                                }
+                                Rule::ingress_dispatch => {
+                                    action = Some("dispatch".into());
+                                    intent = action_pair
+                                        .into_inner()
+                                        .find(|pair| pair.as_rule() == Rule::string)
+                                        .map(plain_string)
+                                        .transpose()?;
+                                }
+                                _ => {}
+                            }
+                        }
+                        Rule::ingress_predicate => {
+                            let predicate_span = span_of(&item);
+                            let mut pointer = None;
+                            let mut operator = None;
+                            let mut value = None;
+                            for part in item.into_inner() {
+                                match part.as_rule() {
+                                    Rule::string => pointer = Some(plain_string(part)?),
+                                    Rule::ingress_predicate_op => {
+                                        operator = Some(part.as_str().to_string())
+                                    }
+                                    Rule::expr => value = Some(parse_expr(part)?),
+                                    _ => {}
+                                }
+                            }
+                            if operator.as_deref() == Some("exists") {
+                                value = None;
+                            }
+                            predicates.push(IngressPredicateDecl {
+                                pointer: pointer.ok_or_else(|| {
+                                    RexRapError::syntax(
+                                        predicate_span,
+                                        "ingress predicate missing pointer",
+                                    )
+                                })?,
+                                operator: operator.ok_or_else(|| {
+                                    RexRapError::syntax(
+                                        predicate_span,
+                                        "ingress predicate missing operator",
+                                    )
+                                })?,
+                                value,
+                                span: predicate_span,
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -668,6 +732,8 @@ fn parse_ingress_decl(pair: Pair<Rule>) -> Result<IngressDecl, RexRapError> {
                     action: action.ok_or_else(|| {
                         RexRapError::syntax(route_span, "ingress route missing action")
                     })?,
+                    intent,
+                    predicates,
                     span: route_span,
                 });
             }
@@ -677,6 +743,248 @@ fn parse_ingress_decl(pair: Pair<Rule>) -> Result<IngressDecl, RexRapError> {
     Ok(IngressDecl {
         scope: scope.ok_or_else(|| RexRapError::syntax(span, "ingress missing scope"))?,
         routes,
+        span,
+    })
+}
+
+fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut intents = Vec::new();
+    let mut budgets = Vec::new();
+    let mut phases = Vec::new();
+    for item in pair
+        .into_inner()
+        .filter(|pair| pair.as_rule() == Rule::orchestration_item)
+    {
+        let item = first_inner(item)?;
+        match item.as_rule() {
+            Rule::orchestration_intent => intents.push(parse_orchestration_intent(item)?),
+            Rule::orchestration_budget => budgets.push(parse_orchestration_budget(item)?),
+            Rule::orchestration_phase => phases.push(parse_orchestration_phase(item)?),
+            _ => {}
+        }
+    }
+    Ok(OrchestrationDecl {
+        intents,
+        budgets,
+        phases,
+        span,
+    })
+}
+
+fn parse_orchestration_intent(pair: Pair<Rule>) -> Result<OrchestrationIntentDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut name = None;
+    let mut effect = None;
+    let mut priority = None;
+    let mut coalesce_seconds = None;
+    let mut stop = None;
+    let mut restart = None;
+    let mut revision = None;
+    let mut signal_name = None;
+    let mut allow_self_originated = false;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::string if name.is_none() => name = Some(plain_string(part)?),
+            Rule::control_effect => effect = Some(part.as_str().to_string()),
+            Rule::integer => {
+                priority =
+                    Some(part.as_str().parse::<i32>().map_err(|_| {
+                        RexRapError::syntax(span, "intent priority is out of range")
+                    })?)
+            }
+            Rule::orchestration_intent_option => {
+                let option = first_inner(part)?;
+                match option.as_rule() {
+                    Rule::orchestration_coalesce => {
+                        let duration = option
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::duration)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "coalesce is missing a duration")
+                            })?;
+                        coalesce_seconds =
+                            Some(parse_duration(duration.as_str(), span_of(&duration))? as u64);
+                    }
+                    Rule::orchestration_stop => {
+                        stop = option
+                            .into_inner()
+                            .next()
+                            .map(|part| part.as_str().to_string())
+                    }
+                    Rule::orchestration_restart => {
+                        let value = option.into_inner().next().ok_or_else(|| {
+                            RexRapError::syntax(span, "restart is missing a selector")
+                        })?;
+                        restart = Some(if value.as_rule() == Rule::string {
+                            plain_string(value)?
+                        } else {
+                            value.as_str().to_string()
+                        });
+                    }
+                    Rule::orchestration_revision => {
+                        revision = option
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::string)
+                            .map(plain_string)
+                            .transpose()?
+                    }
+                    Rule::orchestration_signal_name => {
+                        signal_name = option
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::string)
+                            .map(plain_string)
+                            .transpose()?
+                    }
+                    Rule::orchestration_allow_self => allow_self_originated = true,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(OrchestrationIntentDecl {
+        name: name.ok_or_else(|| RexRapError::syntax(span, "intent is missing a name"))?,
+        effect: effect.ok_or_else(|| RexRapError::syntax(span, "intent is missing an effect"))?,
+        priority: priority
+            .ok_or_else(|| RexRapError::syntax(span, "intent is missing a priority"))?,
+        coalesce_seconds,
+        stop,
+        restart,
+        revision,
+        signal_name,
+        allow_self_originated,
+        span,
+    })
+}
+
+fn parse_orchestration_budget(pair: Pair<Rule>) -> Result<OrchestrationBudgetDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut name = None;
+    let mut attempts = None;
+    let mut exhausted = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::string => name = Some(plain_string(part)?),
+            Rule::integer => {
+                attempts = Some(part.as_str().parse::<u32>().map_err(|_| {
+                    RexRapError::syntax(span, "budget attempts must be a non-negative integer")
+                })?)
+            }
+            Rule::budget_exhaustion => exhausted = Some(part.as_str().to_string()),
+            _ => {}
+        }
+    }
+    Ok(OrchestrationBudgetDecl {
+        name: name.ok_or_else(|| RexRapError::syntax(span, "budget is missing a name"))?,
+        attempts: attempts
+            .ok_or_else(|| RexRapError::syntax(span, "budget is missing attempts"))?,
+        exhausted: exhausted
+            .ok_or_else(|| RexRapError::syntax(span, "budget is missing exhaustion behavior"))?,
+        span,
+    })
+}
+
+fn parse_orchestration_phase(pair: Pair<Rule>) -> Result<OrchestrationPhaseDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut member = None;
+    let mut mappings = Vec::new();
+    let mut workspace = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::string if member.is_none() => member = Some(plain_string(part)?),
+            Rule::orchestration_phase_item => {
+                let item = first_inner(part)?;
+                match item.as_rule() {
+                    Rule::orchestration_mapping => {
+                        let mut field = None;
+                        let mut pointer = None;
+                        for value in item.into_inner() {
+                            match value.as_rule() {
+                                Rule::mapping_field => field = Some(value.as_str().to_string()),
+                                Rule::string => pointer = Some(plain_string(value)?),
+                                _ => {}
+                            }
+                        }
+                        mappings.push((
+                            field.ok_or_else(|| {
+                                RexRapError::syntax(span, "phase mapping is missing a field")
+                            })?,
+                            pointer.ok_or_else(|| {
+                                RexRapError::syntax(span, "phase mapping is missing a pointer")
+                            })?,
+                        ));
+                    }
+                    Rule::orchestration_workspace => {
+                        workspace = Some(parse_orchestration_workspace(item)?)
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(OrchestrationPhaseDecl {
+        member: member.ok_or_else(|| RexRapError::syntax(span, "phase is missing a member"))?,
+        mappings,
+        workspace,
+        span,
+    })
+}
+
+fn parse_orchestration_workspace(
+    pair: Pair<Rule>,
+) -> Result<OrchestrationWorkspaceDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut scope = None;
+    let mut reuse = false;
+    let mut lease_seconds = None;
+    let mut recovery = None;
+    let mut labels = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::string => scope = Some(plain_string(part)?),
+            Rule::orchestration_workspace_option => {
+                let option = first_inner(part)?;
+                match option.as_rule() {
+                    Rule::workspace_reuse => reuse = true,
+                    Rule::workspace_lease => {
+                        let duration = option
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::duration)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "workspace lease is missing a duration")
+                            })?;
+                        lease_seconds =
+                            Some(parse_duration(duration.as_str(), span_of(&duration))? as u64);
+                    }
+                    Rule::workspace_recovery => {
+                        recovery = option
+                            .into_inner()
+                            .next()
+                            .map(|part| part.as_str().to_string())
+                    }
+                    Rule::workspace_labels => {
+                        let object = option
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::object)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "workspace labels are missing an object")
+                            })?;
+                        labels = Some(parse_object(object)?);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(OrchestrationWorkspaceDecl {
+        scope: scope.ok_or_else(|| RexRapError::syntax(span, "workspace is missing a scope"))?,
+        reuse,
+        lease_seconds,
+        recovery,
+        labels,
         span,
     })
 }

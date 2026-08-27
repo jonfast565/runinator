@@ -10,6 +10,7 @@
     </section>
     <PipelinesView v-if="app.activeTab === 'Pipelines'" />
     <PipelineRunsView v-if="app.activeTab === 'PipelineRuns'" />
+    <OrchestrationsView v-if="app.activeTab === 'Orchestrations'" />
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
     <ProvidersView v-if="app.activeTab === 'Providers'" />
@@ -66,6 +67,7 @@ const DevView = defineAsyncComponent(() => import("./ui/views/DevView.vue"));
 const WorkflowsView = defineAsyncComponent(() => import("./ui/views/WorkflowsView.vue"));
 const PipelinesView = defineAsyncComponent(() => import("./ui/views/PipelinesView.vue"));
 const PipelineRunsView = defineAsyncComponent(() => import("./ui/views/PipelineRunsView.vue"));
+const OrchestrationsView = defineAsyncComponent(() => import("./ui/views/OrchestrationsView.vue"));
 const ApprovalsView = defineAsyncComponent(() => import("./ui/views/ApprovalsView.vue"));
 const NotificationsView = defineAsyncComponent(() => import("./ui/views/NotificationsView.vue"));
 const SchedulesView = defineAsyncComponent(() => import("./ui/views/SchedulesView.vue"));

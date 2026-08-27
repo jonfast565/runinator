@@ -255,6 +255,7 @@ async fn pipeline_round_trip_create_update_delete() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             Default::default(),
+            Default::default(),
         )
         .await
         .unwrap();

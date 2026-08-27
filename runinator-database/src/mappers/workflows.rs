@@ -256,6 +256,9 @@ macro_rules! pipeline_run_from_row {
                 .try_get::<String, _>("trigger_metadata")
                 .map(parse_json)
                 .unwrap_or(Value::Null),
+            orchestration_binding_id: $row.try_get("orchestration_binding_id").ok().flatten(),
+            execution_epoch: $row.try_get("execution_epoch").ok().flatten(),
+            start_member: $row.try_get("start_member").ok().flatten(),
         }
     }};
 }

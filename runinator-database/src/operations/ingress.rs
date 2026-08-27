@@ -380,6 +380,23 @@ where
             > 0)
     }
 
+    async fn settle_ingress_admission(
+        &self,
+        admission_id: Uuid,
+        generation: i64,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE ingress_admissions SET status = 'terminal', updated_at = ? WHERE id = ? AND generation = ? AND status = 'active'",
+        ))
+        .bind(now.timestamp())
+        .bind(admission_id)
+        .bind(generation)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
+    }
+
     async fn settle_and_promote_ingress_workflow_run(
         &self,
         workflow_run_id: Uuid,

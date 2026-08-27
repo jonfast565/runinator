@@ -628,6 +628,58 @@ export async function fetchPipelineRuns() {
   return command<PipelineRun[]>("fetch_pipeline_runs");
 }
 
+export async function fetchOrchestrations(filters: Record<string, unknown> = {}) {
+  return command<import("../domain/models").OrchestrationBinding[]>("fetch_orchestrations", {
+    filters,
+  });
+}
+
+export async function fetchOrchestration(orchestrationId: string) {
+  return command<import("../domain/models").OrchestrationBinding>("fetch_orchestration", {
+    orchestrationId,
+  });
+}
+
+export async function fetchOrchestrationEpochs(orchestrationId: string) {
+  return command<import("../domain/models").OrchestrationEpoch[]>("fetch_orchestration_epochs", {
+    orchestrationId,
+  });
+}
+
+export async function fetchOrchestrationEvents(orchestrationId: string) {
+  return command<import("../domain/models").OrchestrationReduction[]>("fetch_orchestration_events", {
+    orchestrationId,
+  });
+}
+
+export async function fetchOrchestrationEvidence(orchestrationId: string) {
+  return command<import("../domain/models").OrchestrationEvidence[]>("fetch_orchestration_evidence", {
+    orchestrationId,
+  });
+}
+
+export async function fetchOrchestrationCommands(orchestrationId: string) {
+  return command<import("../domain/models").OrchestrationCommand[]>("fetch_orchestration_commands", {
+    orchestrationId,
+  });
+}
+
+export async function sendOrchestrationIntent(
+  orchestrationId: string,
+  intent: string,
+  reason: string,
+  payload: unknown = {},
+  idempotencyKey: string = crypto.randomUUID(),
+) {
+  return command("send_orchestration_intent", {
+    orchestrationId,
+    intent,
+    reason,
+    payload,
+    idempotencyKey,
+  });
+}
+
 export async function fetchPipelineRun(pipelineRunId: string) {
   return command<PipelineRunDetail>("fetch_pipeline_run", { pipelineRunId });
 }

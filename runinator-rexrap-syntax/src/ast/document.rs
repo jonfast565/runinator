@@ -138,6 +138,16 @@ pub struct IngressRouteDecl {
     pub event_type: String,
     pub lifecycle: String,
     pub action: String,
+    pub intent: Option<String>,
+    pub predicates: Vec<IngressPredicateDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IngressPredicateDecl {
+    pub pointer: String,
+    pub operator: String,
+    pub value: Option<Expr>,
     pub span: Span,
 }
 

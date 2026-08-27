@@ -93,6 +93,15 @@ pub trait IngressStore: Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Settle a managed generation by binding identity. Managed pipeline epochs deliberately do
+    /// not transfer admission ownership to each replacement pipeline run.
+    fn settle_ingress_admission(
+        &self,
+        admission_id: Uuid,
+        generation: i64,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Mark a bound generation terminal and atomically claim/promote its oldest queued child.
     fn settle_and_promote_ingress_workflow_run(
         &self,

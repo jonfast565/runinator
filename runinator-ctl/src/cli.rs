@@ -183,6 +183,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: PipelineCommands,
     },
+    /// Inspect and control durable correlated orchestration instances.
+    Orchestrations {
+        #[command(subcommand)]
+        command: OrchestrationCommands,
+    },
     /// Serve MCP on stdin/stdout. Expose every runinatorctl command as a tool.
     /// An MCP client should launch this command; it speaks JSON-RPC, so
     /// command output is captured into tool results instead of being printed.
@@ -848,6 +853,9 @@ pub enum PipelineCommands {
         /// Run this immutable pipeline revision instead of the current head.
         #[arg(long)]
         revision: Option<i64>,
+        /// Start with this member as the sole initial frontier.
+        #[arg(long = "from")]
+        from: Option<String>,
         /// Wait for the run to reach a terminal status before returning.
         #[arg(long)]
         follow: bool,
@@ -900,6 +908,42 @@ pub enum PipelineCommands {
     },
     /// Delete a pipeline. Its member workflows are untouched.
     Delete { pipeline: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrchestrationCommands {
+    /// List orchestration instances.
+    List {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        pipeline_id: Option<Uuid>,
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
+        correlation: Option<String>,
+    },
+    /// Show one orchestration instance.
+    Show { id: Uuid },
+    /// Show normalized-event reduction history for an instance.
+    Timeline { id: Uuid },
+    /// Refresh an instance until it reaches a terminal state.
+    Watch {
+        id: Uuid,
+        #[arg(long, default_value_t = 2)]
+        interval: u64,
+    },
+    /// Submit an author-defined intent through the durable inbox.
+    Intent {
+        id: Uuid,
+        name: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long = "payload")]
+        payload: Option<PathBuf>,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
 }
 
 /// CLI-facing decision for a pipeline run's open `inquire` pause.

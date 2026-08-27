@@ -6,7 +6,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use runinator_models::orchestration::{
-    IngressAction, IngressLifecycle, IngressPolicy, IngressRoute,
+    BudgetExhaustion, BudgetPolicy, ControlEffect, EpochStopAction, IngressAction,
+    IngressLifecycle, IngressPolicy, IngressPredicate, IngressPredicateOperator, IngressRoute,
+    IntentPolicy, OrchestrationPolicy, PhasePolicy, RestartSelector, WorkspacePolicy,
+    WorkspaceRecovery,
 };
 use runinator_models::pipelines::{
     PipelineBundle, PipelineDefaults, PipelineFailurePolicy, PipelineJoinMode, PipelineJoinSpec,
@@ -55,15 +58,15 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         max_chain_depth: decl.max_depth,
         ..PipelineDefaults::default()
     };
-    let members: HashSet<&str> = decl.members.iter().map(|m| m.name.as_str()).collect();
+    let member_names: HashSet<&str> = decl.members.iter().map(|m| m.name.as_str()).collect();
     let mut links = Vec::with_capacity(decl.links.len());
     for link in &decl.links {
-        links.push(lower_link(link, &members, on_step_failure)?);
+        links.push(lower_link(link, &member_names, on_step_failure)?);
     }
-    validate_links(&links, &members, decl.span)?;
+    validate_links(&links, &member_names, decl.span)?;
     let mut joins = Vec::with_capacity(decl.joins.len());
     for join in &decl.joins {
-        if !members.contains(join.target.as_str()) {
+        if !member_names.contains(join.target.as_str()) {
             return Err(RexRapError::syntax(
                 join.span,
                 format!(
@@ -92,7 +95,19 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         .iter()
         .map(lower_member)
         .collect::<Result<Vec<_>, RexRapError>>()?;
-    let metadata = lower_ingress_metadata(decl.ingress.as_ref())?;
+    let mut metadata = lower_ingress_metadata(decl.ingress.as_ref())?;
+    if let Some(orchestration) = &decl.orchestration {
+        let policy = lower_orchestration(orchestration, &member_names)?;
+        metadata
+            .as_object_mut()
+            .expect("pipeline metadata is an object")
+            .insert(
+                "orchestration".into(),
+                serde_json::to_value(policy)
+                    .expect("orchestration policy serializes")
+                    .into(),
+            );
+    }
     Ok(PipelineSpec {
         name: decl.name.clone(),
         key: decl.key.clone(),
@@ -122,6 +137,150 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
     })
 }
 
+fn lower_orchestration(
+    decl: &crate::ast::OrchestrationDecl,
+    members: &HashSet<&str>,
+) -> Result<OrchestrationPolicy, RexRapError> {
+    let mut policy = OrchestrationPolicy::default();
+    for intent in &decl.intents {
+        let effect = match intent.effect.as_str() {
+            "terminate" => ControlEffect::Terminate,
+            "suspend" => ControlEffect::Suspend,
+            "resume" => ControlEffect::Resume,
+            "supersede" => ControlEffect::Supersede,
+            "observe" => ControlEffect::Observe,
+            "signal" => ControlEffect::Signal,
+            _ => unreachable!("parser restricts orchestration effects"),
+        };
+        let stop = match intent.stop.as_deref() {
+            Some("pause") => EpochStopAction::Pause,
+            Some("none") => EpochStopAction::None,
+            _ => EpochStopAction::Cancel,
+        };
+        let restart = match intent.restart.as_deref() {
+            None | Some("entry") => RestartSelector::Entry,
+            Some("current") => RestartSelector::Current,
+            Some(member) => RestartSelector::Member(member.to_string()),
+        };
+        if policy
+            .intents
+            .insert(
+                intent.name.clone(),
+                IntentPolicy {
+                    effect,
+                    priority: intent.priority,
+                    coalesce_seconds: intent.coalesce_seconds,
+                    stop,
+                    restart,
+                    subject_revision_pointer: intent.revision.clone(),
+                    allow_self_originated: intent.allow_self_originated,
+                    signal_name: intent.signal_name.clone(),
+                },
+            )
+            .is_some()
+        {
+            return Err(RexRapError::syntax(
+                intent.span,
+                format!("duplicate orchestration intent '{}'", intent.name),
+            ));
+        }
+    }
+    for budget in &decl.budgets {
+        let exhausted = match budget.exhausted.as_str() {
+            "fail" => BudgetExhaustion::Fail,
+            "terminate" => BudgetExhaustion::Terminate,
+            _ => BudgetExhaustion::Pause,
+        };
+        if policy
+            .budgets
+            .insert(
+                budget.name.clone(),
+                BudgetPolicy {
+                    attempts: budget.attempts,
+                    exhausted,
+                },
+            )
+            .is_some()
+        {
+            return Err(RexRapError::syntax(
+                budget.span,
+                format!("duplicate orchestration budget '{}'", budget.name),
+            ));
+        }
+    }
+    for phase in &decl.phases {
+        if !members.contains(phase.member.as_str()) {
+            return Err(RexRapError::syntax(
+                phase.span,
+                format!(
+                    "orchestration phase '{}' is not a pipeline member",
+                    phase.member
+                ),
+            ));
+        }
+        let mut phase_policy = PhasePolicy::default();
+        for (field, pointer) in &phase.mappings {
+            let slot = match field.as_str() {
+                "subject_revision" => &mut phase_policy.result.subject_revision,
+                "resources" => &mut phase_policy.result.resources,
+                "evidence" => &mut phase_policy.result.evidence,
+                "failure_class" => &mut phase_policy.result.failure_class,
+                _ => unreachable!("parser restricts result mapping fields"),
+            };
+            if slot.replace(pointer.clone()).is_some() {
+                return Err(RexRapError::syntax(
+                    phase.span,
+                    format!("phase '{}' maps '{field}' more than once", phase.member),
+                ));
+            }
+        }
+        if let Some(workspace) = &phase.workspace {
+            let requirements = workspace
+                .labels
+                .as_ref()
+                .map(|expr| {
+                    runinator_rexrap_codegen::lower::lower_expression_fragment(
+                        expr,
+                        &crate::CompileOptions::default(),
+                    )
+                })
+                .transpose()?
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            if contains_dynamic_expression(&requirements) {
+                return Err(RexRapError::syntax(
+                    workspace.span,
+                    "workspace labels must be literal values",
+                ));
+            }
+            phase_policy.workspace = Some(WorkspacePolicy {
+                scope: workspace.scope.clone(),
+                requirements,
+                lease_seconds: workspace.lease_seconds.unwrap_or(300),
+                reuse: workspace.reuse,
+                recovery: match workspace.recovery.as_deref() {
+                    Some("wait") => WorkspaceRecovery::Wait,
+                    Some("fail") => WorkspaceRecovery::Fail,
+                    _ => WorkspaceRecovery::Replace,
+                },
+            });
+        }
+        if policy
+            .phases
+            .insert(phase.member.clone(), phase_policy)
+            .is_some()
+        {
+            return Err(RexRapError::syntax(
+                phase.span,
+                format!("duplicate orchestration phase '{}'", phase.member),
+            ));
+        }
+    }
+    policy
+        .validate(members.iter().copied())
+        .map_err(|message| RexRapError::syntax(decl.span, message))?;
+    Ok(policy)
+}
+
 fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<Value, RexRapError> {
     let Some(ingress) = ingress else {
         return Ok(Value::Object(Map::new()));
@@ -140,6 +299,7 @@ fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<V
             "queue" => IngressAction::Queue,
             "record" => IngressAction::Record,
             "requeue" => IngressAction::Requeue,
+            "dispatch" => IngressAction::Dispatch,
             _ => unreachable!("parser restricts ingress action"),
         };
         if !action.is_allowed_when(lifecycle) {
@@ -151,10 +311,47 @@ fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<V
                 ),
             ));
         }
+        let predicates = route
+            .predicates
+            .iter()
+            .map(|predicate| {
+                let operator = match predicate.operator.as_str() {
+                    "==" => IngressPredicateOperator::Equal,
+                    "!=" => IngressPredicateOperator::NotEqual,
+                    "in" => IngressPredicateOperator::In,
+                    "contains" => IngressPredicateOperator::Contains,
+                    "exists" => IngressPredicateOperator::Exists,
+                    _ => unreachable!("parser restricts ingress predicate operators"),
+                };
+                let value = predicate
+                    .value
+                    .as_ref()
+                    .map(|expr| {
+                        runinator_rexrap_codegen::lower::lower_expression_fragment(
+                            expr,
+                            &crate::CompileOptions::default(),
+                        )
+                    })
+                    .transpose()?;
+                if value.as_ref().is_some_and(contains_dynamic_expression) {
+                    return Err(RexRapError::syntax(
+                        predicate.span,
+                        "ingress predicate values must be literals",
+                    ));
+                }
+                Ok(IngressPredicate {
+                    pointer: predicate.pointer.clone(),
+                    operator,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, RexRapError>>()?;
         routes.push(IngressRoute {
             event_type: route.event_type.clone(),
             lifecycle,
             action,
+            predicates,
+            intent: route.intent.clone(),
         });
     }
     let policy = IngressPolicy {
@@ -172,6 +369,16 @@ fn lower_ingress_metadata(ingress: Option<&crate::ast::IngressDecl>) -> Result<V
             .into(),
     );
     Ok(Value::Object(metadata))
+}
+
+fn contains_dynamic_expression(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_dynamic_expression),
+        Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| key.starts_with('$') || contains_dynamic_expression(value)),
+        _ => false,
+    }
 }
 
 /// lower a `workflow "Name" [on_failure <mode>]` member decl. `on_failure` is `None` when the member
@@ -495,13 +702,55 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
             out.push_str(&format!("    ingress scope {} {{\n", quote(&ingress.scope)));
             for route in ingress.routes {
                 out.push_str(&format!(
-                    "        on {} when {} -> {}\n",
+                    "        on {} when {}\n",
                     quote(&route.event_type),
-                    ingress_lifecycle_name(route.lifecycle),
-                    ingress_action_name(route.action),
+                    ingress_lifecycle_name(route.lifecycle)
                 ));
+                for predicate in route.predicates {
+                    let operator = match predicate.operator {
+                        IngressPredicateOperator::Equal => "==",
+                        IngressPredicateOperator::NotEqual => "!=",
+                        IngressPredicateOperator::In => "in",
+                        IngressPredicateOperator::Contains => "contains",
+                        IngressPredicateOperator::Exists => "exists",
+                    };
+                    let value = predicate
+                        .value
+                        .as_ref()
+                        .map(|value| {
+                            runinator_rexrap_codegen::render_expression(value)
+                                .unwrap_or_else(|_| "null".into())
+                        })
+                        .unwrap_or_default();
+                    out.push_str(
+                        &format!(
+                            "            if {} {operator} {value}\n",
+                            quote(&predicate.pointer)
+                        )
+                        .trim_end()
+                        .to_string(),
+                    );
+                    out.push('\n');
+                }
+                if route.action == IngressAction::Dispatch {
+                    out.push_str(&format!(
+                        "            -> dispatch {}\n",
+                        quote(route.intent.as_deref().unwrap_or_default())
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "            -> {}\n",
+                        ingress_action_name(route.action)
+                    ));
+                }
             }
             out.push_str("    }\n");
+        }
+        if let Some(orchestration) = spec.metadata.get("orchestration").and_then(|value| {
+            serde_json::from_value::<OrchestrationPolicy>(value.clone().into()).ok()
+        }) {
+            out.push('\n');
+            render_orchestration_policy(&mut out, &orchestration);
         }
         if !spec.triggers.is_empty() {
             out.push('\n');
@@ -568,6 +817,134 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
         out.push_str("}\n");
     }
     out
+}
+
+fn render_orchestration_policy(out: &mut String, policy: &OrchestrationPolicy) {
+    out.push_str("    orchestration {\n");
+    let mut intents = policy.intents.iter().collect::<Vec<_>>();
+    intents.sort_by(|(left_name, left), (right_name, right)| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left_name.cmp(right_name))
+    });
+    for (name, intent) in intents {
+        let effect = match intent.effect {
+            ControlEffect::Terminate => "terminate",
+            ControlEffect::Suspend => "suspend",
+            ControlEffect::Resume => "resume",
+            ControlEffect::Supersede => "supersede",
+            ControlEffect::Observe => "observe",
+            ControlEffect::Signal => "signal",
+        };
+        out.push_str(&format!(
+            "        intent {} effect {effect} priority {}",
+            quote(name),
+            intent.priority
+        ));
+        if let Some(seconds) = intent.coalesce_seconds {
+            out.push_str(&format!(" coalesce {}", render_duration(seconds)));
+        }
+        if intent.stop != EpochStopAction::Cancel {
+            out.push_str(&format!(
+                " stop {}",
+                match intent.stop {
+                    EpochStopAction::Pause => "pause",
+                    EpochStopAction::None => "none",
+                    EpochStopAction::Cancel => "cancel",
+                }
+            ));
+        }
+        match &intent.restart {
+            RestartSelector::Entry => {}
+            RestartSelector::Current => out.push_str(" restart current"),
+            RestartSelector::Member(member) => out.push_str(&format!(" restart {}", quote(member))),
+        }
+        if let Some(pointer) = &intent.subject_revision_pointer {
+            out.push_str(&format!(" revision {}", quote(pointer)));
+        }
+        if let Some(signal) = &intent.signal_name {
+            out.push_str(&format!(" signal {}", quote(signal)));
+        }
+        if intent.allow_self_originated {
+            out.push_str(" allow_self_originated");
+        }
+        out.push('\n');
+    }
+    for (name, budget) in &policy.budgets {
+        let exhausted = match budget.exhausted {
+            BudgetExhaustion::Fail => "fail",
+            BudgetExhaustion::Pause => "pause",
+            BudgetExhaustion::Terminate => "terminate",
+        };
+        out.push_str(&format!(
+            "        budget {} attempts {} exhausted {exhausted}\n",
+            quote(name),
+            budget.attempts
+        ));
+    }
+    for (member, phase) in &policy.phases {
+        out.push_str(&format!("        phase {} {{\n", quote(member)));
+        for (field, pointer) in [
+            ("subject_revision", &phase.result.subject_revision),
+            ("resources", &phase.result.resources),
+            ("evidence", &phase.result.evidence),
+            ("failure_class", &phase.result.failure_class),
+        ] {
+            if let Some(pointer) = pointer {
+                out.push_str(&format!("            {field} from {}\n", quote(pointer)));
+            }
+        }
+        if let Some(workspace) = &phase.workspace {
+            out.push_str(&format!(
+                "            workspace scope {}",
+                quote(&workspace.scope)
+            ));
+            if workspace.reuse {
+                out.push_str(" reuse");
+            }
+            if workspace.lease_seconds != 300 {
+                out.push_str(&format!(
+                    " lease {}",
+                    render_duration(workspace.lease_seconds)
+                ));
+            }
+            if workspace.recovery != WorkspaceRecovery::Replace {
+                out.push_str(&format!(
+                    " recovery {}",
+                    match workspace.recovery {
+                        WorkspaceRecovery::Wait => "wait",
+                        WorkspaceRecovery::Fail => "fail",
+                        WorkspaceRecovery::Replace => "replace",
+                    }
+                ));
+            }
+            if workspace
+                .requirements
+                .as_object()
+                .is_some_and(|values| !values.is_empty())
+            {
+                let labels = runinator_rexrap_codegen::render_expression(&workspace.requirements)
+                    .unwrap_or_else(|_| "{}".into());
+                out.push_str(&format!(" labels {labels}"));
+            }
+            out.push('\n');
+        }
+        out.push_str("        }\n");
+    }
+    out.push_str("    }\n");
+}
+
+fn render_duration(seconds: u64) -> String {
+    if seconds % 86_400 == 0 {
+        format!("{}d", seconds / 86_400)
+    } else if seconds % 3_600 == 0 {
+        format!("{}h", seconds / 3_600)
+    } else if seconds % 60 == 0 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 fn ingress_lifecycle_name(lifecycle: IngressLifecycle) -> &'static str {

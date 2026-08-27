@@ -1,9 +1,9 @@
 use super::*;
 use runinator_models::artifacts::ArtifactPath;
 use runinator_models::pipelines::{
-    PIPELINE_GRAPH_VERSION, PipelineBundle, PipelineGraph, PipelineJoin, PipelineLink,
-    PipelineMember, PipelineRun, PipelineRunDetail, PipelineRunEdgeState, PipelineRunJoinState,
-    PipelineSpec, PipelineTrigger,
+    PIPELINE_GRAPH_VERSION, PipelineBundle, PipelineExecutionContext, PipelineGraph, PipelineJoin,
+    PipelineLink, PipelineMember, PipelineRun, PipelineRunDetail, PipelineRunEdgeState,
+    PipelineRunJoinState, PipelineSpec, PipelineTrigger,
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::revisions::{PipelineRevision, RevisionAuthor, RevisionSource};
@@ -610,6 +610,7 @@ pub async fn create_manual_pipeline_run<T: DefinitionStore + RuntimeStore + Work
     revision: Option<i64>,
     actor_replica_id: Option<Uuid>,
     actor_display_name: Option<String>,
+    execution: PipelineExecutionContext,
 ) -> Result<PipelineRun, SendableError> {
     let current = db
         .fetch_pipeline(pipeline_id)
@@ -640,8 +641,10 @@ pub async fn create_manual_pipeline_run<T: DefinitionStore + RuntimeStore + Work
         request_ip: None,
         metadata: Value::Object(Default::default()),
     };
-    pipeline_orchestration::create_and_start_pipeline_run(db, &pipeline, parameters, provenance)
-        .await
+    pipeline_orchestration::create_and_start_pipeline_run(
+        db, &pipeline, parameters, provenance, execution,
+    )
+    .await
 }
 
 /// start a pipeline run from a manual/cron pipeline trigger id.
@@ -675,6 +678,7 @@ pub async fn create_pipeline_run_for_trigger<
         None,
         actor_replica_id,
         actor_display_name,
+        PipelineExecutionContext::default(),
     )
     .await
 }

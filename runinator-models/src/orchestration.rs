@@ -1,4 +1,6 @@
-use crate::{value::Value, workflows::WorkflowStatus};
+use std::collections::BTreeMap;
+
+use crate::{types::RuninatorType, value::Value, workflows::WorkflowStatus};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -21,18 +23,89 @@ pub enum IngressAction {
     Queue,
     Record,
     Requeue,
+    Dispatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngressPredicateOperator {
+    Equal,
+    NotEqual,
+    In,
+    Contains,
+    Exists,
+}
+
+/// A deliberately bounded condition over a normalized event payload. Keeping this vocabulary in
+/// the model prevents adapters from smuggling executable policy into the control plane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IngressPredicate {
+    pub pointer: String,
+    pub operator: IngressPredicateOperator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+}
+
+impl IngressPredicate {
+    pub fn matches(&self, payload: &Value) -> bool {
+        let actual = payload.pointer(&self.pointer);
+        match self.operator {
+            IngressPredicateOperator::Exists => actual.is_some(),
+            IngressPredicateOperator::Equal => actual == self.value.as_ref(),
+            IngressPredicateOperator::NotEqual => actual != self.value.as_ref(),
+            IngressPredicateOperator::In => self
+                .value
+                .as_ref()
+                .and_then(Value::as_array)
+                .is_some_and(|values| actual.is_some_and(|actual| values.contains(actual))),
+            IngressPredicateOperator::Contains => match (actual, self.value.as_ref()) {
+                (Some(Value::Array(values)), Some(expected)) => values.contains(expected),
+                (Some(Value::String(value)), Some(Value::String(expected))) => {
+                    value.contains(expected)
+                }
+                (Some(Value::Object(values)), Some(Value::String(expected))) => {
+                    values.contains_key(expected)
+                }
+                _ => false,
+            },
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.pointer.is_empty() && !self.pointer.starts_with('/') {
+            return Err(format!(
+                "ingress predicate pointer '{}' must be empty or start with '/'",
+                self.pointer
+            ));
+        }
+        match self.operator {
+            IngressPredicateOperator::Exists if self.value.is_some() => {
+                Err("an exists predicate must not have a comparison value".into())
+            }
+            IngressPredicateOperator::Exists => Ok(()),
+            _ if self.value.is_none() => Err("an ingress predicate requires a value".into()),
+            IngressPredicateOperator::In if !self.value.as_ref().is_some_and(Value::is_array) => {
+                Err("an in predicate requires an array value".into())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// One static event-type route in a workflow or pipeline ingress policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IngressRoute {
     pub event_type: String,
     pub lifecycle: IngressLifecycle,
     pub action: IngressAction,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predicates: Vec<IngressPredicate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
 }
 
 /// Authored, provider-neutral policy carried in workflow/pipeline metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IngressPolicy {
     pub scope: String,
     #[serde(default)]
@@ -53,6 +126,29 @@ impl IngressPolicy {
             .map(|route| route.action)
     }
 
+    /// Return every matching named intent. The orchestration policy owns precedence; ingress only
+    /// identifies candidates and never chooses control outcomes itself.
+    pub fn dispatches_for(
+        &self,
+        event_type: &str,
+        lifecycle: IngressLifecycle,
+        payload: &Value,
+    ) -> Vec<&str> {
+        self.routes
+            .iter()
+            .filter(|route| {
+                route.event_type == event_type
+                    && route.lifecycle == lifecycle
+                    && route.action == IngressAction::Dispatch
+                    && route
+                        .predicates
+                        .iter()
+                        .all(|predicate| predicate.matches(payload))
+            })
+            .filter_map(|route| route.intent.as_deref())
+            .collect()
+    }
+
     /// Validate the policy independently of any provider or target kind.
     pub fn validate(&self) -> Result<(), String> {
         if self.scope.trim().is_empty() {
@@ -68,6 +164,24 @@ impl IngressPolicy {
                     route.action.as_str(),
                     route.lifecycle.as_str()
                 ));
+            }
+            for predicate in &route.predicates {
+                predicate.validate()?;
+            }
+            match route.action {
+                IngressAction::Dispatch
+                    if route
+                        .intent
+                        .as_deref()
+                        .is_none_or(|intent| intent.trim().is_empty()) =>
+                {
+                    return Err("a dispatch ingress route requires a non-empty intent".into());
+                }
+                IngressAction::Dispatch => {}
+                _ if route.intent.is_some() => {
+                    return Err("only a dispatch ingress route may name an intent".into());
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -92,6 +206,7 @@ impl IngressAction {
             Self::Queue => "queue",
             Self::Record => "record",
             Self::Requeue => "requeue",
+            Self::Dispatch => "dispatch",
         }
     }
 
@@ -101,11 +216,510 @@ impl IngressAction {
             (IngressLifecycle::Unbound, Self::Start | Self::Record)
                 | (
                     IngressLifecycle::Active,
-                    Self::Interrupt | Self::Queue | Self::Record
+                    Self::Interrupt | Self::Queue | Self::Record | Self::Dispatch
                 )
                 | (IngressLifecycle::Terminal, Self::Requeue | Self::Record)
         )
     }
+}
+
+/// Binding-level status. It is intentionally distinct from workflow and pipeline run status: one
+/// binding can survive many immutable execution epochs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestrationStatus {
+    Pending,
+    Running,
+    Waiting,
+    Suspended,
+    Completed,
+    Failed,
+    Terminated,
+}
+
+impl OrchestrationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Waiting => "waiting",
+            Self::Suspended => "suspended",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Terminated => "terminated",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Terminated)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlEffect {
+    Terminate,
+    Suspend,
+    Resume,
+    Supersede,
+    Observe,
+    Signal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "member")]
+pub enum RestartSelector {
+    #[default]
+    Entry,
+    Current,
+    Member(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EpochStopAction {
+    Pause,
+    #[default]
+    Cancel,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntentPolicy {
+    pub effect: ControlEffect,
+    pub priority: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coalesce_seconds: Option<u64>,
+    #[serde(default)]
+    pub stop: EpochStopAction,
+    #[serde(default)]
+    pub restart: RestartSelector,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_revision_pointer: Option<String>,
+    #[serde(default)]
+    pub allow_self_originated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ResultMapping {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkspacePolicy {
+    pub scope: String,
+    #[serde(default)]
+    pub requirements: Value,
+    #[serde(default = "default_workspace_lease_seconds")]
+    pub lease_seconds: u64,
+    #[serde(default)]
+    pub reuse: bool,
+    #[serde(default)]
+    pub recovery: WorkspaceRecovery,
+}
+
+fn default_workspace_lease_seconds() -> u64 {
+    300
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRecovery {
+    #[default]
+    Replace,
+    Wait,
+    Fail,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PhasePolicy {
+    #[serde(default)]
+    pub result: ResultMapping,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspacePolicy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetExhaustion {
+    Fail,
+    Pause,
+    Terminate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetPolicy {
+    pub attempts: u32,
+    pub exhausted: BudgetExhaustion,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct OrchestrationPolicy {
+    #[serde(default)]
+    pub intents: BTreeMap<String, IntentPolicy>,
+    #[serde(default)]
+    pub phases: BTreeMap<String, PhasePolicy>,
+    #[serde(default)]
+    pub budgets: BTreeMap<String, BudgetPolicy>,
+    #[serde(default)]
+    pub defaults: Value,
+}
+
+impl OrchestrationPolicy {
+    pub fn validate<'a>(
+        &self,
+        member_keys: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), String> {
+        let member_keys = member_keys
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut priorities = std::collections::BTreeMap::new();
+        for (name, intent) in &self.intents {
+            if name.trim().is_empty() {
+                return Err("orchestration intent names must not be empty".into());
+            }
+            if let Some(existing) = priorities.insert(intent.priority, name) {
+                return Err(format!(
+                    "orchestration intents '{existing}' and '{name}' use the same priority {}",
+                    intent.priority
+                ));
+            }
+            if let RestartSelector::Member(member) = &intent.restart
+                && !member_keys.contains(member.as_str())
+            {
+                return Err(format!(
+                    "orchestration restart member '{member}' does not exist"
+                ));
+            }
+            if let Some(pointer) = &intent.subject_revision_pointer {
+                validate_json_pointer(pointer)?;
+            }
+        }
+        for (member, phase) in &self.phases {
+            if !member_keys.contains(member.as_str()) {
+                return Err(format!(
+                    "orchestration phase member '{member}' does not exist"
+                ));
+            }
+            for pointer in [
+                &phase.result.subject_revision,
+                &phase.result.resources,
+                &phase.result.evidence,
+                &phase.result.failure_class,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                validate_json_pointer(pointer)?;
+            }
+            if let Some(workspace) = &phase.workspace
+                && workspace.scope.trim().is_empty()
+            {
+                return Err(format!(
+                    "workspace scope for phase '{member}' must not be empty"
+                ));
+            }
+        }
+        for (name, budget) in &self.budgets {
+            if name.trim().is_empty() || budget.attempts == 0 {
+                return Err("budget names must be non-empty and attempts must be positive".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_json_pointer(pointer: &str) -> Result<(), String> {
+    if pointer.is_empty() || pointer.starts_with('/') {
+        Ok(())
+    } else {
+        Err(format!("'{pointer}' is not a JSON pointer"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationBinding {
+    pub id: Uuid,
+    pub admission_id: Uuid,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    pub scope: String,
+    pub correlation_key: String,
+    pub generation: i64,
+    pub pipeline_id: Uuid,
+    pub pipeline_revision: i64,
+    pub pipeline_digest: String,
+    pub policy: OrchestrationPolicy,
+    pub status: OrchestrationStatus,
+    #[serde(default)]
+    pub current_phase: Option<String>,
+    pub current_attempt: i64,
+    pub current_epoch: i64,
+    #[serde(default)]
+    pub restart_member: Option<String>,
+    #[serde(default)]
+    pub resume_existing_epoch: bool,
+    #[serde(default)]
+    pub subject_revision: Option<String>,
+    #[serde(default)]
+    pub resources: Value,
+    #[serde(default)]
+    pub budgets: BTreeMap<String, u32>,
+    pub last_reduced_sequence: i64,
+    pub version: i64,
+    #[serde(default)]
+    pub reducer_lease_owner: Option<String>,
+    #[serde(default)]
+    pub reducer_leased_until: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewOrchestrationBinding {
+    pub id: Uuid,
+    pub admission_id: Uuid,
+    pub org_id: Option<Uuid>,
+    pub scope: String,
+    pub correlation_key: String,
+    pub generation: i64,
+    pub pipeline_id: Uuid,
+    pub pipeline_revision: i64,
+    pub pipeline_digest: String,
+    pub policy: OrchestrationPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationEpoch {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub epoch: i64,
+    #[serde(default)]
+    pub pipeline_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub start_member: Option<String>,
+    #[serde(default)]
+    pub parameters: Value,
+    pub status: String,
+    pub reason: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationEventReduction {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub inbox_event_id: Uuid,
+    pub sequence: i64,
+    #[serde(default)]
+    pub matched_intents: Vec<String>,
+    #[serde(default)]
+    pub winner: Option<String>,
+    #[serde(default)]
+    pub suppressed_intents: Vec<String>,
+    pub binding_version: i64,
+    pub disposition: String,
+    #[serde(default)]
+    pub detail: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationPendingIntent {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub intent: String,
+    pub priority: i32,
+    pub source_event_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub latest_payload: Value,
+    pub wake_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestrationCommandStatus {
+    Pending,
+    Claimed,
+    Succeeded,
+    Failed,
+    Superseded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationCommand {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub epoch: i64,
+    pub command_type: String,
+    pub operation_key: String,
+    #[serde(default)]
+    pub payload: Value,
+    pub status: OrchestrationCommandStatus,
+    pub attempts: i64,
+    #[serde(default)]
+    pub claimed_by: Option<String>,
+    #[serde(default)]
+    pub claimed_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub result: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationEvidence {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    #[serde(default)]
+    pub epoch: Option<i64>,
+    pub kind: String,
+    #[serde(default)]
+    pub subject_revision: Option<String>,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub source_event_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliverySemantics {
+    AtLeastOnce,
+    Idempotent,
+    Reconcilable,
+}
+
+impl Default for DeliverySemantics {
+    fn default() -> Self {
+        Self::AtLeastOnce
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalOperationStatus {
+    Pending,
+    Running,
+    Waiting,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalOperation {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub operation_key: String,
+    pub provider: String,
+    pub action: String,
+    pub semantics: DeliverySemantics,
+    pub attempt: i64,
+    pub status: ExternalOperationStatus,
+    pub ambiguous: bool,
+    #[serde(default)]
+    pub provenance: Value,
+    #[serde(default)]
+    pub receipt: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdapterConfigurationField {
+    pub name: String,
+    pub value_type: RuninatorType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub secret: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdapterKindMetadata {
+    pub kind: String,
+    pub version: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<AdapterConfigurationField>,
+    #[serde(default)]
+    pub event_names: Vec<String>,
+    #[serde(default)]
+    pub canonical_pointers: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterDefinition {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub name: String,
+    pub kind: String,
+    pub current_revision: i64,
+    pub enabled: bool,
+    pub endpoint_identity: String,
+    pub has_admitted_binding: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterRevision {
+    pub id: Uuid,
+    pub adapter_id: Uuid,
+    pub revision: i64,
+    pub kind_version: String,
+    #[serde(default)]
+    pub configuration: Value,
+    #[serde(default)]
+    pub secret_bindings: BTreeMap<String, Uuid>,
+    #[serde(default)]
+    pub identity_configuration: Value,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub actor_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NormalizedAdapterEvent {
+    pub source: String,
+    pub delivery_id: String,
+    pub event_type: String,
+    pub scope: String,
+    pub correlation_key: String,
+    #[serde(default)]
+    pub subject_revision: Option<String>,
+    #[serde(default)]
+    pub occurred_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub provenance: Value,
 }
 
 /// Opaque event accepted by the generic workflow/pipeline ingress surface.
@@ -245,6 +859,8 @@ mod ingress_policy_tests {
                 event_type: "changed".into(),
                 lifecycle: IngressLifecycle::Active,
                 action: IngressAction::Queue,
+                predicates: vec![],
+                intent: None,
             }],
         };
         assert_eq!(
@@ -265,6 +881,8 @@ mod ingress_policy_tests {
                 event_type: "changed".into(),
                 lifecycle: IngressLifecycle::Unbound,
                 action: IngressAction::Interrupt,
+                predicates: vec![],
+                intent: None,
             }],
         };
         assert!(policy.validate().is_err());

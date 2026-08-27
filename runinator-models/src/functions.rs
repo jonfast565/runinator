@@ -163,6 +163,7 @@ impl FunctionCatalogEntry {
             results: self.output.clone(),
             // packaged code runs a container; it is never reducer-evaluable in process.
             pure: false,
+            delivery_semantics: Default::default(),
         }
     }
 

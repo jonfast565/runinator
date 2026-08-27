@@ -52,7 +52,7 @@ secret_kind      = { "secret" | "config" }
 // the grammar only expresses well-formed pipelines; the lowering rejects empty/danging references.
 pipeline_document       = { SOI ~ pipeline_decl* ~ EOI }
 pipeline_decl           = { "pipeline" ~ string ~ "{" ~ pipeline_item* ~ "}" }
-pipeline_item           = { key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | ingress_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
+pipeline_item           = { key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | ingress_decl | orchestration_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
 pipeline_desc           = { "description" ~ string }
 pipeline_on_failure     = { "on_failure" ~ pipeline_failure_policy }
 pipeline_failure_policy = { "halt" | "continue" }
@@ -187,9 +187,40 @@ correlate_decl = { "correlate" ~ "key" ~ expr }
 // generic, correlation-keyed ingress. Event names and scope names are static strings so policy
 // matching never evaluates an untrusted ingress payload inside the control plane.
 ingress_decl = { "ingress" ~ "scope" ~ string ~ "{" ~ ingress_route* ~ "}" }
-ingress_route = { "on" ~ string ~ "when" ~ ingress_lifecycle ~ "->" ~ ingress_action }
+ingress_route = { "on" ~ string ~ "when" ~ ingress_lifecycle ~ ingress_predicate* ~ "->" ~ ingress_route_action }
 ingress_lifecycle = { "unbound" | "active" | "terminal" }
 ingress_action = { "start" | "interrupt" | "queue" | "record" | "requeue" }
+ingress_route_action = { ingress_dispatch | ingress_action }
+ingress_dispatch = { "dispatch" ~ string }
+ingress_predicate = { "if" ~ string ~ ingress_predicate_op ~ expr? }
+ingress_predicate_op = { "!=" | "==" | "in" | "contains" | "exists" }
+
+orchestration_decl = { "orchestration" ~ "{" ~ orchestration_item* ~ "}" }
+orchestration_item = { orchestration_intent | orchestration_budget | orchestration_phase }
+orchestration_intent = { "intent" ~ string ~ "effect" ~ control_effect ~ "priority" ~ integer ~ orchestration_intent_option* }
+control_effect = { "terminate" | "suspend" | "resume" | "supersede" | "observe" | "signal" }
+orchestration_intent_option = { orchestration_coalesce | orchestration_stop | orchestration_restart | orchestration_revision | orchestration_signal_name | orchestration_allow_self }
+orchestration_coalesce = { "coalesce" ~ duration }
+orchestration_stop = { "stop" ~ epoch_stop_action }
+epoch_stop_action = { "pause" | "cancel" | "none" }
+orchestration_restart = { "restart" ~ (restart_keyword | string) }
+restart_keyword = { "entry" | "current" }
+orchestration_revision = { "revision" ~ string }
+orchestration_signal_name = { "signal" ~ string }
+orchestration_allow_self = { "allow_self_originated" }
+orchestration_budget = { "budget" ~ string ~ "attempts" ~ integer ~ "exhausted" ~ budget_exhaustion }
+budget_exhaustion = { "fail" | "pause" | "terminate" }
+orchestration_phase = { "phase" ~ string ~ "{" ~ orchestration_phase_item* ~ "}" }
+orchestration_phase_item = { orchestration_mapping | orchestration_workspace }
+orchestration_mapping = { mapping_field ~ "from" ~ string }
+mapping_field = { "subject_revision" | "resources" | "evidence" | "failure_class" }
+orchestration_workspace = { "workspace" ~ "scope" ~ string ~ orchestration_workspace_option* }
+orchestration_workspace_option = { workspace_reuse | workspace_lease | workspace_recovery | workspace_labels }
+workspace_reuse = { "reuse" }
+workspace_lease = { "lease" ~ duration }
+workspace_recovery = { "recovery" ~ workspace_recovery_kind }
+workspace_recovery_kind = { "replace" | "wait" | "fail" }
+workspace_labels = { "labels" ~ object }
 
 // a `trigger cron "<expr>"` schedules this workflow; a `trigger on_success workflow "<name>"`
 // (or on_failure/on_complete) starts another workflow when this one reaches that terminal state.

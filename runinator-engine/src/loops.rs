@@ -5,18 +5,297 @@ use runinator_comm::WakeCommand;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::{
-    orchestration::{IngressPromotion, IngressTargetKind},
+    interrupt::InterruptSource,
+    orchestration::{IngressPromotion, IngressTargetKind, OrchestrationStatus},
+    pipelines::PipelineExecutionContext,
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
+    value::Value,
     workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
     workspaces::WorkspaceAffinity,
 };
 use runinator_store::{
     RuntimeStore,
     roles::{
-        DefinitionStore, IngressStore, NotificationStore, OrgStore, ReplicaStore, ScheduleStore,
-        WorkflowVmStore, WorkspaceStore,
+        DefinitionStore, IngressStore, NotificationStore, OrchestrationBindingUpdate,
+        OrchestrationStore, OrgStore, ReplicaStore, ScheduleStore, WorkflowVmStore, WorkspaceStore,
     },
 };
+
+/// Reduce correlated bindings and execute their durable command outbox. All provider-specific
+/// interpretation has already happened at the adapter edge; this loop only sees named intents and
+/// the engine's closed control-effect vocabulary.
+pub async fn run_correlated_orchestration_reducer<
+    T: RuntimeStore + WorkflowVmStore + DefinitionStore + IngressStore + OrchestrationStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    instance: String,
+    settings: ServerSettingsHandle,
+    shutdown: Arc<Notify>,
+) {
+    info!(instance = %instance, "correlated orchestration reducer started");
+    let service = crate::services::OrchestrationOperations::new(db.clone());
+    loop {
+        let policy = settings.current();
+        let now = chrono::Utc::now();
+        let lease = now
+            + chrono::Duration::seconds(policy.orchestration.action_dispatch_lease_seconds as i64);
+        match db
+            .claim_orchestration_bindings(
+                instance.clone(),
+                now,
+                lease,
+                policy.orchestration.claim_batch_size as i64,
+            )
+            .await
+        {
+            Ok(bindings) => {
+                for binding in bindings {
+                    let binding_id = binding.id;
+                    match service.reduce_binding(binding, &instance).await {
+                        Ok(binding) => {
+                            if let Err(err) =
+                                settle_current_orchestration_epoch(db.as_ref(), &instance, &binding)
+                                    .await
+                            {
+                                warn!(%binding_id, error = %err, "failed to settle orchestration epoch");
+                            }
+                        }
+                        Err(err) => {
+                            warn!(%binding_id, error = %err, "failed to reduce orchestration binding")
+                        }
+                    }
+                    if let Err(err) = db
+                        .release_orchestration_binding_lease(binding_id, instance.clone())
+                        .await
+                    {
+                        warn!(%binding_id, error = %err, "failed to release orchestration reducer lease");
+                    }
+                }
+            }
+            Err(err) => warn!(error = %err, "failed to claim orchestration bindings"),
+        }
+
+        match db
+            .claim_orchestration_commands(
+                instance.clone(),
+                now,
+                lease,
+                policy.orchestration.claim_batch_size as i64,
+            )
+            .await
+        {
+            Ok(commands) => {
+                for command in commands {
+                    let outcome =
+                        execute_orchestration_command(db.as_ref(), broker.as_ref(), &command).await;
+                    let (succeeded, result) = match outcome {
+                        Ok(result) => (true, result),
+                        Err(err) => {
+                            warn!(command_id = %command.id, error = %err, "orchestration command failed");
+                            (false, runinator_models::json!({ "error": err.to_string() }))
+                        }
+                    };
+                    if let Err(err) = db
+                        .complete_orchestration_command(
+                            command.id,
+                            instance.clone(),
+                            succeeded,
+                            result,
+                            chrono::Utc::now(),
+                        )
+                        .await
+                    {
+                        warn!(command_id = %command.id, error = %err, "failed to settle orchestration command");
+                    }
+                }
+            }
+            Err(err) => warn!(error = %err, "failed to claim orchestration commands"),
+        }
+
+        tokio::select! {
+            _ = shutdown.notified() => return,
+            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.workflow_vm_poll_interval_ms)) => {}
+        }
+    }
+}
+
+async fn execute_orchestration_command<
+    T: RuntimeStore + WorkflowVmStore + DefinitionStore + IngressStore + OrchestrationStore,
+>(
+    db: &T,
+    broker: &dyn Broker,
+    command: &runinator_models::orchestration::OrchestrationCommand,
+) -> Result<runinator_models::value::Value, runinator_models::errors::SendableError> {
+    let binding = db
+        .fetch_orchestration_binding(command.binding_id)
+        .await?
+        .ok_or_else(|| {
+            Box::new(std::io::Error::other(
+                "orchestration command binding disappeared",
+            )) as runinator_models::errors::SendableError
+        })?;
+    let epoch = db
+        .fetch_orchestration_epochs(binding.id)
+        .await?
+        .into_iter()
+        .find(|epoch| epoch.epoch == command.epoch)
+        .ok_or_else(|| {
+            Box::new(std::io::Error::other(
+                "orchestration command epoch disappeared",
+            )) as runinator_models::errors::SendableError
+        })?;
+    match command.command_type.as_str() {
+        "start_epoch" => {
+            if let Some(run_id) = epoch.pipeline_run_id {
+                return Ok(
+                    runinator_models::json!({ "pipeline_run_id": run_id, "replayed": true }),
+                );
+            }
+            let parameters = command
+                .payload
+                .get("parameters")
+                .cloned()
+                .unwrap_or_default();
+            let run = repository::create_manual_pipeline_run(
+                db,
+                binding.pipeline_id,
+                parameters,
+                Some(binding.pipeline_revision),
+                None,
+                Some(format!("orchestration:{}:{}", binding.id, command.epoch)),
+                PipelineExecutionContext {
+                    orchestration_binding_id: Some(binding.id),
+                    execution_epoch: Some(command.epoch),
+                    start_member: epoch.start_member.clone(),
+                },
+            )
+            .await?;
+            db.bind_orchestration_epoch_run(binding.id, command.epoch, run.id, chrono::Utc::now())
+                .await?;
+            let admission = db
+                .fetch_ingress_admission(
+                    binding.org_id,
+                    binding.scope.clone(),
+                    binding.correlation_key.clone(),
+                )
+                .await?;
+            if admission
+                .as_ref()
+                .is_some_and(|admission| admission.pipeline_run_id.is_none())
+            {
+                let _ = db
+                    .bind_ingress_pipeline_run(binding.admission_id, run.id, chrono::Utc::now())
+                    .await?;
+            }
+            Ok(runinator_models::json!({ "pipeline_run_id": run.id }))
+        }
+        "cancel_epoch" => {
+            if let Some(run_id) = epoch.pipeline_run_id {
+                repository::cancel_pipeline_run(db, broker, run_id).await?;
+            }
+            Ok(runinator_models::json!({ "canceled": epoch.pipeline_run_id }))
+        }
+        "pause_epoch" => {
+            if let Some(run_id) = epoch.pipeline_run_id {
+                repository::pause_pipeline_run(db, run_id).await?;
+            }
+            Ok(runinator_models::json!({ "paused": epoch.pipeline_run_id }))
+        }
+        "resume_epoch" => {
+            if let Some(run_id) = epoch.pipeline_run_id {
+                repository::resume_pipeline_run(db, run_id).await?;
+            }
+            Ok(runinator_models::json!({ "resumed": epoch.pipeline_run_id }))
+        }
+        "signal_epoch" => {
+            let Some(run_id) = epoch.pipeline_run_id else {
+                return Ok(Value::Null);
+            };
+            let member = db
+                .fetch_workflow_runs_for_pipeline_run(run_id)
+                .await?
+                .into_iter()
+                .filter(|run| run.status.is_active())
+                .min_by_key(|run| run.created_at);
+            if let Some(member) = member {
+                repository::request_run_interrupt(
+                    db,
+                    member.id,
+                    InterruptSource::External,
+                    command.payload.clone(),
+                    None,
+                )
+                .await?;
+                Ok(runinator_models::json!({ "workflow_run_id": member.id }))
+            } else {
+                Ok(runinator_models::json!({ "ignored": "no active member" }))
+            }
+        }
+        other => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("unknown orchestration command '{other}'"),
+        ))),
+    }
+}
+
+async fn settle_current_orchestration_epoch<T: RuntimeStore + IngressStore + OrchestrationStore>(
+    db: &T,
+    owner: &str,
+    binding: &runinator_models::orchestration::OrchestrationBinding,
+) -> Result<(), runinator_models::errors::SendableError> {
+    if binding.status.is_terminal() {
+        return Ok(());
+    }
+    let Some(epoch) = db
+        .fetch_orchestration_epochs(binding.id)
+        .await?
+        .into_iter()
+        .find(|epoch| epoch.epoch == binding.current_epoch)
+    else {
+        return Ok(());
+    };
+    let Some(run_id) = epoch.pipeline_run_id else {
+        return Ok(());
+    };
+    let Some(run) = db.fetch_pipeline_run(run_id).await? else {
+        return Ok(());
+    };
+    if !run.status.is_terminal() {
+        return Ok(());
+    }
+    let now = chrono::Utc::now();
+    let status = if run.status == runinator_models::workflows::WorkflowStatus::Succeeded {
+        OrchestrationStatus::Completed
+    } else if binding.status == OrchestrationStatus::Suspended {
+        return Ok(());
+    } else {
+        OrchestrationStatus::Failed
+    };
+    let update = OrchestrationBindingUpdate {
+        expected_version: binding.version,
+        status,
+        current_phase: binding.current_phase.clone(),
+        current_attempt: binding.current_attempt,
+        current_epoch: binding.current_epoch,
+        restart_member: binding.restart_member.clone(),
+        resume_existing_epoch: binding.resume_existing_epoch,
+        subject_revision: binding.subject_revision.clone(),
+        resources: binding.resources.clone(),
+        budgets: binding.budgets.clone(),
+        last_reduced_sequence: binding.last_reduced_sequence,
+        finished_at: Some(now),
+    };
+    if db
+        .update_orchestration_binding(binding.id, owner.to_string(), update, now)
+        .await?
+        .is_some()
+    {
+        db.settle_ingress_admission(binding.admission_id, binding.generation, now)
+            .await?;
+    }
+    Ok(())
+}
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -100,7 +379,10 @@ pub async fn run_workflow_vm_driver<
                                 if let Some(pipeline_run_id) = run.pipeline_run_id {
                                     match db.fetch_pipeline_run(pipeline_run_id).await {
                                         Ok(Some(pipeline_run))
-                                            if pipeline_run.status.is_terminal() =>
+                                            if pipeline_run.status.is_terminal()
+                                                && pipeline_run
+                                                    .orchestration_binding_id
+                                                    .is_none() =>
                                         {
                                             match db
                                                 .settle_and_promote_ingress_pipeline_run(
@@ -233,6 +515,7 @@ async fn start_ingress_promotion<
             None,
             None,
             Some("ingress queue".into()),
+            Default::default(),
         )
         .await
         {

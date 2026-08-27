@@ -9,6 +9,7 @@ mod audit;
 mod auth;
 mod definitions;
 mod notifications;
+mod orchestrations;
 mod pack_transaction;
 mod parity;
 mod revisions;

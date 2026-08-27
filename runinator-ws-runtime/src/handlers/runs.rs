@@ -410,6 +410,7 @@ fn ingress_event_reply(
             queue_position: entry.queue_position,
             workflow_run_id: entry.workflow_run_id,
             pipeline_run_id: entry.pipeline_run_id,
+            orchestration_binding_id: None,
             message: message.into(),
         })),
     )

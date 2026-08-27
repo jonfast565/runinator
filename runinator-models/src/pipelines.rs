@@ -480,6 +480,21 @@ pub struct PipelineRun {
     pub trigger_actor_display_name: Option<String>,
     #[serde(default)]
     pub trigger_metadata: Value,
+    /// Present when this immutable run is one epoch of a correlated orchestration binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_binding_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_epoch: Option<i64>,
+    /// Optional member chosen as the sole initial frontier for a resumed/superseding epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_member: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PipelineExecutionContext {
+    pub orchestration_binding_id: Option<Uuid>,
+    pub execution_epoch: Option<i64>,
+    pub start_member: Option<String>,
 }
 
 /// a pipeline run with the member workflow runs it started. mirrors the workflow-run detail shape so

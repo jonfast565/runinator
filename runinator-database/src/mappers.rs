@@ -125,6 +125,8 @@ mod ingress;
 pub use ingress::*;
 mod workspaces;
 pub use workspaces::*;
+mod orchestrations;
+pub use orchestrations::*;
 
 #[cfg(test)]
 #[path = "mappers_tests.rs"]

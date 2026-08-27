@@ -62,6 +62,41 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
 pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "get",
+        "/orchestrations",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}/events",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}/epochs",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}/evidence",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}/commands",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/{id}/intents",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
         "/audit_log",
         docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::AuditRead),
     ),

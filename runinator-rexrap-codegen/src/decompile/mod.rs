@@ -705,11 +705,46 @@ impl<'a> Decompiler<'a> {
                 runinator_models::orchestration::IngressAction::Queue => "queue",
                 runinator_models::orchestration::IngressAction::Record => "record",
                 runinator_models::orchestration::IngressAction::Requeue => "requeue",
+                runinator_models::orchestration::IngressAction::Dispatch => "dispatch",
             };
             self.line(&format!(
-                "on {} when {lifecycle} -> {action}",
+                "on {} when {lifecycle}",
                 serde_json::to_string(&route.event_type).unwrap_or_default()
             ));
+            self.indent += 1;
+            for predicate in route.predicates {
+                let operator = match predicate.operator {
+                    runinator_models::orchestration::IngressPredicateOperator::Equal => "==",
+                    runinator_models::orchestration::IngressPredicateOperator::NotEqual => "!=",
+                    runinator_models::orchestration::IngressPredicateOperator::In => "in",
+                    runinator_models::orchestration::IngressPredicateOperator::Contains => {
+                        "contains"
+                    }
+                    runinator_models::orchestration::IngressPredicateOperator::Exists => "exists",
+                };
+                let value = predicate
+                    .value
+                    .as_ref()
+                    .map(|value| render_expression(value).unwrap_or_else(|_| "null".into()))
+                    .unwrap_or_default();
+                self.line(
+                    format!(
+                        "if {} {operator} {value}",
+                        serde_json::to_string(&predicate.pointer).unwrap_or_default()
+                    )
+                    .trim_end(),
+                );
+            }
+            if route.action == runinator_models::orchestration::IngressAction::Dispatch {
+                self.line(&format!(
+                    "-> dispatch {}",
+                    serde_json::to_string(route.intent.as_deref().unwrap_or_default())
+                        .unwrap_or_default()
+                ));
+            } else {
+                self.line(&format!("-> {action}"));
+            }
+            self.indent -= 1;
         }
         self.indent -= 1;
         self.line("}");

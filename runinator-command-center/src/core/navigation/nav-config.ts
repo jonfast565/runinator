@@ -13,6 +13,7 @@ export const navSections: NavSection[] = [
         searchPlaceholder: "Search pipelines",
       },
       { tab: "PipelineRuns", label: "Pipeline Runs", icon: "runs" },
+      { tab: "Orchestrations", label: "Orchestrations", icon: "branch" },
       {
         tab: "Workflows",
         label: "Workflows",
