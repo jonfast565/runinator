@@ -161,8 +161,15 @@ pub async fn delete_pipeline_run(
 pub async fn cancel_pipeline_run(
     state: State<'_, CommandCenterState>,
     pipeline_run_id: Uuid,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<TaskResponse> {
-    let value = post_empty(&state, &format!("pipeline_runs/{pipeline_run_id}/cancel")).await?;
+    let value = post_json(
+        &state,
+        &format!("pipeline_runs/{pipeline_run_id}/cancel"),
+        &json!({ "reason": override_reason, "idempotency_key": idempotency_key }),
+    )
+    .await?;
     serde_json::from_value(value)
         .map_err(|err| CommandError::Unexpected(format!("invalid cancel response: {err}")))
 }
@@ -171,8 +178,15 @@ pub async fn cancel_pipeline_run(
 pub async fn pause_pipeline_run(
     state: State<'_, CommandCenterState>,
     pipeline_run_id: Uuid,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<TaskResponse> {
-    let value = post_empty(&state, &format!("pipeline_runs/{pipeline_run_id}/pause")).await?;
+    let value = post_json(
+        &state,
+        &format!("pipeline_runs/{pipeline_run_id}/pause"),
+        &json!({ "reason": override_reason, "idempotency_key": idempotency_key }),
+    )
+    .await?;
     serde_json::from_value(value)
         .map_err(|err| CommandError::Unexpected(format!("invalid pause response: {err}")))
 }
@@ -181,8 +195,15 @@ pub async fn pause_pipeline_run(
 pub async fn resume_pipeline_run(
     state: State<'_, CommandCenterState>,
     pipeline_run_id: Uuid,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<TaskResponse> {
-    let value = post_empty(&state, &format!("pipeline_runs/{pipeline_run_id}/resume")).await?;
+    let value = post_json(
+        &state,
+        &format!("pipeline_runs/{pipeline_run_id}/resume"),
+        &json!({ "reason": override_reason, "idempotency_key": idempotency_key }),
+    )
+    .await?;
     serde_json::from_value(value)
         .map_err(|err| CommandError::Unexpected(format!("invalid resume response: {err}")))
 }
@@ -193,6 +214,8 @@ pub async fn retry_pipeline_member(
     pipeline_run_id: Uuid,
     member_key: String,
     parameters: Option<Value>,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<PipelineMemberAttempt> {
     let mut url =
         build_state_url(&state, &format!("pipeline_runs/{pipeline_run_id}/members")).await?;
@@ -205,7 +228,11 @@ pub async fn retry_pipeline_member(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({ "parameters": parameters.unwrap_or_else(|| json!({})) }))
+        .json(&json!({
+            "parameters": parameters.unwrap_or_else(|| json!({})),
+            "override_reason": override_reason,
+            "idempotency_key": idempotency_key,
+        }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;

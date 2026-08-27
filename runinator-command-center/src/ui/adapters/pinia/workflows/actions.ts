@@ -41,6 +41,7 @@ export function createWorkflowActions(services: WorkflowServices) {
     continueSelectedWorkflowRun: services.runs.continueSelectedWorkflowRun,
     pauseSelectedWorkflowRun: services.runs.pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun: services.runs.resumeSelectedWorkflowRun,
+    forceManagedWorkflowRunControl: services.runs.forceManagedWorkflowRunControl,
     cancelSelectedWorkflowRun: services.runs.cancelSelectedWorkflowRun,
     deleteSelectedWorkflowRun: services.runs.deleteSelectedWorkflowRun,
     deleteWorkflowRunById: services.runs.deleteWorkflowRunById,

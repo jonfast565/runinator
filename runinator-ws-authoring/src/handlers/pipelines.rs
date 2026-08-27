@@ -24,11 +24,12 @@ use serde::Deserialize;
 
 use runinator_engine::services::{IngressOperations, OrchestrationOperations, PipelineOperations};
 use runinator_ws_core::models::{
-    ApiError, ApiResponse, IngressEventRequest, IngressResponse, PipelineMemberRetryRequest,
-    PipelineRunInquiryDecision, PipelineRunRequest, PipelineRunResolutionRequest,
+    ApiError, ApiResponse, IngressEventRequest, IngressResponse, ManagedRunOverrideRequest,
+    PipelineMemberRetryRequest, PipelineRunInquiryDecision, PipelineRunRequest,
+    PipelineRunResolutionRequest,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 pub async fn get_pipelines<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
@@ -775,12 +776,19 @@ pub async fn delete_pipeline_run<
 }
 
 pub async fn cancel_pipeline_run<
-    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
+    body: Option<Json<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -788,7 +796,17 @@ pub async fn cancel_pipeline_run<
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+    let override_request = body.as_ref().map(|Json(request)| request);
+    if let Err(reply) = authorize_pipeline_run_control(
+        db.clone(),
+        service.as_ref(),
+        &ctx,
+        pipeline_run_id,
+        "cancel",
+        override_request,
+    )
+    .await
+    {
         return reply;
     }
     match service.cancel_run(pipeline_run_id).await {
@@ -798,12 +816,19 @@ pub async fn cancel_pipeline_run<
 }
 
 pub async fn pause_pipeline_run<
-    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
+    body: Option<Json<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -811,7 +836,17 @@ pub async fn pause_pipeline_run<
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+    let override_request = body.as_ref().map(|Json(request)| request);
+    if let Err(reply) = authorize_pipeline_run_control(
+        db.clone(),
+        service.as_ref(),
+        &ctx,
+        pipeline_run_id,
+        "pause",
+        override_request,
+    )
+    .await
+    {
         return reply;
     }
     match service.pause_run(pipeline_run_id).await {
@@ -821,12 +856,19 @@ pub async fn pause_pipeline_run<
 }
 
 pub async fn resume_pipeline_run<
-    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
+    body: Option<Json<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -834,7 +876,17 @@ pub async fn resume_pipeline_run<
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+    let override_request = body.as_ref().map(|Json(request)| request);
+    if let Err(reply) = authorize_pipeline_run_control(
+        db.clone(),
+        service.as_ref(),
+        &ctx,
+        pipeline_run_id,
+        "resume",
+        override_request,
+    )
+    .await
+    {
         return reply;
     }
     match service.resume_run(pipeline_run_id).await {
@@ -847,7 +899,13 @@ pub async fn resume_pipeline_run<
 /// until a human decides whether to continue (fire that member's onward pipeline links and resume)
 /// or abort (settle the run `failed` now).
 pub async fn resolve_pipeline_run<
-    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
@@ -861,7 +919,20 @@ pub async fn resolve_pipeline_run<
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+    let override_request = ManagedRunOverrideRequest {
+        reason: request.override_reason.clone(),
+        idempotency_key: request.idempotency_key.clone(),
+    };
+    if let Err(reply) = authorize_pipeline_run_control(
+        db.clone(),
+        service.as_ref(),
+        &ctx,
+        pipeline_run_id,
+        "resolve_inquiry",
+        Some(&override_request),
+    )
+    .await
+    {
         return reply;
     }
     let continue_pipeline = request.decision == PipelineRunInquiryDecision::Continue;
@@ -880,7 +951,13 @@ pub async fn resolve_pipeline_run<
 }
 
 pub async fn retry_pipeline_member<
-    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
@@ -894,7 +971,20 @@ pub async fn retry_pipeline_member<
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_pipeline_run(service.as_ref(), pipeline_run_id).await {
+    let override_request = ManagedRunOverrideRequest {
+        reason: request.override_reason.clone(),
+        idempotency_key: request.idempotency_key.clone(),
+    };
+    if let Err(reply) = authorize_pipeline_run_control(
+        db.clone(),
+        service.as_ref(),
+        &ctx,
+        pipeline_run_id,
+        &format!("retry_member:{member_key}"),
+        Some(&override_request),
+    )
+    .await
+    {
         return reply;
     }
     match service
@@ -928,6 +1018,76 @@ async fn require_unmanaged_pipeline_run<
         Ok(_) => Ok(()),
         Err(error) => Err(api_error(error.to_string())),
     }
+}
+
+#[allow(clippy::result_large_err)]
+async fn authorize_pipeline_run_control<
+    T: DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
+>(
+    db: Arc<T>,
+    service: &PipelineOperations<T>,
+    ctx: &AuthContext,
+    pipeline_run_id: Uuid,
+    action: &str,
+    request: Option<&ManagedRunOverrideRequest>,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    let binding_id = match service.fetch_run_detail(pipeline_run_id).await {
+        Ok(Some(detail)) => detail.run.orchestration_binding_id,
+        Ok(None) => return Ok(()),
+        Err(error) => return Err(api_error(error.to_string())),
+    };
+    let Some(binding_id) = binding_id else {
+        return Ok(());
+    };
+    if !ctx.is_platform_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse::ApiError(ApiError::new(
+                "Only a platform administrator may force a managed pipeline run control",
+            ))),
+        ));
+    }
+    let reason = request
+        .and_then(|request| request.reason.as_deref())
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .ok_or_else(|| bad_request("A force override requires a non-empty reason"))?;
+    let idempotency_key = request
+        .and_then(|request| request.idempotency_key.as_deref())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| bad_request("A force override requires an idempotency key"))?;
+    let binding = db
+        .fetch_orchestration_binding(binding_id)
+        .await
+        .map_err(|error| api_error(error.to_string()))?
+        .ok_or_else(|| not_found("managed orchestration binding not found"))?;
+    let record = OrchestrationOperations::new(db)
+        .record_out_of_band_override(
+            &binding,
+            "pipeline_run",
+            pipeline_run_id,
+            action,
+            reason.to_owned(),
+            idempotency_key.to_owned(),
+            ctx.principal_id,
+        )
+        .await
+        .map_err(|error| api_error(error.to_string()))?;
+    if record.duplicate {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::ApiError(ApiError::new(
+                "This force override idempotency key was already used",
+            ))),
+        ));
+    }
+    Ok(())
 }
 
 /// the `pipelines` endpoints.

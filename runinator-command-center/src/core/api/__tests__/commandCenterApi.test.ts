@@ -3,6 +3,8 @@ import { setCommandRuntime } from "../runtime";
 import { apiBaseUrl, invokeViaHttp, wsBaseUrl } from "../httpRuntime";
 import {
   addTeamMember,
+  cancelPipelineRun,
+  cancelWorkflowRun,
   clearConsoleSession,
   createApiKey,
   createUser,
@@ -50,6 +52,30 @@ describe("command center catalog metadata API", () => {
   it("requests enum catalogs", async () => {
     await fetchEnumCatalogs();
     expect(invoke).toHaveBeenCalledWith("fetch_enum_catalogs", undefined);
+  });
+
+  it("passes managed-run override audit fields through the shared command runtime", async () => {
+    vi.mocked(invoke).mockResolvedValue({ success: true, message: "accepted" });
+
+    await cancelPipelineRun("pipeline-run-1", {
+      reason: "recover a wedged executor",
+      idempotencyKey: "pipeline-override-1",
+    });
+    await cancelWorkflowRun("workflow-run-1", {
+      reason: "contain a provider incident",
+      idempotencyKey: "workflow-override-1",
+    });
+
+    expect(invoke).toHaveBeenCalledWith("cancel_pipeline_run", {
+      pipelineRunId: "pipeline-run-1",
+      overrideReason: "recover a wedged executor",
+      idempotencyKey: "pipeline-override-1",
+    });
+    expect(invoke).toHaveBeenCalledWith("cancel_workflow_run", {
+      workflowRunId: "workflow-run-1",
+      overrideReason: "contain a provider incident",
+      idempotencyKey: "workflow-override-1",
+    });
   });
 
   it("keeps completed VM effects attached to the node that issued them", async () => {

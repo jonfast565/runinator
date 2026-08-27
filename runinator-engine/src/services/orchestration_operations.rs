@@ -6,8 +6,9 @@ use chrono::{Duration, Utc};
 use runinator_models::{
     errors::SendableError,
     orchestration::{
-        ControlEffect, EpochStopAction, IngressAdmission, IngressInboxEntry, IngressLifecycle,
-        IngressPolicy, NewOrchestrationBinding, OrchestrationBinding, OrchestrationEventReduction,
+        ControlEffect, EpochStopAction, IngressAdmission, IngressEvent, IngressEventDisposition,
+        IngressEventRecord, IngressInboxEntry, IngressLifecycle, IngressPolicy,
+        NewOrchestrationBinding, OrchestrationBinding, OrchestrationEventReduction,
         OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationPolicy,
         OrchestrationStatus, RestartSelector, WorkspaceRecovery,
     },
@@ -160,6 +161,48 @@ impl<T: OrchestrationStore + DefinitionStore> OrchestrationOperations<T> {
 }
 
 impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
+    /// Put an administrator's emergency low-level run control through the durable inbox. The
+    /// control itself remains deliberately out of band, but its immutable event is reduced in
+    /// sequence with adapter and operator intents so the timeline cannot hide the bypass.
+    pub async fn record_out_of_band_override(
+        &self,
+        binding: &OrchestrationBinding,
+        target_kind: &str,
+        target_id: Uuid,
+        action: &str,
+        reason: String,
+        idempotency_key: String,
+        actor_id: Option<Uuid>,
+    ) -> Result<IngressEventRecord, SendableError> {
+        let now = Utc::now();
+        self.store
+            .record_ingress_event(
+                binding.admission_id,
+                binding.generation,
+                IngressEvent {
+                    source: "runinator.admin_override".into(),
+                    event_id: idempotency_key,
+                    event_type: "out_of_band_override".into(),
+                    correlation_key: binding.correlation_key.clone(),
+                    payload: runinator_models::json!({
+                        "target_kind": target_kind,
+                        "target_id": target_id,
+                        "action": action,
+                        "reason": reason,
+                        "actor_id": actor_id,
+                    }),
+                    provenance: runinator_models::json!({
+                        "origin": "platform_admin",
+                    }),
+                    occurred_at: Some(now),
+                },
+                IngressEventDisposition::Recorded,
+                false,
+                now,
+            )
+            .await
+    }
+
     pub async fn reduce_binding(
         &self,
         mut binding: OrchestrationBinding,
@@ -286,7 +329,12 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             .cloned()
             .collect::<Vec<_>>();
         let mut intent_outcome = None;
-        if !event.source.starts_with("runinator.workspace") {
+        // Infrastructure lifecycle and platform-admin override events are reducer-owned audit
+        // inputs. They must never be reinterpreted as authored dispatch routes: an emergency
+        // control has already happened out of band and dispatching it again could double-apply it.
+        if !event.source.starts_with("runinator.workspace")
+            && event.source != "runinator.admin_override"
+        {
             let manual_intent = (event.source == "runinator.manual")
                 .then(|| event.payload.get("intent").and_then(Value::as_str))
                 .flatten();
@@ -893,6 +941,13 @@ mod tests {
                     predicates: vec![],
                     intent: Some("rework".into()),
                 },
+                IngressRoute {
+                    event_type: "out_of_band_override".into(),
+                    lifecycle: IngressLifecycle::Active,
+                    action: IngressAction::Dispatch,
+                    predicates: vec![],
+                    intent: Some("stop".into()),
+                },
             ],
         };
         let now = Utc::now();
@@ -1140,6 +1195,57 @@ mod tests {
                 .filter(|command| command.command_type == "arm_intent_wake")
                 .count(),
             2
+        );
+
+        let operations = OrchestrationOperations::new(db.clone());
+        let override_record = operations
+            .record_out_of_band_override(
+                &reduced,
+                "pipeline_run",
+                Uuid::now_v7(),
+                "pause",
+                "recover inconsistent provider state".into(),
+                "admin-override-1".into(),
+                Some(Uuid::now_v7()),
+            )
+            .await
+            .unwrap();
+        assert!(!override_record.duplicate);
+        let duplicate = operations
+            .record_out_of_band_override(
+                &reduced,
+                "pipeline_run",
+                Uuid::now_v7(),
+                "pause",
+                "retry of the same request".into(),
+                "admin-override-1".into(),
+                Some(Uuid::now_v7()),
+            )
+            .await
+            .unwrap();
+        assert!(duplicate.duplicate);
+        let reduced = operations
+            .reduce_binding(reduced, "self-origin-reducer")
+            .await
+            .unwrap();
+        let reductions = db.fetch_orchestration_reductions(binding.id).await.unwrap();
+        let override_reduction = reductions
+            .iter()
+            .find(|reduction| {
+                reduction
+                    .detail
+                    .pointer("/event/event_type")
+                    .and_then(Value::as_str)
+                    == Some("out_of_band_override")
+            })
+            .expect("administrator override should pass through the reducer timeline");
+        assert_eq!(override_reduction.disposition, "observed");
+        assert_eq!(
+            override_reduction
+                .detail
+                .pointer("/event/payload/action")
+                .and_then(Value::as_str),
+            Some("pause")
         );
 
         db.record_ingress_event(

@@ -11,6 +11,7 @@ import {
 } from "../../api/commandCenterApi";
 import type { JsonRecord } from "../../domain/json";
 import type { PipelineRun, PipelineRunDetail } from "../../domain/models";
+import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
 
 /** Start a manual run of a pipeline (starts its entry members). */
 export async function createPipelineRun(
@@ -36,24 +37,34 @@ export async function deletePipelineRun(pipelineRunId: string): Promise<void> {
   }
 }
 
-export async function cancelPipelineRun(pipelineRunId: string): Promise<void> {
-  await cancelPipelineRunApi(pipelineRunId);
+export async function cancelPipelineRun(
+  pipelineRunId: string,
+  override?: ManagedRunOverrideOptions,
+): Promise<void> {
+  await cancelPipelineRunApi(pipelineRunId, override);
 }
 
-export async function pausePipelineRun(pipelineRunId: string): Promise<void> {
-  await pausePipelineRunApi(pipelineRunId);
+export async function pausePipelineRun(
+  pipelineRunId: string,
+  override?: ManagedRunOverrideOptions,
+): Promise<void> {
+  await pausePipelineRunApi(pipelineRunId, override);
 }
 
-export async function resumePipelineRun(pipelineRunId: string): Promise<void> {
-  await resumePipelineRunApi(pipelineRunId);
+export async function resumePipelineRun(
+  pipelineRunId: string,
+  override?: ManagedRunOverrideOptions,
+): Promise<void> {
+  await resumePipelineRunApi(pipelineRunId, override);
 }
 
 export async function retryPipelineMember(
   pipelineRunId: string,
   memberKey: string,
   parameters: JsonRecord = {},
+  override?: ManagedRunOverrideOptions,
 ) {
-  return retryPipelineMemberApi(pipelineRunId, memberKey, parameters);
+  return retryPipelineMemberApi(pipelineRunId, memberKey, parameters, override);
 }
 
 /** Resolve a pipeline run's pending inquiry. */

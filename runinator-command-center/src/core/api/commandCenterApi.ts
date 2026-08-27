@@ -800,27 +800,56 @@ export async function deletePipelineRun(pipelineRunId: string) {
   return command<TaskResponse>("delete_pipeline_run", { pipelineRunId });
 }
 
-export async function cancelPipelineRun(pipelineRunId: string) {
-  return command<TaskResponse>("cancel_pipeline_run", { pipelineRunId });
+export interface ManagedRunOverrideOptions {
+  reason: string;
+  idempotencyKey: string;
 }
 
-export async function pausePipelineRun(pipelineRunId: string) {
-  return command<TaskResponse>("pause_pipeline_run", { pipelineRunId });
+export async function cancelPipelineRun(
+  pipelineRunId: string,
+  override?: ManagedRunOverrideOptions,
+) {
+  return command<TaskResponse>("cancel_pipeline_run", {
+    pipelineRunId,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
+  });
 }
 
-export async function resumePipelineRun(pipelineRunId: string) {
-  return command<TaskResponse>("resume_pipeline_run", { pipelineRunId });
+export async function pausePipelineRun(
+  pipelineRunId: string,
+  override?: ManagedRunOverrideOptions,
+) {
+  return command<TaskResponse>("pause_pipeline_run", {
+    pipelineRunId,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
+  });
+}
+
+export async function resumePipelineRun(
+  pipelineRunId: string,
+  override?: ManagedRunOverrideOptions,
+) {
+  return command<TaskResponse>("resume_pipeline_run", {
+    pipelineRunId,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
+  });
 }
 
 export async function retryPipelineMember(
   pipelineRunId: string,
   memberKey: string,
   parameters: unknown = {},
+  override?: ManagedRunOverrideOptions,
 ) {
   return command<PipelineMemberAttempt>("retry_pipeline_member", {
     pipelineRunId,
     memberKey,
     parameters,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
   });
 }
 
@@ -1105,25 +1134,48 @@ export async function continueWorkflowRun(workflowRunId: string, cursor?: string
   return command<TaskResponse>("continue_workflow_run", { workflowRunId, cursor });
 }
 
-export async function cancelWorkflowRun(workflowRunId: string) {
-  return command<TaskResponse>("cancel_workflow_run", { workflowRunId });
+export async function cancelWorkflowRun(
+  workflowRunId: string,
+  override?: ManagedRunOverrideOptions,
+) {
+  return command<TaskResponse>("cancel_workflow_run", {
+    workflowRunId,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
+  });
 }
 
-export async function pauseWorkflowRun(workflowRunId: string) {
-  return command<TaskResponse>("pause_workflow_run", { workflowRunId });
+export async function pauseWorkflowRun(
+  workflowRunId: string,
+  override?: ManagedRunOverrideOptions,
+) {
+  return command<TaskResponse>("pause_workflow_run", {
+    workflowRunId,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
+  });
 }
 
-export async function resumeWorkflowRun(workflowRunId: string) {
-  return command<TaskResponse>("resume_workflow_run", { workflowRunId });
+export async function resumeWorkflowRun(
+  workflowRunId: string,
+  override?: ManagedRunOverrideOptions,
+) {
+  return command<TaskResponse>("resume_workflow_run", {
+    workflowRunId,
+    overrideReason: override?.reason ?? null,
+    idempotencyKey: override?.idempotencyKey ?? null,
+  });
 }
 
 export async function replayWorkflowRun(
   workflowRunId: string,
-  options: { fromStepId?: string } = {},
+  options: { fromStepId?: string; override?: ManagedRunOverrideOptions } = {},
 ) {
   return command<WorkflowRunCreated>("replay_workflow_run", {
     workflowRunId,
     fromStepId: options.fromStepId ?? null,
+    overrideReason: options.override?.reason ?? null,
+    idempotencyKey: options.override?.idempotencyKey ?? null,
   });
 }
 

@@ -213,6 +213,8 @@ pub async fn continue_workflow_run(
 pub async fn cancel_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/cancel")).await?;
     let response = state
@@ -220,7 +222,7 @@ pub async fn cancel_workflow_run(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({}))
+        .json(&json!({ "reason": override_reason, "idempotency_key": idempotency_key }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;
@@ -231,6 +233,8 @@ pub async fn cancel_workflow_run(
 pub async fn pause_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/pause")).await?;
     let response = state
@@ -238,7 +242,7 @@ pub async fn pause_workflow_run(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({}))
+        .json(&json!({ "reason": override_reason, "idempotency_key": idempotency_key }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;
@@ -249,6 +253,8 @@ pub async fn pause_workflow_run(
 pub async fn resume_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/resume")).await?;
     let response = state
@@ -256,7 +262,7 @@ pub async fn resume_workflow_run(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({}))
+        .json(&json!({ "reason": override_reason, "idempotency_key": idempotency_key }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;
@@ -280,6 +286,8 @@ pub async fn replay_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
     from_step_id: Option<String>,
+    override_reason: Option<String>,
+    idempotency_key: Option<String>,
 ) -> CommandResult<WorkflowRunCreated> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/replay")).await?;
     let response = state
@@ -287,7 +295,11 @@ pub async fn replay_workflow_run(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({ "from_step_id": from_step_id }))
+        .json(&json!({
+            "from_step_id": from_step_id,
+            "override_reason": override_reason,
+            "idempotency_key": idempotency_key,
+        }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;

@@ -7,6 +7,7 @@ import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { usePipelineRunsStore } from "../../../ui/adapters/pinia/pipeline-runs";
 import { useOrchestrationsStore } from "../../../ui/adapters/pinia/orchestrations";
+import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
@@ -40,6 +41,10 @@ const providersStore = useProvidersStore();
 const app = useAppStore();
 const pipelineRuns = usePipelineRunsStore();
 const orchestrations = useOrchestrationsStore();
+const auth = useAuthStore();
+const isPlatformAdmin = computed(() => auth.user?.platform_role === "admin");
+const managedOverrideReason = ref("");
+const managedOverrideBusy = ref(false);
 interface ManagedWorkspaceSummary { scope: string; status: string }
 interface ManagedOperationSummary { workflow_run_id?: string | null; provider: string; action: string; status: string }
 const orchestrationRuntime = orchestrations as unknown as {
@@ -85,6 +90,26 @@ async function openOrchestration(): Promise<void> {
   app.activeTab = "Orchestrations";
 }
 
+async function forceManagedControl(action: "cancel" | "pause" | "resume" | "replay"): Promise<void> {
+  const reason = managedOverrideReason.value.trim();
+
+  if (!managedBindingId.value || !reason || !isPlatformAdmin.value || managedOverrideBusy.value) {return;}
+  if (!window.confirm(`Force ${action} this managed workflow run outside orchestration control?`)) {return;}
+  managedOverrideBusy.value = true;
+
+  try {
+    await workflows.forceManagedWorkflowRunControl(action, {
+      reason,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    managedOverrideReason.value = "";
+  } catch (err) {
+    app.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    managedOverrideBusy.value = false;
+  }
+}
+
 watch(parentPipelineRunId, (pipelineRunId) => {
   if (pipelineRunId) {
     void pipelineRuns.selectRun(pipelineRunId);
@@ -92,6 +117,8 @@ watch(parentPipelineRunId, (pipelineRunId) => {
 }, { immediate: true });
 
 watch(managedBindingId, (bindingId) => {
+  managedOverrideReason.value = "";
+
   if (bindingId) {
     void orchestrations.select(bindingId);
   }

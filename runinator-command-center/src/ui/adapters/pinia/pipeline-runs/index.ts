@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { Pipeline, PipelineRun, PipelineRunDetail } from "../../../../core/domain/models";
+import type { ManagedRunOverrideOptions } from "../../../../core/api/commandCenterApi";
 import {
   cancelPipelineRun as cancelPipelineRunService,
   createPipelineRun as createPipelineRunService,
@@ -72,8 +73,11 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     await selectRun(run.id);
   }
 
-  async function cancelRun(pipelineRunId: string): Promise<void> {
-    await cancelPipelineRunService(pipelineRunId);
+  async function cancelRun(
+    pipelineRunId: string,
+    override?: ManagedRunOverrideOptions,
+  ): Promise<void> {
+    await cancelPipelineRunService(pipelineRunId, override);
     await refresh();
   }
 
@@ -84,13 +88,19 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     await refresh();
   }
 
-  async function pauseRun(pipelineRunId: string): Promise<void> {
-    await pausePipelineRunService(pipelineRunId);
+  async function pauseRun(
+    pipelineRunId: string,
+    override?: ManagedRunOverrideOptions,
+  ): Promise<void> {
+    await pausePipelineRunService(pipelineRunId, override);
     await refresh();
   }
 
-  async function resumeRun(pipelineRunId: string): Promise<void> {
-    await resumePipelineRunService(pipelineRunId);
+  async function resumeRun(
+    pipelineRunId: string,
+    override?: ManagedRunOverrideOptions,
+  ): Promise<void> {
+    await resumePipelineRunService(pipelineRunId, override);
     await refresh();
   }
 
@@ -98,8 +108,9 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     pipelineRunId: string,
     memberKey: string,
     parameters: Record<string, unknown> = {},
+    override?: ManagedRunOverrideOptions,
   ): Promise<void> {
-    await retryPipelineMemberService(pipelineRunId, memberKey, parameters);
+    await retryPipelineMemberService(pipelineRunId, memberKey, parameters, override);
     await refresh();
   }
 

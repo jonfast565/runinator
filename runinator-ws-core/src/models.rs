@@ -330,10 +330,24 @@ pub struct IngressResponse {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct ManagedRunOverrideRequest {
+    /// Required when a platform administrator deliberately bypasses orchestration ownership.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// Client-generated key used to prevent a retried override request from applying twice.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct PipelineMemberRetryRequest {
     #[serde(default)]
     pub parameters: Value,
+    #[serde(default)]
+    pub override_reason: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -352,6 +366,10 @@ pub struct PipelineRunResolutionRequest {
     pub resolved_by: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub override_reason: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -453,6 +471,10 @@ pub struct WebhookSignalRequest {
 pub struct WorkflowRunReplayRequest {
     #[serde(default)]
     pub from_step_id: Option<String>,
+    #[serde(default)]
+    pub override_reason: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

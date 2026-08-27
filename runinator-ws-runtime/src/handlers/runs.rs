@@ -17,15 +17,17 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{FileStore, IngressStore, RunStore, ScheduleStore, WorkflowVmStore},
+    roles::{
+        FileStore, IngressStore, OrchestrationStore, RunStore, ScheduleStore, WorkflowVmStore,
+    },
 };
 
-use runinator_engine::services::{IngressOperations, RunOperations};
+use runinator_engine::services::{IngressOperations, OrchestrationOperations, RunOperations};
 use runinator_ws_core::models::{
     self, ApiError, ApiResponse, IngressAdmissionQuery, IngressEventRequest, IngressResponse,
-    SchedulerRunClaimReleaseRequest, SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest,
-    TaskResponseSchema, WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
-    WorkflowTriggerRunRequest,
+    ManagedRunOverrideRequest, SchedulerRunClaimReleaseRequest, SchedulerRunClaimRenewRequest,
+    SchedulerRunClaimRequest, TaskResponseSchema, WorkflowRunRequest, WorkflowRunStatusQuery,
+    WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
 };
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, ParamDoc, WORKFLOW_RUN_FILTERS, endpoint, json_body,
@@ -45,6 +47,7 @@ pub trait RunOperationsStore:
     + ScheduleStore
     + FileStore
     + IngressStore
+    + OrchestrationStore
 {
 }
 
@@ -56,6 +59,7 @@ impl<T> RunOperationsStore for T where
         + ScheduleStore
         + FileStore
         + IngressStore
+        + OrchestrationStore
 {
 }
 
@@ -647,6 +651,7 @@ pub async fn release_workflow_run_claim<T: RunOperationsStore>(
     path = "/workflow_runs/{id}/cancel",
     tag = "Workflow Runs",
     params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    request_body = Option<runinator_ws_core::models::ManagedRunOverrideRequest>,
     responses(
         (status = 200, description = "workflow run cancel requested", body = TaskResponseSchema),
         (status = 400, description = "workflow run could not be canceled", body = runinator_ws_core::models::ApiError),
@@ -658,6 +663,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
+    body: Option<Json<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -665,7 +671,16 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+    let override_request = body.as_ref().map(|Json(request)| request);
+    if let Err(reply) = authorize_workflow_run_control(
+        db.clone(),
+        &ctx,
+        workflow_run_id,
+        "cancel",
+        override_request,
+    )
+    .await
+    {
         return reply;
     }
     match operations.cancel(workflow_run_id).await {
@@ -679,6 +694,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     path = "/workflow_runs/{id}/pause",
     tag = "Workflow Runs",
     params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    request_body = Option<runinator_ws_core::models::ManagedRunOverrideRequest>,
     responses(
         (status = 200, description = "workflow run pause requested", body = TaskResponseSchema),
         (status = 400, description = "workflow run could not be paused", body = runinator_ws_core::models::ApiError),
@@ -690,6 +706,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
+    body: Option<Json<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -697,7 +714,11 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+    let override_request = body.as_ref().map(|Json(request)| request);
+    if let Err(reply) =
+        authorize_workflow_run_control(db.clone(), &ctx, workflow_run_id, "pause", override_request)
+            .await
+    {
         return reply;
     }
     match operations.pause(workflow_run_id).await {
@@ -711,6 +732,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     path = "/workflow_runs/{id}/resume",
     tag = "Workflow Runs",
     params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    request_body = Option<runinator_ws_core::models::ManagedRunOverrideRequest>,
     responses(
         (status = 200, description = "workflow run resume requested", body = TaskResponseSchema),
         (status = 400, description = "workflow run could not be resumed", body = runinator_ws_core::models::ApiError),
@@ -722,6 +744,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
+    body: Option<Json<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -729,7 +752,16 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+    let override_request = body.as_ref().map(|Json(request)| request);
+    if let Err(reply) = authorize_workflow_run_control(
+        db.clone(),
+        &ctx,
+        workflow_run_id,
+        "resume",
+        override_request,
+    )
+    .await
+    {
         return reply;
     }
     match operations.resume(workflow_run_id).await {
@@ -763,10 +795,23 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let override_request = ManagedRunOverrideRequest {
+        reason: request.override_reason.clone(),
+        idempotency_key: request.idempotency_key.clone(),
+    };
+    if let Err(reply) = authorize_workflow_run_control(
+        db.clone(),
+        &ctx,
+        workflow_run_id,
+        "replay",
+        Some(&override_request),
+    )
+    .await
+    {
         return reply;
     }
-    let from_step_id = body.and_then(|Json(request)| request.from_step_id);
+    let from_step_id = request.from_step_id;
     match operations.replay(workflow_run_id, from_step_id).await {
         Ok(run) => (
             StatusCode::ACCEPTED,
@@ -798,6 +843,75 @@ async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
         Ok(_) => Ok(()),
         Err(error) => Err(api_error(error.to_string())),
     }
+}
+
+#[allow(clippy::result_large_err)]
+async fn authorize_workflow_run_control<T: RunOperationsStore>(
+    db: Arc<T>,
+    ctx: &runinator_models::auth::AuthContext,
+    workflow_run_id: Uuid,
+    action: &str,
+    request: Option<&ManagedRunOverrideRequest>,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    let workflow_run = db
+        .fetch_workflow_run(workflow_run_id)
+        .await
+        .map_err(|error| api_error(error.to_string()))?;
+    let Some(pipeline_run_id) = workflow_run.and_then(|run| run.pipeline_run_id) else {
+        return Ok(());
+    };
+    let binding_id = db
+        .fetch_pipeline_run(pipeline_run_id)
+        .await
+        .map_err(|error| api_error(error.to_string()))?
+        .and_then(|run| run.orchestration_binding_id);
+    let Some(binding_id) = binding_id else {
+        return Ok(());
+    };
+    if !ctx.is_platform_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse::ApiError(ApiError::new(
+                "Only a platform administrator may force a managed workflow run control",
+            ))),
+        ));
+    }
+    let reason = request
+        .and_then(|request| request.reason.as_deref())
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .ok_or_else(|| bad_request("A force override requires a non-empty reason"))?;
+    let idempotency_key = request
+        .and_then(|request| request.idempotency_key.as_deref())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| bad_request("A force override requires an idempotency key"))?;
+    let binding = db
+        .fetch_orchestration_binding(binding_id)
+        .await
+        .map_err(|error| api_error(error.to_string()))?
+        .ok_or_else(|| not_found("managed orchestration binding not found"))?;
+    let record = OrchestrationOperations::new(db)
+        .record_out_of_band_override(
+            &binding,
+            "workflow_run",
+            workflow_run_id,
+            action,
+            reason.to_owned(),
+            idempotency_key.to_owned(),
+            ctx.principal_id,
+        )
+        .await
+        .map_err(|error| api_error(error.to_string()))?;
+    if record.duplicate {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse::ApiError(ApiError::new(
+                "This force override idempotency key was already used",
+            ))),
+        ));
+    }
+    Ok(())
 }
 
 /// deliver an event to a parked `event_source` node in one run. the node consumes it on the next

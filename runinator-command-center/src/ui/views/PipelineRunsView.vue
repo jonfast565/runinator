@@ -209,7 +209,7 @@
               </p>
               <div class="flex flex-wrap items-end gap-2">
                 <label class="grid min-w-[260px] flex-1 gap-1 text-xs text-fg-muted">
-                  <span>Reason for intent</span>
+                  <span>Reason for intent or emergency override</span>
                   <input v-model="managedReason" class="input" placeholder="Required operator reason" />
                 </label>
                 <button
@@ -223,6 +223,32 @@
                   <span>{{ control.name }}</span>
                 </button>
                 <button class="btn btn-sm" @click="openOrchestration">Full timeline</button>
+              </div>
+              <div
+                v-if="isPlatformAdmin"
+                class="grid gap-2 rounded border border-warning-fg/30 bg-warning-bg px-3 py-2"
+              >
+                <p class="m-0 text-xs text-warning-fg">
+                  Emergency controls bypass orchestration ownership. Each use requires the reason
+                  above and is recorded as an out-of-band reducer event.
+                </p>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    class="btn btn-sm"
+                    :disabled="!managedReason.trim() || runControlBusy"
+                    @click="forceManagedControl('pause')"
+                  >Force pause</button>
+                  <button
+                    class="btn btn-sm"
+                    :disabled="!managedReason.trim() || runControlBusy"
+                    @click="forceManagedControl('resume')"
+                  >Force resume</button>
+                  <button
+                    class="btn btn-danger btn-sm"
+                    :disabled="!managedReason.trim() || runControlBusy"
+                    @click="forceManagedControl('cancel')"
+                  >Force cancel</button>
+                </div>
               </div>
             </section>
 
@@ -328,6 +354,15 @@
                       <Icon name="refresh" />
                       <span>Retry member</span>
                     </button>
+                    <button
+                      v-if="canForceRetryAttempt(attempt)"
+                      class="btn btn-danger btn-sm"
+                      :disabled="!managedReason.trim() || retrying === attempt.id"
+                      @click.prevent="forceRetryAttempt(attempt)"
+                    >
+                      <Icon name="refresh" />
+                      <span>Force retry member</span>
+                    </button>
                     <button v-if="attempt.workflow_run_id" class="btn btn-sm" @click.prevent="openMemberRunById(attempt.workflow_run_id)">
                       <span>Open workflow run</span>
                     </button>
@@ -359,6 +394,7 @@ import { usePipelineRunsStore } from "../../ui/adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrchestrationsStore } from "../../ui/adapters/pinia/orchestrations";
+import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import type {
   OrchestrationBinding,
   PipelineMemberAttempt,
@@ -372,6 +408,7 @@ const store = usePipelineRunsStore();
 const workflows = useWorkflowsStore();
 const app = useAppStore();
 const orchestrations = useOrchestrationsStore();
+const auth = useAuthStore();
 const selectedPipelineId = ref("");
 const starting = ref(false);
 const resolving = ref(false);
@@ -379,6 +416,7 @@ const retrying = ref<string | null>(null);
 const runControlBusy = ref(false);
 const managedIntentBusy = ref(false);
 const managedReason = ref("");
+const isPlatformAdmin = computed(() => auth.user?.platform_role === "admin");
 
 const managedBindingId = computed(() => store.detail?.run.orchestration_binding_id ?? null);
 const managedBinding = computed<OrchestrationBinding | null>(() => {
@@ -501,6 +539,14 @@ function isRetryableAttempt(attempt: PipelineMemberAttempt): boolean {
   );
 }
 
+function canForceRetryAttempt(attempt: PipelineMemberAttempt): boolean {
+  return Boolean(
+    managedBindingId.value
+      && isPlatformAdmin.value
+      && ["failed", "timed_out"].includes(attempt.status),
+  );
+}
+
 async function openOrchestration(): Promise<void> {
   if (!managedBindingId.value) {return;}
   await orchestrations.select(managedBindingId.value);
@@ -541,6 +587,47 @@ async function retryAttempt(attempt: PipelineMemberAttempt): Promise<void> {
   } finally {
     retrying.value = null;
   }
+}
+
+async function forceRetryAttempt(attempt: PipelineMemberAttempt): Promise<void> {
+  const run = store.detail?.run;
+  const reason = managedReason.value.trim();
+
+  if (!run || !reason || retrying.value || !isPlatformAdmin.value) {return;}
+  if (!window.confirm(`Force retry member '${attempt.member_key}' outside orchestration control?`)) {return;}
+  retrying.value = attempt.id;
+
+  try {
+    await store.retryMember(run.id, attempt.member_key, {}, {
+      reason,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    managedReason.value = "";
+  } catch (err) {
+    app.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    retrying.value = null;
+  }
+}
+
+async function forceManagedControl(action: "cancel" | "pause" | "resume"): Promise<void> {
+  const run = store.detail?.run;
+  const reason = managedReason.value.trim();
+
+  if (!run || !reason || !isPlatformAdmin.value || runControlBusy.value) {return;}
+  if (!window.confirm(`Force ${action} this managed pipeline run outside orchestration control?`)) {return;}
+  const override = { reason, idempotencyKey: crypto.randomUUID() };
+  await runControl(async () => {
+    if (action === "cancel") {
+      await store.cancelRun(run.id, override);
+    } else if (action === "pause") {
+      await store.pauseRun(run.id, override);
+    } else {
+      await store.resumeRun(run.id, override);
+    }
+
+    managedReason.value = "";
+  });
 }
 
 async function startRun(): Promise<void> {

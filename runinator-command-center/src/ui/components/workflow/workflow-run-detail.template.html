@@ -68,6 +68,25 @@
         <span class="text-xs text-fg-muted">Runtime controls are routed through named intents on the binding.</span>
         <button class="btn btn-primary btn-sm" @click="openOrchestration">Open orchestration</button>
       </div>
+      <div v-if="isPlatformAdmin" class="summary-row">
+        <div class="grid flex-1 gap-2 rounded border border-warning-fg/30 bg-warning-bg p-2">
+          <span class="text-xs text-warning-fg">
+            Emergency controls bypass orchestration ownership and are recorded as out-of-band
+            reducer events.
+          </span>
+          <input
+            v-model="managedOverrideReason"
+            class="input"
+            placeholder="Required emergency override reason"
+          />
+          <div class="flex flex-wrap gap-2">
+            <button class="btn btn-sm" :disabled="!managedOverrideReason.trim() || managedOverrideBusy" @click="forceManagedControl('pause')">Force pause</button>
+            <button class="btn btn-sm" :disabled="!managedOverrideReason.trim() || managedOverrideBusy" @click="forceManagedControl('resume')">Force resume</button>
+            <button class="btn btn-danger btn-sm" :disabled="!managedOverrideReason.trim() || managedOverrideBusy" @click="forceManagedControl('cancel')">Force cancel</button>
+            <button class="btn btn-danger btn-sm" :disabled="!managedOverrideReason.trim() || managedOverrideBusy" @click="forceManagedControl('replay')">Force replay</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="isTerminalRun && workflows.workflowRunDetail" class="run-summary-card">

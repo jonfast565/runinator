@@ -485,20 +485,36 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   cancel_pipeline_run: {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/cancel`,
+    body: (args) => ({
+      reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
   },
   pause_pipeline_run: {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/pause`,
+    body: (args) => ({
+      reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
   },
   resume_pipeline_run: {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/resume`,
+    body: (args) => ({
+      reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
   },
   retry_pipeline_member: {
     method: "POST",
     path: (args) =>
       `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/members/${escape(arg(args, "memberKey"))}/retry`,
-    body: (args) => ({ parameters: argOpt(args, "parameters") ?? {} }),
+    body: (args) => ({
+      parameters: argOpt(args, "parameters") ?? {},
+      override_reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
   },
   resolve_pipeline_run: {
     method: "POST",
@@ -559,9 +575,27 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   step_workflow_run: workflowRunDebugAction("step"),
   continue_workflow_run: workflowRunDebugAction("continue"),
-  cancel_workflow_run: workflowRunAction("cancel"),
-  pause_workflow_run: workflowRunAction("pause"),
-  resume_workflow_run: workflowRunAction("resume"),
+  cancel_workflow_run: {
+    ...workflowRunAction("cancel"),
+    body: (args) => ({
+      reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
+  },
+  pause_workflow_run: {
+    ...workflowRunAction("pause"),
+    body: (args) => ({
+      reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
+  },
+  resume_workflow_run: {
+    ...workflowRunAction("resume"),
+    body: (args) => ({
+      reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
+  },
   // every field is optional end to end (`#[serde(default)]`): an omitted source defaults to
   // `external`, and an omitted cursor targets whichever real thread drives next.
   request_run_interrupt: {
@@ -588,7 +622,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   replay_workflow_run: {
     method: "POST",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/replay`,
-    body: (args) => ({ from_step_id: argOpt(args, "fromStepId") ?? null }),
+    body: (args) => ({
+      from_step_id: argOpt(args, "fromStepId") ?? null,
+      override_reason: argOpt(args, "overrideReason") ?? null,
+      idempotency_key: argOpt(args, "idempotencyKey") ?? null,
+    }),
     transform: extractWorkflowRunId,
   },
   rename_workflow_run: {

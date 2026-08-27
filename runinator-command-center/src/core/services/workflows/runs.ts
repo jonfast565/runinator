@@ -17,6 +17,7 @@ import {
   resumeWorkflowRun,
   stepWorkflowRun,
 } from "../../api/commandCenterApi";
+import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
 import type { GateRecord, JsonRecord, RunSummary, WorkflowRunDetail } from "../../domain/models";
 import { asJsonRecord, isJsonRecord, jsonRecordArray } from "../../domain/json";
 
@@ -366,6 +367,47 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     host.ctx.setStatus(response.message || `Workflow run ${runId} resumed`);
+    await fetchWorkflowRunDetail(runId, true);
+    host.notify();
+  }
+
+  async function forceManagedWorkflowRunControl(
+    action: "cancel" | "pause" | "resume" | "replay",
+    override: ManagedRunOverrideOptions,
+  ) {
+    const runId = host.state.workflowRunDetail?.run.id;
+
+    if (!runId) {
+      return;
+    }
+
+    if (action === "replay") {
+      const created = await host.ctx.runOperation(`Force replaying workflow run ${runId}`, () =>
+        replayWorkflowRunApi(runId, { override }),
+      );
+      host.ctx.setStatus(`Emergency replay started as run ${created.id}`);
+      await fetchWorkflowRunDetail(runId, true);
+      await fetchRecentWorkflowRuns();
+      host.notify();
+      return;
+    }
+
+    const invoke = action === "cancel"
+      ? cancelWorkflowRun
+      : action === "pause"
+        ? pauseWorkflowRun
+        : resumeWorkflowRun;
+    const response = await host.ctx.runOperation(
+      `Force ${action} workflow run ${runId}`,
+      () => invoke(runId, override),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || `Failed to force ${action} workflow run`);
+      return;
+    }
+
+    host.ctx.setStatus(response.message || `Emergency ${action} applied to workflow run ${runId}`);
     await fetchWorkflowRunDetail(runId, true);
     host.notify();
   }
@@ -1069,6 +1111,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     requestSelectedRunInterrupt,
     pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun,
+    forceManagedWorkflowRunControl,
     replaySelectedWorkflowRun,
     renameSelectedWorkflowRun,
     cancelWorkflowRuns,
