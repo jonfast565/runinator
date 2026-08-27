@@ -169,6 +169,33 @@ fn validate_definition(
     Ok(())
 }
 
+fn identity_projection(
+    kind: &str,
+    configuration: &runinator_models::value::Value,
+) -> serde_json::Value {
+    let configuration = serde_json::to_value(configuration).unwrap_or_default();
+    let fields: &[&str] = match kind {
+        "generic_webhook" => &[
+            "delivery_id_pointer",
+            "scope_pointer",
+            "correlation_pointer",
+        ],
+        "jira" => &["instance_id"],
+        _ => &[],
+    };
+    serde_json::Value::Object(
+        fields
+            .iter()
+            .filter_map(|field| {
+                configuration
+                    .get(*field)
+                    .cloned()
+                    .map(|value| ((*field).to_owned(), value))
+            })
+            .collect(),
+    )
+}
+
 async fn current_revision<T: OrchestrationStore>(
     db: &T,
     adapter: &AdapterDefinition,
@@ -612,6 +639,19 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
     }
+    if adapter.has_admitted_binding {
+        let current = match current_revision(db.as_ref(), &adapter).await {
+            Ok(value) => value,
+            Err(reply) => return reply,
+        };
+        if identity_projection(&adapter.kind, &current.configuration)
+            != identity_projection(&adapter.kind, &request.configuration)
+        {
+            return bad_request(
+                "adapter identity extraction is immutable after its first admitted binding; clone the adapter instead",
+            );
+        }
+    }
     let expected_revision = request
         .expected_revision
         .unwrap_or(adapter.current_revision);
@@ -968,4 +1008,57 @@ where
         .route("/webhooks/orchestration/{adapter_id}", post(webhook::<T>))
         .layer(Extension(pool))
         .layer(Extension(publisher))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::identity_projection;
+    use runinator_models::json;
+
+    #[test]
+    fn generic_identity_projection_ignores_non_identity_configuration() {
+        let first = json!({
+            "delivery_id_pointer": "/delivery",
+            "scope_pointer": "/tenant",
+            "correlation_pointer": "/subject/id",
+            "event_pointer": "/event"
+        });
+        let second = json!({
+            "delivery_id_pointer": "/delivery",
+            "scope_pointer": "/tenant",
+            "correlation_pointer": "/subject/id",
+            "event_pointer": "/kind",
+            "payload_pointer": "/payload"
+        });
+        assert_eq!(
+            identity_projection("generic_webhook", &first),
+            identity_projection("generic_webhook", &second)
+        );
+    }
+
+    #[test]
+    fn identity_projection_tracks_generic_pointers_and_jira_instance() {
+        assert_ne!(
+            identity_projection(
+                "generic_webhook",
+                &json!({
+                    "delivery_id_pointer": "/delivery",
+                    "scope_pointer": "/tenant",
+                    "correlation_pointer": "/subject/id"
+                })
+            ),
+            identity_projection(
+                "generic_webhook",
+                &json!({
+                    "delivery_id_pointer": "/delivery",
+                    "scope_pointer": "/tenant",
+                    "correlation_pointer": "/new/id"
+                })
+            )
+        );
+        assert_ne!(
+            identity_projection("jira", &json!({ "instance_id": "first" })),
+            identity_projection("jira", &json!({ "instance_id": "second" }))
+        );
+    }
 }
