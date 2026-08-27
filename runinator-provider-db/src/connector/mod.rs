@@ -12,7 +12,9 @@ use crate::statement::StatementSpec;
 
 #[cfg(feature = "mongo")]
 pub mod mongo;
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 pub mod sql;
+pub(crate) mod timeout;
 
 /// what `db.provision` should ensure exists before the workflow touches the database.
 #[derive(Debug, Default)]

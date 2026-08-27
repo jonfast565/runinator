@@ -3,7 +3,6 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
-use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_store::roles::DefinitionStore;
 
@@ -52,43 +51,11 @@ pub async fn upsert_catalog_item<T: DefinitionStore>(
 }
 
 pub async fn seed_builtin_catalog<T: DefinitionStore>(db: &T) -> Result<(), SendableError> {
-    for raw in [include_str!("../../../packs/sdlc/sdlc.rrx")] {
-        let item = rexrap_pack_catalog_item(raw)?;
-        db.upsert_catalog_item(item).await?;
-    }
     for provider in runinator_provider_catalog::metadata() {
         db.upsert_catalog_item(provider_catalog_item(&provider))
             .await?;
     }
     Ok(())
-}
-
-fn rexrap_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
-    let blocks = runinator_rexrap::parse_rrx_blocks(raw)?;
-    let package = blocks
-        .packages
-        .first()
-        .ok_or_else(|| "builtin pack is missing a package block".to_string())?;
-    let manifest: Value = serde_json::from_str(package)?;
-    let version = manifest
-        .get("version")
-        .and_then(|value| {
-            value
-                .as_str()
-                .map(str::to_string)
-                .or_else(|| value.as_i64().map(|number| number.to_string()))
-        })
-        .unwrap_or_else(|| "1".to_string());
-    Ok(json!({
-        "uri": "runinator://packs/sdlc",
-        "item_type": "rexrap_pack",
-        "name": manifest.get("name").and_then(Value::as_str).unwrap_or("SDLC Automation Pack"),
-        "version": version,
-        "document": {
-            "workflows": manifest.get("workflows").cloned().unwrap_or_else(|| json!([])),
-            "triggers": manifest.get("triggers").cloned().unwrap_or_else(|| json!([]))
-        }
-    }))
 }
 
 /// the `catalog` endpoints.

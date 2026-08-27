@@ -8,7 +8,7 @@ use runinator_models::errors::SendableError;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
 
-use crate::connector::sql::ops::with_timeout;
+use crate::connector::timeout::with_timeout;
 use crate::connector::{DatabaseConnector, ProvisionSpec, SeedSpec};
 use crate::errors::{
     CONNECTION_FAILED, DATABASE_MISSING, INVALID_STATEMENT, STATEMENT_FAILED, UNSUPPORTED_ENGINE,

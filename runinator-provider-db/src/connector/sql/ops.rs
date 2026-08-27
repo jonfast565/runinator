@@ -1,9 +1,7 @@
-use std::time::Duration;
-
 use runinator_models::errors::SendableError;
 use serde_json::Value;
 
-use crate::errors::{STATEMENT_FAILED, STATEMENT_TIMEOUT};
+use crate::errors::STATEMENT_FAILED;
 
 /// a single statement to run inside a script, already resolved to text, parameters, and whether
 /// its result should be collected as rows or as an affected count.
@@ -46,20 +44,6 @@ pub fn sql_returns_rows(text: &str) -> bool {
         .any(|word| word.trim_matches(|ch: char| !ch.is_alphanumeric()) == "returning")
 }
 
-/// wrap a database future in the statement timeout, mapping the elapsed case to `DB006`.
-pub async fn with_timeout<F, T>(future: F, timeout: Duration) -> Result<T, SendableError>
-where
-    F: std::future::Future<Output = Result<T, SendableError>>,
-{
-    match tokio::time::timeout(timeout, future).await {
-        Ok(result) => result,
-        Err(_) => Err(STATEMENT_TIMEOUT.error(format!(
-            "statement timed out after {} seconds",
-            timeout.as_secs()
-        ))),
-    }
-}
-
 pub fn statement_error(err: sqlx::Error) -> SendableError {
     STATEMENT_FAILED.error(err.to_string())
 }
@@ -83,7 +67,8 @@ macro_rules! sql_ops {
             use serde_json::Value;
             use sqlx::{Column, Executor, TypeInfo};
 
-            use super::{SqlStep, statement_error, with_timeout};
+            use super::{SqlStep, statement_error};
+            use crate::connector::timeout::with_timeout;
             use crate::rowset::{ColumnInfo, ExecOutcome, RowSet, StepOutcome};
 
             type Pool = $pool;
