@@ -27,6 +27,25 @@ pub struct IntentDecision {
     pub suppressed: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentApplyOutcome {
+    Applied,
+    IgnoredState,
+    IgnoredSubjectRevision,
+    IgnoredNoActiveMember,
+}
+
+impl IntentApplyOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::IgnoredState => "ignored_state",
+            Self::IgnoredSubjectRevision => "ignored_subject_revision",
+            Self::IgnoredNoActiveMember => "ignored_no_active_member",
+        }
+    }
+}
+
 /// Resolve named-intent precedence without knowing any provider or problem-domain vocabulary.
 pub fn choose_intent<'a>(
     candidates: impl IntoIterator<Item = &'a str>,
@@ -180,7 +199,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             .into_iter()
             .filter(|intent| intent.wake_at <= Utc::now())
         {
-            binding = self
+            (binding, _) = self
                 .apply_intent(
                     binding,
                     owner,
@@ -261,13 +280,27 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 "observed".into()
             }
         });
+        let matching_routes = ingress
+            .routes_for_payload(&event.event_type, IngressLifecycle::Active, &event.payload)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut intent_outcome = None;
         if !event.source.starts_with("runinator.workspace") {
             let manual_intent = (event.source == "runinator.manual")
                 .then(|| event.payload.get("intent").and_then(Value::as_str))
                 .flatten();
-            let routed = ingress
-                .dispatches_for(&event.event_type, IngressLifecycle::Active, &event.payload)
-                .into_iter()
+            let effective_payload = if manual_intent.is_some() {
+                event.payload.get("payload").cloned().unwrap_or_default()
+            } else {
+                event.payload.clone()
+            };
+            let routed = matching_routes
+                .iter()
+                .filter(|route| {
+                    route.action == runinator_models::orchestration::IngressAction::Dispatch
+                })
+                .filter_map(|route| route.intent.as_deref())
                 .filter(|name| {
                     self_origin_operation.is_none()
                         || binding
@@ -303,7 +336,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                             intent: winner.to_string(),
                             priority: intent.priority,
                             source_event_ids,
-                            latest_payload: event.payload.clone(),
+                            latest_payload: effective_payload,
                             wake_at: now + Duration::seconds(seconds as i64),
                             created_at: now,
                             updated_at: now,
@@ -318,19 +351,15 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                     self.store
                         .delete_orchestration_pending_intents_below(binding.id, intent.priority)
                         .await?;
-                    binding = self
-                        .apply_intent(
-                            binding,
-                            owner,
-                            winner,
-                            event.payload.clone(),
-                            Some(event.id),
-                        )
+                    let applied = self
+                        .apply_intent(binding, owner, winner, effective_payload, Some(event.id))
                         .await?;
+                    binding = applied.0;
+                    intent_outcome = Some(applied.1);
                     disposition = if self_origin_operation.is_some() {
-                        "self_originated_applied".into()
+                        format!("self_originated_{}", applied.1.as_str())
                     } else {
-                        "applied".into()
+                        applied.1.as_str().into()
                     };
                 }
             }
@@ -391,6 +420,17 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 binding_version: updated.version,
                 disposition,
                 detail: runinator_models::json!({
+                    "event": {
+                        "source": event.source,
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "correlation_key": event.correlation_key,
+                        "occurred_at": event.occurred_at,
+                        "received_at": event.received_at,
+                        "payload": event.payload,
+                    },
+                    "matched_routes": matching_routes,
+                    "intent_outcome": intent_outcome.map(IntentApplyOutcome::as_str),
                     "self_originated": self_origin_operation.is_some(),
                     "external_operation_id": self_origin_operation.map(|operation| operation.id),
                     "provenance": event.provenance,
@@ -537,7 +577,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
         name: &str,
         payload: Value,
         source_event_id: Option<Uuid>,
-    ) -> Result<OrchestrationBinding, SendableError> {
+    ) -> Result<(OrchestrationBinding, IntentApplyOutcome), SendableError> {
         let intent = binding.policy.intents.get(name).cloned().ok_or_else(|| {
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -545,6 +585,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             )) as SendableError
         })?;
         let restart_member = resolve_restart_member(&binding, &intent.restart);
+        let mut outcome = IntentApplyOutcome::Applied;
         match intent.effect {
             ControlEffect::Terminate => {
                 self.enqueue_control(&binding, "cancel_epoch", payload.clone())
@@ -553,6 +594,9 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 binding.finished_at = Some(Utc::now());
             }
             ControlEffect::Suspend => {
+                if binding.status == OrchestrationStatus::Suspended {
+                    return Ok((binding, IntentApplyOutcome::IgnoredState));
+                }
                 let command = match intent.stop {
                     EpochStopAction::Pause => "pause_epoch",
                     EpochStopAction::Cancel => "cancel_epoch",
@@ -589,6 +633,8 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                     binding.status = OrchestrationStatus::Running;
                     binding.restart_member = None;
                     binding.resume_existing_epoch = false;
+                } else {
+                    outcome = IntentApplyOutcome::IgnoredState;
                 }
             }
             ControlEffect::Supersede => {
@@ -615,11 +661,15 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                     .await?;
             }
             ControlEffect::Signal => {
+                if binding.status != OrchestrationStatus::Running || binding.current_phase.is_none()
+                {
+                    return Ok((binding, IntentApplyOutcome::IgnoredNoActiveMember));
+                }
                 if let Some(pointer) = intent.subject_revision_pointer.as_deref()
                     && payload.pointer(pointer).and_then(Value::as_str)
                         != binding.subject_revision.as_deref()
                 {
-                    return Ok(binding);
+                    return Ok((binding, IntentApplyOutcome::IgnoredSubjectRevision));
                 }
                 self.enqueue_control(
                     &binding,
@@ -633,7 +683,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             }
         }
         let _ = owner;
-        Ok(binding)
+        Ok((binding, outcome))
     }
 
     async fn enqueue_epoch(
@@ -934,6 +984,62 @@ mod tests {
                 .iter()
                 .any(|item| item.kind == "self_originated_event")
         );
+        assert_eq!(
+            reductions
+                .last()
+                .unwrap()
+                .detail
+                .pointer("/event/event_id")
+                .and_then(Value::as_str),
+            Some("echo")
+        );
+        assert_eq!(
+            reductions
+                .last()
+                .unwrap()
+                .detail
+                .pointer("/matched_routes/0/intent")
+                .and_then(Value::as_str),
+            Some("stop")
+        );
+
+        db.record_ingress_event(
+            binding.admission_id,
+            binding.generation,
+            IngressEvent {
+                source: "runinator.manual".into(),
+                event_id: "manual-stop".into(),
+                event_type: "manual_intent".into(),
+                correlation_key: binding.correlation_key.clone(),
+                payload: runinator_models::json!({
+                    "intent": "stop",
+                    "payload": { "reason": "operator request" },
+                    "reason": "audit reason",
+                }),
+                provenance: Value::Null,
+                occurred_at: Some(now),
+            },
+            IngressEventDisposition::Recorded,
+            false,
+            now,
+        )
+        .await
+        .unwrap();
+        let reduced = OrchestrationOperations::new(db.clone())
+            .reduce_binding(reduced, "self-origin-reducer")
+            .await
+            .unwrap();
+        assert_eq!(reduced.status, OrchestrationStatus::Terminated);
+        let commands = db.fetch_orchestration_commands(binding.id).await.unwrap();
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.command_type == "cancel_epoch")
+                .map(|command| command.payload.clone()),
+            Some(runinator_models::json!({ "reason": "operator request" }))
+        );
+        let reductions = db.fetch_orchestration_reductions(binding.id).await.unwrap();
+        assert_eq!(reductions.last().unwrap().disposition, "applied");
 
         drop(db);
         let _ = std::fs::remove_file(path);
