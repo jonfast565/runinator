@@ -29,8 +29,8 @@ fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.into(),
-        key: None,
-        namespace: None,
+        key: Some(format!("test.{}", name.replace(' ', "_"))),
+        namespace: Some("test".into()),
         org_id: None,
         version: SemVer::new(1, 0, 0),
         enabled: true,
@@ -52,7 +52,7 @@ fn subflow_workflow(name: &str, target: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.into(),
-        key: None,
+        key: Some(format!("test.{}", name.replace(' ', "_"))),
         namespace: Some("acme.billing".into()),
         org_id: None,
         version: SemVer::new(1, 0, 0),

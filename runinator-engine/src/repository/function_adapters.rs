@@ -125,8 +125,9 @@ pub fn build_adapter_workflow(
 /// body is validated against the same schema a workflow call is type-checked against.
 fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> String {
     let mut source = format!(
-        "workflow \"{}\" v1 {{\n",
-        adapter_workflow_name(entry).replace('"', "")
+        "namespace runinator.functions {{\nworkflow \"{}\" v1 {{\n    key functions.adapter.export_{}\n",
+        adapter_workflow_name(entry).replace('"', ""),
+        entry.export_id.simple(),
     );
     if !export.input.is_empty() {
         source.push_str("    params {\n");
@@ -153,7 +154,7 @@ fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> Stri
         entry.export_name
     ));
     source.push_str("    }\n");
-    source.push_str("}\n");
+    source.push_str("}\n}\n");
     source
 }
 

@@ -63,7 +63,7 @@ fn a_console_scratch_workflow_is_recognisable_as_managed() {
     // built through the compiler rather than hand-assembled, so the marker is checked against a
     // definition of the shape the scratch path actually produces.
     let mut definition = runinator_rexrap::compile_str(
-        "workflow \"console.abc.def\" v1 {\n    do {\n        console.run(command: \"go\")\n    }\n}\n",
+        "namespace runinator.console {\nworkflow \"console.abc.def\" v1 {\n    key console_abc_def\n    do {\n        console.run(command: \"go\")\n    }\n}\n}\n",
         &runinator_rexrap::CompileOptions {
             enabled: true,
             ..runinator_rexrap::CompileOptions::default()

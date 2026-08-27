@@ -422,7 +422,7 @@ fn library_validation_source(active: &[ConsoleFunction], local: &[NewConsoleFunc
         .collect::<Vec<_>>();
     sources.extend(local.iter().map(|function| function.source.as_str()));
     format!(
-        "{}\nworkflow \"__console_library__\" v1 {{\n    do {{\n        compute {{ return null }}\n    }}\n}}\n",
+        "{}\nnamespace runinator.console {{\nworkflow \"__console_library__\" v1 {{\n    key console_library\n    do {{\n        compute {{ return null }}\n    }}\n}}\n}}\n",
         sources.join("\n\n")
     )
 }

@@ -218,6 +218,17 @@ pub fn workflow_source_with_functions(
     workflow_name: &str,
     functions: &[ConsoleFunction],
 ) -> String {
+    let workflow_key = format!(
+        "console.{}",
+        workflow_name
+            .chars()
+            .map(|character| if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            })
+            .collect::<String>()
+    );
     let local_names = runinator_rexrap::function_definitions(cell_source)
         .unwrap_or_default()
         .into_iter()
@@ -240,7 +251,9 @@ pub fn workflow_source_with_functions(
         let prefix = insert_declarations(&cell_source[..span.start], &declarations);
         let body = indent(&cell_source[span.start..span.end], 4);
         let suffix = &cell_source[span.end..];
-        return format!("{prefix}\nworkflow \"{workflow_name}\" v1 {{\n{body}\n}}\n{suffix}");
+        return format!(
+            "{prefix}\nnamespace runinator.console {{\nworkflow \"{workflow_name}\" v1 {{\n    key {workflow_key}\n{body}\n}}\n}}\n{suffix}"
+        );
     }
 
     let body = indent(cell_source, 8);
@@ -249,7 +262,9 @@ pub fn workflow_source_with_functions(
     } else {
         format!("{declarations}\n\n")
     };
-    format!("{prefix}workflow \"{workflow_name}\" v1 {{\n    do {{\n{body}\n    }}\n}}\n")
+    format!(
+        "{prefix}namespace runinator.console {{\nworkflow \"{workflow_name}\" v1 {{\n    key {workflow_key}\n    do {{\n{body}\n    }}\n}}\n}}\n"
+    )
 }
 
 fn insert_declarations(source: &str, declarations: &str) -> String {
