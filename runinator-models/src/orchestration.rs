@@ -711,6 +711,10 @@ pub struct AdapterKindMetadata {
     pub canonical_pointers: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Human-readable provider setup steps. The command center renders these verbatim so dynamic
+    /// adapter kinds can explain their installation without frontend-specific branching.
+    #[serde(default)]
+    pub setup_instructions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

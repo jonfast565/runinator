@@ -9,7 +9,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
@@ -115,6 +115,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         catalog: Arc::new(RwLock::new(BTreeMap::new())),
     };
     reload_catalog(&state).await;
+    let host_request_limit = state
+        .limits
+        .body_bytes
+        .saturating_mul(2)
+        .saturating_add(64 * 1024);
     let port = std::env::var("RUNINATOR_ADAPTER_HOST_PORT")
         .ok()
         .and_then(|raw| raw.parse().ok())
@@ -126,6 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/kinds", get(kinds))
         .route("/reload", post(reload))
         .route("/verify-normalize", post(invoke))
+        .layer(DefaultBodyLimit::max(host_request_limit))
         .with_state(state);
     axum::serve(listener, router).await?;
     Ok(())
@@ -191,11 +197,13 @@ async fn invoke(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    if request.request.body_base64.len() > state.limits.body_bytes.saturating_mul(2) {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(json!({ "error": "request body exceeds limit" })),
-        );
+    if let Err(error) = decode_body_bytes(&request.request, state.limits.body_bytes) {
+        let status = if error == "request body exceeds limit" {
+            StatusCode::PAYLOAD_TOO_LARGE
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return (status, Json(json!({ "error": error })));
     }
     let entry = state.catalog.read().await.get(&request.kind).cloned();
     let Some(entry) = entry else {
@@ -446,6 +454,7 @@ fn placeholder_metadata(path: &Path) -> AdapterKindMetadata {
         event_names: vec![],
         canonical_pointers: vec![],
         capabilities: vec![],
+        setup_instructions: vec![],
     }
 }
 
@@ -454,14 +463,16 @@ fn field(
     value_type: RuninatorType,
     required: bool,
     secret: bool,
+    description: &str,
+    default: Value,
 ) -> AdapterConfigurationField {
     AdapterConfigurationField {
         name: name.into(),
         value_type,
         required,
         secret,
-        description: None,
-        default: Value::Null.into(),
+        description: Some(description.into()),
+        default: default.into(),
     }
 }
 
@@ -472,21 +483,86 @@ fn generic_metadata() -> AdapterKindMetadata {
         display_name: "Generic webhook".into(),
         description: Some("HMAC-SHA256 or bearer-authenticated JSON webhook".into()),
         fields: vec![
-            field("authentication", RuninatorType::String, true, false),
-            field("secret", RuninatorType::String, true, true),
-            field("delivery_id_pointer", RuninatorType::String, true, false),
-            field("scope_pointer", RuninatorType::String, true, false),
-            field("correlation_pointer", RuninatorType::String, true, false),
-            field("event_pointer", RuninatorType::String, true, false),
-            field("occurred_at_pointer", RuninatorType::String, false, false),
-            field("payload_pointer", RuninatorType::String, false, false),
+            field(
+                "authentication",
+                RuninatorType::Enum(vec!["hmac_sha256".into(), "bearer".into()]),
+                true,
+                false,
+                "Verification scheme used by the sender.",
+                "hmac_sha256".into(),
+            ),
+            field(
+                "secret",
+                RuninatorType::String,
+                true,
+                true,
+                "Stored Secret used to verify the signature or bearer token.",
+                Value::Null,
+            ),
+            field(
+                "delivery_id_pointer",
+                RuninatorType::String,
+                true,
+                false,
+                "JSON pointer to a provider-stable delivery identifier.",
+                "/delivery_id".into(),
+            ),
+            field(
+                "scope_pointer",
+                RuninatorType::String,
+                true,
+                false,
+                "JSON pointer to the admission scope.",
+                "/scope".into(),
+            ),
+            field(
+                "correlation_pointer",
+                RuninatorType::String,
+                true,
+                false,
+                "JSON pointer to the resource correlation key.",
+                "/correlation_key".into(),
+            ),
+            field(
+                "event_pointer",
+                RuninatorType::String,
+                true,
+                false,
+                "JSON pointer to the normalized event name.",
+                "/event_type".into(),
+            ),
+            field(
+                "occurred_at_pointer",
+                RuninatorType::String,
+                false,
+                false,
+                "Optional JSON pointer to an RFC 3339 or epoch occurrence time.",
+                Value::Null,
+            ),
+            field(
+                "payload_pointer",
+                RuninatorType::String,
+                false,
+                false,
+                "Optional JSON pointer selecting the normalized payload subtree.",
+                Value::Null,
+            ),
             field(
                 "subject_revision_pointer",
                 RuninatorType::String,
                 false,
                 false,
+                "Optional JSON pointer to a revision used to fence stale signals.",
+                Value::Null,
             ),
-            field("provenance_pointer", RuninatorType::String, false, false),
+            field(
+                "provenance_pointer",
+                RuninatorType::String,
+                false,
+                false,
+                "Optional JSON pointer to provider-operation provenance.",
+                Value::Null,
+            ),
         ],
         event_names: vec![],
         canonical_pointers: vec![
@@ -496,6 +572,11 @@ fn generic_metadata() -> AdapterKindMetadata {
             "/event_type".into(),
         ],
         capabilities: vec!["hmac_sha256".into(), "bearer".into()],
+        setup_instructions: vec![
+            "Configure the sender to POST the original JSON bytes to the webhook URL above.".into(),
+            "For HMAC-SHA256, send sha256=<hex digest> in X-Runinator-Signature; for bearer authentication, send Authorization: Bearer <token>.".into(),
+            "Choose stable delivery, scope, correlation, and event pointers before admitting correlations; identity fields lock after first use.".into(),
+        ],
     }
 }
 
@@ -506,8 +587,22 @@ fn jira_metadata() -> AdapterKindMetadata {
         display_name: "Jira".into(),
         description: Some("Canonical Jira issue, change, and comment events".into()),
         fields: vec![
-            field("instance_id", RuninatorType::String, true, false),
-            field("secret", RuninatorType::String, true, true),
+            field(
+                "instance_id",
+                RuninatorType::String,
+                true,
+                false,
+                "Stable Jira instance identity, such as the site hostname.",
+                Value::Null,
+            ),
+            field(
+                "secret",
+                RuninatorType::String,
+                true,
+                true,
+                "Stored Secret expected as the webhook bearer token.",
+                Value::Null,
+            ),
         ],
         event_names: vec!["issue_updated".into(), "comment_created".into()],
         canonical_pointers: vec![
@@ -517,6 +612,11 @@ fn jira_metadata() -> AdapterKindMetadata {
             "/provenance".into(),
         ],
         capabilities: vec!["bearer".into()],
+        setup_instructions: vec![
+            "Configure Jira automation or a webhook to POST issue, change, and comment deliveries to the webhook URL above.".into(),
+            "Send Authorization: Bearer <token> using the same value as the selected Secret.".into(),
+            "Set the stable Jira instance identity before enabling the adapter; it becomes part of every correlation scope.".into(),
+        ],
     }
 }
 
@@ -526,7 +626,14 @@ fn github_metadata() -> AdapterKindMetadata {
         version: "1".into(),
         display_name: "GitHub".into(),
         description: Some("Canonical repository, pull request, check, and workflow events".into()),
-        fields: vec![field("secret", RuninatorType::String, true, true)],
+        fields: vec![field(
+            "secret",
+            RuninatorType::String,
+            true,
+            true,
+            "Stored Secret used to verify X-Hub-Signature-256.",
+            Value::Null,
+        )],
         event_names: vec![
             "pull_request".into(),
             "check_run".into(),
@@ -539,6 +646,11 @@ fn github_metadata() -> AdapterKindMetadata {
             "/provenance".into(),
         ],
         capabilities: vec!["hmac_sha256".into()],
+        setup_instructions: vec![
+            "In the repository or organization webhook settings, use the webhook URL above and application/json content type.".into(),
+            "Use the same webhook secret as the selected stored Secret; signature verification is mandatory.".into(),
+            "Subscribe to pull request, check run, and workflow run events needed by the pipeline admission routes.".into(),
+        ],
     }
 }
 
@@ -552,15 +664,20 @@ fn builtin_handle(kind: &str, request: AdapterRequest, body_limit: usize) -> Ada
 }
 
 fn decode_body(request: &AdapterRequest, body_limit: usize) -> Result<(Vec<u8>, Value), String> {
+    let bytes = decode_body_bytes(request, body_limit)?;
+    let json = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    Ok((bytes, json))
+}
+
+fn decode_body_bytes(request: &AdapterRequest, body_limit: usize) -> Result<Vec<u8>, String> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&request.body_base64)
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "request body is not valid base64".to_string())?;
     if bytes.len() > body_limit {
         return Err("request body exceeds limit".into());
     }
-    let json = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    Ok((bytes, json))
+    Ok(bytes)
 }
 
 fn configured_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -1103,5 +1220,22 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("JSON body"))
         );
+    }
+
+    #[test]
+    fn builtins_publish_typed_configuration_and_setup_guidance() {
+        let generic = generic_metadata();
+        let authentication = generic
+            .fields
+            .iter()
+            .find(|field| field.name == "authentication")
+            .unwrap();
+        assert_eq!(
+            authentication.value_type,
+            RuninatorType::Enum(vec!["hmac_sha256".into(), "bearer".into()])
+        );
+        assert!(!generic.setup_instructions.is_empty());
+        assert!(!jira_metadata().setup_instructions.is_empty());
+        assert!(!github_metadata().setup_instructions.is_empty());
     }
 }

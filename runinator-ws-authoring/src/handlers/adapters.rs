@@ -1277,6 +1277,7 @@ mod tests {
             event_names: vec![],
             canonical_pointers: vec![],
             capabilities: vec![],
+            setup_instructions: vec![],
         };
         let request = AdapterApplyRequest {
             name: "adapter".into(),

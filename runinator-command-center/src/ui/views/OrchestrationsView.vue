@@ -42,6 +42,16 @@
               <article v-for="event in store.events" :key="event.id" class="rounded border border-border p-3 text-sm"><div class="flex justify-between gap-3"><strong>#{{ event.sequence }} {{ event.winner || "observed" }}</strong><span class="text-fg-muted">{{ event.disposition }}</span></div><p class="mt-1 text-xs text-fg-muted">matched: {{ event.matched_intents.join(", ") || "none" }} · suppressed: {{ event.suppressed_intents.join(", ") || "none" }}</p><pre class="mt-2 overflow-auto text-xs">{{ pretty(event.detail) }}</pre></article>
             </div>
             <div v-else-if="activeInstanceTab === 'Epochs'" class="space-y-2">
+              <section v-if="currentEpochRunId" class="grid gap-2 rounded border border-border p-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div><strong>Current epoch execution graph</strong><p class="text-xs text-fg-muted">Immutable pipeline snapshot for epoch {{ store.selected.current_epoch }}</p></div>
+                  <button class="button" @click="openPipelineRun(currentEpochRunId)">Open pipeline run</button>
+                </div>
+                <div v-if="currentEpochDetail" class="h-[360px] min-h-[260px] overflow-hidden rounded border border-border bg-surface-raised">
+                  <PipelineCanvas :detail="currentEpochDetail" readonly @open-run="openWorkflowRun" />
+                </div>
+                <p v-else class="text-sm text-fg-muted">{{ pipelineRuns.detailLoading ? "Loading execution graph…" : "Execution graph unavailable." }}</p>
+              </section>
               <article v-for="epoch in store.epochs" :key="epoch.id" class="rounded border border-border p-3 text-sm">
                 <div class="flex flex-wrap items-start justify-between gap-2">
                   <div><strong>Epoch {{ epoch.epoch }}</strong><p class="text-xs text-fg-muted">starts at {{ epoch.start_member || "pipeline entry" }} · {{ epoch.reason }}</p></div>
@@ -92,6 +102,10 @@
           <div class="flex flex-wrap justify-between gap-3"><div><h2 class="text-lg font-semibold">{{ store.selectedAdapter.name }}</h2><p class="text-sm text-fg-muted">{{ selectedKind?.display_name || store.selectedAdapter.kind }} · immutable revision {{ store.selectedAdapter.current_revision }}</p></div><div class="flex flex-wrap gap-2"><button class="button" @click="copyWebhook">Copy webhook URL</button><button class="button" @click="openAdapterForm(store.selectedAdapter)">Edit</button><button class="button" @click="openAdapterForm(store.selectedAdapter, true)">Clone</button><button class="button" @click="toggleSelectedAdapter">{{ store.selectedAdapter.enabled ? 'Disable' : 'Enable' }}</button><button class="button" :disabled="store.selectedAdapter.has_admitted_binding" @click="removeSelectedAdapter">Delete</button></div></div>
           <code class="mt-3 block break-all rounded bg-surface-raised p-2 text-xs">{{ webhookPath }}</code><p v-if="store.selectedAdapter.has_admitted_binding" class="mt-2 text-xs text-fg-muted">Identity extraction is locked because this adapter has admitted a correlation.</p>
           <div v-if="selectedKind" class="mt-3 grid gap-2 text-xs md:grid-cols-3"><div><strong>Capabilities</strong><p class="text-fg-muted">{{ selectedKind.capabilities.join(', ') || 'normalize' }}</p></div><div><strong>Canonical events</strong><p class="text-fg-muted">{{ selectedKind.event_names.join(', ') || 'provider-defined' }}</p></div><div><strong>Canonical pointers</strong><p class="break-all text-fg-muted">{{ selectedKind.canonical_pointers.join(', ') || 'provider-defined' }}</p></div></div>
+          <section v-if="selectedKind?.setup_instructions?.length" class="mt-3 rounded border border-border bg-surface-raised p-3 text-sm">
+            <strong>Provider setup</strong>
+            <ol class="mt-2 list-decimal space-y-1 pl-5 text-fg-muted"><li v-for="instruction in selectedKind.setup_instructions" :key="instruction">{{ instruction }}</li></ol>
+          </section>
           <nav class="mt-5 flex gap-1 border-b border-border"><button v-for="tab in adapterTabs" :key="tab" class="px-3 py-2 text-sm" :class="tab === activeAdapterTab ? 'border-b-2 border-accent' : 'text-fg-muted'" @click="activeAdapterTab = tab">{{ tab }}</button></nav>
           <pre v-if="activeAdapterTab === 'Configuration'" class="mt-4 overflow-auto text-xs">{{ pretty(currentAdapterRevision) }}</pre><pre v-else-if="activeAdapterTab === 'Revisions'" class="mt-4 overflow-auto text-xs">{{ pretty(store.adapterRevisions) }}</pre>
           <div v-else class="mt-4 grid gap-3">
@@ -127,31 +141,35 @@
     <div v-if="requeueOpen" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="requeueOpen = false"><form class="w-full max-w-md rounded border border-border bg-surface p-4 shadow-xl" @submit.prevent="submitRequeue"><h2 class="font-semibold">Requeue next generation</h2><p class="mt-1 text-xs text-fg-muted">The next generation snapshots the current immutable pipeline and adapter revisions.</p><label class="mt-3 block text-sm text-fg-muted">Reason</label><textarea v-model="reason" required class="input mt-1 min-h-24 w-full" /><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="requeueOpen = false">Cancel</button><button class="button" type="submit">Requeue</button></div></form></div>
     <div v-if="resolvingOperation" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="resolvingOperation = null"><form class="w-full max-w-lg rounded border border-border bg-surface p-4" @submit.prevent="submitResolution"><h2 class="font-semibold">Resolve {{ resolvingOperation.provider }}.{{ resolvingOperation.action }}</h2><p class="mt-1 text-xs text-fg-muted">{{ resolution }} · {{ resolvingOperation.semantics }}</p><label class="mt-3 block text-sm">Reason<textarea v-model="resolutionReason" required class="input mt-1 min-h-20 w-full" /></label><label class="mt-3 block text-sm">Receipt JSON<textarea v-model="resolutionReceipt" class="input mt-1 min-h-28 w-full font-mono text-xs" /></label><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="resolvingOperation = null">Cancel</button><button class="button" type="submit">Apply resolution</button></div></form></div>
     <div v-if="adapterFormOpen" class="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" @click.self="adapterFormOpen = false"><form class="my-8 w-full max-w-2xl rounded border border-border bg-surface p-4" @submit.prevent="saveAdapter"><h2 class="font-semibold">{{ editingAdapterId ? 'Edit adapter' : 'New adapter' }}</h2><div class="mt-3 grid gap-3 md:grid-cols-2"><label class="text-sm">Name<input v-model="adapterForm.name" required class="input mt-1 w-full" /></label><label class="text-sm">Kind<select v-model="adapterForm.kind" required class="input mt-1 w-full" :disabled="!!editingAdapterId" @change="initializeKind"><option value="" disabled>Select a loaded kind</option><option v-for="kind in store.adapterKinds" :key="kind.kind" :value="kind.kind">{{ kind.display_name }} v{{ kind.version }}</option></select></label></div>
-      <div v-if="formKind" class="mt-4 grid gap-3"><p class="text-sm text-fg-muted">{{ formKind.description }}</p><label v-for="field in configurationFields" :key="field.name" class="text-sm"><span>{{ field.name }}<template v-if="field.required"> *</template></span><input v-if="fieldInputType(field) !== 'checkbox'" :type="fieldInputType(field)" class="input mt-1 w-full" :value="adapterForm.configuration[field.name] ?? ''" @input="updateConfigField(field, $event)" /><input v-else type="checkbox" class="ml-2" :checked="Boolean(adapterForm.configuration[field.name])" @change="updateConfigField(field, $event)" /><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label v-for="field in secretFields" :key="field.name" class="text-sm">{{ field.name }} Secret<template v-if="field.required"> *</template><select v-model="adapterForm.secret_bindings[field.name]" class="input mt-1 w-full" :required="field.required"><option value="">Select stored Secret</option><option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">{{ secret.scope }}/{{ secret.name }}</option></select><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label class="text-sm">Identity extraction JSON<textarea v-model="identityText" class="input mt-1 min-h-28 w-full font-mono text-xs" :disabled="identityLocked" /></label></div><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="adapterFormOpen = false">Cancel</button><button class="button" type="submit">Save immutable revision</button></div></form></div>
+      <div v-if="formKind" class="mt-4 grid gap-3"><p class="text-sm text-fg-muted">{{ formKind.description }}</p><label v-for="field in configurationFields" :key="field.name" class="text-sm"><span>{{ field.name }}<template v-if="field.required"> *</template></span><TypedValueEditor class="mt-1" :model-value="adapterForm.configuration[field.name]" :ty="field.value_type" :allow-expressions="false" @update:model-value="updateConfigField(field.name, $event)" /><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label v-for="field in secretFields" :key="field.name" class="text-sm">{{ field.name }} Secret<template v-if="field.required"> *</template><select v-model="adapterForm.secret_bindings[field.name]" class="input mt-1 w-full" :required="field.required"><option value="">Select stored Secret</option><option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">{{ secret.scope }}/{{ secret.name }}</option></select><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label class="text-sm">Identity extraction JSON<textarea v-model="identityText" class="input mt-1 min-h-28 w-full font-mono text-xs" :disabled="identityLocked" /></label></div><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="adapterFormOpen = false">Cancel</button><button class="button" type="submit">Save immutable revision</button></div></form></div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, shallowRef } from "vue";
+import { computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import type {
-  AdapterConfigurationField,
   AdapterDefinition,
   AdapterKindCatalogEntry,
   AdapterKindMetadata,
   AdapterRevision,
   ExternalOperation,
   JsonValue,
+  PipelineRunDetail,
 } from "../../core/domain/models";
 import { fetchAdapterHealth, fetchAdapterKinds, reloadAdapterHost } from "../../core/services/orchestrations";
 import { useAppStore } from "../adapters/pinia/app";
 import { useOrchestrationsStore } from "../adapters/pinia/orchestrations";
 import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useSecretsStore } from "../adapters/pinia/secrets";
+import { useWorkflowsStore } from "../adapters/pinia/workflows";
+import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
+import TypedValueEditor from "../components/shared/TypedValueEditor.vue";
 
 const store = useOrchestrationsStore();
 const app = useAppStore();
 const pipelineRuns = usePipelineRunsStore();
 const secrets = useSecretsStore();
+const workflows = useWorkflowsStore();
 const modes = ["Instances", "Adapters"] as const;
 type Mode = (typeof modes)[number];
 const mode = ref<Mode>("Instances");
@@ -250,6 +268,15 @@ const instanceChips = computed(() => store.selected ? [
     ? [`adapter revision ${String(store.selected.adapter_revision ?? "—")}`]
     : []),
 ] : []);
+const currentEpoch = computed(() =>
+  store.epochs.find((epoch) => epoch.epoch === store.selected?.current_epoch),
+);
+const currentEpochRunId = computed(() => currentEpoch.value?.pipeline_run_id ?? null);
+const currentEpochDetail = computed<PipelineRunDetail | null>(() => {
+  const detail: PipelineRunDetail | null = pipelineRuns.detail;
+
+  return detail?.run.id === currentEpochRunId.value ? detail : null;
+});
 
 function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -321,6 +348,15 @@ async function submitIntent(): Promise<void> {
 async function openPipelineRun(id: string): Promise<void> {
   await pipelineRuns.selectRun(id);
   app.activeTab = "PipelineRuns";
+}
+
+function openWorkflowRun(id: string): void {
+  const run = currentEpochDetail.value?.members.find((member) => member.id === id);
+
+  if (run) {
+    void workflows.selectWorkflowRun(run);
+    app.activeTab = "Runs";
+  }
 }
 
 async function submitRequeue(): Promise<void> {
@@ -450,27 +486,8 @@ function openAdapterForm(adapter?: AdapterDefinition, clone = false): void {
   adapterFormOpen.value = true;
 }
 
-function fieldInputType(field: AdapterConfigurationField): string {
-  const rendered = JSON.stringify(field.value_type).toLowerCase();
-
-  if (rendered.includes("bool")) {
-    return "checkbox";
-  }
-
-  return rendered.includes("int") || rendered.includes("number") || rendered.includes("float")
-    ? "number"
-    : "text";
-}
-
-function updateConfigField(field: AdapterConfigurationField, event: Event): void {
-  const target = event.target as HTMLInputElement;
-  const kind = fieldInputType(field);
-
-  adapterForm.configuration[field.name] = kind === "checkbox"
-    ? target.checked
-    : kind === "number" && target.value !== ""
-      ? Number(target.value)
-      : target.value;
+function updateConfigField(name: string, value: unknown): void {
+  adapterForm.configuration[name] = (value ?? null) as JsonValue;
 }
 
 async function saveAdapter(): Promise<void> {
@@ -498,6 +515,12 @@ async function saveAdapter(): Promise<void> {
   }, editingAdapterId.value ?? undefined);
   adapterFormOpen.value = false;
 }
+
+watch(currentEpochRunId, (id) => {
+  if (id && pipelineRuns.selectedRunId !== id) {
+    void pipelineRuns.selectRun(id);
+  }
+}, { immediate: true });
 
 onMounted(refreshInstances);
 </script>

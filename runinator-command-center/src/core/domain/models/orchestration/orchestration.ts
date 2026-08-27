@@ -1,4 +1,5 @@
 import type { JsonValue } from "../../json";
+import type { RuninatorType } from "../provider/runinator-type";
 
 export type OrchestrationStatus =
   | "pending"
@@ -176,7 +177,7 @@ export interface OrchestrationCommand {
 
 export interface AdapterConfigurationField {
   name: string;
-  value_type: unknown;
+  value_type: RuninatorType;
   required: boolean;
   secret: boolean;
   description?: string | null;
@@ -192,6 +193,7 @@ export interface AdapterKindMetadata {
   event_names: string[];
   canonical_pointers: string[];
   capabilities: string[];
+  setup_instructions?: string[];
 }
 
 export interface AdapterKindCatalogEntry {
