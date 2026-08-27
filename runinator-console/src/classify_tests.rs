@@ -92,7 +92,9 @@ fn a_pure_cell_carries_its_lowered_form_and_a_workflow_cell_its_source() {
 #[test]
 fn a_cell_is_wrapped_into_a_workflow_unless_it_declares_one() {
     let wrapped = workflow_source("console.run(command: \"go\")", "console.abc");
-    assert!(wrapped.starts_with("workflow \"console.abc\" v1 {"));
+    assert!(wrapped.starts_with("namespace runinator.console {"));
+    assert!(wrapped.contains("workflow \"console.abc\" v1 {"));
+    assert!(wrapped.contains("key console.console_abc"));
     assert!(wrapped.contains("    console.run(command: \"go\")"));
 
     // an author who wrote their own workflow block meant it; wrapping again would nest one.
@@ -107,7 +109,7 @@ fn a_commented_out_workflow_keyword_does_not_look_like_a_declaration() {
     let source = "// workflow \"Old\" v1 {\nconsole.run(command: \"go\")";
     let wrapped = workflow_source(source, "console.abc");
     assert!(
-        wrapped.starts_with("workflow \"console.abc\" v1 {"),
+        wrapped.starts_with("namespace runinator.console {"),
         "{wrapped}"
     );
 }
@@ -143,7 +145,7 @@ fn bare_runtime_do_is_wrapped_once_and_compute_keyword_is_pure() {
     assert_eq!(kind(source), CellKind::Workflow);
     let wrapped = workflow_source(source, "console.abc");
     assert!(
-        wrapped.contains("workflow \"console.abc\" v1 {\n    do {"),
+        wrapped.contains("workflow \"console.abc\" v1 {\n    key console.console_abc\n    do {"),
         "{wrapped}"
     );
     assert!(!wrapped.contains("do {\n        do {"), "{wrapped}");

@@ -582,7 +582,7 @@ impl<'a> Decompiler<'a> {
         Ok(())
     }
 
-    /// the handler regions to emit, as `(source, first node of the body, enabled)`.
+    /// the handler regions to emit, as `(source, interval_seconds, first node of the body, enabled)`.
     ///
     /// metadata owns the source-to-entry link and enabled state. when its handler is an `interrupt`
     /// node, that structural entry is marked visited and the emitted body begins at its `next`.
@@ -591,7 +591,7 @@ impl<'a> Decompiler<'a> {
         &mut self,
         graph: &WorkflowGraph,
         metadata: &[Value],
-    ) -> Result<Vec<(String, String, bool)>, RexRapError> {
+    ) -> Result<Vec<(String, Option<i64>, String, bool)>, RexRapError> {
         let regions = metadata
             .iter()
             .map(|interrupt| {
@@ -607,6 +607,7 @@ impl<'a> Decompiler<'a> {
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
+                let interval_seconds = interrupt.get("interval_seconds").and_then(Value::as_i64);
                 let body = match graph.nodes.iter().find(|node| node.id == handler) {
                     Some(node) if node.kind == WorkflowNodeKind::Interrupt => {
                         self.visited.insert(node.id.clone());
@@ -622,7 +623,7 @@ impl<'a> Decompiler<'a> {
                     }
                     _ => handler.to_string(),
                 };
-                Ok((source.to_string(), body, enabled))
+                Ok((source.to_string(), interval_seconds, body, enabled))
             })
             .collect::<Result<Vec<_>, RexRapError>>()?;
         let linked: HashSet<&str> = metadata
@@ -645,13 +646,20 @@ impl<'a> Decompiler<'a> {
     /// walking each region here — before the main flow — is also what keeps its nodes out of the
     /// orphan pass at the end. a region is unreachable from `start` by design, so without this it
     /// would be re-emitted as a pile of loose top-level statements.
-    fn emit_interrupts(&mut self, regions: &[(String, String, bool)]) -> Result<(), RexRapError> {
+    fn emit_interrupts(
+        &mut self,
+        regions: &[(String, Option<i64>, String, bool)],
+    ) -> Result<(), RexRapError> {
         if regions.is_empty() {
             return Ok(());
         }
-        for (source, body, enabled) in regions {
+        for (source, interval_seconds, body, enabled) in regions {
             let disabled = if *enabled { "" } else { " disabled" };
-            self.line(&format!("interrupt on {source}{disabled} {{"));
+            let every = interval_seconds
+                .map(runinator_rexrap_syntax::format::format_duration)
+                .map(|duration| format!(" every {duration}"))
+                .unwrap_or_default();
+            self.line(&format!("interrupt on {source}{every}{disabled} {{"));
             self.indent += 1;
             self.emit_region(body, None)?;
             self.indent -= 1;

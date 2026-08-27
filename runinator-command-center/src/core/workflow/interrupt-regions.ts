@@ -7,6 +7,8 @@ export interface InterruptDeclaration {
   source: string;
   handler: string;
   enabled: boolean;
+  /** cadence for a `timer` declaration, in seconds. */
+  intervalSeconds?: number;
 }
 
 /** what a node run belongs to, when it belongs to a handler region rather than the main flow. */
@@ -40,7 +42,13 @@ export function interruptDeclarations(
     .flatMap((entry) => {
       const source = typeof entry.on === "string" ? entry.on : null;
       const handler = typeof entry.handler === "string" ? entry.handler : null;
-      return source && handler ? [{ source, handler, enabled: entry.enabled !== false }] : [];
+      const intervalSeconds =
+        typeof entry.interval_seconds === "number" && Number.isFinite(entry.interval_seconds)
+          ? entry.interval_seconds
+          : undefined;
+      return source && handler
+        ? [{ source, handler, enabled: entry.enabled !== false, intervalSeconds }]
+        : [];
     });
 }
 

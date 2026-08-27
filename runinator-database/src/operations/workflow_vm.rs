@@ -2,12 +2,13 @@
 
 use super::*;
 use runinator_comm::{EffectCommand, EffectDispatchRecord};
+use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_vm::{
     WORKFLOW_JOURNAL_VERSION, WorkflowContinuation, WorkflowContinuationStatus, WorkflowEffect,
     WorkflowEffectOutputEvent, WorkflowEffectStatus, WorkflowFrame, WorkflowInterruptOutcome,
     WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule, WorkflowPendingInterrupt,
 };
-use runinator_store::roles::NewWorkflowVmRun;
+use runinator_store::roles::{NewWorkflowVmRun, WorkflowTimerInterrupt};
 
 const CONTINUATION_COLUMNS: &str = "id, workflow_run_id, module_version, continuation_json, status, version, ready_at, claimed_by, claimed_until, created_at, updated_at";
 const EFFECT_COLUMNS: &str = "id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, current_executor_replica_id, last_executor_replica_id, result_json, message, created_at, updated_at, finished_at";
@@ -255,6 +256,32 @@ where
         .bind(now)
         .execute(&mut *tx)
         .await?;
+        // Timer handlers are frozen into the compiled module. Materialize one run-scoped schedule
+        // per declaration before exposing the run, so an engine restart can discover and arm the
+        // first occurrence without reading mutable authoring metadata.
+        for handler in module
+            .interrupt_handlers
+            .iter()
+            .filter(|handler| handler.source == InterruptSource::Timer)
+        {
+            let (Some(timer_id), Some(interval_seconds)) =
+                (handler.timer_id.as_deref(), handler.interval_seconds)
+            else {
+                continue;
+            };
+            if interval_seconds <= 0 {
+                continue;
+            }
+            sqlx::query(&self.render(
+                "INSERT INTO workflow_timer_interrupts (workflow_run_id, timer_id, interval_seconds, next_due_at) VALUES (?, ?, ?, ?)",
+            ))
+            .bind(run_id)
+            .bind(timer_id)
+            .bind(interval_seconds)
+            .bind(now.saturating_add(interval_seconds))
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query(&self.render(
             "INSERT INTO workflow_continuations (id, workflow_run_id, module_version, continuation_json, status, version, ready_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
@@ -1132,6 +1159,145 @@ where
         }
         tx.commit().await?;
         Ok(Some(target.id))
+    }
+
+    async fn fetch_workflow_timer_interrupts_before(
+        &self,
+        before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowTimerInterrupt>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT t.workflow_run_id, t.timer_id, t.interval_seconds, t.next_due_at
+             FROM workflow_timer_interrupts t
+             INNER JOIN workflow_runs r ON r.id = t.workflow_run_id
+             WHERE t.next_due_at <= ?
+               AND r.status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')
+             ORDER BY t.next_due_at, t.workflow_run_id, t.timer_id
+             LIMIT ?",
+        ))
+        .bind(before.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| WorkflowTimerInterrupt {
+                workflow_run_id: row.get("workflow_run_id"),
+                timer_id: row.get("timer_id"),
+                interval_seconds: row.get("interval_seconds"),
+                due_at: DateTime::<Utc>::from_timestamp(row.get("next_due_at"), 0)
+                    .unwrap_or_else(Utc::now),
+            })
+            .collect())
+    }
+
+    async fn fire_workflow_timer_interrupt(
+        &self,
+        timer: WorkflowTimerInterrupt,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let due_at = timer.due_at.timestamp();
+        let now_at = now.timestamp();
+
+        let mut tx = self.pool().begin().await?;
+        // A timer may have been canceled with its run or advanced by a competing engine while its
+        // broker wake was in flight. The exact due-at guard makes both cases a harmless no-op.
+        let active: Option<(String, i64)> = sqlx::query_as(&self.render(
+            "SELECT r.status, t.interval_seconds FROM workflow_timer_interrupts t
+             INNER JOIN workflow_runs r ON r.id = t.workflow_run_id
+             WHERE t.workflow_run_id = ? AND t.timer_id = ? AND t.next_due_at = ?",
+        ))
+        .bind(timer.workflow_run_id)
+        .bind(&timer.timer_id)
+        .bind(due_at)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((status, interval_seconds)) = active else {
+            tx.commit().await?;
+            return Ok(false);
+        };
+        if matches!(
+            status.as_str(),
+            "succeeded" | "failed" | "timed_out" | "canceled"
+        ) {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        if interval_seconds <= 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        let mut next_due_at = due_at.saturating_add(interval_seconds);
+        if next_due_at <= now_at {
+            let missed = now_at
+                .saturating_sub(next_due_at)
+                .saturating_div(interval_seconds)
+                .saturating_add(1);
+            next_due_at = next_due_at.saturating_add(missed.saturating_mul(interval_seconds));
+        }
+
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations
+             WHERE workflow_run_id = ? AND status IN ('runnable', 'waiting', 'paused')
+             ORDER BY created_at, id"
+        )))
+        .bind(timer.workflow_run_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let target = rows
+            .iter()
+            .map(mappers::row_to_workflow_continuation)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|continuation| {
+                !continuation.is_interrupt_handler() && continuation.pending_interrupt.is_none()
+            });
+
+        if let Some(mut continuation) = target {
+            let expected = continuation.revision;
+            continuation.revision += 1;
+            continuation.pending_interrupt = Some(WorkflowPendingInterrupt {
+                id: Uuid::now_v7(),
+                source: InterruptSource::Timer,
+                payload: runinator_models::json!({
+                    "timer_id": timer.timer_id.clone(),
+                    "due_at": due_at,
+                    "interval_seconds": interval_seconds,
+                }),
+            });
+            let updated = sqlx::query(&self.render(
+                "UPDATE workflow_continuations SET continuation_json = ?, version = ?, updated_at = ?
+                 WHERE id = ? AND version = ?",
+            ))
+            .bind(serde_json::to_string(&continuation)?)
+            .bind(continuation.revision as i64)
+            .bind(now_at)
+            .bind(continuation.id)
+            .bind(expected as i64)
+            .execute(&mut *tx)
+            .await?;
+            if updated.affected() == 0 {
+                tx.rollback().await?;
+                return Ok(false);
+            }
+        }
+
+        let advanced = sqlx::query(&self.render(
+            "UPDATE workflow_timer_interrupts SET next_due_at = ?
+             WHERE workflow_run_id = ? AND timer_id = ? AND next_due_at = ?",
+        ))
+        .bind(next_due_at)
+        .bind(timer.workflow_run_id)
+        .bind(&timer.timer_id)
+        .bind(due_at)
+        .execute(&mut *tx)
+        .await?;
+        if advanced.affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        tx.commit().await?;
+        Ok(true)
     }
 
     async fn claim_workflow_effect_executor(

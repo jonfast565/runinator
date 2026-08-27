@@ -169,7 +169,44 @@ fn try_raise_detected(
         source,
         Value::Null,
         handler.target,
+        "",
     ))
+}
+
+fn handler_for_pending<'a>(
+    handlers: &'a [runinator_models::workflow_vm::WorkflowVmInterruptHandler],
+    pending: &runinator_models::workflow_vm::WorkflowPendingInterrupt,
+) -> Option<&'a runinator_models::workflow_vm::WorkflowVmInterruptHandler> {
+    if pending.source != InterruptSource::Timer {
+        return handlers
+            .iter()
+            .find(|handler| handler.source == pending.source);
+    }
+    let timer_id = pending.payload.get("timer_id").and_then(Value::as_str)?;
+    handlers.iter().find(|handler| {
+        handler.source == InterruptSource::Timer && handler.timer_id.as_deref() == Some(timer_id)
+    })
+}
+
+/// Each periodic occurrence gets its own deterministic handler id. A redelivered wake recreates
+/// the same id; the next interval's different due instant creates a new handler.
+fn timer_discriminator(
+    pending: &runinator_models::workflow_vm::WorkflowPendingInterrupt,
+) -> String {
+    if pending.source != InterruptSource::Timer {
+        return String::new();
+    }
+    let timer_id = pending
+        .payload
+        .get("timer_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let due_at = pending
+        .payload
+        .get("due_at")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    format!("timer:{timer_id}:{due_at}")
 }
 
 /// Run a continuation until it reaches its next durable boundary.
@@ -350,20 +387,19 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     continuation.instruction_pointer += 1;
                     continue;
                 };
-                match handlers
-                    .iter()
-                    .find(|handler| handler.source == pending.source)
-                {
+                match handler_for_pending(handlers, &pending) {
                     // fail-open, and the request is consumed either way: a source nobody declared
                     // a handler for must not linger and fire at some arbitrary later point.
                     None => continuation.instruction_pointer += 1,
                     Some(handler) => {
+                        let discriminator = timer_discriminator(&pending);
                         return raise_interrupt(
                             module,
                             continuation,
                             pending.source,
                             pending.payload,
                             handler.target,
+                            &discriminator,
                         );
                     }
                 }
@@ -1121,9 +1157,16 @@ fn raise_interrupt(
     source: InterruptSource,
     payload: Value,
     target: usize,
+    discriminator: &str,
 ) -> WorkflowVmStep {
-    let handler =
-        interrupt_handler_continuation(module, &continuation, source, payload, target, "");
+    let handler = interrupt_handler_continuation(
+        module,
+        &continuation,
+        source,
+        payload,
+        target,
+        discriminator,
+    );
     continuation.status = WorkflowContinuationStatus::Suspended;
     WorkflowVmStep::Interrupted {
         suspended: continuation,
@@ -1400,6 +1443,8 @@ mod tests {
                 handlers: vec![runinator_models::workflow_vm::WorkflowVmInterruptHandler {
                     source: InterruptSource::External,
                     target: 4,
+                    timer_id: None,
+                    interval_seconds: None,
                 }],
             },
             WorkflowInstruction::Effect {
@@ -1521,6 +1566,43 @@ mod tests {
     }
 
     #[test]
+    fn a_timer_request_selects_its_own_handler_and_occurrence() {
+        let mut module = interrupt_module();
+        module.instructions[1] = WorkflowInstruction::CheckInterrupt {
+            handlers: vec![
+                runinator_models::workflow_vm::WorkflowVmInterruptHandler {
+                    source: InterruptSource::Timer,
+                    target: 4,
+                    timer_id: Some("fast".into()),
+                    interval_seconds: Some(30),
+                },
+                runinator_models::workflow_vm::WorkflowVmInterruptHandler {
+                    source: InterruptSource::Timer,
+                    target: 5,
+                    timer_id: Some("slow".into()),
+                    interval_seconds: Some(300),
+                },
+            ],
+        };
+        let mut continuation = continuation();
+        continuation.pending_interrupt =
+            Some(runinator_models::workflow_vm::WorkflowPendingInterrupt {
+                id: uuid::Uuid::now_v7(),
+                source: InterruptSource::Timer,
+                payload: runinator_models::json!({ "timer_id": "slow", "due_at": 600 }),
+            });
+
+        let WorkflowVmStep::Interrupted { handler, .. } = step(&module, continuation) else {
+            panic!("a declared timer occurrence must raise its matching handler");
+        };
+        assert_eq!(handler.instruction_pointer, 5);
+        assert_eq!(
+            handler.locals["interrupt"]["payload"]["timer_id"],
+            Value::from("slow")
+        );
+    }
+
+    #[test]
     fn a_handler_mode_picks_where_the_frozen_thread_lands() {
         let module = interrupt_module();
         for (mode, expected) in [
@@ -1586,6 +1668,8 @@ mod tests {
             vec![runinator_models::workflow_vm::WorkflowVmInterruptHandler {
                 source: InterruptSource::Wake,
                 target: 4,
+                timer_id: None,
+                interval_seconds: None,
             }];
         let WorkflowVmStep::Yield { continuation, .. } = step(&module, continuation()) else {
             panic!("the timer must yield");

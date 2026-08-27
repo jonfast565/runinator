@@ -168,6 +168,10 @@ fn interrupt_source_options() -> Vec<EnumOptionMetadata> {
                     "Orphan signal",
                     "A signal arrived that no node in the run was parked on.",
                 ),
+                InterruptSource::Timer => (
+                    "Timer",
+                    "A workflow-owned periodic timer elapsed. Timer handlers declare their own interval and may be repeated.",
+                ),
                 InterruptSource::Wake => (
                     "Wake",
                     "A parked cursor's timer elapsed, bound to a wait node's deadline.",

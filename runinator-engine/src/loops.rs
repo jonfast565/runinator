@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
-use runinator_broker_core::Broker;
+use runinator_broker_core::{Broker, WakeMessage};
+use runinator_comm::WakeCommand;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_store::{
@@ -28,6 +29,7 @@ const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
 const OPERATIONAL_METRICS_INTERVAL: Duration = Duration::from_secs(15);
 const WORKFLOW_VM_DRIVE_INTERVAL: Duration = Duration::from_millis(250);
 const WORKFLOW_EFFECT_DISPATCH_INTERVAL: Duration = Duration::from_millis(250);
+const TIMER_INTERRUPT_ARM_HORIZON: Duration = Duration::from_secs(1);
 
 fn queue_age(
     now: chrono::DateTime<chrono::Utc>,
@@ -122,6 +124,72 @@ pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
         tokio::select! {
             _ = shutdown.notified() => return,
             _ = ready_nudge.notified() => {}
+            _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
+        }
+    }
+}
+
+/// Arm declared periodic interrupt timers through the broker-only waker.
+///
+/// The schedule itself is durable; re-publishing the same not-yet-due occurrence is harmless
+/// because the wake key includes the run, timer declaration, and exact due instant. This keeps the
+/// engine from sleeping on a run-local timer and lets any waker relay the due occurrence.
+pub async fn run_timer_interrupt_scheduler<T: WorkflowVmStore>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    shutdown: Arc<Notify>,
+) {
+    info!("workflow timer-interrupt scheduler started");
+    loop {
+        let started = std::time::Instant::now();
+        let now = chrono::Utc::now();
+        let mut succeeded = true;
+        match db
+            .fetch_workflow_timer_interrupts_before(
+                now + chrono::Duration::from_std(TIMER_INTERRUPT_ARM_HORIZON)
+                    .unwrap_or_else(|_| chrono::Duration::seconds(1)),
+                CLAIM_LIMIT,
+            )
+            .await
+        {
+            Ok(timers) => {
+                for timer in timers {
+                    let wake = WakeCommand::timer_interrupt(
+                        timer.due_at,
+                        timer.workflow_run_id,
+                        timer.timer_id.clone(),
+                        timer.interval_seconds,
+                        uuid::Uuid::now_v7(),
+                    );
+                    match broker
+                        .publish_wake(WakeMessage {
+                            dedupe_key: Some(wake.dedupe_key()),
+                            command: wake,
+                            enqueued_at: now,
+                        })
+                        .await
+                    {
+                        Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {}
+                        Err(err) => {
+                            succeeded = false;
+                            warn!(
+                                workflow_run_id = %timer.workflow_run_id,
+                                timer_id = %timer.timer_id,
+                                error = %err,
+                                "failed to arm workflow timer interrupt"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                succeeded = false;
+                warn!(error = %err, "failed to load workflow timer interrupts to arm");
+            }
+        }
+        stability::loop_iteration("timer_interrupt_scheduler", succeeded, started.elapsed());
+        tokio::select! {
+            _ = shutdown.notified() => return,
             _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
         }
     }

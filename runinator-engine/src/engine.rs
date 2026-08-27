@@ -16,8 +16,8 @@ use tracing::{error, info};
 use crate::events::EventSender;
 use crate::loops::{
     run_agent_directive_publisher, run_notification_effect_dispatcher,
-    run_operational_metrics_sampler, run_replica_reaper, run_trigger_loop, run_usage_sampler,
-    run_workflow_effect_dispatcher, run_workflow_vm_driver,
+    run_operational_metrics_sampler, run_replica_reaper, run_timer_interrupt_scheduler,
+    run_trigger_loop, run_usage_sampler, run_workflow_effect_dispatcher, run_workflow_vm_driver,
 };
 
 /// Runtime limits for one durable engine instance.
@@ -167,6 +167,11 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         pool.clone(),
         instance.clone(),
         local_signals.workflow_vm_notifier(),
+        shutdown.clone(),
+    ));
+    loops.spawn(run_timer_interrupt_scheduler(
+        pool.clone(),
+        broker.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_workflow_effect_dispatcher(

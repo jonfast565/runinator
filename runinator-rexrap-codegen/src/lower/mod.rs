@@ -2116,6 +2116,9 @@ impl Lowerer {
             let mut spec = Map::new();
             spec.insert("on".into(), Value::String(interrupt.source.clone()));
             spec.insert("handler".into(), Value::String(entry));
+            if let Some(interval) = interrupt.interval_seconds {
+                spec.insert("interval_seconds".into(), Value::from(interval));
+            }
             if !interrupt.enabled {
                 spec.insert("enabled".into(), Value::Bool(false));
             }

@@ -164,11 +164,13 @@ watch_decl = { "watch" ~ cond ~ "->" ~ target }
 //
 // `orphan_signal` is listed before `wake` only because pest takes the first matching alternative and
 // these must not prefix one another.
-interrupt_decl   = { "interrupt" ~ "on" ~ interrupt_source ~ interrupt_disabled? ~ block }
+interrupt_decl   = { "interrupt" ~ "on" ~ interrupt_source ~ interrupt_every? ~ interrupt_disabled? ~ block }
+interrupt_every  = { "every" ~ duration }
 interrupt_disabled = { "disabled" }
 interrupt_source = {
     "external"
   | "orphan_signal"
+  | "timer"
   | "wake"
   | "timeout"
   | "retry"

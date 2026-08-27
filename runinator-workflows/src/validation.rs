@@ -356,7 +356,31 @@ fn validate_interrupt_handlers(
                 reason,
             };
 
-        if !sources_seen.insert(source.to_string()) {
+        match declaration.source() {
+            Some(runinator_models::interrupt::InterruptSource::Timer) => {
+                if declaration
+                    .interval_seconds
+                    .is_none_or(|seconds| seconds <= 0)
+                {
+                    return Err(not_isolatable(
+                        "timer interrupts require a positive `interval_seconds`".into(),
+                    ));
+                }
+            }
+            Some(_) if declaration.interval_seconds.is_some() => {
+                return Err(not_isolatable(
+                    "only timer interrupts may declare `interval_seconds`".into(),
+                ));
+            }
+            _ => {}
+        }
+
+        // A timer declaration identifies itself by its handler entry, not just the shared source.
+        // Other sources are singleton observations and retaining their one-handler rule keeps
+        // their deterministic precedence intact.
+        if declaration.source() != Some(runinator_models::interrupt::InterruptSource::Timer)
+            && !sources_seen.insert(source.to_string())
+        {
             return Err(not_isolatable(format!(
                 "source '{source}' already has a handler; one handler per source"
             )));

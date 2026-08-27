@@ -55,6 +55,7 @@ fn every_source_is_listed_exactly_once_with_its_wire_name() {
         [
             "external",
             "orphan_signal",
+            "timer",
             "wake",
             "timeout",
             "retry",

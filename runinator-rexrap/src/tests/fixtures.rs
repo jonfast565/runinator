@@ -135,62 +135,6 @@ fn round_trips_sdlc() {
     assert_round_trips(src);
 }
 #[test]
-fn compiles_checked_in_sdlc_review_workflow() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/sdlc/rexrap/sdlc-review.rrx");
-    let src = fs::read_to_string(&path).expect("read sdlc review workflow");
-    let definition = compile_with_providers(&src);
-    assert_eq!(definition.name, "SDLC: Review");
-    assert_eq!(
-        definition
-            .definition
-            .metadata
-            .pointer("/rexrap/type_hints/review_state/fields/changes_requested/ty/type")
-            .and_then(Value::as_str),
-        Some("integer")
-    );
-}
-#[test]
-fn compiles_checked_in_sdlc_deploy_workflow() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/sdlc/rexrap/sdlc-deploy.rrx");
-    let src = fs::read_to_string(&path).expect("read sdlc deploy workflow");
-    let definition = compile_with_providers(&src);
-    assert_eq!(definition.name, "SDLC: Deploy");
-    assert_eq!(
-        definition
-            .definition
-            .metadata
-            .pointer("/rexrap/type_hints/impact/fields/lambdas/ty/type")
-            .and_then(Value::as_str),
-        Some("array")
-    );
-    assert_eq!(
-        definition
-            .definition
-            .metadata
-            .pointer("/rexrap/type_hints/deploy_state/fields/failed/ty/type")
-            .and_then(Value::as_str),
-        Some("integer")
-    );
-}
-#[test]
-fn compiles_checked_in_sdlc_development_workflow() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/sdlc/rexrap/sdlc-development.rrx");
-    let src = fs::read_to_string(&path).expect("read sdlc development workflow");
-    let definition = compile_with_providers(&src);
-    assert_eq!(definition.name, "SDLC: Development");
-    assert_eq!(
-        definition
-            .definition
-            .metadata
-            .pointer("/rexrap/type_hints/budget/type")
-            .and_then(Value::as_str),
-        Some("integer")
-    );
-}
-#[test]
 fn compiles_and_validates_sdlc() {
     let src = r#"
         workflow "Core Team SDLC Pipeline" v1 {

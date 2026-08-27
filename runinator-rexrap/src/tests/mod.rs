@@ -251,14 +251,6 @@ fn expect_semantic(src: &str) -> (crate::Span, String) {
 fn compile(src: &str) -> runinator_models::workflows::WorkflowDefinition {
     compile_str(src, &default_test_options()).expect("compile")
 }
-fn compile_with_providers(src: &str) -> runinator_models::workflows::WorkflowDefinition {
-    let options = CompileOptions {
-        providers: runinator_provider_catalog::metadata(),
-        workflow_signatures: test_workflow_signatures(),
-        ..CompileOptions::default()
-    };
-    compile_str(src, &options).expect("compile with providers")
-}
 fn default_test_options() -> CompileOptions {
     CompileOptions {
         workflow_signatures: test_workflow_signatures(),

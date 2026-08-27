@@ -94,6 +94,22 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     }
 
     entry.source = source;
+    if (source === "timer") {
+      entry.intervalSeconds ??= 60;
+    } else {
+      delete entry.intervalSeconds;
+    }
+    applyWorkflowHeader();
+  }
+
+  function setHeaderInterruptInterval(index: number, intervalSeconds: number) {
+    const entry = host.state.headerDraft.interrupts.at(index);
+
+    if (!entry || entry.source !== "timer") {
+      return;
+    }
+
+    entry.intervalSeconds = intervalSeconds;
     applyWorkflowHeader();
   }
 
@@ -233,7 +249,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   /** the sources that do not have a handler yet, in catalog order. */
   function getUndeclaredInterruptSources(sources: string[]): string[] {
     const declared = new Set(host.state.headerDraft.interrupts.map((entry) => entry.source));
-    return sources.filter((source) => !declared.has(source));
+    return sources.filter((source) => source === "timer" || !declared.has(source));
   }
 
   // -- scaffolding -------------------------------------------------------------------------------
@@ -260,7 +276,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
       return false;
     }
 
-    if (host.state.headerDraft.interrupts.some((entry) => entry.source === source)) {
+    if (source !== "timer" && host.state.headerDraft.interrupts.some((entry) => entry.source === source)) {
       host.ctx.setError(`Source '${source}' already has a handler; one handler per source`);
       return false;
     }
@@ -289,6 +305,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
       source,
       handler: displayValue(entry.id),
       enabled: true,
+      ...(source === "timer" ? { intervalSeconds: 60 } : {}),
     });
     applyWorkflowHeader();
     host.ctx.setStatus(`Added an interrupt handler for '${source}'`);
@@ -335,6 +352,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     closeWorkflowHeader,
     applyWorkflowHeader,
     setHeaderInterruptSource,
+    setHeaderInterruptInterval,
     setHeaderInterruptEnabled,
     removeHeaderInterrupt,
     scaffoldInterruptHandler,

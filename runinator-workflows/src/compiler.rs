@@ -67,7 +67,7 @@ enum PendingInstruction {
         exit: Label,
         max_iterations: Option<u64>,
     },
-    CheckInterrupt(Vec<(InterruptSource, Label)>),
+    CheckInterrupt(Vec<(InterruptSource, Option<String>, Option<i64>, Label)>),
     BeginTry {
         try_key: String,
         catch: Option<Label>,
@@ -111,17 +111,32 @@ pub fn compile_workflow_module(
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowModule, WorkflowValidationError> {
     let (start, nodes) = validate_workflow(workflow)?;
-    // one handler per source, frozen into the module. an unknown or disabled source is dropped
-    // here rather than at runtime, so an old binary reading a newer definition simply has fewer
-    // handlers instead of failing the compile.
-    let declared_handlers: Vec<(InterruptSource, Label)> = interrupt_declarations(workflow, &nodes)
-        .into_iter()
-        .filter(|declaration| declaration.enabled)
-        .filter_map(|declaration| {
-            let source = declaration.source()?;
-            Some((source, Label::node(&declaration.handler)))
-        })
-        .collect();
+    // Handlers are frozen into the module. An unknown or disabled source is dropped here rather
+    // than at runtime, so an old binary reading a newer definition simply has fewer handlers
+    // instead of failing the compile. Timer identity belongs to the declaration, not its target:
+    // two intervals may deliberately share one handler region.
+    let mut timer_index = 0usize;
+    let declared_handlers: Vec<(InterruptSource, Option<String>, Option<i64>, Label)> =
+        interrupt_declarations(workflow, &nodes)
+            .into_iter()
+            .filter(|declaration| declaration.enabled)
+            .filter_map(|declaration| {
+                let source = declaration.source()?;
+                let timer_id = if source == InterruptSource::Timer {
+                    let id = format!("timer:{timer_index}");
+                    timer_index += 1;
+                    Some(id)
+                } else {
+                    None
+                };
+                Some((
+                    source,
+                    timer_id,
+                    declaration.interval_seconds,
+                    Label::node(&declaration.handler),
+                ))
+            })
+            .collect();
     let mut ordered = Vec::with_capacity(nodes.len());
     let start_node = nodes
         .iter()
@@ -275,10 +290,12 @@ pub fn compile_workflow_module(
             PendingInstruction::CheckInterrupt(handlers) => WorkflowInstruction::CheckInterrupt {
                 handlers: handlers
                     .iter()
-                    .map(|(source, label)| {
+                    .map(|(source, timer_id, interval_seconds, label)| {
                         Ok(WorkflowVmInterruptHandler {
                             source: *source,
                             target: resolve(label)?,
+                            timer_id: timer_id.clone(),
+                            interval_seconds: *interval_seconds,
                         })
                     })
                     .collect::<Result<Vec<_>, WorkflowValidationError>>()?,
@@ -339,10 +356,12 @@ pub fn compile_workflow_module(
     }
     let interrupt_handlers = declared_handlers
         .iter()
-        .map(|(source, label)| {
+        .map(|(source, timer_id, interval_seconds, label)| {
             Ok(WorkflowVmInterruptHandler {
                 source: *source,
                 target: resolve(label)?,
+                timer_id: timer_id.clone(),
+                interval_seconds: *interval_seconds,
             })
         })
         .collect::<Result<Vec<_>, WorkflowValidationError>>()?;

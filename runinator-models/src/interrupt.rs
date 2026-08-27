@@ -25,6 +25,9 @@ use crate::workflow_state::{LoopFrame, TryFrame};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterruptSource {
+    /// A workflow-owned repeating timer elapsed. Unlike [`Self::Wake`], this timer is independent
+    /// of any `wait` node and is declared with its own interval on the handler.
+    Timer,
     /// a parked cursor's timer elapsed. bound to a `wait` node's deadline.
     #[default]
     Wake,
@@ -51,9 +54,10 @@ pub enum InterruptSource {
 impl InterruptSource {
     /// every source, in the precedence the reducer matches them in. the order only decides which
     /// source wins when a single drive satisfies more than one — the more specific reading first.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::External,
         Self::OrphanSignal,
+        Self::Timer,
         Self::Wake,
         Self::Timeout,
         Self::Retry,
@@ -65,6 +69,7 @@ impl InterruptSource {
     /// the stable wire/author-facing name, matching the serde rename.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Timer => "timer",
             Self::Wake => "wake",
             Self::Timeout => "timeout",
             Self::Retry => "retry",
@@ -239,6 +244,10 @@ pub struct InterruptDeclaration {
     /// whether this link may raise its handler. absent on older definitions means enabled.
     #[serde(default = "interrupt_enabled", skip_serializing_if = "is_true")]
     pub enabled: bool,
+    /// Cadence for a `timer` interrupt. Kept on the declaration rather than the handler node: a
+    /// timer is a run-level source, while a handler region remains pure graph structure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_seconds: Option<i64>,
 }
 
 impl InterruptDeclaration {

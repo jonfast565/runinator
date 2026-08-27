@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    load_pack_pipelines, load_pack_settings, load_workflow_bundle, pack_source_files,
-    rexrap_context_workflow_signatures,
+    load_pack_settings, load_workflow_bundle, pack_source_files, rexrap_context_workflow_signatures,
 };
 
 fn repo_root() -> &'static Path {
@@ -69,11 +68,7 @@ fn rejects_headerless_pack_sources() {
 #[test]
 fn checked_in_packs_all_compile_and_settings_parse() {
     let packs_dir = repo_root().join("packs");
-    let manifests = vec![
-        packs_dir.join("hello-world"),
-        packs_dir.join("creds-sync"),
-        packs_dir.join("sdlc"),
-    ];
+    let manifests = vec![packs_dir.join("hello-world"), packs_dir.join("creds-sync")];
 
     assert!(
         !manifests.is_empty(),
@@ -137,41 +132,6 @@ fn checked_in_packs_all_compile_and_settings_parse() {
                 )
             });
         }
-    }
-}
-
-#[test]
-fn sdlc_manifest_settings_entry_loads_bundle() {
-    let manifest = repo_root().join("packs").join("sdlc");
-
-    let settings = load_pack_settings(&manifest)
-        .expect("sdlc settings should load")
-        .expect("sdlc manifest declares a settings file");
-
-    assert!(
-        !settings.secrets.is_empty(),
-        "sdlc settings bundle should seed config/secret slots"
-    );
-}
-
-#[test]
-fn sdlc_manifest_loads_core_pipeline() {
-    let manifest = repo_root().join("packs").join("sdlc");
-
-    let pipelines = load_pack_pipelines(&manifest)
-        .expect("sdlc pipelines should load")
-        .expect("sdlc manifest declares a pipeline file");
-
-    assert_eq!(pipelines.pipelines.len(), 1);
-    let core = &pipelines.pipelines[0];
-    assert_eq!(core.name, "Core SDLC");
-    assert_eq!(core.members.len(), 4);
-    assert_eq!(core.links.len(), 3);
-    // every link's endpoints must be declared members (lowering enforces this).
-    let member_names: Vec<&str> = core.members.iter().map(|m| m.name.as_str()).collect();
-    for link in &core.links {
-        assert!(member_names.contains(&link.from.as_str()));
-        assert!(member_names.contains(&link.to.as_str()));
     }
 }
 

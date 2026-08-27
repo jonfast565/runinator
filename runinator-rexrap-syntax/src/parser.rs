@@ -965,11 +965,16 @@ fn parse_watch_decl(pair: Pair<Rule>) -> Result<WatchDecl, RexRapError> {
 
 fn parse_interrupt_decl(pair: Pair<Rule>) -> Result<InterruptDecl, RexRapError> {
     let mut source = None;
+    let mut interval_seconds = None;
     let mut enabled = true;
     let mut body = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::interrupt_source => source = Some(inner.as_str().trim().to_string()),
+            Rule::interrupt_every => {
+                let duration = first_inner(inner)?;
+                interval_seconds = Some(parse_duration(duration.as_str(), span_of(&duration))?);
+            }
             Rule::interrupt_disabled => enabled = false,
             Rule::block => body = Some(parse_block(inner)?),
             _ => {}
@@ -977,6 +982,7 @@ fn parse_interrupt_decl(pair: Pair<Rule>) -> Result<InterruptDecl, RexRapError> 
     }
     Ok(InterruptDecl {
         source: source.ok_or_else(|| RexRapError::lower("interrupt missing source"))?,
+        interval_seconds,
         enabled,
         body: body.ok_or_else(|| RexRapError::lower("interrupt missing handler block"))?,
     })

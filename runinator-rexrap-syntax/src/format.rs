@@ -275,7 +275,11 @@ impl Formatter {
         // the same body machinery as any other block, so a region formats like the code it is.
         for interrupt in &workflow.interrupts {
             let disabled = if interrupt.enabled { "" } else { " disabled" };
-            let header = format!("interrupt on {}{disabled} {{", interrupt.source);
+            let every = interrupt
+                .interval_seconds
+                .map(|seconds| format!(" every {}", format_duration(seconds)))
+                .unwrap_or_default();
+            let header = format!("interrupt on {}{every}{disabled} {{", interrupt.source);
             let rendered = self.render_block(&header, &interrupt.body, "}");
             self.line(rendered.trim_end_matches('\n'));
         }

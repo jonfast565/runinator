@@ -75,6 +75,70 @@ fn a_well_formed_handler_region_validates() {
     validate_workflow(&workflow).expect("an isolated handler region is valid");
 }
 
+#[test]
+fn multiple_timer_handlers_with_distinct_intervals_validate() {
+    let workflow = with_handler(
+        runinator_models::json!([
+            { "on": "timer", "handler": "fast", "interval_seconds": 30 },
+            { "on": "timer", "handler": "slow", "interval_seconds": 300 }
+        ]),
+        vec![
+            runinator_models::json!({
+                "id": "fast", "kind": "interrupt",
+                "transitions": { "next": { "$node": "fast_resume" } }
+            }),
+            runinator_models::json!({
+                "id": "fast_resume", "kind": "resume",
+                "parameters": { "mode": "resume" }
+            }),
+            runinator_models::json!({
+                "id": "slow", "kind": "interrupt",
+                "transitions": { "next": { "$node": "slow_resume" } }
+            }),
+            runinator_models::json!({
+                "id": "slow_resume", "kind": "resume",
+                "parameters": { "mode": "resume" }
+            }),
+        ],
+    );
+    validate_workflow(&workflow).expect("separate timer declarations may run at separate periods");
+}
+
+#[test]
+fn timers_with_a_shared_handler_get_distinct_frozen_ids() {
+    let workflow = with_handler(
+        runinator_models::json!([
+            { "on": "timer", "handler": "refresh", "interval_seconds": 30 },
+            { "on": "timer", "handler": "refresh", "interval_seconds": 300 }
+        ]),
+        refresh_region(),
+    );
+
+    let module = compile_workflow_module(&workflow).expect("the shared handler is still valid");
+    let timers: Vec<_> = module
+        .interrupt_handlers
+        .iter()
+        .filter(|handler| handler.source == runinator_models::interrupt::InterruptSource::Timer)
+        .collect();
+    assert_eq!(
+        timers
+            .iter()
+            .map(|handler| handler.interval_seconds)
+            .collect::<Vec<_>>(),
+        vec![Some(30), Some(300)]
+    );
+    assert_ne!(timers[0].timer_id, timers[1].timer_id);
+}
+
+#[test]
+fn a_timer_handler_requires_a_positive_interval() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "timer", "handler": "on_wake" }]),
+        graph_declared_region(),
+    );
+    assert!(expect_region_error(&workflow).contains("positive `interval_seconds`"));
+}
+
 /// metadata links a source to an explicit graph entry.
 #[test]
 fn a_region_declared_by_its_entry_node_validates() {

@@ -279,8 +279,17 @@ async fn settle(broker: &dyn Broker, group: &str, delivery: &runinator_broker::W
             .num_milliseconds()
             .max(0) as f64,
     );
-    let command =
-        WsIngressCommand::settle_effect(delivery.command.result.clone(), delivery.command.trace_id);
+    let command = match &delivery.command.timer_interrupt {
+        Some(timer) => WsIngressCommand::timer_interrupt(
+            timer.clone(),
+            delivery.command.due_at,
+            delivery.command.trace_id,
+        ),
+        None => WsIngressCommand::settle_effect(
+            delivery.command.result.clone(),
+            delivery.command.trace_id,
+        ),
+    };
     let message = IngressMessage {
         command,
         dedupe_key: None,

@@ -1,10 +1,11 @@
 use super::*;
 use runinator_comm::EffectCommand;
+use runinator_models::interrupt::InterruptSource;
 use runinator_models::pipelines::{PIPELINE_GRAPH_VERSION, Pipeline, PipelineGraph};
 use runinator_models::workflow_vm::{
     WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowEffect, WorkflowEffectOutput,
     WorkflowEffectOutputEvent, WorkflowEffectRequest, WorkflowEffectStatus, WorkflowInstruction,
-    WorkflowModule,
+    WorkflowModule, WorkflowVmInterruptHandler,
 };
 
 #[tokio::test]
@@ -52,6 +53,103 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
     assert_eq!(roots[0].locals.get("input"), Some(&parameters));
     assert_eq!(roots[0].locals.get("config"), Some(&config));
     assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn vm_run_start_materializes_and_fires_each_periodic_timer_once() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-vm-timers-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow_id = db
+        .upsert_workflow(&workflow("vm-timers"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let handlers = vec![
+        WorkflowVmInterruptHandler {
+            source: InterruptSource::Timer,
+            target: 1,
+            timer_id: Some("fast".into()),
+            interval_seconds: Some(30),
+        },
+        WorkflowVmInterruptHandler {
+            source: InterruptSource::Timer,
+            target: 1,
+            timer_id: Some("slow".into()),
+            interval_seconds: Some(300),
+        },
+    ];
+    let mut module = WorkflowModule::new(vec![WorkflowInstruction::CheckInterrupt {
+        handlers: handlers.clone(),
+    }]);
+    module.interrupt_handlers = handlers;
+
+    let run = db
+        .create_workflow_vm_run(NewWorkflowVmRun {
+            workflow_id,
+            workflow_snapshot: snapshot,
+            parameters: Value::Null,
+            config: Value::Null,
+            state: Value::Null,
+            name: None,
+            provenance: Default::default(),
+            pipeline_run_id: None,
+            pipeline_member_attempt_id: None,
+            module,
+            instruction_pointer: 0,
+        })
+        .await
+        .unwrap();
+
+    let timers = db
+        .fetch_workflow_timer_interrupts_before(Utc::now() + Duration::seconds(301), 10)
+        .await
+        .unwrap();
+    let run_timers: Vec<_> = timers
+        .into_iter()
+        .filter(|timer| timer.workflow_run_id == run.id)
+        .collect();
+    assert_eq!(run_timers.len(), 2);
+    assert_eq!(
+        run_timers
+            .iter()
+            .map(|timer| (timer.timer_id.as_str(), timer.interval_seconds))
+            .collect::<Vec<_>>(),
+        vec![("fast", 30), ("slow", 300)]
+    );
+
+    let fast = run_timers
+        .into_iter()
+        .find(|timer| timer.timer_id == "fast")
+        .unwrap();
+    assert!(
+        db.fire_workflow_timer_interrupt(fast.clone(), fast.due_at + Duration::seconds(1))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db.fire_workflow_timer_interrupt(fast, Utc::now())
+            .await
+            .unwrap()
+    );
+
+    let root = db
+        .fetch_workflow_continuations(run.id)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        root.pending_interrupt
+            .as_ref()
+            .and_then(|pending| pending.payload.get("timer_id"))
+            .and_then(Value::as_str),
+        Some("fast")
+    );
 }
 
 #[tokio::test]

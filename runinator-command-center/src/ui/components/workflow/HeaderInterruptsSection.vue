@@ -104,6 +104,16 @@
               </option>
             </select>
           </label>
+          <label v-if="entry.source === 'timer'" class="interrupt-source-field">
+            Every (seconds)
+            <input
+              type="number"
+              min="1"
+              step="1"
+              :value="entry.intervalSeconds ?? 60"
+              @change="workflows.setHeaderInterruptInterval(index, numberValue($event))"
+            />
+          </label>
           <label class="interrupt-enabled-toggle checkbox">
             <input
               type="checkbox"
@@ -164,6 +174,10 @@ function checkedValue(event: Event): boolean {
   return (event.target as HTMLInputElement).checked;
 }
 
+function numberValue(event: Event): number {
+  return Number((event.target as HTMLInputElement).value);
+}
+
 function labelFor(source: string): string {
   return sourceOptions.value.find((option) => option.value === source)?.label ?? source;
 }
@@ -173,7 +187,7 @@ function describeSource(source: string): string {
 }
 
 function availableSources(current: string) {
-  const allowed = new Set([current, ...undeclared.value]);
+  const allowed = new Set([current, "timer", ...undeclared.value]);
   return sourceOptions.value.filter((option) => allowed.has(option.value));
 }
 

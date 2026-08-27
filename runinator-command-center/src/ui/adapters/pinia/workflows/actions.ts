@@ -108,6 +108,7 @@ export function createWorkflowActions(services: WorkflowServices) {
     openWorkflowRexRap: services.header.openWorkflowRexRap,
     closeWorkflowHeader: services.header.closeWorkflowHeader,
     setHeaderInterruptSource: services.header.setHeaderInterruptSource,
+    setHeaderInterruptInterval: services.header.setHeaderInterruptInterval,
     setHeaderInterruptEnabled: services.header.setHeaderInterruptEnabled,
     removeHeaderInterrupt: services.header.removeHeaderInterrupt,
     scaffoldInterruptHandler: services.header.scaffoldInterruptHandler,

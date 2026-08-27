@@ -484,6 +484,20 @@ pub struct WakeCommand {
     /// end. defaults for backward-compatible deserialization of older messages.
     #[serde(default = "Uuid::now_v7")]
     pub trace_id: Uuid,
+    /// A workflow-level periodic timer interrupt. When present, the waker relays an ingress
+    /// command instead of settling `result`; `result` remains populated for wire compatibility
+    /// with effect wakes and is intentionally ignored by the timer-interrupt path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_interrupt: Option<TimerInterruptWake>,
+}
+
+/// A due occurrence of one configured workflow timer. The timer id names a frozen interrupt
+/// declaration, so several independent periods can coexist on the same run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimerInterruptWake {
+    pub workflow_run_id: Uuid,
+    pub timer_id: String,
+    pub interval_seconds: i64,
 }
 
 impl WakeCommand {
@@ -492,6 +506,43 @@ impl WakeCommand {
             due_at,
             result,
             trace_id,
+            timer_interrupt: None,
+        }
+    }
+
+    /// Build a wake for a workflow-owned periodic timer. `result` is a compatibility marker only:
+    /// the waker detects `timer_interrupt` and never sends it to the effect-settlement path.
+    pub fn timer_interrupt(
+        due_at: DateTime<Utc>,
+        workflow_run_id: Uuid,
+        timer_id: impl Into<String>,
+        interval_seconds: i64,
+        trace_id: Uuid,
+    ) -> Self {
+        Self {
+            due_at,
+            result: EffectResult {
+                version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+                event_id: Uuid::now_v7(),
+                effect_id: Uuid::now_v7(),
+                workflow_run_id,
+                continuation_id: Uuid::nil(),
+                attempt: 0,
+                kind: EffectResultKind::Status {
+                    status: WorkflowEffectStatus::Succeeded,
+                    output: None,
+                    message: None,
+                },
+                timestamp: due_at,
+                trace_id,
+                notification_delivery_id: None,
+            },
+            trace_id,
+            timer_interrupt: Some(TimerInterruptWake {
+                workflow_run_id,
+                timer_id: timer_id.into(),
+                interval_seconds,
+            }),
         }
     }
 
@@ -508,6 +559,14 @@ impl WakeCommand {
     /// stable identity for broker deduplication while a wake is in flight. keyed on the attempt so
     /// a retried effect arms a new timer rather than colliding with the one it replaced.
     pub fn dedupe_key(&self) -> String {
+        if let Some(timer) = &self.timer_interrupt {
+            return format!(
+                "timer-interrupt:{}:{}:{}",
+                timer.workflow_run_id,
+                timer.timer_id,
+                self.due_at.timestamp()
+            );
+        }
         format!("{}:{}", self.result.effect_id, self.result.attempt)
     }
 }
@@ -547,6 +606,14 @@ pub enum WsIngressCommand {
         #[serde(default = "Uuid::now_v7")]
         trace_id: Uuid,
     },
+    /// waker -> engine: a workflow-owned periodic timer elapsed. The engine records the pending
+    /// interrupt and advances this declaration's durable schedule atomically.
+    TimerInterrupt {
+        timer: TimerInterruptWake,
+        due_at: DateTime<Utc>,
+        #[serde(default = "Uuid::now_v7")]
+        trace_id: Uuid,
+    },
     /// worker -> WS: a control request from an executing action.
     Control {
         workflow_run_id: Uuid,
@@ -563,6 +630,18 @@ pub enum WsIngressCommand {
 impl WsIngressCommand {
     pub fn settle_effect(result: EffectResult, trace_id: Uuid) -> Self {
         Self::SettleEffect { result, trace_id }
+    }
+
+    pub fn timer_interrupt(
+        timer: TimerInterruptWake,
+        due_at: DateTime<Utc>,
+        trace_id: Uuid,
+    ) -> Self {
+        Self::TimerInterrupt {
+            timer,
+            due_at,
+            trace_id,
+        }
     }
 
     pub fn control(workflow_run_id: Uuid, kind: ControlKind) -> Self {
@@ -599,6 +678,12 @@ impl WsIngressCommand {
             Self::SettleEffect { result, .. } => {
                 format!("settle:{}:{}", result.effect_id, result.attempt)
             }
+            Self::TimerInterrupt { timer, due_at, .. } => format!(
+                "timer-interrupt:{}:{}:{}",
+                timer.workflow_run_id,
+                timer.timer_id,
+                due_at.timestamp()
+            ),
             Self::Control {
                 workflow_run_id,
                 kind,

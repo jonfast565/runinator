@@ -48,4 +48,4 @@ pub use replicas::ReplicaStore;
 pub use runs::RunStore;
 pub use schedules::{ScheduleStore, ScheduledWorkflowVm};
 pub use settings::SettingStore;
-pub use workflow_vm::{NewWorkflowVmRun, WorkflowVmStore};
+pub use workflow_vm::{NewWorkflowVmRun, WorkflowTimerInterrupt, WorkflowVmStore};

@@ -74,8 +74,12 @@ function readInterrupts(metadata: JsonRecord): InterruptDeclaration[] {
       const handler = typeof entry.handler === "string" ? entry.handler : null;
       // a half-written entry is dropped rather than surfaced: the backend decodes the whole array
       // or none of it, so a shape it would reject must not round-trip through the editor either.
+      const intervalSeconds =
+        typeof entry.interval_seconds === "number" && Number.isFinite(entry.interval_seconds)
+          ? entry.interval_seconds
+          : undefined;
       return source !== null && handler !== null
-        ? [{ source, handler, enabled: entry.enabled !== false }]
+        ? [{ source, handler, enabled: entry.enabled !== false, intervalSeconds }]
         : [];
     });
 }
@@ -120,6 +124,9 @@ export function applyWorkflowHeader(definition: JsonRecord, header: WorkflowHead
         ? header.interrupts.map((entry) => ({
             on: entry.source,
             handler: entry.handler,
+            ...(entry.intervalSeconds === undefined
+              ? {}
+              : { interval_seconds: entry.intervalSeconds }),
             ...(entry.enabled ? {} : { enabled: false }),
           }))
         : undefined,

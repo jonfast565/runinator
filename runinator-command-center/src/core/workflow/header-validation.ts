@@ -27,6 +27,7 @@ export const HEADER_ISSUE_NODE_ID = "workflow";
 const INTERRUPT_SOURCES = new Set([
   "external",
   "orphan_signal",
+  "timer",
   "wake",
   "timeout",
   "retry",
@@ -191,11 +192,18 @@ function pushInterruptIssues(
       );
     }
 
-    if (seenSources.has(source)) {
+    if (source !== "timer" && seenSources.has(source)) {
       issues.push(handlerError(`${label}: source '${source}' already has a handler; one handler per source`));
     }
 
     seenSources.add(source);
+
+    if (source === "timer" && (!Number.isInteger(declaration.intervalSeconds) || declaration.intervalSeconds! <= 0)) {
+      issues.push(handlerError(`${label}: timer handlers require a positive whole-second interval`));
+    }
+    if (source !== "timer" && declaration.intervalSeconds !== undefined) {
+      issues.push(handlerError(`${label}: only timer handlers may declare an interval`));
+    }
 
     const entry = byId.get(handler);
 

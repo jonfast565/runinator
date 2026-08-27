@@ -101,6 +101,30 @@ async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
                 Err(err) => Err(crate::errors::EFFECT_RESULT_PUBLISH.error(err)),
             }
         }
+        WsIngressCommand::TimerInterrupt {
+            timer,
+            due_at,
+            trace_id,
+        } => {
+            info!(
+                workflow_run_id = %timer.workflow_run_id,
+                timer_id = %timer.timer_id,
+                due_at = %due_at,
+                trace_id = %trace_id,
+                "applying due workflow timer interrupt"
+            );
+            db.fire_workflow_timer_interrupt(
+                runinator_store::roles::WorkflowTimerInterrupt {
+                    workflow_run_id: timer.workflow_run_id,
+                    timer_id: timer.timer_id.clone(),
+                    interval_seconds: timer.interval_seconds,
+                    due_at: *due_at,
+                },
+                chrono::Utc::now(),
+            )
+            .await?;
+            Ok(())
+        }
         // a worker asked for run control from inside an executing action.
         WsIngressCommand::Control {
             workflow_run_id,

@@ -77,7 +77,7 @@ pub mod prelude {
         ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DeliveryStore,
         FileStore, FunctionStore, NewWorkflowVmRun, NotificationStore, OrgStore, QueueSnapshot,
         RbacStore, ReplicaStore, RunStore, ScheduleStore, ScheduledWorkflowVm, SettingStore,
-        WorkflowVmStore,
+        WorkflowTimerInterrupt, WorkflowVmStore,
     };
     pub use crate::runtime_store::RuntimeStore;
 }

@@ -114,9 +114,9 @@ pub struct WorkflowModule {
     /// Maps executable locations back to the author-facing graph.
     #[serde(default)]
     pub source_map: Vec<WorkflowSourceMapEntry>,
-    /// Compiled interrupt handler entries, one per declared source. Frozen into the module rather
-    /// than looked up in mutable workflow metadata, so a run in flight keeps the handlers it
-    /// started with.
+    /// Compiled interrupt handler entries. Frozen into the module rather than looked up in mutable
+    /// workflow metadata, so a run in flight keeps the handlers it started with. Timer handlers
+    /// are keyed by their distinct `timer_id`, allowing several periodic handlers in one workflow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub interrupt_handlers: Vec<WorkflowVmInterruptHandler>,
 }
@@ -177,7 +177,7 @@ impl WorkflowModule {
         })
     }
 
-    /// The compiled handler for one source, if the workflow declared it.
+    /// The compiled handler for one non-timer source, if the workflow declared it.
     pub fn interrupt_handler(
         &self,
         source: InterruptSource,
@@ -185,6 +185,23 @@ impl WorkflowModule {
         self.interrupt_handlers
             .iter()
             .find(|handler| handler.source == source)
+    }
+
+    /// Select the frozen handler for a pending request. Timer requests carry the declaration's
+    /// stable handler id in their payload, while the other sources remain one-per-source.
+    pub fn interrupt_handler_for(
+        &self,
+        source: InterruptSource,
+        payload: &Value,
+    ) -> Option<&WorkflowVmInterruptHandler> {
+        if source != InterruptSource::Timer {
+            return self.interrupt_handler(source);
+        }
+        let timer_id = payload.get("timer_id").and_then(Value::as_str)?;
+        self.interrupt_handlers.iter().find(|handler| {
+            handler.source == InterruptSource::Timer
+                && handler.timer_id.as_deref() == Some(timer_id)
+        })
     }
 }
 
@@ -454,6 +471,14 @@ pub enum WorkflowInterruptOutcome {
 pub struct WorkflowVmInterruptHandler {
     pub source: InterruptSource,
     pub target: usize,
+    /// Stable identity of a periodic timer declaration. Only set for [`InterruptSource::Timer`].
+    /// It is distinct even when two schedules use the same handler region; the timer relay carries
+    /// it in its pending-interrupt payload, so multiple timers are never ambiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_id: Option<String>,
+    /// The frozen period for a periodic timer handler, in seconds. Only set for timer handlers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_seconds: Option<i64>,
 }
 
 /// Durable state scoped to one continuation. Frames replace the graph reducer's cursor, node-run,

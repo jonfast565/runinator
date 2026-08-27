@@ -21,6 +21,17 @@ use runinator_models::{
 };
 use uuid::Uuid;
 
+/// One durable periodic timer attached to a running workflow. The schedule is separate from a
+/// continuation so a timer survives forks, handler completion, and the continuation it happens to
+/// interrupt changing over time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowTimerInterrupt {
+    pub workflow_run_id: Uuid,
+    pub timer_id: String,
+    pub interval_seconds: i64,
+    pub due_at: DateTime<Utc>,
+}
+
 /// Everything needed to freeze a new VM-backed workflow run in one transaction.
 #[derive(Debug, Clone)]
 pub struct NewWorkflowVmRun {
@@ -182,6 +193,23 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         continuation_id: Option<Uuid>,
         pending: WorkflowPendingInterrupt,
     ) -> impl Future<Output = Result<Option<Uuid>, SendableError>> + Send;
+
+    /// List timer occurrences that should be armed with the broker-only waker. Repeated arming of
+    /// the same row is safe: its wake dedupe key includes the exact `due_at` instant.
+    fn fetch_workflow_timer_interrupts_before(
+        &self,
+        before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowTimerInterrupt>, SendableError>> + Send;
+
+    /// Apply a due timer once: advance the durable schedule and, when a real cursor is available,
+    /// record the matching pending interrupt on it in the same transaction. Returns false for a
+    /// stale/redelivered wake or a run that has already finished.
+    fn fire_workflow_timer_interrupt(
+        &self,
+        timer: WorkflowTimerInterrupt,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Record the replica executing one effect attempt, and mark the effect running. Returns
     /// false for a stale attempt or an already-terminal effect. This is the VM's executor lease:
