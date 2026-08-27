@@ -166,6 +166,34 @@ export async function saveAuthSettings(maxRefreshes: number) {
   return command<AuthSettings>("save_auth_settings", { maxRefreshes });
 }
 
+export interface ServerSettingDefinition {
+  key: string;
+  section: string;
+  label: string;
+  description: string;
+  unit: string;
+  default: number;
+  minimum: number;
+  maximum: number;
+  usual_minimum: number;
+  usual_maximum: number;
+}
+
+export type ServerSettingsValues = Record<string, Record<string, number>>;
+
+export interface ServerSettingsResponse {
+  values: ServerSettingsValues;
+  catalog: ServerSettingDefinition[];
+}
+
+export async function fetchServerSettings() {
+  return command<ServerSettingsResponse>("fetch_server_settings");
+}
+
+export async function saveServerSettings(settings: ServerSettingsValues) {
+  return command<ServerSettingsResponse>("save_server_settings", { settings });
+}
+
 // push the access token to both runtimes: the web fetch layer and (on desktop) the tauri client.
 export async function setAccessToken(token: string | null) {
   setHttpAuthToken(token);

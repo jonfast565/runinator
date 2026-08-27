@@ -2,8 +2,12 @@ import {
   fetchCredentials,
   fetchForeignLanguageRuntime,
   fetchAuthSettings,
+  fetchServerSettings,
   saveForeignLanguageRuntime,
   saveAuthSettings,
+  saveServerSettings,
+  type ServerSettingDefinition,
+  type ServerSettingsValues,
 } from "../api/commandCenterApi";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
@@ -67,6 +71,8 @@ export interface AdminSettingsState {
   loaded: boolean;
   languages: ForeignLanguageSetting[];
   maxRefreshes: number;
+  serverValues: ServerSettingsValues;
+  serverCatalog: ServerSettingDefinition[];
 }
 
 export function createAdminSettingsService(app: AppService) {
@@ -74,6 +80,8 @@ export function createAdminSettingsService(app: AppService) {
     loaded: false,
     languages: createLanguageSettings(),
     maxRefreshes: 100,
+    serverValues: {},
+    serverCatalog: [],
   });
 
   const service = {
@@ -118,7 +126,20 @@ export function createAdminSettingsService(app: AppService) {
         }
       }
 
-      store.setState((state) => ({ ...state, loaded: true, languages }));
+      store.setState((state) => ({
+        ...state,
+        loaded: true,
+        languages,
+      }));
+    },
+    async refreshServerSettings() {
+      const server = await app.runOperation("Loading server settings", fetchServerSettings);
+      store.setState((state) => ({
+        ...state,
+        serverValues: server.values,
+        serverCatalog: server.catalog,
+        maxRefreshes: server.values.authentication.max_refreshes,
+      }));
     },
     async refreshAuthSettings() {
       const settings = await app.runOperation("Loading authentication settings", fetchAuthSettings);
@@ -138,6 +159,48 @@ export function createAdminSettingsService(app: AppService) {
       );
       store.setState((state) => ({ ...state, maxRefreshes: saved.max_refreshes }));
       app.setStatus("Authentication settings saved");
+    },
+    updateServerSetting(key: string, value: number) {
+      if (!Number.isInteger(value)) {
+        app.setError(`${key} must be an integer`);
+        return;
+      }
+
+      const definition = store.getState().serverCatalog.find((item) => item.key === key);
+
+      if (!definition) {
+        app.setError(`Unknown server setting: ${key}`);
+        return;
+      }
+
+      if (value < definition.minimum || value > definition.maximum) {
+        app.setError(
+          `${key} must be between ${String(definition.minimum)} and ${String(definition.maximum)}`,
+        );
+        return;
+      }
+
+      const [section, name] = key.split(".");
+
+      store.setState((state) => ({
+        ...state,
+        serverValues: {
+          ...state.serverValues,
+          [section]: { ...state.serverValues[section], [name]: value },
+        },
+      }));
+    },
+    async saveServerSettings() {
+      const saved = await app.runOperation("Saving server settings", () =>
+        saveServerSettings(store.getState().serverValues),
+      );
+      store.setState((state) => ({
+        ...state,
+        serverValues: saved.values,
+        serverCatalog: saved.catalog,
+        maxRefreshes: saved.values.authentication.max_refreshes,
+      }));
+      app.setStatus("Server settings saved; engine replicas will refresh them shortly");
     },
     async saveLanguage(language: string) {
       const runtime = store.getState().languages.find((entry) => entry.language === language);
@@ -174,6 +237,8 @@ export function createAdminSettingsService(app: AppService) {
         loaded: false,
         languages: createLanguageSettings(),
         maxRefreshes: 100,
+        serverValues: {},
+        serverCatalog: [],
       }));
     },
   };

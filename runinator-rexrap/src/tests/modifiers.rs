@@ -387,6 +387,37 @@ fn runner_modifier_lowers_and_round_trips() {
     assert_round_trips(src);
 }
 #[test]
+fn workspace_modifier_lowers_and_round_trips() {
+    let src = r#"
+        workflow "Workspace" v1 {
+            params {
+                workspace: any
+            }
+
+            do {
+                @workspace(params.workspace)
+                let go = console.run(command: "use local workspace")
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let action = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Action)
+        .and_then(|node| node.action.as_ref())
+        .expect("action node");
+    assert!(action.workspace_affinity.is_some());
+
+    let rexrap = decompile(&definition).expect("decompile");
+    assert!(
+        rexrap.contains("@workspace(params.workspace)"),
+        "decompiled source missing workspace attribute:\n{rexrap}"
+    );
+    assert_round_trips(src);
+}
+#[test]
 fn idempotent_modifier_lowers_and_round_trips() {
     // the key is an expression, not a literal: it names *this* run's effect, so it has to be able to
     // read run inputs the way any other action argument does.

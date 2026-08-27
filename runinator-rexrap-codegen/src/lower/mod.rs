@@ -1353,6 +1353,9 @@ impl Lowerer {
             labels.insert("runner".into(), Value::String(runner.clone()));
             action_obj.insert("required_labels".into(), Value::Object(labels));
         }
+        if let Some(affinity) = &action.modifiers.workspace_affinity {
+            action_obj.insert("workspace_affinity".into(), self.lower_expr(affinity)?);
+        }
         if let Some(key) = &action.modifiers.idempotency_key {
             let lowered = self.lower_expr(key)?;
             action_obj.insert("idempotency_key".into(), lowered);
@@ -1420,6 +1423,9 @@ impl Lowerer {
             let mut labels = Map::new();
             labels.insert("runner".into(), Value::String(runner.clone()));
             obj.insert("required_labels".into(), Value::Object(labels));
+        }
+        if let Some(affinity) = &action.modifiers.workspace_affinity {
+            obj.insert("workspace_affinity".into(), self.lower_expr(affinity)?);
         }
         if let Some(key) = &action.modifiers.idempotency_key {
             let lowered = self.lower_expr(key)?;

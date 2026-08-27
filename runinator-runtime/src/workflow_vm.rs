@@ -1001,6 +1001,7 @@ fn resolve_effect_request(
             retry,
             tags,
             required_labels,
+            workspace_affinity,
             idempotency_key,
             function_binding,
         } => WorkflowEffectRequest::Action {
@@ -1011,6 +1012,7 @@ fn resolve_effect_request(
             retry,
             tags,
             required_labels,
+            workspace_affinity: workspace_affinity.map(resolve).transpose()?,
             idempotency_key: idempotency_key.map(resolve).transpose()?,
             function_binding,
         },
@@ -1780,6 +1782,7 @@ mod tests {
                 retry: Default::default(),
                 tags: Vec::new(),
                 required_labels: Default::default(),
+                workspace_affinity: None,
                 idempotency_key: Some(runinator_models::json!({
                     "$ref": { "input": ["request_id"] }
                 })),

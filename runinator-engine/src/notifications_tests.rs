@@ -232,8 +232,13 @@ async fn repeated_secret_expiry_scans_emit_one_notification() {
     .unwrap();
     let events = UiEventPublisher::new(Arc::new(InMemoryBroker::new()));
 
-    scan_secret_expiry(&db, &events, now).await.unwrap();
-    scan_secret_expiry(&db, &events, now).await.unwrap();
+    let settings = runinator_models::server_settings::ServerSettings::default();
+    scan_secret_expiry(&db, &events, now, &settings)
+        .await
+        .unwrap();
+    scan_secret_expiry(&db, &events, now, &settings)
+        .await
+        .unwrap();
 
     let notifications = db.fetch_notifications(false, 10).await.unwrap();
     assert_eq!(notifications.len(), 1);

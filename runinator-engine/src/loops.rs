@@ -7,12 +7,14 @@ use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::{
     orchestration::{IngressPromotion, IngressTargetKind},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
+    workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
+    workspaces::WorkspaceAffinity,
 };
 use runinator_store::{
     RuntimeStore,
     roles::{
         DefinitionStore, IngressStore, NotificationStore, OrgStore, ReplicaStore, ScheduleStore,
-        WorkflowVmStore,
+        WorkflowVmStore, WorkspaceStore,
     },
 };
 use tokio::sync::Notify;
@@ -21,20 +23,10 @@ use tracing::{error, info, warn};
 use crate::{
     events::{AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflow_run},
     repository,
-    services::{REPLICA_STALE_SECONDS, ReplicaRegistry},
+    services::{ReplicaRegistry, WorkspaceOperations, WorkspaceRecovery},
+    settings::ServerSettingsHandle,
     stability,
 };
-
-const TRIGGER_INTERVAL: Duration = Duration::from_millis(1000);
-const AGENT_DIRECTIVE_INTERVAL: Duration = Duration::from_secs(1);
-const CLAIM_LIMIT: i64 = 100;
-const ACTION_DISPATCH_LEASE_SECONDS: i64 = 60;
-const REPLICA_REAP_INTERVAL: Duration = Duration::from_secs(60);
-const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
-const OPERATIONAL_METRICS_INTERVAL: Duration = Duration::from_secs(15);
-const WORKFLOW_VM_DRIVE_INTERVAL: Duration = Duration::from_millis(250);
-const WORKFLOW_EFFECT_DISPATCH_INTERVAL: Duration = Duration::from_millis(250);
-const TIMER_INTERRUPT_ARM_HORIZON: Duration = Duration::from_secs(1);
 
 fn queue_age(
     now: chrono::DateTime<chrono::Utc>,
@@ -53,6 +45,7 @@ pub async fn run_workflow_vm_driver<
     db: Arc<T>,
     instance: String,
     ready_nudge: Arc<Notify>,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow VM driver started");
@@ -60,7 +53,9 @@ pub async fn run_workflow_vm_driver<
     loop {
         let started = std::time::Instant::now();
         let mut succeeded = true;
-        match host.drive_runnable(instance.clone(), CLAIM_LIMIT).await {
+        let policy = settings.current();
+        let claim_limit = policy.orchestration.claim_batch_size as i64;
+        match host.drive_runnable(instance.clone(), claim_limit).await {
             Ok(outcomes) => {
                 for outcome in outcomes {
                     stability::vm_continuation_driven(match outcome {
@@ -151,7 +146,7 @@ pub async fn run_workflow_vm_driver<
                 warn!(error = %err, "workflow VM drive failed");
             }
         }
-        match db.fetch_unsettled_vm_pipeline_members(CLAIM_LIMIT).await {
+        match db.fetch_unsettled_vm_pipeline_members(claim_limit).await {
             Ok(run_ids) => {
                 for run_id in run_ids {
                     if let Err(err) =
@@ -178,7 +173,7 @@ pub async fn run_workflow_vm_driver<
         tokio::select! {
             _ = shutdown.notified() => return,
             _ = ready_nudge.notified() => {}
-            _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
+            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.workflow_vm_poll_interval_ms)) => {}
         }
     }
 }
@@ -291,18 +286,21 @@ async fn start_ingress_promotion<
 pub async fn run_timer_interrupt_scheduler<T: WorkflowVmStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow timer-interrupt scheduler started");
     loop {
         let started = std::time::Instant::now();
         let now = chrono::Utc::now();
+        let policy = settings.current();
         let mut succeeded = true;
         match db
             .fetch_workflow_timer_interrupts_before(
-                now + chrono::Duration::from_std(TIMER_INTERRUPT_ARM_HORIZON)
-                    .unwrap_or_else(|_| chrono::Duration::seconds(1)),
-                CLAIM_LIMIT,
+                now + chrono::Duration::milliseconds(
+                    policy.orchestration.timer_arm_horizon_ms as i64,
+                ),
+                policy.orchestration.claim_batch_size as i64,
             )
             .await
         {
@@ -344,33 +342,82 @@ pub async fn run_timer_interrupt_scheduler<T: WorkflowVmStore>(
         stability::loop_iteration("timer_interrupt_scheduler", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => return,
-            _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
+            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.workflow_vm_poll_interval_ms)) => {}
         }
     }
 }
 
 /// Drain the VM effect outbox. The command was frozen in the same transaction as the suspended
 /// continuation, so this publisher never re-reads graph or node-run state to rebuild a delivery.
-pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore>(
+pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore + WorkspaceStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance: String,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow VM effect dispatcher started");
     loop {
         let now = chrono::Utc::now();
+        let policy = settings.current();
         match db
             .claim_pending_workflow_effect_dispatches(
                 instance.clone(),
                 now,
-                now + chrono::Duration::seconds(ACTION_DISPATCH_LEASE_SECONDS),
-                CLAIM_LIMIT,
+                now + chrono::Duration::seconds(
+                    policy.orchestration.action_dispatch_lease_seconds as i64,
+                ),
+                policy.orchestration.claim_batch_size as i64,
             )
             .await
         {
             Ok(dispatches) => {
                 for dispatch in dispatches {
+                    match workspace_affinity_is_current(db.as_ref(), &dispatch.command.request)
+                        .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let message = "workspace affinity is stale or no longer active";
+                            if let Err(error) = db
+                                .settle_workflow_effect(
+                                    dispatch.command.effect_id,
+                                    dispatch.command.attempt,
+                                    WorkflowEffectStatus::Rejected,
+                                    None,
+                                    Some(message.into()),
+                                    now,
+                                )
+                                .await
+                            {
+                                warn!(error = %error, dispatch_id = %dispatch.id, "failed to reject stale workspace effect");
+                                let _ = db
+                                    .mark_workflow_effect_dispatch_failed(
+                                        dispatch.id,
+                                        error.to_string(),
+                                    )
+                                    .await;
+                                continue;
+                            }
+                            if let Err(error) = db
+                                .mark_workflow_effect_dispatch_published(dispatch.id)
+                                .await
+                            {
+                                warn!(error = %error, dispatch_id = %dispatch.id, "failed to acknowledge rejected workspace effect");
+                            }
+                            continue;
+                        }
+                        Err(error) => {
+                            warn!(error = %error, dispatch_id = %dispatch.id, "failed to validate workspace affinity");
+                            let _ = db
+                                .mark_workflow_effect_dispatch_failed(
+                                    dispatch.id,
+                                    error.to_string(),
+                                )
+                                .await;
+                            continue;
+                        }
+                    }
                     // kept for the deadline arming below, since publishing consumes the command.
                     let published_command = dispatch.command.clone();
                     match broker
@@ -384,8 +431,13 @@ pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore>(
                         Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
                             // armed after publication, never before: the backstop must not be able
                             // to stop the work it protects.
-                            crate::effect_deadline::arm(broker.as_ref(), &published_command, now)
-                                .await;
+                            crate::effect_deadline::arm_with_grace(
+                                broker.as_ref(),
+                                &published_command,
+                                now,
+                                policy.orchestration.action_deadline_grace_seconds as i64,
+                            )
+                            .await;
                             if let Err(err) = db
                                 .mark_workflow_effect_dispatch_published(dispatch.id)
                                 .await
@@ -404,8 +456,42 @@ pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore>(
             }
             Err(err) => warn!(error = %err, "failed to claim VM effect dispatches"),
         }
-        tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(WORKFLOW_EFFECT_DISPATCH_INTERVAL) => {} }
+        tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.effect_dispatch_poll_interval_ms)) => {} }
     }
+}
+
+async fn workspace_affinity_is_current<T: WorkspaceStore>(
+    db: &T,
+    request: &WorkflowEffectRequest,
+) -> Result<bool, runinator_models::errors::SendableError> {
+    let WorkflowEffectRequest::Action {
+        workspace_affinity: Some(value),
+        ..
+    } = request
+    else {
+        return Ok(true);
+    };
+    let affinity: WorkspaceAffinity =
+        serde_json::from_value(value.clone().into()).map_err(|error| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid workspace affinity: {error}"),
+            )) as runinator_models::errors::SendableError
+        })?;
+    let Some(workspace) = db.fetch_workspace(affinity.workspace_id).await? else {
+        return Ok(false);
+    };
+    Ok(workspace_affinity_matches(&workspace, &affinity))
+}
+
+fn workspace_affinity_matches(
+    workspace: &runinator_models::workspaces::WorkspaceLease,
+    affinity: &WorkspaceAffinity,
+) -> bool {
+    !workspace.status.is_terminal()
+        && workspace.worker_instance_id == affinity.worker_instance_id
+        && workspace.attempt == affinity.attempt
+        && workspace.version == affinity.version
 }
 
 /// Drain the notification-owned provider-effect outbox. Notification records deliberately share
@@ -415,17 +501,21 @@ pub async fn run_notification_effect_dispatcher<T: NotificationStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance: String,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("notification effect dispatcher started");
     loop {
         let now = chrono::Utc::now();
+        let policy = settings.current();
         match db
             .claim_pending_notification_effect_dispatches(
                 instance.clone(),
                 now,
-                now + chrono::Duration::seconds(ACTION_DISPATCH_LEASE_SECONDS),
-                CLAIM_LIMIT,
+                now + chrono::Duration::seconds(
+                    policy.orchestration.action_dispatch_lease_seconds as i64,
+                ),
+                policy.orchestration.claim_batch_size as i64,
             )
             .await
         {
@@ -461,7 +551,7 @@ pub async fn run_notification_effect_dispatcher<T: NotificationStore>(
             }
             Err(err) => warn!(error = %err, "failed to claim notification effect dispatches"),
         }
-        tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(WORKFLOW_EFFECT_DISPATCH_INTERVAL) => {} }
+        tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.effect_dispatch_poll_interval_ms)) => {} }
     }
 }
 
@@ -471,12 +561,14 @@ pub async fn run_operational_metrics_sampler<
     T: RuntimeStore + WorkflowVmStore + NotificationStore + OrgStore + ReplicaStore,
 >(
     db: Arc<T>,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("operational metrics sampler started");
     loop {
         let started = std::time::Instant::now();
         let now = chrono::Utc::now();
+        let policy = settings.current();
         let mut succeeded = true;
 
         match db
@@ -515,7 +607,8 @@ pub async fn run_operational_metrics_sampler<
             }
         }
 
-        let stale_before = now - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
+        let stale_before =
+            now - chrono::Duration::seconds(policy.replicas.stale_after_seconds as i64);
         match db.fetch_replicas(None, None, stale_before).await {
             Ok(replicas) => {
                 for kind in ReplicaKind::ALL {
@@ -558,7 +651,7 @@ pub async fn run_operational_metrics_sampler<
 
         tokio::select! {
             _ = shutdown.notified() => return,
-            _ = tokio::time::sleep(OPERATIONAL_METRICS_INTERVAL) => {}
+            _ = tokio::time::sleep(Duration::from_secs(policy.orchestration.operational_metrics_interval_seconds)) => {}
         }
     }
 }
@@ -567,13 +660,21 @@ pub async fn run_operational_metrics_sampler<
 /// hard-delete rows that have stayed quiet far longer so offline replicas do not pile up forever.
 /// the operator-facing views derive stale state per fetch; this loop is the durable cleanup that
 /// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
-pub async fn run_replica_reaper<T: ReplicaStore>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_replica_reaper<T: ReplicaStore>(
+    db: Arc<T>,
+    settings: ServerSettingsHandle,
+    shutdown: Arc<Notify>,
+) {
     info!("replica reaper started");
     let registry = ReplicaRegistry::new(db);
     loop {
+        let policy = settings.current();
         let started = std::time::Instant::now();
         let mut succeeded = true;
-        match registry.reap_inactive().await {
+        match registry
+            .reap_inactive_after(policy.replicas.reap_after_seconds as i64)
+            .await
+        {
             Ok(count) if count > 0 => {
                 stability::cleanup("replica_reap", true, count);
                 stability::replica_transition("all", "offline", count);
@@ -589,7 +690,10 @@ pub async fn run_replica_reaper<T: ReplicaStore>(db: Arc<T>, shutdown: Arc<Notif
                 )
             }
         }
-        match registry.delete_expired().await {
+        match registry
+            .delete_expired_after(policy.replicas.delete_after_seconds as i64)
+            .await
+        {
             Ok(count) if count > 0 => {
                 stability::cleanup("replica_purge", true, count);
                 stability::replica_transition("all", "deleted", count);
@@ -605,7 +709,10 @@ pub async fn run_replica_reaper<T: ReplicaStore>(db: Arc<T>, shutdown: Arc<Notif
                 )
             }
         }
-        match registry.prune_samples().await {
+        match registry
+            .prune_samples_after(policy.replicas.sample_retention_seconds as i64)
+            .await
+        {
             Ok(count) if count > 0 => {
                 stability::cleanup("replica_sample_prune", true, count);
                 info!(count, "pruned expired replica sample(s)")
@@ -626,7 +733,7 @@ pub async fn run_replica_reaper<T: ReplicaStore>(db: Arc<T>, shutdown: Arc<Notif
                 info!("replica reaper shutting down");
                 return;
             }
-            _ = tokio::time::sleep(REPLICA_REAP_INTERVAL) => {}
+            _ = tokio::time::sleep(Duration::from_secs(policy.replicas.reaper_interval_seconds)) => {}
         }
     }
 }
@@ -652,9 +759,70 @@ fn bucket_to_interval(
 #[path = "loops_tests.rs"]
 mod tests;
 
-pub async fn run_usage_sampler<T: OrgStore>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_workspace_reconciler<T: WorkspaceStore + ReplicaStore>(
+    db: Arc<T>,
+    settings: ServerSettingsHandle,
+    shutdown: Arc<Notify>,
+) {
+    info!("workspace locality reconciler started");
+    let operations = WorkspaceOperations::new(db);
+    loop {
+        let policy = settings.current();
+        let started = std::time::Instant::now();
+        let succeeded = match operations
+            .reconcile_expired(
+                chrono::Utc::now(),
+                None,
+                policy.orchestration.claim_batch_size as i64,
+            )
+            .await
+        {
+            Ok(outcomes) => {
+                for outcome in outcomes {
+                    match outcome {
+                        WorkspaceRecovery::Rebound(workspace) => info!(
+                            workspace_id = %workspace.id,
+                            worker_instance = %workspace.worker_instance_id,
+                            "workspace rebound to returned worker instance"
+                        ),
+                        WorkspaceRecovery::Waiting(workspace) => info!(
+                            workspace_id = %workspace.id,
+                            worker_instance = %workspace.worker_instance_id,
+                            "workspace waiting for its worker recovery grace"
+                        ),
+                        WorkspaceRecovery::Abandoned(workspace) => warn!(
+                            workspace_id = %workspace.id,
+                            admission_id = %workspace.admission_id,
+                            scope = %workspace.scope,
+                            attempt = workspace.attempt,
+                            "workspace abandoned; admission coordinator must reschedule its scope"
+                        ),
+                    }
+                }
+                true
+            }
+            Err(error) => {
+                warn!(error = %error, "workspace reconciliation failed");
+                false
+            }
+        };
+        stability::loop_iteration("workspace_reconciler", succeeded, started.elapsed());
+        tokio::select! {
+            _ = shutdown.notified() => return,
+            _ = tokio::time::sleep(Duration::from_secs(policy.orchestration.workspace_reconcile_interval_seconds)) => {}
+        }
+    }
+}
+
+pub async fn run_usage_sampler<T: OrgStore>(
+    db: Arc<T>,
+    settings: ServerSettingsHandle,
+    shutdown: Arc<Notify>,
+) {
     info!("usage sampler started");
     loop {
+        let policy = settings.current();
+        let interval = Duration::from_secs(policy.orchestration.usage_sample_interval_seconds);
         let started = std::time::Instant::now();
         let mut succeeded = true;
         match db.list_all_resource_groups().await {
@@ -663,7 +831,7 @@ pub async fn run_usage_sampler<T: OrgStore>(db: Arc<T>, shutdown: Arc<Notify>) {
                 // the same window produces the same (org, backend, kind, sampled_at) key; the insert
                 // is an idempotent DO-NOTHING upsert, so N-up sampling converges to one row per
                 // window instead of over-counting node-hours by the instance count.
-                let now = bucket_to_interval(chrono::Utc::now(), USAGE_SAMPLE_INTERVAL);
+                let now = bucket_to_interval(chrono::Utc::now(), interval);
                 for group in groups {
                     let org_id = group.org_id;
                     let sample = runinator_models::billing::UsageSample {
@@ -697,7 +865,7 @@ pub async fn run_usage_sampler<T: OrgStore>(db: Arc<T>, shutdown: Arc<Notify>) {
                 info!("usage sampler shutting down");
                 return;
             }
-            _ = tokio::time::sleep(USAGE_SAMPLE_INTERVAL) => {}
+            _ = tokio::time::sleep(interval) => {}
         }
     }
 }
@@ -709,16 +877,18 @@ pub async fn run_trigger_loop<
     db: Arc<T>,
     events: EventSender,
     instance_id: String,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("trigger firing loop started");
     loop {
+        let policy = settings.current();
         let started = std::time::Instant::now();
         let mut succeeded = true;
         match repository::claim_due_workflow_trigger_firings(
             db.as_ref(),
             instance_id.clone(),
-            CLAIM_LIMIT,
+            policy.orchestration.claim_batch_size as i64,
         )
         .await
         {
@@ -768,7 +938,7 @@ pub async fn run_trigger_loop<
         match repository::claim_due_pipeline_trigger_firings(
             db.as_ref(),
             instance_id.clone(),
-            CLAIM_LIMIT,
+            policy.orchestration.claim_batch_size as i64,
         )
         .await
         {
@@ -799,7 +969,7 @@ pub async fn run_trigger_loop<
                 info!("trigger firing loop shutting down");
                 return;
             }
-            _ = tokio::time::sleep(TRIGGER_INTERVAL) => {}
+            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.trigger_poll_interval_ms)) => {}
         }
     }
 }
@@ -810,16 +980,18 @@ pub async fn run_agent_directive_publisher<T: ReplicaStore>(
     broker: Arc<dyn Broker>,
     instance_id: String,
     agent_nudge: Arc<Notify>,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("agent directive publisher started");
     loop {
+        let policy = settings.current();
         let started = std::time::Instant::now();
         let succeeded = if let Err(err) = repository::publish_due_agent_directives(
             db.as_ref(),
             broker.as_ref(),
             &instance_id,
-            CLAIM_LIMIT,
+            policy.orchestration.claim_batch_size as i64,
         )
         .await
         {
@@ -836,7 +1008,7 @@ pub async fn run_agent_directive_publisher<T: ReplicaStore>(
         tokio::select! {
             _ = shutdown.notified() => return,
             _ = agent_nudge.notified() => {}
-            _ = tokio::time::sleep(AGENT_DIRECTIVE_INTERVAL) => {}
+            _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.agent_directive_poll_interval_ms)) => {}
         }
     }
 }

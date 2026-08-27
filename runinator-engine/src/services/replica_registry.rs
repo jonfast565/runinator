@@ -237,7 +237,17 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
         replica_type: Option<ReplicaKind>,
         status: Option<ReplicaStatus>,
     ) -> Result<ReplicaListResponse, SendableError> {
-        let stale_before = Utc::now() - Duration::seconds(REPLICA_STALE_SECONDS);
+        self.list_with_stale_after(replica_type, status, REPLICA_STALE_SECONDS)
+            .await
+    }
+
+    pub async fn list_with_stale_after(
+        &self,
+        replica_type: Option<ReplicaKind>,
+        status: Option<ReplicaStatus>,
+        stale_after_seconds: i64,
+    ) -> Result<ReplicaListResponse, SendableError> {
+        let stale_before = Utc::now() - Duration::seconds(stale_after_seconds);
         // fetch every status first: an agent may advertise a longer stale window than the platform
         // default, so a row the database provisionally classified as stale may still be live.
         let mut replicas = self
@@ -273,13 +283,29 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
         replica_id: Uuid,
         since_seconds: Option<i64>,
     ) -> Result<ReplicaSampleSeries, SendableError> {
+        self.samples_with_limits(
+            replica_id,
+            since_seconds,
+            REPLICA_SAMPLE_DEFAULT_WINDOW_SECONDS,
+            REPLICA_SAMPLE_MAX_POINTS,
+        )
+        .await
+    }
+
+    pub async fn samples_with_limits(
+        &self,
+        replica_id: Uuid,
+        since_seconds: Option<i64>,
+        default_window_seconds: i64,
+        max_points: i64,
+    ) -> Result<ReplicaSampleSeries, SendableError> {
         let window = since_seconds
             .filter(|value| *value > 0)
-            .unwrap_or(REPLICA_SAMPLE_DEFAULT_WINDOW_SECONDS);
+            .unwrap_or(default_window_seconds);
         let since = Utc::now() - Duration::seconds(window);
         let samples = self
             .store
-            .fetch_replica_samples(replica_id, since, REPLICA_SAMPLE_MAX_POINTS)
+            .fetch_replica_samples(replica_id, since, max_points)
             .await?;
         Ok(ReplicaSampleSeries {
             replica_id,
@@ -349,19 +375,32 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
 
     /// Reap replicas that have stayed inactive past the configured liveness window.
     pub async fn reap_inactive(&self) -> Result<u64, SendableError> {
-        let cutoff = Utc::now() - Duration::seconds(replica_reap_seconds());
+        self.reap_inactive_after(replica_reap_seconds()).await
+    }
+
+    pub async fn reap_inactive_after(&self, seconds: i64) -> Result<u64, SendableError> {
+        let cutoff = Utc::now() - Duration::seconds(seconds);
         self.store.reap_inactive_replicas(cutoff).await
     }
 
     /// Remove replicas that have remained offline past the configured retention window.
     pub async fn delete_expired(&self) -> Result<u64, SendableError> {
-        let cutoff = Utc::now() - Duration::seconds(replica_delete_seconds());
+        self.delete_expired_after(replica_delete_seconds()).await
+    }
+
+    pub async fn delete_expired_after(&self, seconds: i64) -> Result<u64, SendableError> {
+        let cutoff = Utc::now() - Duration::seconds(seconds);
         self.store.delete_expired_replicas(cutoff).await
     }
 
     /// Remove telemetry samples outside the fixed retention window.
     pub async fn prune_samples(&self) -> Result<u64, SendableError> {
-        let cutoff = Utc::now() - Duration::seconds(REPLICA_SAMPLE_RETENTION_SECONDS);
+        self.prune_samples_after(REPLICA_SAMPLE_RETENTION_SECONDS)
+            .await
+    }
+
+    pub async fn prune_samples_after(&self, seconds: i64) -> Result<u64, SendableError> {
+        let cutoff = Utc::now() - Duration::seconds(seconds);
         self.store.prune_replica_samples(cutoff).await
     }
 }

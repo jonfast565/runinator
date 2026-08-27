@@ -123,6 +123,8 @@ mod notifications;
 pub use notifications::*;
 mod ingress;
 pub use ingress::*;
+mod workspaces;
+pub use workspaces::*;
 
 #[cfg(test)]
 #[path = "mappers_tests.rs"]

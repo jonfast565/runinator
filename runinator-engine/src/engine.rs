@@ -6,7 +6,7 @@ use runinator_store::{
     RuntimeStore,
     roles::{
         DefinitionStore, IngressStore, NotificationStore, OrgStore, ReplicaStore, RunStore,
-        ScheduleStore, WorkflowVmStore,
+        ScheduleStore, WorkflowVmStore, WorkspaceStore,
     },
 };
 use tokio::sync::Notify;
@@ -18,7 +18,9 @@ use crate::loops::{
     run_agent_directive_publisher, run_notification_effect_dispatcher,
     run_operational_metrics_sampler, run_replica_reaper, run_timer_interrupt_scheduler,
     run_trigger_loop, run_usage_sampler, run_workflow_effect_dispatcher, run_workflow_vm_driver,
+    run_workspace_reconciler,
 };
+use crate::settings::{ServerSettingsHandle, run_server_settings_refresher};
 
 /// Runtime limits for one durable engine instance.
 ///
@@ -61,6 +63,7 @@ pub trait BackgroundEngineStore:
     + ScheduleStore
     + DefinitionStore
     + IngressStore
+    + WorkspaceStore
 {
 }
 
@@ -74,6 +77,7 @@ impl<T> BackgroundEngineStore for T where
         + ScheduleStore
         + DefinitionStore
         + IngressStore
+        + WorkspaceStore
 {
 }
 
@@ -134,8 +138,14 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     runinator_observability::tui::activity("engine", "starting durable orchestration loops", None);
     // A standalone engine owns no HTTP-side signals; its durable loops continue polling normally.
     let local_signals = local_signals.unwrap_or_default();
+    let server_settings = ServerSettingsHandle::load(pool.as_ref()).await?;
 
     let mut loops: JoinSet<()> = JoinSet::new();
+    loops.spawn(run_server_settings_refresher(
+        pool.clone(),
+        server_settings.clone(),
+        shutdown.clone(),
+    ));
     loops.spawn(crate::effect_consumer::run_effect_result_consumer(
         pool.clone(),
         broker.clone(),
@@ -156,6 +166,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         pool.clone(),
         publisher.clone(),
         instance.clone(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_agent_directive_publisher(
@@ -163,40 +174,60 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         broker.clone(),
         instance.clone(),
         local_signals.agent_directives_notifier(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_workflow_vm_driver(
         pool.clone(),
         instance.clone(),
         local_signals.workflow_vm_notifier(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_timer_interrupt_scheduler(
         pool.clone(),
         broker.clone(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_workflow_effect_dispatcher(
         pool.clone(),
         broker.clone(),
         instance.clone(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_notification_effect_dispatcher(
         pool.clone(),
         broker.clone(),
         instance.clone(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
-    loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));
-    loops.spawn(run_usage_sampler(pool.clone(), shutdown.clone()));
+    loops.spawn(run_replica_reaper(
+        pool.clone(),
+        server_settings.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(run_workspace_reconciler(
+        pool.clone(),
+        server_settings.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(run_usage_sampler(
+        pool.clone(),
+        server_settings.clone(),
+        shutdown.clone(),
+    ));
     loops.spawn(run_operational_metrics_sampler(
         pool.clone(),
+        server_settings.clone(),
         shutdown.clone(),
     ));
     loops.spawn(crate::notifications::run_notification_scanner(
         pool.clone(),
         publisher.clone(),
+        server_settings,
         shutdown.clone(),
     ));
 

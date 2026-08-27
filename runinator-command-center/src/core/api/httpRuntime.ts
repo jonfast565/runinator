@@ -87,6 +87,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "auth/settings",
     body: (args) => ({ max_refreshes: arg(args, "maxRefreshes") }),
   },
+  fetch_server_settings: { method: "GET", path: () => "server/settings" },
+  save_server_settings: {
+    method: "PUT",
+    path: () => "server/settings",
+    body: (args) => arg(args, "settings"),
+  },
   list_resource_grants: {
     method: "GET",
     path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,

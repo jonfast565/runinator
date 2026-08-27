@@ -179,6 +179,7 @@ async fn process_provider_effect(
         timeout_seconds,
         tags,
         required_labels,
+        workspace_affinity,
         idempotency_key,
         function_binding,
         ..
@@ -265,6 +266,7 @@ async fn process_provider_effect(
         mcp_enabled: false,
         tags,
         required_labels,
+        workspace_affinity,
         idempotency_key: idempotency_key.clone(),
         function_binding,
     };

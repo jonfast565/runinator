@@ -18,6 +18,7 @@ mod run_operations;
 mod scheduling_operations;
 mod workflow_authoring;
 mod workflow_files;
+mod workspace_operations;
 
 pub use automation_operations::AutomationOperations;
 pub use catalog_operations::{CatalogOperations, provider_catalog_item};
@@ -37,6 +38,10 @@ pub use run_operations::RunOperations;
 pub use scheduling_operations::SchedulingOperations;
 pub use workflow_authoring::WorkflowAuthoring;
 pub use workflow_files::WorkflowFiles;
+pub use workspace_operations::{
+    DEFAULT_WORKER_LOSS_GRACE_SECONDS, DEFAULT_WORKSPACE_LEASE_SECONDS, WorkspaceAllocationRequest,
+    WorkspaceOperations, WorkspaceRecovery,
+};
 
 #[cfg(test)]
 #[path = "pack_operations_tests.rs"]

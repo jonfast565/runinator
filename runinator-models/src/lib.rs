@@ -25,6 +25,7 @@ pub mod revisions;
 pub mod runs;
 pub mod schedules;
 pub mod semver;
+pub mod server_settings;
 pub mod settings;
 pub mod telemetry;
 pub mod types;
@@ -39,6 +40,7 @@ pub mod workflow_runs;
 pub mod workflow_state;
 pub mod workflow_vm;
 pub mod workflows;
+pub mod workspaces;
 
 // re-exported so the `json!` macro can reference serde_json from any calling crate.
 #[doc(hidden)]

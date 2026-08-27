@@ -1,15 +1,35 @@
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
+use runinator_store::DatabaseImpl;
 
 use super::{
-    decode_config_schema, decode_config_value, decode_secret, validate_and_encode,
-    validate_and_encode_with_expiry,
+    decode_config_schema, decode_config_value, decode_secret, load_server_settings,
+    save_server_settings, validate_and_encode, validate_and_encode_with_expiry,
 };
 
 // the schema pinned in a config slot's stored bytes, mirroring how the handler reuses it on a
 // value-only update.
 fn pinned_schema(bytes: &[u8]) -> Option<Value> {
     decode_config_schema(bytes)
+}
+
+#[tokio::test]
+async fn server_settings_round_trip_as_one_validated_policy() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-server-settings-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let db = runinator_database::sqlite::SqliteDb::new(path.to_str().unwrap())
+        .await
+        .unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let mut settings = runinator_models::server_settings::ServerSettings::default();
+    settings.orchestration.workflow_vm_poll_interval_ms = 500;
+    settings.notifications.delivery_timeout_seconds = 45;
+    save_server_settings(&db, &settings).await.unwrap();
+
+    assert_eq!(load_server_settings(&db).await.unwrap(), settings);
 }
 
 #[test]

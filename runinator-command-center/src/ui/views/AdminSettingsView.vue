@@ -25,14 +25,34 @@
           </button>
         </div>
 
-        <button
-          class="flex w-full cursor-pointer items-center rounded-md border-0 bg-transparent px-2 py-2 text-left font-semibold text-fg hover:bg-surface-muted"
-          type="button"
-          :class="activeSection === 'security' ? 'bg-surface-muted text-fg' : ''"
-          @click="selectSection('security')"
-        >
-          <span>Authentication</span>
-        </button>
+        <div class="flex flex-col gap-0.5">
+          <button
+            class="flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-2 text-left font-semibold text-fg hover:bg-surface-muted"
+            type="button"
+            :aria-expanded="serverOpen"
+            @click="serverOpen = !serverOpen"
+          >
+            <Icon
+              name="chevron-right"
+              class="transition-transform duration-150 ease-in-out"
+              :class="{ 'rotate-90': serverOpen }"
+            />
+            <span>Server</span>
+            <span class="ml-auto rounded-[10px] border border-border bg-surface-muted px-1.5 py-px text-[0.74rem] text-fg-muted">{{ settings.serverCatalog.length }}</span>
+          </button>
+          <ul v-show="serverOpen" class="m-0 flex list-none flex-col gap-0.5 py-0 pl-[18px]">
+            <li v-for="section in serverSections" :key="section">
+              <button
+                class="flex w-full cursor-pointer items-center rounded-r-md border-0 border-l-2 border-transparent bg-transparent px-2 py-1.5 text-left text-fg-muted hover:bg-surface-muted hover:text-fg"
+                type="button"
+                :class="activeSection === 'server' && selectedServerSection === section ? 'border-l-accent bg-surface-muted font-semibold text-fg' : ''"
+                @click="selectServerSection(section)"
+              >
+                {{ section }}
+              </button>
+            </li>
+          </ul>
+        </div>
 
         <div class="flex flex-col gap-0.5">
           <button
@@ -129,22 +149,36 @@
           </div>
         </template>
 
-        <template v-else-if="activeSection === 'security'">
+        <template v-else-if="activeSection === 'server'">
           <header>
-            <h2 class="m-0 text-base font-semibold text-fg">Authentication</h2>
+            <h2 class="m-0 text-base font-semibold text-fg">{{ selectedServerSection }}</h2>
+            <p class="mt-1 mb-0 text-sm text-fg-muted">Platform-wide values are validated by the server and picked up by engine replicas without a restart.</p>
           </header>
-          <form class="grid max-w-xl gap-3.5 rounded-lg border border-border p-4" @submit.prevent="settings.saveAuthSettings">
-            <label class="grid gap-1.5">
-              <span class="text-[0.84rem] font-semibold text-fg-muted">Maximum refreshes per login session</span>
+          <form class="grid max-w-3xl gap-3.5" @submit.prevent="settings.saveServerSettings">
+            <label
+              v-for="definition in activeServerDefinitions"
+              :key="definition.key"
+              class="grid gap-1.5 rounded-lg border border-border p-4"
+            >
+              <span class="font-semibold text-fg">{{ definition.label }}</span>
+              <span class="text-[0.84rem] text-fg-muted">{{ definition.description }}</span>
               <input
                 type="number"
-                min="1"
-                max="100000"
-                :value="settings.maxRefreshes"
-                @input="settings.updateMaxRefreshes(Number(($event.target as HTMLInputElement).value))"
+                :min="definition.minimum"
+                :max="definition.maximum"
+                :value="serverValue(definition.key)"
+                @input="settings.updateServerSetting(definition.key, Number(($event.target as HTMLInputElement).value))"
               />
+              <span class="text-[0.78rem] text-fg-muted">
+                Usual {{ definition.usual_minimum.toLocaleString() }}–{{ definition.usual_maximum.toLocaleString() }} {{ definition.unit }};
+                valid {{ definition.minimum.toLocaleString() }}–{{ definition.maximum.toLocaleString() }};
+                default {{ definition.default.toLocaleString() }}.
+              </span>
             </label>
-            <button class="btn btn-primary justify-self-start" type="submit">Save policy</button>
+            <button class="btn btn-primary justify-self-start" type="submit">
+              <Icon name="save" />
+              <span>Save server settings</span>
+            </button>
           </form>
         </template>
 
@@ -230,10 +264,12 @@ import {
 const settings = useAdminSettingsStore();
 const prefs = useDisplayPreferencesStore();
 
-type ActiveSection = "display" | "security" | "languages";
+type ActiveSection = "display" | "server" | "languages";
 const activeSection = ref<ActiveSection>("display");
 const languagesOpen = ref(true);
+const serverOpen = ref(true);
 const selected = ref<string>(settings.languages[0].language);
+const selectedServerSection = ref("Orchestration");
 
 const themeOptions: { value: AppTheme; label: string }[] = [
   { value: "system", label: "System" },
@@ -249,13 +285,30 @@ const activeLanguage = computed(() =>
     : undefined,
 );
 
+const serverSections = computed(() => [
+  ...new Set(settings.serverCatalog.map((definition) => definition.section)),
+]);
+
+const activeServerDefinitions = computed(() =>
+  settings.serverCatalog.filter((definition) => definition.section === selectedServerSection.value),
+);
+
 function selectSection(section: ActiveSection) {
   activeSection.value = section;
   selected.value = "";
 
-  if (section === "security") {
-    void settings.refreshAuthSettings();
-  }
+}
+
+function selectServerSection(section: string) {
+  activeSection.value = "server";
+  selectedServerSection.value = section;
+  selected.value = "";
+}
+
+function serverValue(key: string) {
+  const [section, name] = key.split(".");
+
+  return settings.serverValues[section][name];
 }
 
 function selectLanguage(language: string) {
@@ -268,6 +321,8 @@ function onDefaultTabChange(event: Event) {
 }
 
 onMounted(() => {
+  void settings.refreshServerSettings();
+
   if (!settings.loaded) {
     void settings.refresh();
   }

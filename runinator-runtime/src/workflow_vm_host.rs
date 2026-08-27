@@ -10,10 +10,11 @@ use runinator_models::{
     value::Value,
     workflow_vm::{
         WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowContinuationStatus,
-        WorkflowEffect, WorkflowEffectStatus, WorkflowFailure, WorkflowFailureKind,
-        WorkflowJournalEntry,
+        WorkflowEffect, WorkflowEffectRequest, WorkflowEffectStatus, WorkflowFailure,
+        WorkflowFailureKind, WorkflowJournalEntry,
     },
     workflows::WorkflowStatus,
+    workspaces::{WORKSPACE_INSTANCE_LABEL, WorkspaceAffinity},
 };
 use runinator_store::roles::WorkflowVmStore;
 use uuid::Uuid;
@@ -125,15 +126,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 request,
             } => {
                 let now = Utc::now().timestamp();
-                let target = match &request {
-                    runinator_models::workflow_vm::WorkflowEffectRequest::Action {
-                        required_labels,
-                        ..
-                    } if !required_labels.is_empty() => {
-                        ActionTarget::labels(required_labels.clone())
-                    }
-                    _ => ActionTarget::Any,
-                };
+                let target = effect_target(&request)?;
                 let executor = if matches!(
                     &request,
                     runinator_models::workflow_vm::WorkflowEffectRequest::Action { .. }
@@ -320,5 +313,74 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
             .settle_workflow_vm_run(workflow_run_id, status, message)
             .await?;
         Ok(true)
+    }
+}
+
+fn effect_target(request: &WorkflowEffectRequest) -> Result<ActionTarget, SendableError> {
+    let WorkflowEffectRequest::Action {
+        required_labels,
+        workspace_affinity,
+        ..
+    } = request
+    else {
+        return Ok(ActionTarget::Any);
+    };
+    if required_labels.is_empty() && workspace_affinity.is_none() {
+        return Ok(ActionTarget::Any);
+    }
+    let mut labels = required_labels.clone();
+    if let Some(value) = workspace_affinity {
+        let affinity: WorkspaceAffinity =
+            serde_json::from_value(value.clone().into()).map_err(|error| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid workspace affinity: {error}"),
+                )) as SendableError
+            })?;
+        labels.insert(WORKSPACE_INSTANCE_LABEL.into(), affinity.worker_instance_id);
+    }
+    Ok(ActionTarget::labels(labels))
+}
+
+#[cfg(test)]
+mod locality_tests {
+    use std::collections::BTreeMap;
+
+    use runinator_models::{
+        value::Value, workflow_vm::WorkflowEffectRequest, workflows::WorkflowRetry,
+        workspaces::WorkspaceAffinity,
+    };
+
+    use super::*;
+
+    #[test]
+    fn workspace_affinity_freezes_the_stable_instance_in_the_effect_target() {
+        let affinity = WorkspaceAffinity {
+            workspace_id: Uuid::now_v7(),
+            worker_instance_id: "desktop-a".into(),
+            attempt: 2,
+            version: 4,
+        };
+        let request = WorkflowEffectRequest::Action {
+            provider: "git".into(),
+            function: "run".into(),
+            input: Value::Null,
+            timeout_seconds: None,
+            retry: WorkflowRetry::default(),
+            tags: Vec::new(),
+            required_labels: BTreeMap::from([("pool".into(), "local".into())]),
+            workspace_affinity: Some(Value::from(serde_json::to_value(affinity).unwrap())),
+            idempotency_key: None,
+            function_binding: None,
+        };
+
+        let ActionTarget::Labels { selector } = effect_target(&request).unwrap() else {
+            panic!("workspace action must be label-targeted")
+        };
+        assert_eq!(
+            selector.get(WORKSPACE_INSTANCE_LABEL),
+            Some(&"desktop-a".into())
+        );
+        assert_eq!(selector.get("pool"), Some(&"local".into()));
     }
 }

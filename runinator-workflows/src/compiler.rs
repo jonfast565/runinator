@@ -485,6 +485,7 @@ fn lower_node(
                         retry: node.retry.clone(),
                         tags: action.tags.clone(),
                         required_labels: action.required_labels.clone(),
+                        workspace_affinity: action.workspace_affinity.clone(),
                         idempotency_key: action.idempotency_key.clone(),
                         function_binding: action.function_binding.clone(),
                     },
@@ -504,6 +505,7 @@ fn lower_node(
                             retry: node.retry.clone(),
                             tags: compensation.tags.clone(),
                             required_labels: compensation.required_labels.clone(),
+                            workspace_affinity: compensation.workspace_affinity.clone(),
                             idempotency_key: compensation.idempotency_key.clone(),
                             function_binding: compensation.function_binding.clone(),
                         },
@@ -1204,6 +1206,7 @@ mod tests {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1264,6 +1267,7 @@ mod tests {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1376,6 +1380,7 @@ mod tests {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1477,6 +1482,7 @@ mod tests {
             mcp_enabled: false,
             tags: vec!["critical".into()],
             required_labels: BTreeMap::from([("runner".into(), "isolated".into())]),
+            workspace_affinity: None,
             idempotency_key: Some(Value::String("order-42".into())),
             function_binding: Some(FunctionBinding {
                 package_id: uuid::Uuid::nil(),
@@ -1542,6 +1548,7 @@ mod tests {
                             retry,
                             tags,
                             required_labels,
+                            workspace_affinity,
                             idempotency_key,
                             function_binding,
                         },
@@ -1553,6 +1560,7 @@ mod tests {
                     retry,
                     tags,
                     required_labels,
+                    workspace_affinity,
                     idempotency_key,
                     function_binding,
                 )),
@@ -1569,10 +1577,11 @@ mod tests {
             request.6.get("runner").map(String::as_str),
             Some("isolated")
         );
-        assert_eq!(request.7, &Some(Value::String("order-42".into())));
+        assert_eq!(request.7, &None);
+        assert_eq!(request.8, &Some(Value::String("order-42".into())));
         assert_eq!(
             request
-                .8
+                .9
                 .as_ref()
                 .map(FunctionBinding::call_path)
                 .as_deref(),
@@ -1719,6 +1728,7 @@ mod tests {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1916,6 +1926,7 @@ mod tests {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1927,6 +1938,7 @@ mod tests {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         });

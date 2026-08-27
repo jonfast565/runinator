@@ -859,6 +859,9 @@ pub enum WorkflowEffectRequest {
         /// authoring graph by a dispatcher.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         required_labels: BTreeMap<String, String>,
+        /// Resolved workspace token retained with the effect receipt and dispatch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_affinity: Option<Value>,
         /// A still-unresolved key expression. The VM host evaluates and records it before the
         /// effect is delivered, so redelivery cannot observe a changed workflow definition.
         #[serde(default, skip_serializing_if = "Option::is_none")]

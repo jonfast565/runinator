@@ -40,11 +40,6 @@ use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-/// how long a synchronous invocation waits before falling back to 202.
-const SYNC_WAIT: Duration = Duration::from_secs(5);
-/// how often it re-reads the run while waiting.
-const SYNC_POLL: Duration = Duration::from_millis(200);
-
 /// the header a caller sends to skip the wait entirely.
 const PREFER_HEADER: &str = "prefer";
 const PREFER_ASYNC: &str = "respond-async";
@@ -187,7 +182,16 @@ pub async fn create_function_invocation<
     if prefers_async(&headers) {
         return accepted(run);
     }
-    settle_or_accept(&service, run).await
+    let settings = runinator_engine::settings::load_server_settings(db.as_ref())
+        .await
+        .unwrap_or_default();
+    settle_or_accept(
+        &service,
+        run,
+        Duration::from_millis(settings.orchestration.synchronous_invocation_wait_ms),
+        Duration::from_millis(settings.orchestration.synchronous_invocation_poll_ms),
+    )
+    .await
 }
 
 /// the status of one invocation, which is the status of its run.
@@ -250,13 +254,15 @@ async fn settle_or_accept<
 >(
     service: &FunctionInvocations<T>,
     run: WorkflowRun,
+    wait: Duration,
+    poll: Duration,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let deadline = std::time::Instant::now() + SYNC_WAIT;
+    let deadline = std::time::Instant::now() + wait;
     loop {
         if std::time::Instant::now() >= deadline {
             return accepted(run);
         }
-        tokio::time::sleep(SYNC_POLL).await;
+        tokio::time::sleep(poll).await;
         match service.fetch_run(run.id).await {
             Ok(Some(current)) if current.status.is_terminal() => {
                 return replay(service, current.id).await;

@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS workspace_leases (
+    id BINARY(16) PRIMARY KEY,
+    admission_id BINARY(16) NOT NULL,
+    generation BIGINT NOT NULL,
+    scope VARCHAR(255) NOT NULL,
+    attempt BIGINT NOT NULL,
+    worker_instance_id VARCHAR(255) NOT NULL,
+    worker_replica_id BINARY(16) NULL,
+    local_key VARCHAR(1024) NOT NULL,
+    requirements LONGTEXT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    version BIGINT NOT NULL,
+    leased_until BIGINT NOT NULL,
+    unavailable_since BIGINT NULL,
+    evidence LONGTEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT fk_workspace_admission FOREIGN KEY (admission_id) REFERENCES ingress_admissions(id) ON DELETE CASCADE,
+    UNIQUE KEY idx_workspace_attempt (admission_id, generation, scope, attempt),
+    KEY idx_workspace_worker (worker_instance_id, status),
+    KEY idx_workspace_expiry (status, leased_until)
+);

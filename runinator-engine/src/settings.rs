@@ -5,13 +5,19 @@
 // schema (decoded from the persisted bytes) so they never touch the database. `config_type_tree`
 // is the one database-reading helper, used by workflow validation to type-check `config.*` refs.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
+    errors::SendableError,
+    server_settings::{SERVER_SETTINGS_NAME, SERVER_SETTINGS_SCOPE, ServerSettings},
     settings::SettingKind,
 };
 use runinator_secrets::secret_cipher::SecretCipher;
@@ -19,6 +25,7 @@ use runinator_secrets::stored_secret::StoredSecret;
 use runinator_store::{RuntimeStore, roles::SettingStore};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 // the persisted form of a config entry: the json value plus the schema it was validated against,
 // so the schema is pinned per (scope, name) and later value-only updates reuse it.
@@ -162,6 +169,16 @@ pub async fn import_setting_bundle_with<T: SettingStore + RuntimeStore>(
     let cipher = settings_cipher();
     let mut imported = Vec::with_capacity(bundle.secrets.len());
     for setting in &bundle.secrets {
+        if runinator_models::server_settings::is_reserved_server_setting(
+            setting.kind,
+            &setting.scope,
+            &setting.name,
+        ) {
+            return Err(SettingBundleImportError {
+                bad_request: true,
+                message: "server/operational_policy is reserved for the server settings API".into(),
+            });
+        }
         let incoming_ts = setting.updated_at.map(|updated_at| updated_at.timestamp());
         let stored = db
             .fetch_setting(setting.kind, setting.scope.clone(), setting.name.clone())
@@ -244,6 +261,13 @@ pub async fn config_type_tree<T: RuntimeStore>(db: &T) -> RuninatorType {
         if entry.kind != SettingKind::Config {
             continue;
         }
+        if runinator_models::server_settings::is_reserved_server_setting(
+            entry.kind,
+            &entry.scope,
+            &entry.name,
+        ) {
+            continue;
+        }
         let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
             continue;
         };
@@ -262,6 +286,150 @@ pub async fn config_type_tree<T: RuntimeStore>(db: &T) -> RuninatorType {
         )
     });
     RuninatorType::open_structure(scope_fields, RuninatorType::Any)
+}
+
+/// Load the platform operating policy, falling back field-by-field to the compiled defaults when
+/// no row exists or an older stored document predates newly-added fields.
+pub async fn load_server_settings<T: RuntimeStore>(
+    db: &T,
+) -> Result<ServerSettings, SendableError> {
+    let records = db.list_settings().await?;
+    let Some(record) = records.iter().find(|record| {
+        record.kind == SettingKind::Config
+            && record.scope == SERVER_SETTINGS_SCOPE
+            && record.name == SERVER_SETTINGS_NAME
+    }) else {
+        // Compatibility for deployments that saved the original one-field auth policy before the
+        // unified server policy existed. The next UI save writes the consolidated document.
+        let mut settings = ServerSettings::default();
+        if let Some(record) = records.iter().find(|record| {
+            record.kind == SettingKind::Config
+                && record.scope == "auth"
+                && record.name == "max_refreshes"
+        }) && let Some(bytes) = settings_cipher().try_decrypt(&record.value)
+            && let Ok(value) = serde_json::from_slice::<u64>(&bytes)
+        {
+            settings.authentication.max_refreshes = value;
+        }
+        settings.validate().map_err(|message| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                message,
+            )) as SendableError
+        })?;
+        return Ok(settings);
+    };
+    let plaintext = settings_cipher()
+        .try_decrypt(&record.value)
+        .ok_or_else(|| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "server settings could not be decrypted with the configured credential key",
+            )) as SendableError
+        })?;
+    let decoded = decode_config_value(&plaintext);
+    let settings: ServerSettings = serde_json::from_value(decoded.into()).map_err(|error| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("stored server settings are invalid: {error}"),
+        )) as SendableError
+    })?;
+    settings.validate().map_err(|message| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )) as SendableError
+    })?;
+    Ok(settings)
+}
+
+/// Validate and persist the complete platform operating policy as one atomic config value.
+pub async fn save_server_settings<T: SettingStore>(
+    db: &T,
+    settings: &ServerSettings,
+) -> Result<(), SendableError> {
+    settings.validate().map_err(|message| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            message,
+        )) as SendableError
+    })?;
+    let value = Value::from(
+        serde_json::to_value(settings).map_err(|error| Box::new(error) as SendableError)?,
+    );
+    let bytes = validate_and_encode(
+        SettingKind::Config,
+        SERVER_SETTINGS_SCOPE,
+        SERVER_SETTINGS_NAME,
+        &value,
+        None,
+        None,
+    )
+    .map_err(|message| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )) as SendableError
+    })?;
+    db.upsert_setting(
+        SettingKind::Config,
+        SERVER_SETTINGS_SCOPE.into(),
+        SERVER_SETTINGS_NAME.into(),
+        settings_cipher().encrypt(&bytes),
+        Utc::now().timestamp(),
+    )
+    .await
+}
+
+/// Cheap, cloneable snapshot shared by all loops in an engine replica.
+#[derive(Clone)]
+pub struct ServerSettingsHandle(Arc<RwLock<ServerSettings>>);
+
+impl ServerSettingsHandle {
+    pub async fn load<T: RuntimeStore>(db: &T) -> Result<Self, SendableError> {
+        Ok(Self(Arc::new(RwLock::new(load_server_settings(db).await?))))
+    }
+
+    pub fn current(&self) -> ServerSettings {
+        self.0
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    async fn refresh<T: RuntimeStore>(&self, db: &T) -> Result<(), SendableError> {
+        let next = load_server_settings(db).await?;
+        *self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+        Ok(())
+    }
+}
+
+/// Refresh the shared snapshot so UI changes take effect without restarting server or worker
+/// replicas. The refresh interval itself is read from the current snapshot.
+pub async fn run_server_settings_refresher<T: RuntimeStore>(
+    db: Arc<T>,
+    settings: ServerSettingsHandle,
+    shutdown: Arc<Notify>,
+) {
+    loop {
+        let delay = Duration::from_secs(
+            settings
+                .current()
+                .orchestration
+                .settings_refresh_interval_seconds,
+        );
+        tokio::select! {
+            _ = shutdown.notified() => return,
+            _ = tokio::time::sleep(delay) => {
+                if let Err(error) = settings.refresh(db.as_ref()).await {
+                    log::warn!("failed to refresh server settings: {error}");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

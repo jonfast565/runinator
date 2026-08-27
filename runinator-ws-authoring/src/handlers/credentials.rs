@@ -10,6 +10,7 @@ use runinator_models::auth::AuthContext;
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
+    server_settings::is_reserved_server_setting,
     settings::{SettingBinding, SettingKind},
     web::TaskResponse,
 };
@@ -77,6 +78,9 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
                 Json(ApiResponse::JsonList(
                     entries
                         .into_iter()
+                        .filter(|entry| {
+                            !is_reserved_server_setting(entry.kind, &entry.scope, &entry.name)
+                        })
                         .map(|entry| {
                             let expires_at = (entry.kind == SettingKind::Secret)
                                 .then(|| cipher.try_decrypt(&entry.value))
@@ -104,6 +108,9 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
     let (Some(scope), Some(name)) = (query.scope, query.name) else {
         return bad_request("credential lookup requires both scope and name");
     };
+    if is_reserved_server_setting(query.kind, &scope, &name) {
+        return not_found("credential not found");
+    }
 
     match db
         .fetch_setting(query.kind, scope.clone(), name.clone())
@@ -203,6 +210,11 @@ pub async fn put_credential<T: SettingStore + RuntimeStore>(
         ctx.selected_scope(),
     ) {
         return reply;
+    }
+    if is_reserved_server_setting(request.kind, &request.scope, &request.name) {
+        return bad_request(
+            "server/operational_policy must be changed through the server settings endpoint",
+        );
     }
     let cipher = settings_cipher();
     // reuse the schema pinned by a prior write of this config slot, if any.
@@ -382,6 +394,9 @@ pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>
     let (Some(scope), Some(name)) = (query.scope, query.name) else {
         return bad_request("credential deletion requires both scope and name");
     };
+    if is_reserved_server_setting(query.kind, &scope, &name) {
+        return bad_request("server/operational_policy cannot be deleted through credentials");
+    }
 
     let target = match db
         .fetch_setting(query.kind, scope.clone(), name.clone())
@@ -455,6 +470,11 @@ pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
     };
     if existing.kind != request.kind {
         return bad_request("a setting move cannot change its kind");
+    }
+    if is_reserved_server_setting(existing.kind, &existing.scope, &existing.name)
+        || is_reserved_server_setting(request.kind, &request.scope, &request.name)
+    {
+        return bad_request("server/operational_policy cannot be moved through credentials");
     }
     match db
         .move_setting(setting_id, existing.kind, request.scope, request.name)

@@ -31,15 +31,7 @@ use uuid::Uuid;
 
 use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::repository;
-
-/// how often the notification scanner sweeps scan-driven conditions.
-const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-/// upper bound on runs inspected per sweep so a large backlog drains over several ticks.
-const SCAN_LIMIT: i64 = 500;
-/// warning window used by `secret_expiring` policies that omit `threshold_seconds`.
-const DEFAULT_SECRET_EXPIRY_WARNING_SECONDS: i64 = 30 * 24 * 60 * 60;
-/// timeout for a delivery action; a notify send that hangs must not pin a worker permit.
-const DELIVERY_TIMEOUT_SECONDS: i64 = 30;
+use crate::settings::{ServerSettingsHandle, load_server_settings};
 
 /// the facts a fired policy renders its message from.
 struct EmissionContext {
@@ -69,7 +61,16 @@ pub async fn on_run_terminal<T: RuntimeStore + NotificationStore + RunStore + Wo
         return;
     }
     let context_builder = EmissionContextBuilder { db, run: &run };
-    let dispatcher = NotificationDispatcher { db, events };
+    let delivery_timeout_seconds = load_server_settings(db)
+        .await
+        .unwrap_or_default()
+        .notifications
+        .delivery_timeout_seconds as i64;
+    let dispatcher = NotificationDispatcher {
+        db,
+        events,
+        delivery_timeout_seconds,
+    };
     let context = context_builder.run_failed().await;
     dispatcher
         .dispatch_event(NotificationEvent::RunFailed, run.workflow_id, &context)
@@ -95,12 +96,14 @@ pub async fn run_notification_scanner<
 >(
     db: Arc<T>,
     events: EventSender,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     info!("notification scanner started");
     loop {
+        let policy = settings.current();
         let started = std::time::Instant::now();
-        let succeeded = if let Err(err) = scan_once(db.as_ref(), &events).await {
+        let succeeded = if let Err(err) = scan_once(db.as_ref(), &events, &policy).await {
             error!(
                 error_code = error_code_or_unknown(err.as_ref()),
                 "notification scanner iteration failed: {}", err
@@ -115,7 +118,7 @@ pub async fn run_notification_scanner<
                 info!("notification scanner shutting down");
                 return;
             }
-            _ = tokio::time::sleep(SCAN_INTERVAL) => {}
+            _ = tokio::time::sleep(std::time::Duration::from_secs(policy.notifications.scan_interval_seconds)) => {}
         }
     }
 }
@@ -124,8 +127,9 @@ pub async fn run_notification_scanner<
 async fn scan_once<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>(
     db: &T,
     events: &EventSender,
+    settings: &runinator_models::server_settings::ServerSettings,
 ) -> Result<(), SendableError> {
-    scan_secret_expiry(db, events, chrono::Utc::now()).await?;
+    scan_secret_expiry(db, events, chrono::Utc::now(), settings).await?;
     for event in [
         NotificationEvent::RunSlaBreached,
         NotificationEvent::RunParked,
@@ -146,7 +150,10 @@ async fn scan_once<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmSt
         };
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(min_threshold);
         let runs = db
-            .fetch_open_workflow_runs_created_before(cutoff, SCAN_LIMIT)
+            .fetch_open_workflow_runs_created_before(
+                cutoff,
+                settings.notifications.scan_limit as i64,
+            )
             .await?;
         for run in runs {
             // `run_parked` is about a run sitting in a waiting state, not merely a long-running one.
@@ -157,7 +164,11 @@ async fn scan_once<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmSt
                 .signed_duration_since(run.created_at)
                 .num_seconds();
             let context_builder = EmissionContextBuilder { db, run: &run };
-            let dispatcher = NotificationDispatcher { db, events };
+            let dispatcher = NotificationDispatcher {
+                db,
+                events,
+                delivery_timeout_seconds: settings.notifications.delivery_timeout_seconds as i64,
+            };
             for policy in &policies {
                 if !policy_covers(policy, run.workflow_id) {
                     continue;
@@ -184,6 +195,7 @@ async fn scan_secret_expiry<T: RuntimeStore + NotificationStore + RunStore + Wor
     db: &T,
     events: &EventSender,
     now: chrono::DateTime<chrono::Utc>,
+    settings: &runinator_models::server_settings::ServerSettings,
 ) -> Result<(), SendableError> {
     let policies = db
         .fetch_notification_policies_by_event(NotificationEvent::SecretExpiring)
@@ -198,7 +210,11 @@ async fn scan_secret_expiry<T: RuntimeStore + NotificationStore + RunStore + Wor
 
     let cipher = SecretCipher::from_env();
     let secrets = db.list_settings().await?;
-    let dispatcher = NotificationDispatcher { db, events };
+    let dispatcher = NotificationDispatcher {
+        db,
+        events,
+        delivery_timeout_seconds: settings.notifications.delivery_timeout_seconds as i64,
+    };
     for record in secrets {
         let Some(expires_at) = secret_expiry(&cipher, &record) else {
             continue;
@@ -207,7 +223,7 @@ async fn scan_secret_expiry<T: RuntimeStore + NotificationStore + RunStore + Wor
         for policy in &policies {
             let warning_seconds = policy
                 .threshold_seconds
-                .unwrap_or(DEFAULT_SECRET_EXPIRY_WARNING_SECONDS);
+                .unwrap_or(settings.notifications.secret_expiry_warning_seconds as i64);
             if warning_seconds <= 0 || seconds_until_expiry > warning_seconds {
                 continue;
             }
@@ -295,6 +311,7 @@ struct NotificationDispatcher<'a, T: RuntimeStore + NotificationStore + RunStore
 {
     db: &'a T,
     events: &'a EventSender,
+    delivery_timeout_seconds: i64,
 }
 
 impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
@@ -419,10 +436,11 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
                 provider: provider.to_string(),
                 function: function.to_string(),
                 input: configuration.into(),
-                timeout_seconds: Some(DELIVERY_TIMEOUT_SECONDS),
+                timeout_seconds: Some(self.delivery_timeout_seconds),
                 retry: Default::default(),
                 tags: Vec::new(),
                 required_labels: Default::default(),
+                workspace_affinity: None,
                 idempotency_key: None,
                 function_binding: None,
             },

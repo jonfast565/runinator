@@ -29,6 +29,7 @@ use crate::agent::config::AgentRuntimeConfig;
 use crate::agent::directives::DirectiveHandler;
 use crate::agent::outbox::ResultOutbox;
 use crate::agent::reconnect::ReconnectBudget;
+use crate::agent::registration::routing_labels;
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
 use crate::agent::status::AgentConnection;
@@ -77,9 +78,11 @@ impl SupervisedLoop {
             .consumer_id
             .clone()
             .unwrap_or_else(|| replica_id.to_string());
+        // Replica ids are activation-scoped, but a local workspace survives a process restart.
+        let labels = routing_labels(&config.labels, &config.instance_id);
         let mut profile = ConsumerProfile::shared(consumer_id)
             .with_replica_id(replica_id)
-            .with_labels(config.labels.clone());
+            .with_labels(labels);
         if config.exclusive {
             profile = profile.exclusive();
         }

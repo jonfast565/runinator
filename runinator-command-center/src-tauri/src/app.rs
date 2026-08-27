@@ -141,6 +141,8 @@ pub fn run() {
             crate::commands::logout,
             crate::commands::fetch_auth_settings,
             crate::commands::save_auth_settings,
+            crate::commands::fetch_server_settings,
+            crate::commands::save_server_settings,
             crate::commands::set_access_token,
             crate::commands::list_resource_grants,
             crate::commands::create_resource_grant,

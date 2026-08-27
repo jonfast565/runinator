@@ -2126,6 +2126,9 @@ pub(crate) fn step_attributes(modifiers: Option<&Modifiers>) -> Vec<String> {
     if let Some(runner) = &modifiers.runner {
         out.push(format!("@runner({})", quote(runner)));
     }
+    if let Some(affinity) = &modifiers.workspace_affinity {
+        out.push(format!("@workspace({})", format_expr(affinity)));
+    }
     if let Some(key) = &modifiers.idempotency_key {
         out.push(format!("@idempotent(key: {})", format_expr(key)));
     }

@@ -33,6 +33,7 @@ fn action(timeout_seconds: Option<i64>) -> WorkflowEffectRequest {
         retry: Default::default(),
         tags: Default::default(),
         required_labels: Default::default(),
+        workspace_affinity: None,
         idempotency_key: None,
         function_binding: None,
     }

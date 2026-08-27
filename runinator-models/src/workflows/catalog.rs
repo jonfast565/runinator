@@ -235,6 +235,10 @@ pub struct WorkflowAction {
     /// is live.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub required_labels: BTreeMap<String, String>,
+    /// Unresolved workspace routing token. The VM resolves this beside the configuration and
+    /// freezes the stable worker instance into the durable effect target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_affinity: Option<Value>,
     /// unresolved expression naming this action's external effect, from `.idempotent(key: <expr>)`.
     /// the reducer resolves it against the run context at dispatch and stamps the result on the
     /// action command; the worker reserves that key before invoking the provider. `None` leaves the
@@ -275,6 +279,8 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             #[serde(default)]
             pub required_labels: BTreeMap<String, String>,
             #[serde(default)]
+            pub workspace_affinity: Option<Value>,
+            #[serde(default)]
             pub idempotency_key: Option<Value>,
             #[serde(default)]
             pub function_binding: Option<FunctionBinding>,
@@ -298,6 +304,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             mcp_enabled: raw.mcp_enabled,
             tags: raw.tags,
             required_labels: raw.required_labels,
+            workspace_affinity: raw.workspace_affinity,
             idempotency_key: raw.idempotency_key,
             function_binding: raw.function_binding,
         })

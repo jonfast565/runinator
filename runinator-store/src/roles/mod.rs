@@ -33,6 +33,7 @@ pub mod runs;
 pub mod schedules;
 pub mod settings;
 pub mod workflow_vm;
+pub mod workspaces;
 
 pub use archive::ArchiveStore;
 pub use auth::AuthStore;
@@ -51,3 +52,4 @@ pub use runs::RunStore;
 pub use schedules::{ScheduleStore, ScheduledWorkflowVm};
 pub use settings::SettingStore;
 pub use workflow_vm::{NewWorkflowVmRun, WorkflowTimerInterrupt, WorkflowVmStore};
+pub use workspaces::WorkspaceStore;

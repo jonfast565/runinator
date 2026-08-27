@@ -4,7 +4,7 @@
 //! through broker ingress. They therefore never need to call the web service merely to become
 //! visible, routable, and live in the fleet view.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::Utc;
 use runinator_broker::{Broker, IngressMessage};
@@ -198,8 +198,8 @@ pub(super) fn registration_attributes(config: &AgentRuntimeConfig) -> Value {
         _ => Value::Object(Default::default()),
     };
     let mut labels = Map::default();
-    for (key, value) in &config.labels {
-        labels.insert(key.clone(), Value::String(value.clone()));
+    for (key, value) in routing_labels(&config.labels, &config.instance_id) {
+        labels.insert(key, Value::String(value));
     }
     if let Some(object) = attributes.as_object_mut() {
         object.insert("labels".to_string(), Value::Object(labels));
@@ -216,6 +216,18 @@ pub(super) fn registration_attributes(config: &AgentRuntimeConfig) -> Value {
     attributes_with_host_metadata(&attributes)
 }
 
+pub(super) fn routing_labels(
+    configured: &BTreeMap<String, String>,
+    instance_id: &str,
+) -> BTreeMap<String, String> {
+    let mut labels = configured.clone();
+    labels.insert(
+        runinator_models::workspaces::WORKSPACE_INSTANCE_LABEL.to_string(),
+        instance_id.to_string(),
+    );
+    labels
+}
+
 fn insert_status(attributes: &mut Value, status: runinator_models::replicas::AgentStatusReport) {
     if !attributes.is_object() {
         *attributes = Value::Object(Default::default());
@@ -225,5 +237,29 @@ fn insert_status(attributes: &mut Value, status: runinator_models::replicas::Age
             .map(Value::from)
             .unwrap_or(Value::Null);
         object.insert("status".to_string(), status);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stable_instance_label_is_reserved_and_shared_by_routing_surfaces() {
+        let configured = BTreeMap::from([
+            ("pool".into(), "local".into()),
+            (
+                runinator_models::workspaces::WORKSPACE_INSTANCE_LABEL.into(),
+                "caller-cannot-override".into(),
+            ),
+        ]);
+        let labels = routing_labels(&configured, "worker-a");
+        assert_eq!(labels.get("pool").map(String::as_str), Some("local"));
+        assert_eq!(
+            labels
+                .get(runinator_models::workspaces::WORKSPACE_INSTANCE_LABEL)
+                .map(String::as_str),
+            Some("worker-a")
+        );
     }
 }

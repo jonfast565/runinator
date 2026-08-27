@@ -46,6 +46,7 @@ async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched
             retry: Default::default(),
             tags: Vec::new(),
             required_labels: Default::default(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         },

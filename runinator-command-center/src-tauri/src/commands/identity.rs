@@ -68,6 +68,19 @@ pub async fn save_auth_settings(
     .await
 }
 
+#[tauri::command]
+pub async fn fetch_server_settings(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "server/settings").await
+}
+
+#[tauri::command]
+pub async fn save_server_settings(
+    state: State<'_, CommandCenterState>,
+    settings: Value,
+) -> CommandResult<Value> {
+    put_json(&state, "server/settings", &settings).await
+}
+
 /// store the access token so subsequent requests carry it.
 #[tauri::command]
 pub async fn set_access_token(

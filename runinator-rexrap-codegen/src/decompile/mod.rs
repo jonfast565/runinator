@@ -1455,6 +1455,9 @@ impl<'a> Decompiler<'a> {
                 modifiers.push(format!("@runner({})", quote(runner)));
             }
         }
+        if let Some(affinity) = &action.workspace_affinity {
+            modifiers.push(format!("@workspace({})", self.expr(affinity)?));
+        }
         if let Some(key) = &action.idempotency_key {
             modifiers.push(format!("@idempotent(key: {})", self.expr(key)?));
         }

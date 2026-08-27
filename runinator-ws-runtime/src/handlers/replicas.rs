@@ -14,7 +14,7 @@ use runinator_models::{
         ReplicaRegistrationRequest,
     },
 };
-use runinator_store::roles::ReplicaStore;
+use runinator_store::{RuntimeStore, roles::ReplicaStore};
 
 use runinator_ws_core::models::{ApiResponse, ReplicaQuery, ReplicaSampleQuery};
 use runinator_ws_core::openapi::docs::{
@@ -113,25 +113,48 @@ pub async fn mark_replica_offline<T: ReplicaStore>(
     tag = "Replicas",
     responses((status = 200, description = "service replicas", body = serde_json::Value)),
 )]
-pub async fn get_replicas<T: ReplicaStore>(
+pub async fn get_replicas<T: ReplicaStore + RuntimeStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
+    Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
     Query(query): Query<ReplicaQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match registry.list(query.replica_type, query.status).await {
+    let settings = runinator_engine::settings::load_server_settings(db.as_ref())
+        .await
+        .unwrap_or_default();
+    match registry
+        .list_with_stale_after(
+            query.replica_type,
+            query.status,
+            settings.replicas.stale_after_seconds as i64,
+        )
+        .await
+    {
         Ok(replicas) => (StatusCode::OK, Json(ApiResponse::ReplicaList(replicas))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 /// fetch a replica's recent telemetry samples for charting.
-pub async fn get_replica_samples<T: ReplicaStore>(
+pub async fn get_replica_samples<T: ReplicaStore + RuntimeStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
+    Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Query(query): Query<ReplicaSampleQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match registry.samples(replica_id, query.since_seconds).await {
+    let settings = runinator_engine::settings::load_server_settings(db.as_ref())
+        .await
+        .unwrap_or_default();
+    match registry
+        .samples_with_limits(
+            replica_id,
+            query.since_seconds,
+            settings.replicas.sample_window_seconds as i64,
+            settings.replicas.sample_max_points as i64,
+        )
+        .await
+    {
         Ok(series) => (StatusCode::OK, Json(ApiResponse::ReplicaSamples(series))),
         Err(err) => api_error(err.to_string()),
     }
@@ -199,10 +222,10 @@ async fn reject_unowned_agent_replica<T: ReplicaStore>(
 }
 
 /// the `replicas` endpoints.
-pub fn routes<T: ReplicaStore>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: ReplicaStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
-    let registry = Arc::new(ReplicaRegistry::new(pool));
+    let registry = Arc::new(ReplicaRegistry::new(pool.clone()));
     axum::Router::new()
         .route(
             runinator_models::api_routes::API_REPLICAS,
@@ -230,6 +253,7 @@ pub fn routes<T: ReplicaStore>(pool: std::sync::Arc<T>) -> axum::Router {
             "/replicas/{replica_id}/samples",
             get(get_replica_samples::<T>).layer(Extension(registry)),
         )
+        .layer(Extension(pool))
 }
 
 /// the openapi entries for the routes above.

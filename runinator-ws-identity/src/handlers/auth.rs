@@ -19,7 +19,7 @@ use runinator_models::auth::{
     UpdateUserRequest, User,
 };
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
-use runinator_models::settings::SettingKind;
+use runinator_models::server_settings::{ServerSettings, server_setting_catalog};
 use runinator_models::value::Value;
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
@@ -43,11 +43,6 @@ use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
-const AUTH_POLICY_SCOPE: &str = "auth";
-const MAX_REFRESHES_NAME: &str = "max_refreshes";
-const DEFAULT_MAX_REFRESHES: i64 = 100;
-const MAX_ALLOWED_REFRESHES: i64 = 100_000;
-
 #[derive(serde::Deserialize)]
 pub struct AuthSettingsRequest {
     pub max_refreshes: i64,
@@ -56,29 +51,10 @@ pub struct AuthSettingsRequest {
 async fn max_refreshes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     db: &T,
 ) -> Result<i64, Reply> {
-    let Some(record) = db
-        .fetch_setting(
-            SettingKind::Config,
-            AUTH_POLICY_SCOPE.into(),
-            MAX_REFRESHES_NAME.into(),
-        )
+    runinator_engine::settings::load_server_settings(db)
         .await
-        .map_err(|err| api_error(err.to_string()))?
-    else {
-        return Ok(DEFAULT_MAX_REFRESHES);
-    };
-    let cipher = SecretCipher::from_env();
-    let bytes = cipher
-        .try_decrypt(&record.value)
-        .ok_or_else(|| api_error("stored auth policy could not be decrypted"))?;
-    let value: i64 = serde_json::from_slice(&bytes)
-        .map_err(|_| api_error("stored max refreshes policy is invalid"))?;
-    if !(1..=MAX_ALLOWED_REFRESHES).contains(&value) {
-        return Err(api_error(
-            "stored max refreshes policy is outside the allowed range",
-        ));
-    }
-    Ok(value)
+        .map(|settings| settings.authentication.max_refreshes as i64)
+        .map_err(|err| api_error(err.to_string()))
 }
 
 fn unauthorized(message: &str) -> Reply {
@@ -464,32 +440,66 @@ pub async fn update_auth_settings<T: AuthStore + RbacStore + RuntimeStore + Sett
     if ctx.platform_role != Some(PlatformRole::Admin) {
         return forbidden("only a platform admin may manage refresh policy");
     }
-    if !(1..=MAX_ALLOWED_REFRESHES).contains(&request.max_refreshes) {
-        return bad_request(&format!(
-            "max_refreshes must be between 1 and {MAX_ALLOWED_REFRESHES}"
-        ));
-    }
-    let bytes = match serde_json::to_vec(&request.max_refreshes) {
-        Ok(bytes) => bytes,
+    let mut settings = match runinator_engine::settings::load_server_settings(db.as_ref()).await {
+        Ok(settings) => settings,
         Err(err) => return api_error(err.to_string()),
     };
-    let value = SecretCipher::from_env().encrypt(&bytes);
-    match db
-        .upsert_setting(
-            SettingKind::Config,
-            AUTH_POLICY_SCOPE.into(),
-            MAX_REFRESHES_NAME.into(),
-            value,
-            Utc::now().timestamp(),
-        )
-        .await
-    {
+    settings.authentication.max_refreshes = match u64::try_from(request.max_refreshes) {
+        Ok(value) => value,
+        Err(_) => return bad_request("max_refreshes must be positive"),
+    };
+    if let Err(message) = settings.validate() {
+        return bad_request(&message);
+    }
+    match runinator_engine::settings::save_server_settings(db.as_ref(), &settings).await {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
                 "max_refreshes": request.max_refreshes,
             }))),
         ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+#[derive(Serialize)]
+struct ServerSettingsResponse {
+    values: ServerSettings,
+    catalog: Vec<runinator_models::server_settings::ServerSettingDefinition>,
+}
+
+pub async fn server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    if ctx.platform_role != Some(PlatformRole::Admin) {
+        return forbidden("only a platform admin may manage server settings");
+    }
+    match runinator_engine::settings::load_server_settings(db.as_ref()).await {
+        Ok(values) => ok_value(&ServerSettingsResponse {
+            values,
+            catalog: server_setting_catalog(),
+        }),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn update_server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(settings): Json<ServerSettings>,
+) -> Reply {
+    if ctx.platform_role != Some(PlatformRole::Admin) {
+        return forbidden("only a platform admin may manage server settings");
+    }
+    if let Err(message) = settings.validate() {
+        return bad_request(&message);
+    }
+    match runinator_engine::settings::save_server_settings(db.as_ref(), &settings).await {
+        Ok(()) => ok_value(&ServerSettingsResponse {
+            values: settings,
+            catalog: server_setting_catalog(),
+        }),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -1312,6 +1322,12 @@ pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
                 .layer(Extension(pool.clone())),
         )
         .route(
+            "/server/settings",
+            get(server_settings::<T>)
+                .put(update_server_settings::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
             "/auth/login",
             post(login::<T>).layer(Extension(pool.clone())),
         )
@@ -1434,6 +1450,32 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "saved refresh policy",
         Example::AuthConfig,
+    ),
+    endpoint(
+        "get",
+        "/server/settings",
+        "Settings",
+        "Read server operating policy",
+        "Returns current platform-wide operating values and their defaults, valid bounds, usual ranges, units, and descriptions.",
+        false,
+        None,
+        &[],
+        200,
+        "server settings catalog",
+        Example::None,
+    ),
+    endpoint(
+        "put",
+        "/server/settings",
+        "Settings",
+        "Update server operating policy",
+        "Validates and atomically saves the complete platform-wide operating policy.",
+        false,
+        json_body("Complete server settings document.", Example::None),
+        &[],
+        200,
+        "saved server settings catalog",
+        Example::None,
     ),
     endpoint(
         "post",

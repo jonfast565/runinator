@@ -99,6 +99,7 @@ fn a_workflow_action_round_trips_its_binding() {
         mcp_enabled: false,
         tags: Vec::new(),
         required_labels: Default::default(),
+        workspace_affinity: None,
         idempotency_key: None,
         function_binding: Some(entry().binding()),
     };

@@ -423,6 +423,7 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         (name = "Catalog", description = "Catalog entries used by authoring and provider metadata."),
         (name = "Control Plane", description = "Scheduler, worker, and service-to-service endpoints."),
         (name = "Credentials", description = "Secret and config settings."),
+        (name = "Settings", description = "Platform-wide server operating policy."),
         (name = "Debug", description = "Workflow-run debugger commands."),
         (name = "Notifications", description = "User notification records."),
         (name = "Providers", description = "Registered task providers."),

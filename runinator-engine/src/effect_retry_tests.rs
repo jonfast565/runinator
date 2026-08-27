@@ -22,6 +22,7 @@ fn effect(attempt: u32, retry: WorkflowRetry) -> WorkflowEffect {
             retry,
             tags: Vec::new(),
             required_labels: Default::default(),
+            workspace_affinity: None,
             idempotency_key: None,
             function_binding: None,
         },

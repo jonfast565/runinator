@@ -24,6 +24,7 @@ use tracing::{info, warn};
 /// The worker's clock starts when it receives the effect, so it always runs later than the
 /// engine's; this margin covers publication, queueing, and the worker's idempotency claim, and
 /// keeps the worker's more precise report the one that normally lands.
+#[cfg(test)]
 const DEADLINE_GRACE_SECONDS: i64 = 30;
 
 /// The deadline wake for one dispatched effect, or `None` when the effect owns no action deadline.
@@ -32,9 +33,18 @@ const DEADLINE_GRACE_SECONDS: i64 = 30;
 /// (timers, an approval expiry, a gate deadline) are armed by the infrastructure effect host from
 /// their own request, and the ones that park indefinitely by design (a signal, an input) have no
 /// deadline to enforce.
+#[cfg(test)]
 pub(crate) fn deadline_wake(
     command: &EffectCommand,
     dispatched_at: DateTime<Utc>,
+) -> Option<WakeCommand> {
+    deadline_wake_with_grace(command, dispatched_at, DEADLINE_GRACE_SECONDS)
+}
+
+pub(crate) fn deadline_wake_with_grace(
+    command: &EffectCommand,
+    dispatched_at: DateTime<Utc>,
+    grace_seconds: i64,
 ) -> Option<WakeCommand> {
     let WorkflowEffectRequest::Action {
         timeout_seconds, ..
@@ -45,7 +55,7 @@ pub(crate) fn deadline_wake(
     let budget = timeout_seconds
         .unwrap_or(DEFAULT_ACTION_TIMEOUT_SECONDS)
         .max(1);
-    let due_at = dispatched_at + chrono::Duration::seconds(budget + DEADLINE_GRACE_SECONDS);
+    let due_at = dispatched_at + chrono::Duration::seconds(budget + grace_seconds.max(1));
     let mut result = EffectResult::status(
         command,
         WorkflowEffectStatus::TimedOut,
@@ -67,12 +77,22 @@ pub(crate) fn deadline_wake(
 /// wake-channel problem can never stop the work it protects. A lost arming degrades to the
 /// behaviour that existed before the backstop — the worker's own timeout, and nothing if the worker
 /// dies — rather than halting dispatch.
+#[cfg(test)]
 pub(crate) async fn arm(
     broker: &dyn Broker,
     command: &EffectCommand,
     dispatched_at: DateTime<Utc>,
 ) {
-    let Some(wake) = deadline_wake(command, dispatched_at) else {
+    arm_with_grace(broker, command, dispatched_at, DEADLINE_GRACE_SECONDS).await;
+}
+
+pub(crate) async fn arm_with_grace(
+    broker: &dyn Broker,
+    command: &EffectCommand,
+    dispatched_at: DateTime<Utc>,
+    grace_seconds: i64,
+) {
+    let Some(wake) = deadline_wake_with_grace(command, dispatched_at, grace_seconds) else {
         return;
     };
     let due_at = wake.due_at;

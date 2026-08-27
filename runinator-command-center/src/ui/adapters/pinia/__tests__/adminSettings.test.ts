@@ -8,12 +8,16 @@ vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   fetchCredentials: vi.fn(),
   fetchForeignLanguageRuntime: vi.fn(),
   saveForeignLanguageRuntime: vi.fn(),
+  fetchServerSettings: vi.fn(),
+  saveServerSettings: vi.fn(),
 }));
 
 import {
   fetchCredentials,
   fetchForeignLanguageRuntime,
+  fetchServerSettings,
   saveForeignLanguageRuntime,
+  saveServerSettings,
 } from "../../../../core/api/commandCenterApi";
 
 describe("admin settings store", () => {
@@ -35,6 +39,27 @@ describe("admin settings store", () => {
       success: true,
       message: "saved",
     });
+    vi.mocked(fetchServerSettings).mockResolvedValue({
+      values: { authentication: { max_refreshes: 100 } },
+      catalog: [
+        {
+          key: "authentication.max_refreshes",
+          section: "Authentication",
+          label: "Maximum refreshes",
+          description: "Maximum rotations allowed for one login session.",
+          unit: "refreshes",
+          default: 100,
+          minimum: 1,
+          maximum: 100000,
+          usual_minimum: 10,
+          usual_maximum: 1000,
+        },
+      ],
+    });
+    vi.mocked(saveServerSettings).mockImplementation(async (values) => ({
+      values,
+      catalog: await fetchServerSettings().then((response) => response.catalog),
+    }));
   });
 
   it("shows settings under the admin left nav section", () => {
@@ -95,6 +120,20 @@ describe("admin settings store", () => {
     expect(saveForeignLanguageRuntime).toHaveBeenCalledWith("python", {
       image: "python:3.13-slim",
       setup_script: "pip install requests",
+    });
+  });
+
+  it("loads, validates, and saves catalog-driven server settings", async () => {
+    const settings = useAdminSettingsStore();
+
+    await settings.refreshServerSettings();
+    settings.updateServerSetting("authentication.max_refreshes", 250);
+    await settings.saveServerSettings();
+
+    expect(settings.serverCatalog).toHaveLength(1);
+    expect(settings.serverValues.authentication.max_refreshes).toBe(250);
+    expect(saveServerSettings).toHaveBeenCalledWith({
+      authentication: { max_refreshes: 250 },
     });
   });
 });

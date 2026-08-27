@@ -15,6 +15,7 @@ mod revisions;
 mod schema;
 mod settings;
 mod workflow_vm;
+mod workspaces;
 
 use super::*;
 use chrono::{Duration, Utc};

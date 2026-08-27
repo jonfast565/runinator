@@ -57,6 +57,7 @@ use runinator_models::{
     settings::{SettingKind, SettingRecord},
     telemetry::ReplicaSample,
     workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus, WorkflowTrigger},
+    workspaces::{NewWorkspaceLease, WorkspaceLease, WorkspaceStatus},
 };
 use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, Type};
 use uuid::Uuid;
@@ -1044,3 +1045,4 @@ mod runtime;
 mod schedules;
 mod settings;
 mod workflow_vm;
+mod workspaces;
