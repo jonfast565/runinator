@@ -94,18 +94,20 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     }
 
     entry.source = source;
+
     if (source === "timer") {
       entry.intervalSeconds ??= 60;
     } else {
       delete entry.intervalSeconds;
     }
+
     applyWorkflowHeader();
   }
 
   function setHeaderInterruptInterval(index: number, intervalSeconds: number) {
     const entry = host.state.headerDraft.interrupts.at(index);
 
-    if (!entry || entry.source !== "timer") {
+    if (entry?.source !== "timer") {
       return;
     }
 

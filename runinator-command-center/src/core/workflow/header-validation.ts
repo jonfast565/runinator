@@ -198,9 +198,13 @@ function pushInterruptIssues(
 
     seenSources.add(source);
 
-    if (source === "timer" && (!Number.isInteger(declaration.intervalSeconds) || declaration.intervalSeconds! <= 0)) {
+    if (
+      source === "timer"
+      && (!Number.isInteger(declaration.intervalSeconds) || (declaration.intervalSeconds ?? 0) <= 0)
+    ) {
       issues.push(handlerError(`${label}: timer handlers require a positive whole-second interval`));
     }
+
     if (source !== "timer" && declaration.intervalSeconds !== undefined) {
       issues.push(handlerError(`${label}: only timer handlers may declare an interval`));
     }

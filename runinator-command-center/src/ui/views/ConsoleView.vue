@@ -116,7 +116,6 @@ import { useConsoleStore } from "../adapters/pinia/console";
 import { useConsoleTerminalStore } from "../adapters/pinia/console-terminal";
 import { useOrgsStore } from "../adapters/pinia/orgs";
 import { useCan } from "../composables/useCan";
-import { CELL_SCOPE } from "../../core/domain/models";
 import type { JsonValue } from "../../core/domain/json";
 
 // not named `console`: vue's template compiler treats that identifier as the global one, so
