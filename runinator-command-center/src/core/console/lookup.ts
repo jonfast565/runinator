@@ -1,10 +1,11 @@
-// resolving the id-or-name references console commands accept.
+// resolving the references console commands accept.
 //
 // `runinatorctl` accepts a workflow UUID or name everywhere. The console must do the same, or
 // half the commands documented in `:help` would only work if you had an id to hand.
 
 import { fetchPipelines, fetchWorkflows } from "../api/commandCenterApi";
 import type { Pipeline, WorkflowDefinition } from "../domain/models";
+import { pipelinePath } from "../domain/models";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -68,7 +69,9 @@ export async function resolveWorkflowId(reference: string): Promise<string> {
 export async function resolvePipeline(reference: string): Promise<Pipeline> {
   const pipelines = await fetchPipelines();
   const found = pipelines.find(
-    (pipeline) => pipeline.id === reference || pipeline.name === reference,
+    (pipeline) =>
+      pipeline.id === reference ||
+      (pipeline.namespace != null && pipeline.key != null && pipelinePath(pipeline) === reference),
   );
 
   if (!found) {

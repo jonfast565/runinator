@@ -64,6 +64,10 @@ export interface PipelineConcurrency {
 export interface Pipeline {
   id: string | null;
   name: string;
+  // Stable logical key; display-name edits and namespace moves preserve it.
+  key?: string | null;
+  // Required namespace prefix for the canonical pipeline path.
+  namespace?: string | null;
   description: string | null;
   // owning organization (tenant); null = platform-global. server-managed (stamped on create).
   org_id?: string | null;
@@ -73,6 +77,11 @@ export interface Pipeline {
   metadata: JsonRecord;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export function pipelinePath(pipeline: Pick<Pipeline, "name" | "key" | "namespace">): string {
+  const key = pipeline.key ?? pipeline.name;
+  return pipeline.namespace ? `${pipeline.namespace}.${key}` : key;
 }
 
 export function defaultPipelineDefaults(): PipelineDefaults {

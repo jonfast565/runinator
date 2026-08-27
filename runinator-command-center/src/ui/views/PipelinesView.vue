@@ -68,7 +68,7 @@
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>Path</th>
                   <th>Members</th>
                   <th>Scope</th>
                 </tr>
@@ -81,7 +81,10 @@
                   :class="{ selected: item.id === pipeline.selectedPipelineId }"
                   @click="choosePipeline(item)"
                 >
-                  <td>{{ item.name }}</td>
+                  <td>
+                    <div>{{ pipelinePath(item) }}</div>
+                    <div class="text-xs text-fg-muted">{{ item.name }}</div>
+                  </td>
                   <td>{{ item.graph.members.length }}</td>
                   <td>{{ item.org_id ? "Org" : "Global" }}</td>
                 </tr>
@@ -114,8 +117,8 @@
             <template #first>
               <div class="panel h-full min-h-0">
                 <PanelHeader
-                  :title="selectedPipeline.name"
-                  description="Drag between workflows to chain them."
+                  :title="pipelinePath(selectedPipeline)"
+                  :description="`${selectedPipeline.name} · Drag between workflows to chain them.`"
                 >
                   <select
                     v-if="pipeline.availableWorkflows.length"
@@ -281,6 +284,14 @@
           <input v-model="nameModal.name" type="text" placeholder="Release pipeline" autofocus />
         </label>
         <label class="flex flex-col gap-1 text-sm">
+          <span>Namespace</span>
+          <input v-model="nameModal.namespace" type="text" placeholder="acme.delivery" />
+        </label>
+        <label class="flex flex-col gap-1 text-sm">
+          <span>Stable key</span>
+          <input v-model="nameModal.key" type="text" placeholder="release_train" />
+        </label>
+        <label class="flex flex-col gap-1 text-sm">
           <span>Description</span>
           <input v-model="nameModal.description" type="text" placeholder="Optional" />
         </label>
@@ -307,7 +318,7 @@
 
       <template #actions>
         <button class="btn" @click="closeNameModal">Cancel</button>
-        <button class="btn btn-primary" :disabled="!nameModal.name.trim()" @click="submitNameModal">
+        <button class="btn btn-primary" :disabled="!validPipelineIdentity" @click="submitNameModal">
           {{ nameModal.mode === "create" ? "Create" : "Save" }}
         </button>
       </template>
@@ -343,6 +354,7 @@ import type {
   PipelineJoinMode,
   PipelineMemberFailureMode,
 } from "../../core/domain/models";
+import { pipelinePath } from "../../core/domain/models";
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
 import SplitPane from "../components/shared/SplitPane.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -442,6 +454,7 @@ const scopedPipelines = computed(() => {
   return list.filter(
     (item) =>
       item.name.toLowerCase().includes(query) ||
+      pipelinePath(item).toLowerCase().includes(query) ||
       (item.description ?? "").toLowerCase().includes(query),
   );
 });
@@ -449,7 +462,9 @@ const scopedPipelines = computed(() => {
 const memberWorkflowCount = computed(
   () => new Set(scopedPipelines.value.flatMap((item) => item.graph.members.map((member) => member.workflow_id))).size,
 );
-const selectedPipelineLabel = computed(() => selectedPipeline.value?.name ?? "None");
+const selectedPipelineLabel = computed(() =>
+  selectedPipeline.value ? pipelinePath(selectedPipeline.value) : "None",
+);
 
 const ownerOrgId = ref<string>("");
 const ownerSaving = ref(false);
@@ -459,8 +474,19 @@ const nameModal = reactive({
   mode: "create",
   title: "New pipeline",
   name: "",
+  namespace: "",
+  key: "",
   description: "",
 });
+const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const validPipelineIdentity = computed(() =>
+  Boolean(nameModal.name.trim()) &&
+  identifier.test(nameModal.key.trim()) &&
+  nameModal.namespace
+    .trim()
+    .split(".")
+    .every((segment) => identifier.test(segment)),
+);
 const defaultsModalOpen = ref(false);
 const starting = ref(false);
 
@@ -478,6 +504,8 @@ function openNewPipeline() {
   nameModal.mode = "create";
   nameModal.title = "New pipeline";
   nameModal.name = "";
+  nameModal.namespace = "";
+  nameModal.key = "";
   nameModal.description = "";
 }
 
@@ -492,6 +520,8 @@ function openRename() {
   nameModal.mode = "rename";
   nameModal.title = "Pipeline settings";
   nameModal.name = current.name;
+  nameModal.namespace = current.namespace ?? "";
+  nameModal.key = current.key ?? "";
   nameModal.description = current.description ?? "";
   ownerOrgId.value = current.org_id ?? "";
 
@@ -517,15 +547,25 @@ function closeNameModal() {
 }
 
 async function submitNameModal() {
-  if (!nameModal.name.trim()) {
+  if (!validPipelineIdentity.value) {
     return;
   }
 
   if (nameModal.mode === "create") {
-    await pipeline.createPipeline(nameModal.name, nameModal.description);
+    await pipeline.createPipeline(
+      nameModal.name,
+      nameModal.namespace,
+      nameModal.key,
+      nameModal.description,
+    );
     mobileView.value = "editor";
   } else {
-    await pipeline.renamePipeline(nameModal.name, nameModal.description.trim() || null);
+    await pipeline.renamePipeline(
+      nameModal.name,
+      nameModal.description.trim() || null,
+      nameModal.namespace,
+      nameModal.key,
+    );
   }
 
   nameModal.open = false;

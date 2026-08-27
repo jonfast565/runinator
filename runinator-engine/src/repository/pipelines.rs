@@ -1,4 +1,5 @@
 use super::*;
+use runinator_models::artifacts::ArtifactPath;
 use runinator_models::pipelines::{
     PIPELINE_GRAPH_VERSION, PipelineBundle, PipelineGraph, PipelineJoin, PipelineLink,
     PipelineMember, PipelineRun, PipelineRunDetail, PipelineRunEdgeState, PipelineRunJoinState,
@@ -21,6 +22,7 @@ pub async fn upsert_pipeline_with_author<T: DefinitionStore>(
     author: &RevisionAuthor,
 ) -> Result<Pipeline, SendableError> {
     validate_pipeline(pipeline)?;
+    validate_member_workflow_paths(db, pipeline).await?;
     let saved = db.upsert_pipeline(pipeline).await?;
     if let Some(revision) = PipelineRevision::from_pipeline(&saved, author) {
         db.insert_pipeline_revision(&revision).await?;
@@ -69,6 +71,7 @@ fn validate_mapping(value: &Value) -> Result<(), SendableError> {
 }
 
 fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
+    validate_pipeline_identity(pipeline)?;
     if !pipeline.graph.is_current() {
         return Err(invalid_pipeline(
             "pipeline graph requires source pack reimport",
@@ -79,9 +82,10 @@ fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
     }
     let mut members = std::collections::HashSet::new();
     for member in &pipeline.graph.members {
-        if member.key.trim().is_empty() || !members.insert(member.key.as_str()) {
+        canonical_path(&member.key, "pipeline member")?;
+        if !members.insert(member.key.as_str()) {
             return Err(invalid_pipeline(format!(
-                "duplicate or empty pipeline member key '{}'",
+                "duplicate or non-canonical pipeline member key '{}'; expected namespace.key",
                 member.key
             )));
         }
@@ -180,9 +184,172 @@ fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
     Ok(())
 }
 
-/// import a compiled pipeline bundle from a pack. for each pipeline: resolve member workflow names to
-/// ids, upsert the pipeline (reusing an existing id with the same name + org so re-import updates in
-/// place), and atomically replace its first-class graph. pack-managed pipelines carry
+fn validate_pipeline_identity(pipeline: &Pipeline) -> Result<(), SendableError> {
+    let namespace = pipeline
+        .namespace
+        .as_deref()
+        .filter(|namespace| !namespace.trim().is_empty())
+        .ok_or_else(|| invalid_pipeline("pipeline namespace is required"))?;
+    let key = pipeline
+        .key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| invalid_pipeline("pipeline key is required"))?;
+
+    if !namespace.split('.').all(is_identifier) {
+        return Err(invalid_pipeline(
+            "pipeline namespace must be a dotted REXRAP identifier path",
+        ));
+    }
+    if !is_identifier(key) {
+        return Err(invalid_pipeline("pipeline key must be a REXRAP identifier"));
+    }
+    Ok(())
+}
+
+async fn validate_member_workflow_paths<T: DefinitionStore>(
+    db: &T,
+    pipeline: &Pipeline,
+) -> Result<(), SendableError> {
+    let workflows = db.fetch_workflows().await?;
+    for member in &pipeline.graph.members {
+        let workflow = workflows
+            .iter()
+            .find(|workflow| workflow.id == Some(member.workflow_id))
+            .ok_or_else(|| {
+                invalid_pipeline(format!(
+                    "pipeline member '{}' names an unknown workflow UUID {}",
+                    member.key, member.workflow_id
+                ))
+            })?;
+        if workflow.namespace.is_none()
+            || workflow.key.is_none()
+            || workflow.artifact_path().qualified() != member.key
+        {
+            return Err(invalid_pipeline(format!(
+                "pipeline member '{}' does not match workflow UUID {}",
+                member.key, member.workflow_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn is_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn canonical_path(value: &str, kind: &str) -> Result<ArtifactPath, SendableError> {
+    let path = ArtifactPath::from_qualified(value);
+    if path.namespace.is_none()
+        || !path
+            .namespace
+            .as_deref()
+            .is_some_and(|namespace| namespace.split('.').all(is_identifier))
+        || !is_identifier(&path.key)
+        || path.qualified() != value
+    {
+        return Err(invalid_pipeline(format!(
+            "{kind} '{value}' must be a canonical namespace.key path"
+        )));
+    }
+    Ok(path)
+}
+
+fn resolve_workflow_path(
+    workflows: &[WorkflowDefinition],
+    value: &str,
+    kind: &str,
+) -> Result<Uuid, SendableError> {
+    let path = canonical_path(value, kind)?;
+    let candidates = workflows
+        .iter()
+        .filter_map(|workflow| {
+            (workflow.namespace.is_some()
+                && workflow.key.is_some()
+                && workflow.artifact_path() == path)
+                .then_some(workflow.id)
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(value)),
+        ids => Err(crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
+            "{kind} '{value}' maps to {} workflow UUIDs",
+            ids.len()
+        ))),
+    }
+}
+
+fn resolve_pipeline_path(
+    pipelines: &[Pipeline],
+    value: &str,
+    kind: &str,
+) -> Result<Uuid, SendableError> {
+    let path = canonical_path(value, kind)?;
+    let candidates = pipelines
+        .iter()
+        .filter_map(|pipeline| {
+            (pipeline.namespace.is_some()
+                && pipeline.key.is_some()
+                && pipeline.artifact_path() == path)
+                .then_some(pipeline.id)
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(invalid_pipeline(format!("unknown pipeline source '{value}'"))),
+        ids => Err(crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
+            "{kind} '{value}' maps to {} pipeline UUIDs",
+            ids.len()
+        ))),
+    }
+}
+
+fn resolve_chained_trigger_configuration(
+    configuration: &Value,
+    workflows: &[WorkflowDefinition],
+    pipelines: &[Pipeline],
+) -> Result<Value, SendableError> {
+    let mut configuration = configuration.clone();
+    let object = configuration
+        .as_object_mut()
+        .ok_or_else(|| invalid_pipeline("pipeline trigger configuration must be an object"))?;
+    let workflow = object
+        .get("source_workflow")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let pipeline = object
+        .get("source_pipeline")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    match (workflow, pipeline) {
+        (Some(path), None) => {
+            let id = resolve_workflow_path(workflows, &path, "pipeline trigger workflow source")?;
+            object.insert("source_workflow_id".into(), Value::String(id.to_string()));
+            object.remove("source_pipeline_id");
+        }
+        (None, Some(path)) => {
+            let id = resolve_pipeline_path(pipelines, &path, "pipeline trigger pipeline source")?;
+            object.insert("source_pipeline_id".into(), Value::String(id.to_string()));
+            object.remove("source_workflow_id");
+        }
+        _ => {
+            return Err(invalid_pipeline(
+                "a chained pipeline trigger must declare exactly one canonical source_workflow or source_pipeline",
+            ));
+        }
+    }
+    Ok(configuration)
+}
+
+/// import a compiled pipeline bundle from a pack. for each pipeline: resolve canonical member paths
+/// to ids, upsert the pipeline by its stable `(org, key)` identity, and atomically replace its
+/// first-class graph. pack-managed pipelines carry
 /// `metadata.managed_by = "rexrap"`; only pipeline start triggers are materialized separately.
 pub async fn import_pipeline_bundle_with<T: DefinitionStore + RuntimeStore + ScheduleStore>(
     db: &T,
@@ -190,9 +357,21 @@ pub async fn import_pipeline_bundle_with<T: DefinitionStore + RuntimeStore + Sch
     import_org: Option<Uuid>,
 ) -> Result<Vec<Pipeline>, SendableError> {
     let existing = db.fetch_pipelines().await?;
+    let workflows = db.fetch_workflows().await?;
     let mut imported = Vec::with_capacity(bundle.pipelines.len());
     for spec in &bundle.pipelines {
-        imported.push(import_pipeline_spec(db, spec, import_org, &existing).await?);
+        imported.push(
+            import_pipeline_spec(db, spec, import_org, &existing, &workflows).await?,
+        );
+    }
+    // Pipeline sources can point at another pipeline in the same pack, so materialize triggers
+    // only after every graph has received its durable id.
+    let pipelines = db.fetch_pipelines().await?;
+    for (spec, pipeline) in bundle.pipelines.iter().zip(&imported) {
+        let pipeline_id = pipeline
+            .id
+            .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(&spec.name))?;
+        materialize_pipeline_triggers(db, spec, pipeline_id, &workflows, &pipelines).await?;
     }
     Ok(imported)
 }
@@ -202,17 +381,13 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
     spec: &PipelineSpec,
     import_org: Option<Uuid>,
     existing: &[Pipeline],
+    workflows: &[WorkflowDefinition],
 ) -> Result<Pipeline, SendableError> {
-    // resolve each member workflow name to its id; an unknown member fails the import loudly.
+    // Resolve each canonical member path to an id; display-name aliases are deliberately not part
+    // of this boundary, because a pipeline must survive duplicate workflow labels.
     let mut graph_members = Vec::with_capacity(spec.members.len());
     for member in &spec.members {
-        let id = db
-            .fetch_workflow_by_name(member.name.clone())
-            .await?
-            .and_then(|workflow| workflow.id)
-            .ok_or_else(|| {
-                crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(member.name.as_str())
-            })?;
+        let id = resolve_workflow_path(workflows, &member.name, "pipeline member")?;
         graph_members.push(PipelineMember {
             key: member.name.clone(),
             workflow_id: id,
@@ -221,14 +396,15 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
                 .unwrap_or(spec.defaults.default_failure_mode),
         });
     }
-    // A stable key survives a namespace move or display rename. Legacy specs without one retain
-    // name matching until the namespace migration rewrites their source.
+    // A stable key survives a namespace move or display rename. The destructive namespace cutover
+    // intentionally has no name-based fallback.
+    let stable_key = spec
+        .key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| invalid_pipeline("pipeline key is required"))?;
     let prior = existing.iter().find(|pipeline| {
-        pipeline.org_id == import_org
-            && match &spec.key {
-                Some(key) => pipeline.artifact_key() == key,
-                None => pipeline.name == spec.name && pipeline.namespace == spec.namespace,
-            }
+        pipeline.org_id == import_org && pipeline.artifact_key() == stable_key
     });
     let prior_id = prior.and_then(|p| p.id);
     let pipeline = Pipeline {
@@ -287,10 +463,6 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
     let saved =
         upsert_pipeline_with_author(db, &pipeline, &RevisionAuthor::system(RevisionSource::Pack))
             .await?;
-    let pipeline_id = saved
-        .id
-        .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(spec.name.as_str()))?;
-    materialize_pipeline_triggers(db, spec, pipeline_id).await?;
     Ok(saved)
 }
 
@@ -301,6 +473,8 @@ async fn materialize_pipeline_triggers<T: ScheduleStore>(
     db: &T,
     spec: &PipelineSpec,
     pipeline_id: Uuid,
+    workflows: &[WorkflowDefinition],
+    pipelines: &[Pipeline],
 ) -> Result<(), SendableError> {
     for existing in db.fetch_pipeline_triggers(pipeline_id).await? {
         let managed = existing
@@ -313,12 +487,19 @@ async fn materialize_pipeline_triggers<T: ScheduleStore>(
         }
     }
     for spec_trigger in &spec.triggers {
+        let configuration = if spec_trigger.kind
+            == runinator_models::workflows::WorkflowTriggerKind::Chained
+        {
+            resolve_chained_trigger_configuration(&spec_trigger.configuration, workflows, pipelines)?
+        } else {
+            spec_trigger.configuration.clone()
+        };
         let trigger = PipelineTrigger {
             id: None,
             pipeline_id,
             kind: spec_trigger.kind.clone(),
             enabled: spec_trigger.enabled,
-            configuration: spec_trigger.configuration.clone(),
+            configuration,
             next_execution: None,
             blackout_start: None,
             blackout_end: None,
@@ -363,11 +544,18 @@ pub async fn set_pipeline_org<T: DefinitionStore>(
 
 // --- pipeline triggers ---
 
-pub async fn upsert_pipeline_trigger<T: ScheduleStore>(
+pub async fn upsert_pipeline_trigger<T: DefinitionStore + ScheduleStore>(
     db: &T,
     trigger: &PipelineTrigger,
 ) -> Result<PipelineTrigger, SendableError> {
-    db.upsert_pipeline_trigger(trigger).await
+    let mut trigger = trigger.clone();
+    if trigger.kind == runinator_models::workflows::WorkflowTriggerKind::Chained {
+        let workflows = db.fetch_workflows().await?;
+        let pipelines = db.fetch_pipelines().await?;
+        trigger.configuration =
+            resolve_chained_trigger_configuration(&trigger.configuration, &workflows, &pipelines)?;
+    }
+    db.upsert_pipeline_trigger(&trigger).await
 }
 
 pub async fn fetch_pipeline_triggers<T: ScheduleStore>(

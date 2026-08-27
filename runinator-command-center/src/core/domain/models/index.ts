@@ -108,7 +108,7 @@ export type {
   PipelineJoinMode,
   PipelineConcurrency,
 } from "./pipeline/pipeline";
-export { defaultPipelineDefaults } from "./pipeline/pipeline";
+export { defaultPipelineDefaults, pipelinePath } from "./pipeline/pipeline";
 export type { PipelineTrigger } from "./pipeline/pipeline-trigger";
 export type { PipelineRun } from "./pipeline/pipeline-run";
 export type { PipelineRunDetail, PipelineMemberAttempt, PipelineRunEdgeState } from "./pipeline/pipeline-run-detail";

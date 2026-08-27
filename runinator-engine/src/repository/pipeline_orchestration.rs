@@ -974,7 +974,7 @@ fn resolve_member_parameters(
 }
 
 /// start any pipelines chained to a terminal workflow run via an enabled `chained` pipeline trigger
-/// whose `configuration.source_workflow` matches. deduped per (trigger, source run).
+/// whose resolved `configuration.source_workflow_id` matches. deduped per (trigger, source run).
 pub(crate) async fn maybe_start_chained_pipelines<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     source_run: &WorkflowRun,
@@ -982,14 +982,10 @@ pub(crate) async fn maybe_start_chained_pipelines<T: RuntimeStore + WorkflowVmSt
     if !source_run.status.is_terminal() {
         return Ok(());
     }
-    let source_name = workflow_run_name(db, source_run).await?;
     let triggers = db.fetch_enabled_chained_pipeline_triggers().await?;
     for trigger in triggers {
-        let matches_source = trigger
-            .configuration
-            .get("source_workflow")
-            .and_then(Value::as_str)
-            == Some(source_name.as_str());
+        let matches_source = trigger_source_id(&trigger, "source_workflow_id")
+            .is_some_and(|id| id == source_run.workflow_id);
         if !matches_source {
             continue;
         }
@@ -999,7 +995,7 @@ pub(crate) async fn maybe_start_chained_pipelines<T: RuntimeStore + WorkflowVmSt
 }
 
 /// start any pipelines chained to a terminal pipeline run via a `chained` pipeline trigger whose
-/// `configuration.source_pipeline` matches. bounds cycles with a chain-depth guard.
+/// resolved `configuration.source_pipeline_id` matches. bounds cycles with a chain-depth guard.
 async fn maybe_start_chained_pipelines_from_pipeline<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     source_run: &PipelineRun,
@@ -1016,16 +1012,10 @@ async fn maybe_start_chained_pipelines_from_pipeline<T: RuntimeStore + WorkflowV
         tracing::warn!(pipeline_run_id = %source_run.id, depth, "pipeline chain depth limit reached");
         return Ok(());
     }
-    let Some(source_pipeline) = db.fetch_pipeline(source_run.pipeline_id).await? else {
-        return Ok(());
-    };
     let triggers = db.fetch_enabled_chained_pipeline_triggers().await?;
     for trigger in triggers {
-        let matches_source = trigger
-            .configuration
-            .get("source_pipeline")
-            .and_then(Value::as_str)
-            == Some(source_pipeline.name.as_str());
+        let matches_source = trigger_source_id(&trigger, "source_pipeline_id")
+            .is_some_and(|id| id == source_run.pipeline_id);
         if !matches_source {
             continue;
         }
@@ -1098,19 +1088,14 @@ fn pipeline_chain_status_matches(trigger: &PipelineTrigger, status: WorkflowStat
     }
 }
 
-/// the display name of a workflow run's workflow, from its snapshot or a fetch.
-async fn workflow_run_name<T: RuntimeStore + WorkflowVmStore>(
-    db: &T,
-    run: &WorkflowRun,
-) -> Result<String, SendableError> {
-    if let Some(snapshot) = run.workflow_snapshot.as_ref() {
-        return Ok(snapshot.name.clone());
-    }
-    Ok(db
-        .fetch_workflow(run.workflow_id)
-        .await?
-        .map(|workflow| workflow.name)
-        .unwrap_or_default())
+/// Reads the resolved source id only; the companion canonical path is diagnostic data and must
+/// not affect chaining when an artifact is renamed or moved.
+fn trigger_source_id(trigger: &PipelineTrigger, field: &str) -> Option<Uuid> {
+    trigger
+        .configuration
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
 }
 
 #[cfg(test)]
@@ -1186,5 +1171,36 @@ mod tests {
             PipelineMemberAttemptStatus::Failed,
             PipelineMemberFailureMode::Continue
         ));
+    }
+
+    #[test]
+    fn chained_pipeline_sources_match_the_resolved_uuid_not_the_diagnostic_path() {
+        let source_id = Uuid::now_v7();
+        let trigger = PipelineTrigger {
+            id: Some(Uuid::now_v7()),
+            pipeline_id: Uuid::now_v7(),
+            kind: runinator_models::workflows::WorkflowTriggerKind::Chained,
+            enabled: true,
+            configuration: runinator_models::json!({
+                // This path is intentionally stale after a source namespace move.
+                "source_pipeline": "old.namespace.source",
+                "source_pipeline_id": source_id.to_string(),
+            }),
+            next_execution: None,
+            blackout_start: None,
+            blackout_end: None,
+            metadata: Value::Null,
+            created_at: None,
+            updated_at: None,
+        };
+
+        assert_eq!(
+            trigger_source_id(&trigger, "source_pipeline_id"),
+            Some(source_id)
+        );
+        assert_ne!(
+            trigger_source_id(&trigger, "source_pipeline_id"),
+            Some(Uuid::now_v7())
+        );
     }
 }

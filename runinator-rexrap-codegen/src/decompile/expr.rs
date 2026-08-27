@@ -633,13 +633,13 @@ fn quote(text: &str) -> String {
 
 #[cfg(test)]
 mod uuid_secret_tests {
-    use super::secret_path;
+    use super::secret_parts;
 
     #[test]
-    fn uuid_backed_secret_keeps_its_authored_path() {
+    fn uuid_backed_secret_splits_its_authored_path() {
         assert_eq!(
-            secret_path("secret+uuid://95cd92f0-f144-4bad-b06a-f811d3f2420a/acme/api/token"),
-            Some("secret.acme.api.token".into())
+            secret_parts("secret+uuid://95cd92f0-f144-4bad-b06a-f811d3f2420a/acme/api/token"),
+            Some(("acme", vec!["api", "token"]))
         );
     }
 }

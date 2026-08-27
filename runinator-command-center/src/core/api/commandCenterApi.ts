@@ -648,6 +648,7 @@ export async function fetchWorkflowRuns(workflowId?: string) {
  */
 function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, string> {
   const lastNodeByContinuation = new Map<string, string>();
+  const pendingEffectByContinuation = new Map<string, string>();
   const nodeByEffect = new Map<string, string>();
 
   for (const record of [...journal].sort((left, right) => left.sequence - right.sequence)) {
@@ -658,14 +659,34 @@ function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, str
 
     if (entry.type === "node_entered" && continuationId && typeof entry.node_id === "string") {
       lastNodeByContinuation.set(continuationId, entry.node_id);
+      // `suspend_on_effect` persists its durable EffectRequested boundary before it appends the
+      // node entries collected while interpreting that boundary.  Associate each of those later
+      // entries with the outstanding effect; the final one is the node that issued it.  Keeping
+      // this update also preserves compatibility with older journals that recorded node entries
+      // first, since an effect is initially associated with the most recent entry below.
+      const pendingEffectId = pendingEffectByContinuation.get(continuationId);
+
+      if (pendingEffectId) {
+        nodeByEffect.set(pendingEffectId, entry.node_id);
+      }
+
       continue;
     }
 
-    if (entry.type !== "effect_requested" || typeof entry.effect_id !== "string") {
+    if (entry.type === "effect_settled" && continuationId && typeof entry.effect_id === "string") {
+      if (pendingEffectByContinuation.get(continuationId) === entry.effect_id) {
+        pendingEffectByContinuation.delete(continuationId);
+      }
+
       continue;
     }
 
-    const nodeId = continuationId ? lastNodeByContinuation.get(continuationId) : undefined;
+    if (entry.type !== "effect_requested" || !continuationId || typeof entry.effect_id !== "string") {
+      continue;
+    }
+
+    pendingEffectByContinuation.set(continuationId, entry.effect_id);
+    const nodeId = lastNodeByContinuation.get(continuationId);
 
     if (nodeId) {
       nodeByEffect.set(entry.effect_id, nodeId);

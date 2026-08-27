@@ -147,21 +147,6 @@
       ]
     },
     {
-      "name": "pack-import",
-      "command": "./target/debug/runinatorctl",
-      "env": {
-        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
-      },
-      "args": [
-        "--api-base-url",
-        "http://127.0.0.1:8080/",
-        "workflows",
-        "apply",
-        "./packs/sdlc"
-      ],
-      "restart_on_failure": false
-    },
-    {
       "name": "pack-import-hello-world",
       "command": "./target/debug/runinatorctl",
       "env": {

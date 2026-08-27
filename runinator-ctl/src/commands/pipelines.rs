@@ -229,8 +229,9 @@ pub(super) async fn pipelines(
     }
 }
 
-/// a pipeline by id or by name, the same reference a workflow argument accepts.
-async fn resolve_pipeline(client: &Client, reference: &str) -> Result<Pipeline> {
+/// Resolve a pipeline by UUID or its canonical `namespace.key` path. Display-name and bare-key
+/// aliases are intentionally not accepted: names are presentation, not pipeline identity.
+pub(super) async fn resolve_pipeline(client: &Client, reference: &str) -> Result<Pipeline> {
     if let Ok(id) = reference.parse::<Uuid>() {
         return Ok(client.fetch_pipeline(id).await?);
     }
@@ -238,7 +239,11 @@ async fn resolve_pipeline(client: &Client, reference: &str) -> Result<Pipeline> 
         .fetch_pipelines()
         .await?
         .into_iter()
-        .find(|pipeline| pipeline.name == reference)
+        .find(|pipeline| {
+            pipeline.namespace.is_some()
+                && pipeline.key.is_some()
+                && pipeline.artifact_path().qualified() == reference
+        })
         .ok_or_else(|| err(format!("pipeline '{reference}' not found")))
 }
 
@@ -268,6 +273,7 @@ fn print_pipelines(pipelines: &[Pipeline]) {
                     .id
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "-".into()),
+                pipeline.artifact_path().qualified(),
                 pipeline.name.clone(),
                 pipeline.graph.members.len().to_string(),
                 pipeline.description.clone().unwrap_or_default(),
@@ -276,14 +282,15 @@ fn print_pipelines(pipelines: &[Pipeline]) {
         .collect::<Vec<_>>();
     print!(
         "{}",
-        output::table(&["ID", "NAME", "MEMBERS", "DESCRIPTION"], &rows)
+        output::table(&["ID", "PATH", "NAME", "MEMBERS", "DESCRIPTION"], &rows)
     );
 }
 
 fn print_pipeline(pipeline: &Pipeline) {
     println!(
-        "{} ({})",
+        "{} — {} ({})",
         pipeline.name,
+        pipeline.artifact_path().qualified(),
         pipeline
             .id
             .map(|id| id.to_string())

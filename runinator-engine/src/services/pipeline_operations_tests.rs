@@ -5,15 +5,19 @@ use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
     json,
     pipelines::{
-        PIPELINE_GRAPH_VERSION, Pipeline, PipelineDefaults, PipelineGraph, PipelineMember,
+        PIPELINE_GRAPH_VERSION, Pipeline, PipelineBundle, PipelineDefaults, PipelineGraph,
+        PipelineMember, PipelineSpec, PipelineTriggerSpec,
     },
     schedules::WorkflowConcurrency,
     semver::SemVer,
     types::RuninatorType,
     value::Value,
-    workflows::{WorkflowDefinition, WorkflowGraph},
+    workflows::{WorkflowDefinition, WorkflowGraph, WorkflowTriggerKind},
 };
-use runinator_store::{DatabaseImpl, roles::DefinitionStore};
+use runinator_store::{
+    DatabaseImpl,
+    roles::{DefinitionStore, ScheduleStore},
+};
 
 use super::*;
 
@@ -32,7 +36,7 @@ fn member_workflow() -> WorkflowDefinition {
         id: None,
         name: "pipeline member".into(),
         key: Some("pipeline_member".into()),
-        namespace: None,
+        namespace: Some("runinator.tests".into()),
         org_id: None,
         version: SemVer::new(1, 0, 0),
         enabled: true,
@@ -54,8 +58,8 @@ fn pipeline() -> Pipeline {
     Pipeline {
         id: None,
         name: "service boundary".into(),
-        key: None,
-        namespace: None,
+        key: Some("service_boundary".into()),
+        namespace: Some("runinator.tests".into()),
         description: None,
         org_id: None,
         graph: PipelineGraph {
@@ -107,6 +111,142 @@ async fn save_persists_a_valid_pipeline_through_the_service() {
 }
 
 #[tokio::test]
+async fn save_requires_pipeline_identity_and_canonical_member_keys() {
+    let (db, path) = test_db().await;
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = PipelineOperations::new(db, broker.clone(), UiEventPublisher::new(broker), None);
+
+    let mut missing_namespace = pipeline();
+    missing_namespace.namespace = None;
+    let error = service.save(&missing_namespace).await.unwrap_err();
+    assert!(error.to_string().contains("namespace is required"));
+
+    let mut missing_key = pipeline();
+    missing_key.key = None;
+    let error = service.save(&missing_key).await.unwrap_err();
+    assert!(error.to_string().contains("key is required"));
+
+    let mut bare_member = pipeline();
+    bare_member.graph.members.push(PipelineMember {
+        key: "display name".into(),
+        workflow_id: uuid::Uuid::now_v7(),
+        failure_mode: Default::default(),
+    });
+    let error = service.save(&bare_member).await.unwrap_err();
+    assert!(error.to_string().contains("canonical namespace.key"));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn import_uses_canonical_members_and_resolves_same_pack_pipeline_sources() {
+    let (db, path) = test_db().await;
+    let mut alpha = member_workflow();
+    alpha.name = "Build".into();
+    alpha.key = Some("build".into());
+    alpha.namespace = Some("acme.alpha".into());
+    db.upsert_workflow(&alpha).await.unwrap();
+
+    let mut beta = member_workflow();
+    beta.name = "Build".into();
+    beta.key = Some("build".into());
+    beta.namespace = Some("acme.beta".into());
+    let beta = db.upsert_workflow(&beta).await.unwrap();
+    let beta_id = beta.id.unwrap();
+
+    let source = PipelineSpec {
+        name: "Source".into(),
+        key: Some("source".into()),
+        namespace: Some("acme.pipelines".into()),
+        description: None,
+        defaults: Default::default(),
+        members: vec!["acme.beta.build".into()],
+        links: Vec::new(),
+        joins: Vec::new(),
+        concurrency: Default::default(),
+        triggers: Vec::new(),
+    };
+    let target = PipelineSpec {
+        name: "Target".into(),
+        key: Some("target".into()),
+        namespace: Some("acme.pipelines".into()),
+        description: None,
+        defaults: Default::default(),
+        members: vec!["acme.beta.build".into()],
+        links: Vec::new(),
+        joins: Vec::new(),
+        concurrency: Default::default(),
+        triggers: vec![
+            PipelineTriggerSpec {
+                kind: WorkflowTriggerKind::Chained,
+                enabled: true,
+                configuration: json!({
+                    "on": "success",
+                    "source_pipeline": "acme.pipelines.source",
+                    "parameters": {},
+                }),
+            },
+            PipelineTriggerSpec {
+                kind: WorkflowTriggerKind::Chained,
+                enabled: true,
+                configuration: json!({
+                    "on": "complete",
+                    "source_workflow": "acme.beta.build",
+                    "parameters": {},
+                }),
+            },
+        ],
+    };
+
+    let imported = crate::repository::import_pipeline_bundle_with(
+        db.as_ref(),
+        &PipelineBundle {
+            pipelines: vec![source, target],
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let source_id = imported[0].id.unwrap();
+    let target_id = imported[1].id.unwrap();
+    assert_eq!(imported[1].graph.members[0].workflow_id, beta_id);
+
+    let triggers = db.fetch_pipeline_triggers(target_id).await.unwrap();
+    assert_eq!(triggers.len(), 2);
+    let pipeline_trigger = triggers
+        .iter()
+        .find(|trigger| trigger.configuration.get("source_pipeline").is_some())
+        .unwrap();
+    assert_eq!(
+        pipeline_trigger
+            .configuration
+            .get("source_pipeline")
+            .and_then(Value::as_str),
+        Some("acme.pipelines.source")
+    );
+    assert_eq!(
+        pipeline_trigger
+            .configuration
+            .get("source_pipeline_id")
+            .and_then(Value::as_str),
+        Some(source_id.to_string().as_str())
+    );
+    let workflow_trigger = triggers
+        .iter()
+        .find(|trigger| trigger.configuration.get("source_workflow").is_some())
+        .unwrap();
+    assert_eq!(
+        workflow_trigger
+            .configuration
+            .get("source_workflow_id")
+            .and_then(Value::as_str),
+        Some(beta_id.to_string().as_str())
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn a_pinned_pipeline_start_snapshots_the_requested_revision() {
     let (db, path) = test_db().await;
     let workflow = db.upsert_workflow(&member_workflow()).await.unwrap();
@@ -115,7 +255,7 @@ async fn a_pinned_pipeline_start_snapshots_the_requested_revision() {
     let service = PipelineOperations::new(db, broker.clone(), UiEventPublisher::new(broker), None);
     let mut first = pipeline();
     first.graph.members.push(PipelineMember {
-        key: "member".into(),
+        key: "runinator.tests.pipeline_member".into(),
         workflow_id,
         failure_mode: Default::default(),
     });

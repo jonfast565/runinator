@@ -11,14 +11,14 @@ pipeline "Core SDLC" {
     on_failure continue
     max_depth 8
 
-    workflow "SDLC: Development"
-    workflow "SDLC: Review"
-    workflow "SDLC: Deploy"
-    workflow "SDLC: QA"
+    workflow "acme.sdlc.development"
+    workflow "acme.sdlc.review"
+    workflow "acme.sdlc.deploy"
+    workflow "acme.sdlc.qa"
 
-    "SDLC: Development" -> "SDLC: Review" on complete
-    "SDLC: Review"      -> "SDLC: Deploy" on complete
-    "SDLC: Deploy"      -> "SDLC: QA"     on complete
+    "acme.sdlc.development" -> "acme.sdlc.review" on complete
+    "acme.sdlc.review"      -> "acme.sdlc.deploy" on complete
+    "acme.sdlc.deploy"      -> "acme.sdlc.qa"     on complete
 }
 "#;
 
@@ -36,8 +36,8 @@ fn parses_pipeline_members_links_and_defaults() {
     assert_eq!(p.defaults.max_chain_depth, Some(8));
     assert_eq!(p.members.len(), 4);
     assert_eq!(p.links.len(), 3);
-    assert_eq!(p.links[0].from, "SDLC: Development");
-    assert_eq!(p.links[0].to, "SDLC: Review");
+    assert_eq!(p.links[0].from, "acme.sdlc.development");
+    assert_eq!(p.links[0].to, "acme.sdlc.review");
     assert_eq!(p.links[0].on, PipelineLinkSelector::Complete);
     assert!(p.links.iter().all(|l| l.enabled));
 }
@@ -48,7 +48,7 @@ fn pipeline_key_and_namespace_round_trip() {
 pipeline "Release train" {
     key release_train
     namespace acme.delivery
-    workflow "Build"
+    workflow "acme.delivery.build"
 }
 "#;
     let bundle = parse_pipeline_str(source).unwrap();
@@ -63,13 +63,13 @@ pipeline "Release train" {
 #[test]
 fn link_selector_defaults_from_failure_policy() {
     // halt (default) -> links without `on` fire on success.
-    let halt = parse_pipeline_str(r#"pipeline "P" { workflow "A" workflow "B" "A" -> "B" }"#)
+    let halt = parse_pipeline_str(r#"pipeline "P" { workflow "acme.test.a" workflow "acme.test.b" "acme.test.a" -> "acme.test.b" }"#)
         .expect("parse");
     assert_eq!(halt.pipelines[0].links[0].on, PipelineLinkSelector::Success);
 
     // continue -> links without `on` fire on complete.
     let cont = parse_pipeline_str(
-        r#"pipeline "P" { on_failure continue workflow "A" workflow "B" "A" -> "B" }"#,
+        r#"pipeline "P" { on_failure continue workflow "acme.test.a" workflow "acme.test.b" "acme.test.a" -> "acme.test.b" }"#,
     )
     .expect("parse");
     assert_eq!(
@@ -80,7 +80,7 @@ fn link_selector_defaults_from_failure_policy() {
 
 #[test]
 fn rejects_link_to_undeclared_member() {
-    let err = parse_pipeline_str(r#"pipeline "P" { workflow "A" "A" -> "Ghost" on success }"#)
+    let err = parse_pipeline_str(r#"pipeline "P" { workflow "acme.test.a" "acme.test.a" -> "acme.test.ghost" on success }"#)
         .unwrap_err();
     assert!(
         err.to_string()
@@ -96,6 +96,18 @@ fn rejects_pipeline_without_members() {
 }
 
 #[test]
+fn rejects_bare_pipeline_member_and_trigger_sources() {
+    let member = parse_pipeline_str(r#"pipeline "P" { workflow "bare" }"#).unwrap_err();
+    assert!(member.to_string().contains("canonical"), "{member}");
+
+    let trigger = parse_pipeline_str(
+        r#"pipeline "P" { trigger on_success workflow "bare" workflow "acme.test.member" }"#,
+    )
+    .unwrap_err();
+    assert!(trigger.to_string().contains("canonical"), "{trigger}");
+}
+
+#[test]
 fn round_trips_through_rexrapp_render() {
     let bundle = parse_pipeline_str(SDLC).expect("parse");
     let rendered = pipeline_to_rexrapp(&bundle);
@@ -106,13 +118,13 @@ fn round_trips_through_rexrapp_render() {
 const TRIGGERED: &str = r#"
 pipeline "Nightly" {
     trigger cron "0 0 * * *"
-    trigger on_success workflow "Upstream"
-    trigger on_complete pipeline "Other" disabled
+    trigger on_success workflow "acme.upstream.workflow"
+    trigger on_complete pipeline "acme.other.pipeline" disabled
 
-    workflow "A"
-    workflow "B"
+    workflow "acme.nightly.a"
+    workflow "acme.nightly.b"
 
-    "A" -> "B" on success
+    "acme.nightly.a" -> "acme.nightly.b" on success
 }
 "#;
 
@@ -145,7 +157,7 @@ fn parses_pipeline_triggers() {
             .configuration
             .get("source_workflow")
             .and_then(|v| v.as_str()),
-        Some("Upstream")
+        Some("acme.upstream.workflow")
     );
 
     let from_pipeline = &p.triggers[2];
@@ -155,7 +167,7 @@ fn parses_pipeline_triggers() {
             .configuration
             .get("source_pipeline")
             .and_then(|v| v.as_str()),
-        Some("Other")
+        Some("acme.other.pipeline")
     );
 }
 
@@ -169,14 +181,14 @@ fn round_trips_pipeline_triggers() {
 
 const MEMBER_FAILURE_MODES: &str = r#"
 pipeline "Deploy" {
-    workflow "Build" on_failure stop
-    workflow "Test" on_failure silently_continue
-    workflow "Notify" on_failure inquire
-    workflow "Cleanup"
+    workflow "acme.deploy.build" on_failure stop
+    workflow "acme.deploy.test" on_failure silently_continue
+    workflow "acme.deploy.notify" on_failure inquire
+    workflow "acme.deploy.cleanup"
 
-    "Build" -> "Test" on complete
-    "Test" -> "Notify" on complete
-    "Notify" -> "Cleanup" on complete
+    "acme.deploy.build" -> "acme.deploy.test" on complete
+    "acme.deploy.test" -> "acme.deploy.notify" on complete
+    "acme.deploy.notify" -> "acme.deploy.cleanup" on complete
 }
 "#;
 
@@ -184,7 +196,7 @@ pipeline "Deploy" {
 fn parses_member_failure_modes() {
     let bundle = parse_pipeline_str(MEMBER_FAILURE_MODES).expect("parse");
     let p = &bundle.pipelines[0];
-    assert_eq!(p.members[0].name, "Build");
+    assert_eq!(p.members[0].name, "acme.deploy.build");
     assert_eq!(
         p.members[0].failure_mode,
         Some(PipelineMemberFailureMode::Stop)
@@ -213,15 +225,15 @@ const MAPPED_JOIN: &str = r#"
 pipeline "Release" {
     concurrency 2 on_conflict queue
 
-    workflow "Linux Build"
-    workflow "macOS Build"
-    workflow "Publish"
+    workflow "acme.release.linux_build"
+    workflow "acme.release.macos_build"
+    workflow "acme.release.publish"
 
-    "Linux Build" -> "Publish" on success
-    "macOS Build" -> "Publish" on success
-    join "Publish" all with {
-        linux: members["Linux Build"].result,
-        macos: members["macOS Build"].result,
+    "acme.release.linux_build" -> "acme.release.publish" on success
+    "acme.release.macos_build" -> "acme.release.publish" on success
+    join "acme.release.publish" all with {
+        linux: members["acme.release.linux_build"].result,
+        macos: members["acme.release.macos_build"].result,
         environment: params.environment
     }
 }
@@ -243,9 +255,9 @@ fn parses_and_round_trips_mappings_joins_and_concurrency() {
 #[test]
 fn rejects_ambiguous_multi_inbound_member_without_join() {
     let source = r#"pipeline "P" {
-        workflow "A" workflow "B" workflow "C"
-        "A" -> "C" on success
-        "B" -> "C" on success
+        workflow "acme.test.a" workflow "acme.test.b" workflow "acme.test.c"
+        "acme.test.a" -> "acme.test.c" on success
+        "acme.test.b" -> "acme.test.c" on success
     }"#;
     assert!(
         parse_pipeline_str(source)
@@ -257,7 +269,7 @@ fn rejects_ambiguous_multi_inbound_member_without_join() {
 
 #[test]
 fn rejects_cycles_and_unsupported_mapping_roots() {
-    let cycle = r#"pipeline "P" { workflow "A" workflow "B" "A" -> "B" "B" -> "A" }"#;
+    let cycle = r#"pipeline "P" { workflow "acme.test.a" workflow "acme.test.b" "acme.test.a" -> "acme.test.b" "acme.test.b" -> "acme.test.a" }"#;
     assert!(
         parse_pipeline_str(cycle)
             .unwrap_err()
@@ -266,8 +278,8 @@ fn rejects_cycles_and_unsupported_mapping_roots() {
     );
 
     let bad_root = r#"pipeline "P" {
-        workflow "A" workflow "B"
-        "A" -> "B" with { value: unknown.result }
+        workflow "acme.test.a" workflow "acme.test.b"
+        "acme.test.a" -> "acme.test.b" with { value: unknown.result }
     }"#;
     assert!(
         parse_pipeline_str(bad_root)
@@ -280,10 +292,10 @@ fn rejects_cycles_and_unsupported_mapping_roots() {
 #[test]
 fn rejects_invalid_first_success_join_selectors() {
     let source = r#"pipeline "P" {
-        workflow "A" workflow "B" workflow "C"
-        "A" -> "C" on complete
-        "B" -> "C" on success
-        join "C" first_success
+        workflow "acme.test.a" workflow "acme.test.b" workflow "acme.test.c"
+        "acme.test.a" -> "acme.test.c" on complete
+        "acme.test.b" -> "acme.test.c" on success
+        join "acme.test.c" first_success
     }"#;
     assert!(
         parse_pipeline_str(source)
@@ -296,8 +308,8 @@ fn rejects_invalid_first_success_join_selectors() {
 #[test]
 fn rejects_effectful_pipeline_mapping_calls() {
     let source = r#"pipeline "P" {
-        workflow "A" workflow "B"
-        "A" -> "B" with { generated_at: now() }
+        workflow "acme.test.a" workflow "acme.test.b"
+        "acme.test.a" -> "acme.test.b" with { generated_at: now() }
     }"#;
     let message = parse_pipeline_str(source).unwrap_err().to_string();
     assert!(message.contains("pure intrinsic"), "{message}");

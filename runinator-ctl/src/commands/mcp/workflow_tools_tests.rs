@@ -127,6 +127,22 @@ fn scalars_and_collections_map_to_their_json_types() {
         type_schema(&RuninatorType::Map(Box::new(RuninatorType::Integer))),
         json!({ "type": "object", "additionalProperties": { "type": "integer" } })
     );
+    assert_eq!(
+        type_schema(&RuninatorType::File),
+        json!({
+            "type": "object",
+            "required": ["id", "name", "path", "mime_type", "size_bytes", "sha256"],
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "name": { "type": "string" },
+                "path": { "type": "string" },
+                "mime_type": { "type": "string" },
+                "size_bytes": { "type": "integer", "minimum": 0 },
+                "sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" },
+            },
+            "additionalProperties": false,
+        })
+    );
     // a lambda cannot be written as json, and an empty schema is what json schema calls "anything".
     assert_eq!(type_schema(&RuninatorType::Any), json!({}));
 }

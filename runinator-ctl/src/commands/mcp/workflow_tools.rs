@@ -154,6 +154,21 @@ fn type_schema(input: &RuninatorType) -> Value {
             json!({ "type": "string", "description": "a duration, e.g. \"30s\", \"5m\", \"2h\"" })
         }
         RuninatorType::String => json!({ "type": "string" }),
+        // File values cross the workflow boundary as opaque descriptors, never as local paths or
+        // object-store locations. Keep this in sync with `FileDescriptor::from_value`.
+        RuninatorType::File => json!({
+            "type": "object",
+            "required": ["id", "name", "path", "mime_type", "size_bytes", "sha256"],
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "name": { "type": "string" },
+                "path": { "type": "string" },
+                "mime_type": { "type": "string" },
+                "size_bytes": { "type": "integer", "minimum": 0 },
+                "sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" },
+            },
+            "additionalProperties": false,
+        }),
         RuninatorType::Enum(values) => json!({ "enum": values.clone() }),
         RuninatorType::Range { base, min, max } => range_schema(base, min.as_ref(), max.as_ref()),
         RuninatorType::Array(item) => json!({ "type": "array", "items": type_schema(item) }),

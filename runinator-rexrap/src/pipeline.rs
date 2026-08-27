@@ -1,6 +1,6 @@
-// the `.rexrapp` pipeline surface: `pipeline "Name" { workflow "…" … "A" -> "B" on <selector> }`.
-// lowers to a portable `PipelineBundle` (members and links by workflow name) for import; the web
-// service resolves names to ids and persists the graph atomically. the reverse
+// the `.rexrapp` pipeline surface: `pipeline "Name" { workflow "namespace.key" … }`.
+// lowers to a portable `PipelineBundle` (members and links by canonical workflow path) for import;
+// the web service resolves paths to ids and persists the graph atomically. the reverse
 // (`pipeline_to_rexrapp`) re-renders a bundle so exports round-trip and the editor can format.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -120,6 +120,7 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
 /// lower a `workflow "Name" [on_failure <mode>]` member decl. `on_failure` is `None` when the member
 /// declares no override, meaning it takes the pipeline's `default_failure_mode` at import.
 fn lower_member(decl: &PipelineMemberDecl) -> Result<PipelineMemberSpec, RexRapError> {
+    require_canonical_path(&decl.name, decl.span, "pipeline member workflow")?;
     let failure_mode = match decl.on_failure.as_deref() {
         None => None,
         Some("stop") => Some(PipelineMemberFailureMode::Stop),
@@ -152,6 +153,7 @@ fn lower_trigger(decl: &PipelineTriggerDecl) -> Result<PipelineTriggerSpec, RexR
     let source = decl.source.clone().ok_or_else(|| {
         RexRapError::syntax(decl.span, "a chained pipeline trigger needs a source name")
     })?;
+    require_canonical_path(&source, decl.span, "pipeline trigger source")?;
     // map the raw chain event keyword to the `on` selector.
     let on = match decl.event.as_deref() {
         Some("on_failure") => "failure",
@@ -171,6 +173,24 @@ fn lower_trigger(decl: &PipelineTriggerDecl) -> Result<PipelineTriggerSpec, RexR
             "parameters": {},
         }),
     })
+}
+
+fn require_canonical_path(value: &str, span: crate::errors::Span, kind: &str) -> Result<(), RexRapError> {
+    let mut segments = value.split('.');
+    let valid = segments.clone().count() > 1
+        && segments.all(|segment| {
+            let mut chars = segment.chars();
+            matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
+                && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(RexRapError::syntax(
+            span,
+            format!("{kind} '{value}' must be a canonical namespace.key path"),
+        ))
+    }
 }
 
 fn lower_link(

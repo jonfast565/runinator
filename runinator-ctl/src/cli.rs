@@ -833,11 +833,11 @@ pub enum FreezeCommands {
 pub enum PipelineCommands {
     /// List pipelines.
     List,
-    /// Show a pipeline by id or name, with its member workflows.
+    /// Show a pipeline by UUID or canonical namespace.key, with its member workflows.
     Show { pipeline: String },
     /// Start a pipeline run.
     Run {
-        /// Pipeline id or name.
+        /// Pipeline UUID or canonical namespace.key.
         pipeline: String,
         /// Run parameter as KEY=VALUE; repeat for several. Values parse as json when they can.
         #[arg(long = "param", value_name = "KEY=VALUE")]
@@ -862,7 +862,7 @@ pub enum PipelineCommands {
     Revision { pipeline: String, revision: i64 },
     /// List pipeline runs, newest first.
     Runs {
-        /// Only runs of one pipeline, by id or name.
+        /// Only runs of one pipeline, by UUID or canonical namespace.key.
         #[arg(long)]
         pipeline: Option<String>,
     },

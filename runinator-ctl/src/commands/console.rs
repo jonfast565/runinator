@@ -626,16 +626,10 @@ async fn meta_command(
         ["run", "pipeline"] => {
             let target = arguments.required(0, "pipeline")?.to_string();
             let parameters = run_parameters(arguments)?;
-            let id = match target.parse::<Uuid>() {
-                Ok(id) => id,
-                Err(_) => client
-                    .fetch_pipelines()
-                    .await?
-                    .into_iter()
-                    .find(|pipeline| pipeline.name == target)
-                    .and_then(|pipeline| pipeline.id)
-                    .ok_or_else(|| err(format!("pipeline '{target}' not found")))?,
-            };
+            let pipeline = super::pipelines::resolve_pipeline(client, &target).await?;
+            let id = pipeline
+                .id
+                .ok_or_else(|| err("pipeline has no persisted id"))?;
             let run = client.create_pipeline_run(id, parameters).await?;
             println!("pipeline run {}", run.id);
             if !no_follow {

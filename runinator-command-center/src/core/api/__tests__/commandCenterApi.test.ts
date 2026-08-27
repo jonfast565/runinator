@@ -126,6 +126,94 @@ describe("command center catalog metadata API", () => {
     );
   });
 
+  it("projects an effect to the node entries persisted after its request boundary", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "succeeded" },
+          nodes: [],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: [
+          {
+            version: 1,
+            id: "effect-1",
+            workflow_run_id: "run-1",
+            continuation_id: "continuation-1",
+            sequence: 0,
+            attempt: 0,
+            node_id: null,
+            request: { type: "action" },
+            status: "succeeded",
+            created_at: 0,
+            updated_at: 1,
+            finished_at: 1,
+          },
+        ],
+        // The database writes EffectRequested before draining the continuation's accumulated
+        // NodeEntered records.  Once the effect settles, a later end-node entry must not take
+        // ownership of the completed action.
+        fetch_workflow_journal: [
+          {
+            version: 1,
+            id: "requested",
+            workflow_run_id: "run-1",
+            sequence: 1,
+            continuation_id: "continuation-1",
+            entry: { type: "effect_requested", effect_id: "effect-1", instruction_pointer: 1 },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "entered-start",
+            workflow_run_id: "run-1",
+            sequence: 2,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "start" },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "entered-greeting",
+            workflow_run_id: "run-1",
+            sequence: 3,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "greeting" },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "settled",
+            workflow_run_id: "run-1",
+            sequence: 4,
+            continuation_id: "continuation-1",
+            entry: { type: "effect_settled", effect_id: "effect-1", status: "succeeded" },
+            created_at: 1,
+          },
+          {
+            version: 1,
+            id: "entered-end",
+            workflow_run_id: "run-1",
+            sequence: 5,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "end" },
+            created_at: 1,
+          },
+        ],
+        fetch_workflow_vm_cursors: [
+          { continuation_id: "continuation-1", instruction_pointer: 3, node_id: "end", status: "succeeded" },
+        ],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes).toContainEqual(
+      expect.objectContaining({ id: "effect-1", node_id: "greeting", status: "succeeded" }),
+    );
+  });
+
   it("marks an inline node failed when its journaled evaluation fails", async () => {
     vi.mocked(invoke).mockImplementation((name) => {
       const responses: Record<string, unknown> = {

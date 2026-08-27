@@ -240,7 +240,7 @@ pub async fn upsert_pipeline_trigger<
     trigger.pipeline_id = pipeline_id;
     match service.save_trigger(&trigger, ctx.org_id).await {
         Ok(trigger) => (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger))),
-        Err(err) => api_error(err.to_string()),
+        Err(err) => bad_request(err.to_string()),
     }
 }
 
@@ -262,7 +262,7 @@ pub async fn update_pipeline_trigger<
     trigger.id = Some(trigger_id);
     match service.save_trigger(&trigger, ctx.org_id).await {
         Ok(trigger) => (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger))),
-        Err(err) => api_error(err.to_string()),
+        Err(err) => bad_request(err.to_string()),
     }
 }
 

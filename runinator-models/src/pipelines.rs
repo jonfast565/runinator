@@ -123,7 +123,7 @@ impl PipelineLinkSelector {
     }
 }
 
-/// a directed link between two member workflows (by name), realized as a `chained` trigger on the
+/// a directed link between two member workflows (by canonical path), realized as a `chained` trigger on the
 /// `from` workflow targeting the `to` workflow.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineLinkSpec {
@@ -155,8 +155,8 @@ pub struct PipelineJoinSpec {
     pub parameters: Value,
 }
 
-/// a portable, id-free pipeline declaration compiled from a `.rexrapp` file. members and links are by
-/// workflow name; the web service resolves names to ids and persists one atomic graph.
+/// a portable, id-free pipeline declaration compiled from a `.rexrapp` file. members and links use
+/// canonical workflow paths; the web service resolves those paths to ids and persists one atomic graph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineSpec {
     pub name: String,
@@ -183,7 +183,8 @@ pub struct PipelineSpec {
     pub triggers: Vec<PipelineTriggerSpec>,
 }
 
-/// a member workflow declared in a `.rexrapp` pipeline, by name. `failure_mode` is `None` when the
+/// a member workflow declared in a `.rexrapp` pipeline, by canonical `namespace.key` path.
+/// `failure_mode` is `None` when the
 /// member declares no `on_failure` of its own, meaning it takes the pipeline's
 /// [`PipelineDefaults::default_failure_mode`] at import.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -214,7 +215,8 @@ impl From<String> for PipelineMemberSpec {
 
 /// a portable, id-free pipeline trigger declaration compiled from a `.rexrapp` header. `configuration`
 /// carries kind-specific data (cron: `{cron, parameters}`; chained: `{on, source_workflow |
-/// source_pipeline, parameters}`); manual triggers carry no schedule.
+/// source_pipeline, source_workflow_id | source_pipeline_id, parameters}`); manual triggers carry
+/// no schedule. The path is authored for diagnostics; the resolved UUID is authoritative at runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineTriggerSpec {
     pub kind: WorkflowTriggerKind,
@@ -246,7 +248,7 @@ pub const PIPELINE_GRAPH_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineMember {
-    /// stable pipeline-local identity and expression key. Initially the authored workflow name.
+    /// stable pipeline-local identity and expression key: the authored canonical workflow path.
     pub key: String,
     pub workflow_id: Uuid,
     #[serde(default)]

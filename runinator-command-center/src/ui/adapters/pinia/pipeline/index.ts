@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import type {
   Pipeline,
   PipelineDefaults,
@@ -7,9 +7,9 @@ import type {
   PipelineJoinMode,
   PipelineMemberFailureMode,
   WorkflowDefinition,
-  WorkflowTrigger,
 } from "../../../../core/domain/models";
 import { defaultPipelineDefaults } from "../../../../core/domain/models";
+import { workflowPath } from "../../../../core/domain/models";
 import {
   deletePipeline as deletePipelineService,
   fetchPipelines,
@@ -17,13 +17,14 @@ import {
   savePipeline,
   setPipelineOwner as setPipelineOwnerService,
 } from "../../../../core/services/pipeline";
-import {
-  buildPipelineGraph,
-  type ChainEvent,
-  type PipelineEdgeModel,
-  type PipelineNodeModel,
-  type UnresolvedChain,
+import type {
+  ChainEvent,
+  PipelineEdgeModel,
+  PipelineNodeModel,
+  UnresolvedChain,
 } from "../../../../core/workflow/pipeline-graph";
+import { buildPipelinePresentation } from "./graph";
+import { createPipelineSelectors } from "./selectors";
 
 // The pipeline canvas store. Members, links, joins, mappings, and concurrency are persisted on the
 // pipeline graph; Vue Flow nodes and edges are derived presentation state.
@@ -39,59 +40,23 @@ export const usePipelineStore = defineStore("pipeline", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  const selectedPipeline = computed(
-    () => pipelines.value.find((p) => p.id === selectedPipelineId.value) ?? null,
-  );
-
-  const memberWorkflows = computed(() => {
-    const ids = new Set(selectedPipeline.value?.graph.members.map((member) => member.workflow_id) ?? []);
-    return allWorkflows.value.filter(
-      (wf): wf is WorkflowDefinition & { id: string } => wf.id != null && ids.has(wf.id),
-    );
+  const selectors = createPipelineSelectors({
+    pipelines,
+    selectedPipelineId,
+    allWorkflows,
+    edges,
+    nodes,
+    selectedEdgeId,
+    selectedNodeId,
+    unresolved,
   });
-
-  // workflows not yet in the selected pipeline, offered by the "add workflow" picker.
-  const availableWorkflows = computed(() => {
-    const ids = new Set(selectedPipeline.value?.graph.members.map((member) => member.workflow_id) ?? []);
-    return allWorkflows.value.filter(
-      (wf): wf is WorkflowDefinition & { id: string } => wf.id != null && !ids.has(wf.id),
-    );
-  });
+  const { selectedPipeline, memberWorkflows, availableWorkflows, selectedEdge, selectedNode } =
+    selectors;
 
   function rebuild() {
     const pipeline = selectedPipeline.value;
 
-    if (!pipeline) {
-      nodes.value = [];
-      edges.value = [];
-      unresolved.value = [];
-      selectedEdgeId.value = null;
-      selectedNodeId.value = null;
-      return;
-    }
-
-    const syntheticTriggers: Record<string, WorkflowTrigger[]> = {};
-    const memberByKey = new Map(pipeline.graph.members.map((member) => [member.key, member]));
-
-    for (const link of pipeline.graph.links) {
-      const source = memberByKey.get(link.from);
-      if (!source) {continue;}
-      (syntheticTriggers[source.workflow_id] ??= []).push({
-        id: link.id,
-        workflow_id: source.workflow_id,
-        kind: "chained",
-        enabled: link.enabled,
-        configuration: { on: link.on, target_workflow: link.to, parameters: link.parameters, pipeline_id: pipeline.id },
-        next_execution: null, blackout_start: null, blackout_end: null, metadata: {},
-      });
-    }
-
-    const graph = buildPipelineGraph(allWorkflows.value, syntheticTriggers, {
-      pipelineId: pipeline.id,
-      memberIds: pipeline.graph.members.map((member) => member.workflow_id),
-      memberFailureModes: Object.fromEntries(pipeline.graph.members.map((member) => [member.workflow_id, member.failure_mode])),
-      defaultFailureMode: pipeline.defaults.default_failure_mode,
-    });
+    const graph = buildPipelinePresentation(pipeline, allWorkflows.value);
     nodes.value = graph.nodes;
     edges.value = graph.edges;
     unresolved.value = graph.unresolved;
@@ -161,10 +126,17 @@ export const usePipelineStore = defineStore("pipeline", () => {
     }
   }
 
-  async function createPipeline(name: string, description: string): Promise<Pipeline | null> {
+  async function createPipeline(
+    name: string,
+    namespace: string,
+    key: string,
+    description: string,
+  ): Promise<Pipeline | null> {
     const trimmed = name.trim();
+    const trimmedNamespace = namespace.trim();
+    const trimmedKey = key.trim();
 
-    if (!trimmed) {
+    if (!trimmed || !trimmedNamespace || !trimmedKey) {
       return null;
     }
 
@@ -172,6 +144,8 @@ export const usePipelineStore = defineStore("pipeline", () => {
       const saved = await savePipeline({
         id: null,
         name: trimmed,
+        namespace: trimmedNamespace,
+        key: trimmedKey,
         description: description.trim() || null,
         graph: { version: 1, members: [], links: [], joins: {} },
         concurrency: { max_concurrent_runs: 0, on_conflict: "allow" },
@@ -204,8 +178,19 @@ export const usePipelineStore = defineStore("pipeline", () => {
     }
   }
 
-  function renamePipeline(name: string, description: string | null) {
-    return persistSelected((draft) => ({ ...draft, name: name.trim(), description }));
+  function renamePipeline(
+    name: string,
+    description: string | null,
+    namespace: string,
+    key: string,
+  ) {
+    return persistSelected((draft) => ({
+      ...draft,
+      name: name.trim(),
+      description,
+      namespace: namespace.trim(),
+      key: key.trim(),
+    }));
   }
 
   function savePipelineDefaults(defaults: PipelineDefaults) {
@@ -217,9 +202,16 @@ export const usePipelineStore = defineStore("pipeline", () => {
   }
 
   function updateJoin(target: string, mode: PipelineJoinMode, parameters: Record<string, unknown>) {
-    return persistSelected((draft) => ({ ...draft, graph: { ...draft.graph, joins: {
-      ...draft.graph.joins, [target]: { target, mode, parameters },
-    } } }));
+    return persistSelected((draft) => ({
+      ...draft,
+      graph: {
+        ...draft.graph,
+        joins: {
+          ...draft.graph.joins,
+          [target]: { target, mode, parameters },
+        },
+      },
+    }));
   }
 
   function addWorkflowToPipeline(workflowId: string) {
@@ -229,10 +221,25 @@ export const usePipelineStore = defineStore("pipeline", () => {
       }
 
       const workflow = allWorkflows.value.find((item) => item.id === workflowId);
-      if (!workflow) {return draft;}
-      return { ...draft, graph: { ...draft.graph, members: [...draft.graph.members, {
-        key: workflow.name, workflow_id: workflowId, failure_mode: draft.defaults.default_failure_mode,
-      }] } };
+
+      if (!workflow) {
+        return draft;
+      }
+
+      return {
+        ...draft,
+        graph: {
+          ...draft.graph,
+          members: [
+            ...draft.graph.members,
+            {
+              key: workflowPath(workflow),
+              workflow_id: workflowId,
+              failure_mode: draft.defaults.default_failure_mode,
+            },
+          ],
+        },
+      };
     });
   }
 
@@ -243,11 +250,18 @@ export const usePipelineStore = defineStore("pipeline", () => {
         ...draft.graph,
         members: draft.graph.members.filter((member) => member.workflow_id !== workflowId),
         links: draft.graph.links.filter((link) => {
-          const removed = draft.graph.members.find((member) => member.workflow_id === workflowId)?.key;
+          const removed = draft.graph.members.find(
+            (member) => member.workflow_id === workflowId,
+          )?.key;
           return link.from !== removed && link.to !== removed;
         }),
-        joins: Object.fromEntries(Object.entries(draft.graph.joins).filter(([target]) =>
-          draft.graph.members.find((member) => member.workflow_id === workflowId)?.key !== target)),
+        joins: Object.fromEntries(
+          Object.entries(draft.graph.joins).filter(
+            ([target]) =>
+              draft.graph.members.find((member) => member.workflow_id === workflowId)?.key !==
+              target,
+          ),
+        ),
       },
     }));
   }
@@ -255,8 +269,17 @@ export const usePipelineStore = defineStore("pipeline", () => {
   // set (or clear, when `mode` is null) a member's failure-mode override.
   function setMemberFailureMode(workflowId: string, mode: PipelineMemberFailureMode | null) {
     return persistSelected((draft) => {
-      return { ...draft, graph: { ...draft.graph, members: draft.graph.members.map((member) =>
-        member.workflow_id === workflowId ? { ...member, failure_mode: mode ?? draft.defaults.default_failure_mode } : member) } };
+      return {
+        ...draft,
+        graph: {
+          ...draft.graph,
+          members: draft.graph.members.map((member) =>
+            member.workflow_id === workflowId
+              ? { ...member, failure_mode: mode ?? draft.defaults.default_failure_mode }
+              : member,
+          ),
+        },
+      };
     });
   }
 
@@ -290,14 +313,6 @@ export const usePipelineStore = defineStore("pipeline", () => {
     }
   }
 
-  const selectedEdge = computed(
-    () => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null,
-  );
-
-  const selectedNode = computed(
-    () => nodes.value.find((node) => node.id === selectedNodeId.value) ?? null,
-  );
-
   function nameById(id: string): string {
     return allWorkflows.value.find((wf) => wf.id === id)?.name ?? id;
   }
@@ -322,22 +337,51 @@ export const usePipelineStore = defineStore("pipeline", () => {
     try {
       const source = pipeline.graph.members.find((member) => member.workflow_id === sourceId);
       const target = pipeline.graph.members.find((member) => member.workflow_id === targetId);
-      if (!source || !target) {return;}
-      await persistSelected((draft) => ({ ...draft, graph: { ...draft.graph, links: [...draft.graph.links, {
-        id: crypto.randomUUID(), from: source.key, to: target.key, on,
-        enabled: draft.defaults.links_enabled_by_default, parameters: draft.defaults.default_parameters,
-      }], joins: {
-        ...draft.graph.joins,
-        ...(draft.graph.links.filter((link) => link.enabled && link.to === target.key).length >= 1
-          ? { [target.key]: draft.graph.joins[target.key] ?? { target: target.key, mode: "all", parameters: {} } }
-          : {}),
-      } } }));
+
+      if (!source || !target) {
+        return;
+      }
+
+      await persistSelected((draft) => ({
+        ...draft,
+        graph: {
+          ...draft.graph,
+          links: [
+            ...draft.graph.links,
+            {
+              id: crypto.randomUUID(),
+              from: source.key,
+              to: target.key,
+              on,
+              enabled: draft.defaults.links_enabled_by_default,
+              parameters: draft.defaults.default_parameters,
+            },
+          ],
+          joins: {
+            ...draft.graph.joins,
+            ...(draft.graph.links.filter((link) => link.enabled && link.to === target.key).length >=
+            1
+              ? {
+                  [target.key]: draft.graph.joins[target.key] ?? {
+                    target: target.key,
+                    mode: "all",
+                    parameters: {},
+                  },
+                }
+              : {}),
+          },
+        },
+      }));
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
     }
   }
 
-  async function updateSelected(changes: { on?: ChainEvent; enabled?: boolean; parameters?: Record<string, unknown> }) {
+  async function updateSelected(changes: {
+    on?: ChainEvent;
+    enabled?: boolean;
+    parameters?: Record<string, unknown>;
+  }) {
     const edge = selectedEdge.value;
 
     if (!edge) {
@@ -346,15 +390,30 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
     try {
       await persistSelected((draft) => {
-        const links = draft.graph.links.map((link) => link.id === edge.id ? {
-          ...link, on: changes.on ?? link.on, enabled: changes.enabled ?? link.enabled,
-          parameters: changes.parameters ?? link.parameters,
-        } : link);
+        const links = draft.graph.links.map((link) =>
+          link.id === edge.id
+            ? {
+                ...link,
+                on: changes.on ?? link.on,
+                enabled: changes.enabled ?? link.enabled,
+                parameters: changes.parameters ?? link.parameters,
+              }
+            : link,
+        );
         const target = links.find((link) => link.id === edge.id)?.to;
-        const enabledInbound = target ? links.filter((link) => link.enabled && link.to === target).length : 0;
+        const enabledInbound = target
+          ? links.filter((link) => link.enabled && link.to === target).length
+          : 0;
         let joins = { ...draft.graph.joins };
-        if (target && enabledInbound >= 2) {joins[target] ??= { target, mode: "all", parameters: {} };}
-        if (target && enabledInbound < 2) {joins = Object.fromEntries(Object.entries(joins).filter(([key]) => key !== target));}
+
+        if (target && enabledInbound >= 2) {
+          joins[target] ??= { target, mode: "all", parameters: {} };
+        }
+
+        if (target && enabledInbound < 2) {
+          joins = Object.fromEntries(Object.entries(joins).filter(([key]) => key !== target));
+        }
+
         return { ...draft, graph: { ...draft.graph, links, joins } };
       });
     } catch (err) {
