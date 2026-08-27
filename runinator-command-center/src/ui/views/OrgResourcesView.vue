@@ -1,8 +1,6 @@
 <template>
   <section class="pane flex flex-col gap-2.5 overflow-auto">
-    <div v-if="!orgs.activeOrg" class="panel py-3.5 text-fg-muted">
-      Select an organization on the Organization tab to manage its resources.
-    </div>
+    <div v-if="!orgs.activeOrg" class="panel py-3.5" />
 
     <template v-else>
       <div class="panel">
@@ -72,9 +70,7 @@
               compact
               :message="refreshMessage || 'Loading node pools…'"
             />
-            <div v-else-if="!groups.length" class="py-3.5 text-fg-muted">
-              No dedicated node pools. Scale one below.
-            </div>
+            <div v-else-if="!groups.length" class="py-3.5 text-fg-muted">No dedicated node pools.</div>
             <table v-else class="w-full border-collapse">
               <thead>
                 <tr>
@@ -153,11 +149,6 @@
                 ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
               </span>
             </form>
-            <p class="mt-2.5 mb-0 text-[13px] text-fg-muted">
-              A worker pool with a positive count makes this org's workflows route to its dedicated,
-              <span class="font-mono">org={{ orgs.activeOrg.slug }}</span
-              >-labeled workers.
-            </p>
           </section>
         </div>
       </div>
@@ -267,4 +258,3 @@ async function scale() {
 watch(() => orgs.activeOrgId, refresh);
 onMounted(refresh);
 </script>
-

@@ -72,6 +72,7 @@ export type {
   WorkflowEdgeEditorMatchKind,
   WorkflowEdgeLabelAnchor,
   WorkflowEdgeLabelOffset,
+  WorkflowInterruptEdgeRegion,
   WorkflowEdgeSemanticOption,
   WorkflowEdgeStyle,
   WorkflowSemanticHandle,

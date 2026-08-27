@@ -420,9 +420,7 @@
                 </div>
               </template>
 
-              <div v-else class="py-3.5 text-fg-muted">
-                Select a replica to inspect its health, address, and runtime details.
-              </div>
+              <div v-else class="py-3.5" />
             </section>
           </template>
         </SplitPane>
@@ -434,10 +432,6 @@
     <Modal v-if="enrollmentOpen" title="Enroll a machine" width="620px" @close="closeEnrollment">
       <form class="flex flex-col gap-3" @submit.prevent="createEnrollmentToken">
         <template v-if="!createdEnrollmentToken">
-          <p class="m-0 text-sm text-fg-muted">
-            Create a short-lived, single-use token for a worker agent. Requested labels cannot
-            exceed this allowed set.
-          </p>
           <label class="flex flex-col gap-1 text-sm">
             <span class="font-medium">Service URL</span>
             <input

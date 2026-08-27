@@ -131,9 +131,7 @@
       </form>
     </div>
 
-    <div v-else class="panel py-3.5 text-fg-muted">
-      Create or select an organization to manage its members.
-    </div>
+    <div v-else class="panel py-3.5" />
 
     <div v-if="can('teams:manage')" class="panel">
       <div class="panel-toolbar">
@@ -142,10 +140,6 @@
           >{{ teams.length }} team(s)</span
         >
       </div>
-      <p class="mb-2.5 mt-0 text-xs text-fg-muted">
-        Teams are named principals you can grant workflow access to. Add users to a team, then share
-        a workflow with the whole team.
-      </p>
 
       <div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,260px)_minmax(0,1fr)]">
         <div class="flex flex-col gap-1.5">
@@ -177,9 +171,7 @@
         </div>
 
         <div>
-          <div v-if="!selectedTeamId" class="py-3.5 text-fg-muted">
-            Select a team to manage its members.
-          </div>
+          <div v-if="!selectedTeamId" class="py-3.5" />
           <template v-else>
             <h3 class="m-0 mb-2 text-sm font-semibold text-fg">
               {{ selectedTeamName }} · members
@@ -456,4 +448,3 @@ async function removeMember(userId: string) {
 onMounted(refresh);
 watch(() => orgs.activeOrgId, refreshActiveOrgDetail);
 </script>
-

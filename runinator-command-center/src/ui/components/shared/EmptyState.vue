@@ -25,9 +25,6 @@
     >
       {{ loading ? loadingMessage || title : title }}
     </p>
-    <p v-if="!loading && description" class="m-0 max-w-[42ch] text-[13px] leading-normal">
-      {{ description }}
-    </p>
     <div v-if="!loading && $slots.default" class="mt-1.5 flex flex-wrap justify-center gap-2">
       <slot />
     </div>
@@ -38,7 +35,7 @@
 import Icon, { type IconName } from "./Icon.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 
-// shared empty/first-run placeholder. keep messages actionable: say what is empty and what to do next.
+// Shared empty-state placeholder. Supplemental guidance is deliberately not rendered.
 withDefaults(
   defineProps<{
     title: string;

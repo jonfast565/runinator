@@ -16,11 +16,6 @@
         </button>
       </PanelHeader>
 
-      <p class="border-b border-border px-4 py-2 text-xs text-fg-muted">
-        While a window is in effect its triggers are held, not dropped: the due slot survives the
-        freeze and each trigger's catch-up policy decides what happens when the window lifts.
-      </p>
-
       <form v-if="draft" class="border-b border-border px-4 py-3" @submit.prevent="save">
         <div
           class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&_label]:flex [&_label]:flex-col [&_label]:gap-1 [&_label]:text-xs [&_label]:text-fg-muted"

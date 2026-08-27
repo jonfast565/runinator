@@ -50,7 +50,7 @@
           >
             <button class="btn btn-primary" @click="openNewPipeline">
               <Icon name="plus" />
-              <span>Create your first pipeline</span>
+              <span>New pipeline</span>
             </button>
           </EmptyState>
           <EmptyState
@@ -230,10 +230,7 @@
                     <button class="btn btn-sm" :disabled="Boolean(joinMappingError)" @click="saveJoin">Save join</button>
                   </div>
                 </template>
-                <p v-else class="m-0 text-sm text-fg-muted">
-                  Select a chain edge or a workflow to edit it, or drag from one workflow to another
-                  to create a chain.
-                </p>
+                <div v-else />
 
                 <div>
                   <h4 class="m-0 text-sm font-semibold text-fg">Workflows in this pipeline</h4>

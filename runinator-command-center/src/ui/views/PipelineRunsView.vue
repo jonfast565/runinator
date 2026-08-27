@@ -176,7 +176,6 @@
             <section class="grid gap-2 border-t border-border-subtle pt-3">
               <div class="flex items-baseline justify-between gap-2">
                 <h2 class="m-0 text-base font-semibold text-fg">Execution Graph</h2>
-                <span class="text-xs text-fg-muted">Double-click a started member to open its workflow run.</span>
               </div>
               <div class="h-[360px] min-h-[260px] overflow-hidden rounded-md border border-border-subtle bg-surface-subtle">
                 <PipelineCanvas :detail="store.detail" readonly @open-run="openMemberRunById" />
@@ -246,7 +245,6 @@
             <section class="grid gap-2 border-t border-border-subtle pt-3">
               <div class="flex items-baseline justify-between gap-2">
                 <h2 class="m-0 text-base font-semibold text-fg">Member Attempts</h2>
-                <span class="text-xs text-fg-muted">Results, artifacts, errors, and frontier retries.</span>
               </div>
               <div v-if="store.detail.attempts.length" class="grid gap-2">
                 <details

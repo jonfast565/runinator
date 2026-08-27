@@ -34,7 +34,6 @@
         <button class="btn btn-sm shrink-0" type="button" @click="remove(file.id)">Remove</button>
       </li>
     </ul>
-    <span v-else class="text-xs text-fg-muted">Upload a file or choose an immutable library revision.</span>
   </div>
 </template>
 

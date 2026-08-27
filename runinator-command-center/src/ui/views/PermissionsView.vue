@@ -4,7 +4,6 @@
       <header class="flex items-center justify-between gap-3">
         <div>
           <h2 class="m-0 text-base font-semibold text-fg">Permissions</h2>
-          <p class="m-0 text-xs text-fg-muted">Users, teams, workflow access, and API keys.</p>
         </div>
         <button class="btn" :disabled="loading" @click="refresh">
           <LoadingSpinner v-if="loading" size="sm" label="Refreshing permissions" />

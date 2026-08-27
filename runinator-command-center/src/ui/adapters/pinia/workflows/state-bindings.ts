@@ -51,6 +51,7 @@ export function createWorkflowStateBindings(
       set: (workflowLayoutDirection) =>
         { services.setState((current) => ({ ...current, workflowLayoutDirection })); },
     }),
+    workflowCanvasFocus: computed(() => state.value.workflowCanvasFocus),
     workflowInspectorMode: computed(() => state.value.workflowInspectorMode),
     stepEditorOpen: computed(() => state.value.stepEditorOpen),
     stepEditorCreating: computed(() => state.value.stepEditorCreating),

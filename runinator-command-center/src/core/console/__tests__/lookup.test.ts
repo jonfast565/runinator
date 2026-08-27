@@ -6,17 +6,18 @@ vi.mock("../../api/commandCenterApi", () => ({
 }));
 
 import { fetchPipelines } from "../../api/commandCenterApi";
-import { pipelinePath, type Pipeline } from "../../domain/models";
+import { defaultPipelineDefaults, pipelinePath, type Pipeline } from "../../domain/models";
 import { resolvePipeline } from "../lookup";
 
 const pipeline: Pipeline = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Release train",
+  description: null,
   key: "release_train",
   namespace: "acme.delivery",
   graph: { version: 1, members: [], links: [], joins: {} },
   concurrency: { max_concurrent_runs: 0, on_conflict: "allow" },
-  defaults: {},
+  defaults: defaultPipelineDefaults(),
   metadata: {},
 };
 

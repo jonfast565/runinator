@@ -70,6 +70,14 @@ describe("interrupt declarations", () => {
     expect(messages(broken)).toContainEqual("Interrupt handler 'ghost' does not exist");
   });
 
+  it("tags interrupt diagnostics with their declared handler", () => {
+    const broken = definition({ metadata: { interrupts: [{ on: "wake", handler: "ghost" }] } });
+
+    expect(interruptIssues(broken)).toEqual([
+      expect.objectContaining({ interruptHandlerId: "ghost", nodeId: "workflow" }),
+    ]);
+  });
+
   it("rejects a handler reachable from the workflow start", () => {
     const broken = definition({ metadata: { interrupts: [{ on: "wake", handler: "poll" }] } });
 

@@ -74,10 +74,6 @@
       <template #second>
         <div class="panel details overflow-auto">
           <h2 class="m-0 text-base font-semibold text-fg">Scope</h2>
-          <p class="hint m-0">
-            What <code>{{ CELL_SCOPE }}.&lt;name&gt;</code> resolves to in this session. A failed
-            line drops its binding rather than leaving a stale value behind.
-          </p>
           <EmptyState
             v-if="!notebook.bindings.length"
             compact

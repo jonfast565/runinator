@@ -29,6 +29,7 @@ import type { WorkflowServiceHost } from "./host";
 export interface WorkflowHeaderPeer {
   syncWorkflowDraftToJson(): void;
   setGraphNodePosition(nodeId: string, position: { x: number; y: number }): void;
+  focusWorkflowCanvasNodes(nodeIds: string[]): void;
   populateStepEditor(nodeId: string): void;
   openStepEditor(nodeId: string, creating?: boolean): void;
   ensureWorkflowNodes(): JsonRecord[];
@@ -240,9 +241,9 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   /**
    * create a minimal, valid handler region for `source` and declare it.
    *
-   * the region is an `interrupt -> audit -> resume` sequence: metadata links the source to the
-   * source-neutral entry, the audit is immediately editable, and resume hands control back.
-   * authors can change or extend that middle step without first breaking a structural edge.
+   * the region is an empty `interrupt -> resume` route: metadata links the source to the
+   * source-neutral entry and resume hands control back.  The canvas owns building it out, so the
+   * focused connection is immediately ready for a safe step insertion.
    *
    * the resulting region satisfies every rule in `validate_interrupt_handlers` by construction --
    * nothing can enter it (an `interrupt` is an entry point, so no edge may target it), both kinds
@@ -253,8 +254,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     if (
       !isNodeCatalogLoaded() ||
       !findNodeKindMetadata("resume") ||
-      !findNodeKindMetadata("interrupt") ||
-      !findNodeKindMetadata("audit")
+      !findNodeKindMetadata("interrupt")
     ) {
       host.ctx.setError("Node types are still loading; try again in a moment");
       return false;
@@ -270,30 +270,18 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     entry.id = uniqueWorkflowNodeId(nodes, `on_${source}`);
     insertBeforeEnd(nodes, entry);
 
-    // give the author a real, editable step between the structural endpoints. asking them to add a
-    // node, delete the direct edge, and reconnect both halves is needless graph surgery for the
-    // most common next action after creating a handler.
-    const body = createWorkflowNode("audit", nodes);
-    body.id = uniqueWorkflowNodeId(nodes, `handle_${source}`);
-    body.parameters = { action: `interrupt:${source}` };
-    insertBeforeEnd(nodes, body);
-
-    // claimed after the other nodes are in the list so all three ids are distinct.
+    // Claimed after the entry so the ids stay distinct even when a main-flow node already uses a
+    // source-shaped id.  The edge between them is the explicit first-step insertion point.
     const resume = createWorkflowNode("resume", nodes);
     resume.id = uniqueWorkflowNodeId(nodes, `resume_${source}`);
     insertBeforeEnd(nodes, resume);
 
-    entry.transitions = { next: { $node: body.id } };
-    body.transitions = { next: { $node: resume.id } };
+    entry.transitions = { next: { $node: resume.id } };
 
     const origin = scaffoldOrigin();
     editor.setGraphNodePosition(displayValue(entry.id), origin);
-    editor.setGraphNodePosition(displayValue(body.id), {
-      x: origin.x + SCAFFOLD_STEP_X,
-      y: origin.y,
-    });
     editor.setGraphNodePosition(displayValue(resume.id), {
-      x: origin.x + SCAFFOLD_STEP_X * 2,
+      x: origin.x + SCAFFOLD_STEP_X,
       y: origin.y,
     });
 
@@ -304,7 +292,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     });
     applyWorkflowHeader();
     host.ctx.setStatus(`Added an interrupt handler for '${source}'`);
-    editor.openStepEditor(displayValue(body.id));
+    editor.focusWorkflowCanvasNodes([displayValue(entry.id), displayValue(resume.id)]);
     return true;
   }
 

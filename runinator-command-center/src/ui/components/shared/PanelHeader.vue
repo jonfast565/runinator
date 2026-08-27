@@ -8,9 +8,6 @@
       >
         <slot name="title">{{ title }}</slot>
       </component>
-      <p v-if="description || $slots.description" class="m-0 text-xs text-fg-muted">
-        <slot name="description">{{ description }}</slot>
-      </p>
     </div>
     <div v-if="$slots.default" class="btn-row items-center self-center">
       <slot />
@@ -19,8 +16,8 @@
 </template>
 
 <script setup lang="ts">
-// shared panel title row: title (+ optional subtitle) on the left, actions on the right.
-// keeps multi-line headers start-aligned while action buttons stay vertically centered.
+// Shared panel title row. `description` remains accepted while callers are migrated, but panel
+// chrome intentionally renders titles and controls only.
 withDefaults(
   defineProps<{
     title?: string;

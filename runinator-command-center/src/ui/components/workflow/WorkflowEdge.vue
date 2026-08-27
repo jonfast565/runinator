@@ -5,7 +5,7 @@
     :marker-start="markerStart"
     :marker-end="markerEnd"
     :interaction-width="interactionWidth"
-    :style="style"
+    :style="edgeStyle"
   />
   <!-- leader line + anchor dot tie a displaced label back to the edge it defines. -->
   <g v-if="connectorPath" class="workflow-edge-label-connector nodrag nopan" :class="severityClass">
@@ -27,6 +27,19 @@
       {{ labelText }}
     </div>
   </EdgeLabelRenderer>
+  <EdgeLabelRenderer v-if="canInsert">
+    <button
+      type="button"
+      class="workflow-edge-insert nodrag nopan"
+      :class="{ 'is-interrupt': isInterruptRegion, disabled: interruptDisabled }"
+      :style="insertStyle"
+      title="Insert a step on this connection"
+      aria-label="Insert a step on this connection"
+      @click.stop="emit('insert', id)"
+    >
+      <Icon name="plus" :size="13" />
+    </button>
+  </EdgeLabelRenderer>
 </template>
 
 <script setup lang="ts">
@@ -42,6 +55,7 @@ import {
 } from "@vue-flow/core";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import type { WorkflowEditorEdgeData } from "../../../core/domain/models";
+import Icon from "../shared/Icon.vue";
 
 // vue flow passes the resolved edge geometry to custom edge components.
 const props = defineProps<{
@@ -61,6 +75,8 @@ const props = defineProps<{
   style?: CSSProperties;
   data?: WorkflowEditorEdgeData;
 }>();
+
+const emit = defineEmits<{ insert: [edgeId: string] }>();
 
 const workflows = useWorkflowsStore();
 const { getNodes, viewport } = useVueFlow();
@@ -100,6 +116,19 @@ const pathParams = computed(() => {
 
 const path = computed(() => pathParams.value[0]);
 const labelText = computed(() => (typeof props.label === "string" ? props.label : ""));
+const isInterruptRegion = computed(() => Boolean(props.data?.interruptRegion));
+const interruptDisabled = computed(() => props.data?.interruptRegion?.enabled === false);
+const canInsert = computed(() => interactive && props.data?.editable !== false);
+const edgeStyle = computed<CSSProperties>(() => ({
+  ...props.style,
+  ...(isInterruptRegion.value
+    ? {
+        stroke: "var(--accent)",
+        strokeDasharray: "7 4",
+        opacity: interruptDisabled.value ? 0.46 : 0.92,
+      }
+    : {}),
+}));
 
 const manualOffset = computed(() => {
   const offset = props.data?.labelOffset;
@@ -136,6 +165,11 @@ const labelPosition = computed(() => {
 
   return avoidNodes(anchor.x, anchor.y);
 });
+
+const insertStyle = computed<CSSProperties>(() => ({
+  transform: `translate(-50%, -50%) translate(${String(anchorPoint.value.x)}px, ${String(anchorPoint.value.y)}px)`,
+  pointerEvents: "all",
+}));
 
 const labelStyle = computed<CSSProperties>(() => ({
   transform: `translate(-50%, -50%) translate(${String(labelPosition.value.x)}px, ${String(labelPosition.value.y)}px)`,
@@ -392,5 +426,46 @@ onBeforeUnmount(stopDragging);
 .workflow-edge-label.error {
   border-color: var(--danger-solid);
   color: var(--danger-fg);
+}
+
+.workflow-edge-insert {
+  position: absolute;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-control);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+:global(.vue-flow__edge:hover) .workflow-edge-insert,
+.workflow-edge-insert:focus-visible {
+  opacity: 1;
+}
+
+.workflow-edge-insert:hover,
+.workflow-edge-insert:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.workflow-edge-insert.is-interrupt {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.workflow-edge-insert.disabled {
+  opacity: 0.72;
 }
 </style>

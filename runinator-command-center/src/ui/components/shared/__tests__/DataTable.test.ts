@@ -64,7 +64,7 @@ describe("DataTable (column mode)", () => {
       emptyDescription: "Nothing here.",
     });
     expect(html).toContain("No records yet");
-    expect(html).toContain("Nothing here.");
+    expect(html).not.toContain("Nothing here.");
   });
 
   it("stays a plain scroll wrapper when no columns are given", async () => {

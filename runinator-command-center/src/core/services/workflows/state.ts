@@ -17,6 +17,12 @@ import {
 
 export type StepEditorState = ReturnType<typeof createStepEditorState>;
 
+/** A one-shot viewport request consumed by the editable workflow canvas. */
+export interface WorkflowCanvasFocusRequest {
+  nodeIds: string[];
+  requestId: number;
+}
+
 export interface WorkflowServicesState {
   workflows: WorkflowDefinition[];
   selectedWorkflowId: string | null;
@@ -36,6 +42,7 @@ export interface WorkflowServicesState {
   triggerJson: { configuration: string; metadata: string };
   workflowEditorMode: "graph" | "json" | "rexrap";
   workflowLayoutDirection: WorkflowLayoutDirection;
+  workflowCanvasFocus: WorkflowCanvasFocusRequest;
   workflowInspectorMode: "step" | "header" | "interrupts" | "rexrap";
   /** working copy of the four workflow-level header declarations; applied back on every commit. */
   headerDraft: WorkflowHeader;
@@ -123,6 +130,7 @@ export function createWorkflowServicesState(): WorkflowServicesState {
     triggerJson: { configuration: "{}", metadata: "{}" },
     workflowEditorMode: "graph",
     workflowLayoutDirection: "horizontal",
+    workflowCanvasFocus: { nodeIds: [], requestId: 0 },
     workflowInspectorMode: "step",
     headerDraft: emptyWorkflowHeader(),
     stepEditorOpen: false,

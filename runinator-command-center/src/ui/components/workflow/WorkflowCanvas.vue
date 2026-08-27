@@ -13,13 +13,20 @@ import {
 import type {
   JsonRecord,
   WorkflowEdgeEditorDraft,
+  WorkflowEditorEdgeData,
   WorkflowEdgeSemanticOption,
+  WorkflowNodeKind,
 } from "../../../core/domain/models";
 import { workflowInputType } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
-import { optionIdForSourceHandle } from "../../../core/workflow";
+import {
+  optionIdForSourceHandle,
+  workflowNodeKindDescription,
+  workflowNodeKindIcon,
+  workflowNodeKindLabel,
+} from "../../../core/workflow";
 import { jsonRecordArray as recordArray } from "../../../core/domain/json";
 import { HEADER_ISSUE_NODE_ID } from "../../../core/workflow/header-validation";
 import { buildSampleContext } from "../../../core/utils/workflow-references";
@@ -28,6 +35,7 @@ import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";
+import Icon from "../shared/Icon.vue";
 
 // edges in the editable canvas allow manual label repositioning.
 provide("workflowEdgeInteractive", true);
@@ -49,6 +57,13 @@ const pendingConnect = ref<null | {
   options: WorkflowEdgeSemanticOption[];
 }>(null);
 const edgeEditor = ref<null | (WorkflowEdgeEditorDraft & { x: number; y: number })>(null);
+const edgeInsertion = ref<null | {
+  edgeId: string;
+  x: number;
+  y: number;
+  kinds: WorkflowNodeKind[];
+  interrupt: boolean;
+}>(null);
 const nodeWidth = 180;
 const nodeHeight = 64;
 const popoverMargin = 12;
@@ -224,6 +239,19 @@ watch(
   },
 );
 
+// The service can request a focused region from inspector actions without importing Vue Flow.
+watch(
+  () => workflows.workflowCanvasFocus.requestId,
+  async (requestId) => {
+    if (requestId === 0 || workflows.workflowCanvasFocus.nodeIds.length === 0) {
+      return;
+    }
+
+    await nextTick();
+    void fitView({ nodes: workflows.workflowCanvasFocus.nodeIds, duration: 400, maxZoom: 1.2 });
+  },
+);
+
 function openNodeMenu(event: NodeMouseEvent) {
   const mouse = event.event as MouseEvent | undefined;
   const node = event.node;
@@ -278,6 +306,7 @@ function closeOverlays() {
   contextMenu.value = null;
   pendingConnect.value = null;
   edgeEditor.value = null;
+  edgeInsertion.value = null;
 }
 
 function closeOverlaysAndSelection() {
@@ -324,6 +353,38 @@ function editSelectedEdge() {
   }
 
   openEdgeEditorForEdge(workflows.selectedGraphEdge.id);
+}
+
+function openEdgeInsertion(edgeId: string) {
+  const kinds = workflows.insertableWorkflowNodeKinds(edgeId);
+
+  if (kinds.length === 0) {
+    return;
+  }
+
+  const edge = workflows.graphEdges.find((candidate) => candidate.id === edgeId);
+  const edgeData = edge?.data as WorkflowEditorEdgeData | undefined;
+  const position = edgeEditorPosition(edgeId, lastPointer.value);
+  closeContextMenu();
+  edgeEditor.value = null;
+  pendingConnect.value = null;
+  edgeInsertion.value = {
+    edgeId,
+    x: position.x,
+    y: position.y,
+    kinds,
+    interrupt: Boolean(edgeData?.interruptRegion),
+  };
+}
+
+function insertWorkflowNodeOnEdge(kind: WorkflowNodeKind) {
+  if (!edgeInsertion.value) {
+    return;
+  }
+
+  if (workflows.insertWorkflowNodeOnEdge(edgeInsertion.value.edgeId, kind)) {
+    edgeInsertion.value = null;
+  }
 }
 
 function applyPendingConnect(optionId: string) {

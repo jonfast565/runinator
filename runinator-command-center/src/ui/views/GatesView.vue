@@ -42,11 +42,6 @@
               </button>
             </div>
           </div>
-          <p class="hint m-0">
-            A gate blocks its workflow node until it opens. <strong>condition</strong> gates open
-            automatically; open or close <strong>manual</strong> and <strong>external</strong> gates
-            here.
-          </p>
           <DataTable>
             <table>
               <thead>

@@ -216,7 +216,7 @@
           </ul>
         </template>
 
-        <div v-else class="py-3.5 text-fg-muted">Select a provider to view its actions.</div>
+        <div v-else class="py-3.5" />
       </section>
       </template>
     </SplitPane>

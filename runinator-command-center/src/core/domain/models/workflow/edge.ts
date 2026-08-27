@@ -55,6 +55,13 @@ export interface WorkflowEdgeLabelAnchor {
   position: number;
 }
 
+/** Interrupt metadata carried by an edge wholly inside one handler region. */
+export interface WorkflowInterruptEdgeRegion {
+  source: string;
+  handler: string;
+  enabled: boolean;
+}
+
 export interface WorkflowEditorEdgeData {
   kind: WorkflowEditorEdgeKind;
   transitionKey?: WorkflowDirectTransitionKey;
@@ -70,5 +77,7 @@ export interface WorkflowEditorEdgeData {
   validationCount?: number;
   validationSeverity?: WorkflowValidationSeverity;
   validationMessages?: string[];
+  /** present only when both endpoints belong to the same interrupt handler region. */
+  interruptRegion?: WorkflowInterruptEdgeRegion;
   editable: boolean;
 }

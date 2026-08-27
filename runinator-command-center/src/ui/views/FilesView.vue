@@ -17,10 +17,6 @@
           <input class="sr-only" type="file" multiple webkitdirectory="" directory="" @change="uploadFiles" />
         </label>
       </PanelHeader>
-      <p class="hint m-0 mb-3">
-        Uploading to an existing path creates a new current revision. Runs keep the exact revision
-        they selected, even after the library changes.
-      </p>
       <p v-if="error" class="mb-2 text-sm text-danger">{{ error }}</p>
       <p v-if="uploading" class="mb-2 text-sm text-fg-muted">Uploading {{ uploading }} file{{ uploading === 1 ? "" : "s" }}…</p>
       <div class="table-scroll min-h-0 flex-1">

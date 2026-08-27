@@ -80,9 +80,6 @@
           >
             <div>
               <h2 class="m-0 text-base font-semibold text-fg">Display</h2>
-              <p class="mt-1 mb-0 text-fg-muted">
-                Appearance and navigation preferences stored locally in your browser.
-              </p>
             </div>
           </header>
 
@@ -92,9 +89,6 @@
             >
               <div class="flex flex-col gap-0.5">
                 <span class="font-semibold">Theme</span>
-                <span class="text-[0.82rem] text-fg-muted"
-                  >Override the app color scheme. "System" follows your OS setting.</span
-                >
               </div>
               <div class="flex gap-1.5">
                 <label
@@ -125,9 +119,6 @@
             >
               <div class="flex flex-col gap-0.5">
                 <span class="font-semibold">Default page</span>
-                <span class="text-[0.82rem] text-fg-muted"
-                  >Which page opens when you launch the app.</span
-                >
               </div>
               <select class="w-auto min-w-40" :value="prefs.defaultTab" @change="onDefaultTabChange">
                 <option v-for="opt in tabOptions" :key="opt.value" :value="opt.value">
@@ -141,12 +132,10 @@
         <template v-else-if="activeSection === 'security'">
           <header>
             <h2 class="m-0 text-base font-semibold text-fg">Authentication</h2>
-            <p class="mt-1 mb-0 text-fg-muted">Platform-wide authentication policies.</p>
           </header>
           <form class="grid max-w-xl gap-3.5 rounded-lg border border-border p-4" @submit.prevent="settings.saveAuthSettings">
             <label class="grid gap-1.5">
               <span class="text-[0.84rem] font-semibold text-fg-muted">Maximum refreshes per login session</span>
-              <span class="text-[0.82rem] text-fg-muted">A new login starts a new budget. Existing sessions use the updated cap.</span>
               <input
                 type="number"
                 min="1"
@@ -168,9 +157,6 @@
               <h2 class="m-0 text-base font-semibold text-fg">
                 {{ activeLanguage ? activeLanguage.label : "Foreign Languages" }}
               </h2>
-              <p class="mt-1 mb-0 text-fg-muted">
-                Runtime configuration shared by workers and workflow execution.
-              </p>
             </div>
             <button class="btn max-md:w-full max-md:justify-center" type="button" @click="settings.refresh">
               <Icon name="refresh" />

@@ -36,9 +36,13 @@ import {
   uniqueWorkflowNodeId,
   validateWorkflowReferenceSyntax,
 } from "../../workflow/index";
-import { findNodeKindMetadata } from "../../workflow/catalog-registry";
+import { addableNodeKinds, findNodeKindMetadata } from "../../workflow/catalog-registry";
 import { readWorkflowHeader } from "../../workflow/header-metadata";
-import { interruptRegionNodes, nodesById } from "../../workflow/interrupt-regions";
+import {
+  interruptRegionNodes,
+  interruptRegionOrigins,
+  nodesById,
+} from "../../workflow/interrupt-regions";
 import { getAtLocation } from "../../workflow/field-location";
 import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
 import {
@@ -94,6 +98,125 @@ export function createWorkflowEditorService(
 
   function addConnectedWorkflowNode(kind: WorkflowNodeKind = "action") {
     addWorkflowNode(kind);
+  }
+
+  /**
+   * The compact insertion palette deliberately excludes branching/control nodes.  Those remain
+   * available through the normal node palette, where an author can configure all of their exits.
+   */
+  function insertableWorkflowNodeKinds(edgeId: string): WorkflowNodeKind[] {
+    const edge = host.buildDraftGraphEdges().find((candidate) => candidate.id === edgeId);
+
+    if (!edge) {
+      return [];
+    }
+
+    const regions = interruptRegionOrigins(host.state.workflowDraft);
+    const sourceRegion = regions.get(edge.source);
+    const targetRegion = regions.get(edge.target);
+    const handlerEdge = sourceRegion?.handler === targetRegion?.handler ? (sourceRegion ?? null) : null;
+
+    return addableNodeKinds().filter((kind): kind is WorkflowNodeKind => {
+      const metadata = findNodeKindMetadata(kind);
+
+      return Boolean(
+        metadata &&
+          metadata.addable &&
+          metadata.edge_slots.length === 0 &&
+          (!handlerEdge || metadata.handler_safe),
+      );
+    });
+  }
+
+  /**
+   * Splice a single-path node into an existing connection without making the author delete and
+   * rebuild either half of the route.  The source edge keeps its semantic slot, labels, handles,
+   * and style; the new node receives the old target as its ordinary continuation.
+   */
+  function insertWorkflowNodeOnEdge(edgeId: string, kind: WorkflowNodeKind): boolean {
+    const edge = host.buildDraftGraphEdges().find((candidate) => candidate.id === edgeId);
+
+    if (!edge) {
+      host.ctx.setError("That connection no longer exists");
+      return false;
+    }
+
+    if (!insertableWorkflowNodeKinds(edgeId).includes(kind)) {
+      host.ctx.setError("That node type cannot be inserted on this connection");
+      return false;
+    }
+
+    const edgeDraft = workflowEdgeEditorDraft(host.state.workflowDraft, edge);
+
+    if (!edgeDraft) {
+      host.ctx.setError("That connection cannot be edited");
+      return false;
+    }
+
+    // Capture the visible geometry before rewiring: the fallback layout would otherwise place the
+    // not-yet-positioned node and make the midpoint drift as soon as the graph changes.
+    const positions = new Map(
+      host.buildDraftGraphNodes().map((node) => [node.id, node.position]),
+    );
+    const sourcePosition = positions.get(edge.source);
+    const targetPosition = positions.get(edge.target);
+    const fallback = graphCentroidPosition();
+    const nodes = ensureWorkflowNodes();
+    const newNode = createWorkflowNode(kind, nodes);
+    stripNewNodeConnections(newNode);
+    const newNodeId = displayValue(newNode.id);
+
+    if (!newNodeId) {
+      host.ctx.setError("Could not create a node for that connection");
+      return false;
+    }
+
+    const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
+
+    if (endIndex >= 0) {
+      nodes.splice(endIndex, 0, newNode);
+    } else {
+      nodes.push(newNode);
+    }
+
+    // Every kind offered here is linear.  Overwrite the template's default continuation (often
+    // `end`) so the original path remains intact after the insertion.
+    newNode.transitions = { ...asRecord(newNode.transitions), next: { $node: edge.target } };
+
+    const retargeted = applyWorkflowEdgeEditorDraft(host.state.workflowDraft.definition, edge, {
+      ...edgeDraft,
+      target: newNodeId,
+    });
+
+    if (!retargeted.ok) {
+      nodes.splice(nodes.indexOf(newNode), 1);
+      host.ctx.setError(retargeted.message);
+      return false;
+    }
+
+    setGraphNodePosition(newNodeId, {
+      x: Math.round(((sourcePosition?.x ?? fallback.x) + (targetPosition?.x ?? fallback.x)) / 2),
+      y: Math.round(((sourcePosition?.y ?? fallback.y) + (targetPosition?.y ?? fallback.y)) / 2),
+    });
+
+    syncWorkflowDraftToJson();
+    openStepEditor(newNodeId, true);
+    return true;
+  }
+
+  /** Ask the mounted Vue Flow canvas to fit a useful set of nodes without coupling services to it. */
+  function focusWorkflowCanvasNodes(nodeIds: string[]) {
+    const normalized = [...new Set(nodeIds.filter(Boolean))];
+
+    if (normalized.length === 0) {
+      return;
+    }
+
+    host.state.workflowCanvasFocus = {
+      nodeIds: normalized,
+      requestId: host.state.workflowCanvasFocus.requestId + 1,
+    };
+    host.notify();
   }
 
   function removeWorkflowStep() {
@@ -1052,6 +1175,9 @@ export function createWorkflowEditorService(
     addWorkflowStep,
     addWorkflowNode,
     addConnectedWorkflowNode,
+    insertableWorkflowNodeKinds,
+    insertWorkflowNodeOnEdge,
+    focusWorkflowCanvasNodes,
     removeWorkflowStep,
     removeWorkflowNode,
     removeWorkflowNodes,

@@ -5,7 +5,6 @@
       @submit.prevent="submit"
     >
       <h1 class="m-0 text-xl text-fg">Runinator</h1>
-      <p class="m-0 mb-2 text-[13px] text-fg-muted">Sign in to continue</p>
       <label class="grid gap-1 text-xs font-semibold text-fg-subtle">
         Username
         <input

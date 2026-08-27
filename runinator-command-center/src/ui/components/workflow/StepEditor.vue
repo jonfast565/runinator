@@ -163,7 +163,6 @@
     <template v-else>
       <div class="empty-detail">
         <h2>No Step Selected</h2>
-        <p>Select a node on the graph or add a node from the workflow toolbar.</p>
         <button @click="workflows.addWorkflowNode('action')">Add Node</button>
       </div>
     </template>
@@ -496,4 +495,3 @@ function section(
 }
 
 </script>
-

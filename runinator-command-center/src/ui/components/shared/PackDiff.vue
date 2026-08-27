@@ -26,7 +26,7 @@
       >
     </div>
 
-    <div v-if="!pack" class="text-xs text-fg-muted">Inspect a pack to preview changes.</div>
+    <div v-if="!pack" />
     <template v-else>
       <section>
         <h4 class="my-1 text-xs text-fg-subtle">Workflows</h4>

@@ -128,15 +128,14 @@ describe("scaffoldInterruptHandler", () => {
     expect(workflows.getHeaderIssues()).toEqual([]);
   });
 
-  it("scaffolds an editable body between the interrupt and resume", async () => {
+  it("scaffolds an empty route and focuses its first insertion point", async () => {
     const workflows = useWorkflowsStore();
     await workflows.selectWorkflow(workflow());
     workflows.scaffoldInterruptHandler("external");
 
-    // the interrupt template carries no transitions of its own, so the region cannot accidentally
-    // reach `end` -- which is not handler-safe and would have the region rejected on sight.
+    // The route starts valid but empty.  Its connection is where the canvas insertion control adds
+    // the first handler step, rather than forcing an Audit placeholder into every workflow.
     expect(workflows.getRegionNodeIds("on_external").sort()).toEqual([
-      "handle_external",
       "on_external",
       "resume_external",
     ]);
@@ -146,11 +145,15 @@ describe("scaffoldInterruptHandler", () => {
     expect(entry?.kind).toBe("interrupt");
     // metadata links the source; the graph entry stays source-neutral and purely structural.
     expect(entry?.parameters).toBeUndefined();
-    expect(draftNode(workflows, "handle_external")?.transitions).toEqual({
+    expect(entry?.transitions).toEqual({
       next: { $node: "resume_external" },
     });
-    expect(workflows.selectedStepId).toBe("handle_external");
-    expect(workflows.stepEditorOpen).toBe(true);
+    expect(workflows.selectedStepId).toBe("");
+    expect(workflows.stepEditorOpen).toBe(false);
+    expect(workflows.workflowCanvasFocus).toEqual(
+      expect.objectContaining({ nodeIds: ["on_external", "resume_external"] }),
+    );
+    expect(workflows.workflowCanvasFocus.requestId).toBeGreaterThan(0);
   });
 
   it("keeps source and enabled state in metadata while the graph owns the region", async () => {
@@ -185,6 +188,9 @@ describe("scaffoldInterruptHandler", () => {
     const entry = nodes.find((node) => node.id === "on_wake");
     const resume = nodes.find((node) => node.id === "resume_wake");
     const main = nodes.find((node) => node.id === "work");
+    const route = workflows.graphEdges.find(
+      (edge) => edge.source === "on_wake" && edge.target === "resume_wake",
+    );
 
     expect(entry?.data?.interruptRegion).toEqual({
       source: "wake",
@@ -195,6 +201,11 @@ describe("scaffoldInterruptHandler", () => {
     expect(resume?.data?.interruptEntry).toBe(false);
     expect(entry?.class).toContain("node-interrupt-region");
     expect(main?.data?.interruptRegion).toBeNull();
+    expect(route?.data.interruptRegion).toEqual({
+      source: "wake",
+      handler: "on_wake",
+      enabled: true,
+    });
   });
 
   it("makes a disabled handler visibly inactive on the canvas", async () => {
@@ -205,14 +216,56 @@ describe("scaffoldInterruptHandler", () => {
     workflows.setHeaderInterruptEnabled(0, false);
 
     const region = workflows.graphNodes.filter((node) =>
-      ["on_wake", "handle_wake", "resume_wake"].includes(node.id),
+      ["on_wake", "resume_wake"].includes(node.id),
     );
-    expect(region).toHaveLength(3);
+    expect(region).toHaveLength(2);
     expect(
       region.every(
         (node) => typeof node.class === "string" && node.class.includes("node-interrupt-disabled"),
       ),
     ).toBe(true);
+  });
+
+  it("inserts a single-path step into a normal canvas connection", async () => {
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+
+    const edge = workflows.graphEdges.find((item) => item.source === "work" && item.target === "end");
+    const before = new Map(workflows.graphNodes.map((node) => [node.id, node.position]));
+
+    expect(edge).toBeDefined();
+    expect(workflows.insertableWorkflowNodeKinds(edge?.id ?? "")).toContain("audit");
+    expect(workflows.insertableWorkflowNodeKinds(edge?.id ?? "")).not.toContain("condition");
+    expect(workflows.insertWorkflowNodeOnEdge(edge?.id ?? "", "audit")).toBe(true);
+
+    expect(draftNode(workflows, "work")?.transitions).toEqual({ next: { $node: "audit" } });
+    expect(draftNode(workflows, "audit")?.transitions).toEqual({ next: { $node: "end" } });
+    expect(workflows.selectedStepId).toBe("audit");
+    expect(workflows.stepEditorOpen).toBe(true);
+    expect(workflows.graphNodes.find((node) => node.id === "audit")?.position).toEqual({
+      x: Math.round(((before.get("work")?.x ?? 0) + (before.get("end")?.x ?? 0)) / 2),
+      y: Math.round(((before.get("work")?.y ?? 0) + (before.get("end")?.y ?? 0)) / 2),
+    });
+  });
+
+  it("keeps handler insertion safe and preserves its return to resume", async () => {
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+    workflows.scaffoldInterruptHandler("wake");
+
+    const edge = workflows.graphEdges.find(
+      (item) => item.source === "on_wake" && item.target === "resume_wake",
+    );
+
+    expect(edge).toBeDefined();
+    expect(workflows.insertableWorkflowNodeKinds(edge?.id ?? "")).toContain("audit");
+    expect(workflows.insertableWorkflowNodeKinds(edge?.id ?? "")).not.toContain("condition");
+    expect(workflows.insertWorkflowNodeOnEdge(edge?.id ?? "", "audit")).toBe(true);
+
+    expect(draftNode(workflows, "on_wake")?.transitions).toEqual({ next: { $node: "audit" } });
+    expect(draftNode(workflows, "audit")?.transitions).toEqual({ next: { $node: "resume_wake" } });
+    expect(workflows.getInterruptIssues()).toEqual([]);
+    expect(workflows.insertWorkflowNodeOnEdge(edge?.id ?? "", "condition")).toBe(false);
   });
 
   it("refuses a canvas edge drawn into the interrupt entry", async () => {
@@ -268,7 +321,7 @@ describe("scaffoldInterruptHandler", () => {
     workflows.removeWorkflowStep();
 
     const ids = workflows.ensureWorkflowNodes().map((node) => node.id);
-    expect(ids).not.toEqual(expect.arrayContaining(["on_wake", "handle_wake", "resume_wake"]));
+    expect(ids).not.toEqual(expect.arrayContaining(["on_wake", "resume_wake"]));
     expect(interruptDeclarations(workflows.workflowDraft)).toEqual([]);
   });
 
@@ -313,7 +366,6 @@ describe("removeHeaderInterrupt", () => {
     ]);
     const ids = workflows.ensureWorkflowNodes().map((node) => node.id);
     expect(ids).toContain("on_wake");
-    expect(ids).toContain("handle_wake");
     expect(ids).toContain("resume_wake");
   });
 
@@ -327,7 +379,6 @@ describe("removeHeaderInterrupt", () => {
 
     const ids = workflows.ensureWorkflowNodes().map((node) => node.id);
     expect(ids).not.toContain("on_wake");
-    expect(ids).not.toContain("handle_wake");
     expect(ids).not.toContain("resume_wake");
     // the main flow is untouched.
     expect(ids).toEqual(expect.arrayContaining(["start", "work", "end"]));

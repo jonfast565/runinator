@@ -62,12 +62,20 @@ function kindOf(node: JsonRecord | undefined): string {
   return displayValue(node?.kind) || "action";
 }
 
-function error(message: string, nodeId = HEADER_ISSUE_NODE_ID): WorkflowValidationIssue {
-  return { severity: "error", nodeId, message };
+function error(
+  message: string,
+  nodeId = HEADER_ISSUE_NODE_ID,
+  interruptHandlerId?: string,
+): WorkflowValidationIssue {
+  return { severity: "error", nodeId, message, interruptHandlerId };
 }
 
-function warning(message: string, nodeId = HEADER_ISSUE_NODE_ID): WorkflowValidationIssue {
-  return { severity: "warning", nodeId, message };
+function warning(
+  message: string,
+  nodeId = HEADER_ISSUE_NODE_ID,
+  interruptHandlerId?: string,
+): WorkflowValidationIssue {
+  return { severity: "warning", nodeId, message, interruptHandlerId };
 }
 
 /**
@@ -172,15 +180,19 @@ function pushInterruptIssues(
   for (const declaration of declarations) {
     const { source, handler } = declaration;
     const label = `Interrupt handler '${handler}'`;
+    const handlerError = (message: string, nodeId = HEADER_ISSUE_NODE_ID) =>
+      error(message, nodeId, handler);
+    const handlerWarning = (message: string, nodeId = HEADER_ISSUE_NODE_ID) =>
+      warning(message, nodeId, handler);
 
     if (!INTERRUPT_SOURCES.has(source)) {
       issues.push(
-        error(`${label} declares unknown source '${source}'; the workflow will not compile`),
+        handlerError(`${label} declares unknown source '${source}'; the workflow will not compile`),
       );
     }
 
     if (seenSources.has(source)) {
-      issues.push(error(`${label}: source '${source}' already has a handler; one handler per source`));
+      issues.push(handlerError(`${label}: source '${source}' already has a handler; one handler per source`));
     }
 
     seenSources.add(source);
@@ -188,19 +200,19 @@ function pushInterruptIssues(
     const entry = byId.get(handler);
 
     if (!entry) {
-      issues.push(error(`${label} does not exist`));
+      issues.push(handlerError(`${label} does not exist`));
       continue;
     }
 
     if (kindsKnown && !findNodeKindMetadata(kindOf(entry))?.runnable_entry) {
       issues.push(
-        error(`${label} is a ${kindOf(entry)} node, which cannot start a region`, handler),
+        handlerError(`${label} is a ${kindOf(entry)} node, which cannot start a region`, handler),
       );
     }
 
     if (reachable.has(handler)) {
       issues.push(
-        error(`${label} is reachable from the workflow start; a region must be entered only by its interrupt`, handler),
+        handlerError(`${label} is reachable from the workflow start; a region must be entered only by its interrupt`, handler),
       );
     }
 
@@ -210,7 +222,7 @@ function pushInterruptIssues(
 
     for (const id of nodes) {
       if (missing.has(id)) {
-        issues.push(error(`${label}: region node '${id}' does not exist`, handler));
+        issues.push(handlerError(`${label}: region node '${id}' does not exist`, handler));
         continue;
       }
 
@@ -218,17 +230,17 @@ function pushInterruptIssues(
       sawResume ||= kind === "resume";
 
       if (kindsKnown && !findNodeKindMetadata(kind)?.handler_safe) {
-        issues.push(error(`${label}: '${id}' is a ${kind} node, which is not allowed inside a handler region`, id));
+        issues.push(handlerError(`${label}: '${id}' is a ${kind} node, which is not allowed inside a handler region`, id));
       }
 
       if (id !== handler && reachable.has(id)) {
-        issues.push(error(`${label}: region node '${id}' is also reachable from the workflow start`, id));
+        issues.push(handlerError(`${label}: region node '${id}' is also reachable from the workflow start`, id));
       }
 
       const owner = claimed.get(id);
 
       if (owner !== undefined && owner !== handler) {
-        issues.push(error(`${label}: region node '${id}' already belongs to handler '${owner}'`, id));
+        issues.push(handlerError(`${label}: region node '${id}' already belongs to handler '${owner}'`, id));
       }
 
       claimed.set(id, handler);
@@ -236,7 +248,7 @@ function pushInterruptIssues(
 
     if (!sawResume) {
       issues.push(
-        error(`${label}: region never reaches a resume node, so it can never return control`, handler),
+        handlerError(`${label}: region never reaches a resume node, so it can never return control`, handler),
       );
     }
 
@@ -247,14 +259,14 @@ function pushInterruptIssues(
 
       for (const target of nodeTargets(node)) {
         if (nodes.has(target)) {
-          issues.push(error(`${label}: '${outsideId}' transitions into the region at '${target}'`, outsideId));
+          issues.push(handlerError(`${label}: '${outsideId}' transitions into the region at '${target}'`, outsideId));
         }
       }
     }
 
     for (const id of converging) {
       issues.push(
-        warning(
+        handlerWarning(
           `${label}: '${id}' is reached by more than one path inside the region, which cannot be written as rexrap`,
           id,
         ),

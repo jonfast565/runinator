@@ -196,6 +196,16 @@
     @apply text-xs text-fg-muted;
   }
 
+  /* Keep controls and status visible; omit instructional/promotional supporting copy. */
+  .hint:not(.error),
+  .reference-chips-hint,
+  .node-pools-hint,
+  .log-hint,
+  .flat-steps-hint,
+  .transitions-hint {
+    display: none;
+  }
+
   .error {
     @apply text-danger-fg;
   }

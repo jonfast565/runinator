@@ -56,7 +56,7 @@
           >
             <button class="btn btn-primary" @click="workflows.addWorkflow">
               <Icon name="plus" />
-              <span>Create your first workflow</span>
+              <span>New workflow</span>
             </button>
           </EmptyState>
           <EmptyState

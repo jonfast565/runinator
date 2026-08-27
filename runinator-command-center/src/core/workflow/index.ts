@@ -250,6 +250,7 @@ export function buildGraphEdgeModels(
   const nodes = recordArray(definition.nodes);
   const nodeIds = new Set(nodes.map((node: JsonRecord) => String(node.id)));
   const issuesByEdge = validationIssuesByEdge(validateWorkflowIssues(definition));
+  const interruptRegions = interruptRegionOrigins(workflow);
   const edges: GraphEdgeModel[] = [];
 
   const edgeData = (
@@ -326,6 +327,21 @@ export function buildGraphEdgeModels(
 
   const separated = separateParallelEdges(edges);
 
+  // An edge reads as part of a handler only when it stays entirely inside one declared region.
+  // Broken cross-region connections deliberately keep their normal appearance so their diagnostic
+  // remains conspicuous rather than looking like a supported handler route.
+  for (const edge of separated) {
+    const sourceRegion = interruptRegions.get(edge.source);
+    const targetRegion = interruptRegions.get(edge.target);
+
+    if (!sourceRegion || sourceRegion.handler !== targetRegion?.handler) {
+      continue;
+    }
+
+    edge.data = { ...edge.data, interruptRegion: sourceRegion };
+    edge.class = `edge-interrupt-region${sourceRegion.enabled ? "" : " edge-interrupt-disabled"}`;
+  }
+
   // freeze the animation on edges whose target has already completed; leave the
   // rest (incomplete or not-yet-reached) animating to show the live flow. when the
   // walked trail is known, only edges the run actually took animate.
@@ -336,7 +352,7 @@ export function buildGraphEdgeModels(
 
       // the edge feeding a node that is actively running gets a stronger "in play" treatment.
       if (edge.animated && activeNodeIds?.has(edge.target)) {
-        edge.class = "edge-in-play";
+        edge.class = `${edge.class ? `${edge.class} ` : ""}edge-in-play`;
       }
     }
   }
