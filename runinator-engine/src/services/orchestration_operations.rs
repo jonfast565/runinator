@@ -189,9 +189,39 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                     None,
                 )
                 .await?;
-            self.store
-                .delete_orchestration_pending_intent(binding.id, pending.intent)
+            let now = Utc::now();
+            let updated = self
+                .store
+                .consume_orchestration_pending_intent(
+                    binding.id,
+                    pending.intent,
+                    pending.priority,
+                    owner.to_string(),
+                    OrchestrationBindingUpdate {
+                        expected_version: binding.version,
+                        status: binding.status,
+                        current_phase: binding.current_phase.clone(),
+                        current_attempt: binding.current_attempt,
+                        current_epoch: binding.current_epoch,
+                        restart_member: binding.restart_member.clone(),
+                        resume_existing_epoch: binding.resume_existing_epoch,
+                        subject_revision: binding.subject_revision.clone(),
+                        resources: binding.resources.clone(),
+                        budgets: binding.budgets.clone(),
+                        last_reduced_sequence: binding.last_reduced_sequence,
+                        finished_at: binding.finished_at,
+                    },
+                    now,
+                )
                 .await?;
+            binding = updated.ok_or_else(|| {
+                Box::new(std::io::Error::other(
+                    "coalesced orchestration intent CAS lost",
+                )) as SendableError
+            })?;
+            // Pending intents are sorted by descending policy priority. The atomic consume above
+            // removes every lower-priority row, so none from this stale in-memory page may run.
+            break;
         }
         Ok(binding)
     }

@@ -222,6 +222,44 @@ where
         self.fetch_orchestration_binding(binding_id).await
     }
 
+    async fn consume_orchestration_pending_intent(
+        &self,
+        binding_id: Uuid,
+        intent: String,
+        priority: i32,
+        owner: String,
+        update: OrchestrationBindingUpdate,
+        now: DateTime<Utc>,
+    ) -> Result<Option<OrchestrationBinding>, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let changed = sqlx::query(&self.render(
+            "UPDATE orchestration_bindings SET status = ?, current_phase = ?, current_attempt = ?, current_epoch = ?, restart_member = ?, resume_existing_epoch = ?, subject_revision = ?, resources = ?, budgets = ?, last_reduced_sequence = ?, version = version + 1, updated_at = ?, finished_at = ? WHERE id = ? AND version = ? AND reducer_lease_owner = ? AND reducer_leased_until >= ?"
+        )).bind(update.status.as_str()).bind(update.current_phase).bind(update.current_attempt)
+            .bind(update.current_epoch).bind(update.restart_member).bind(update.resume_existing_epoch)
+            .bind(update.subject_revision).bind(update.resources.to_string())
+            .bind(serde_json::to_string(&update.budgets)?).bind(update.last_reduced_sequence)
+            .bind(now.timestamp()).bind(update.finished_at.map(|value| value.timestamp())).bind(binding_id)
+            .bind(update.expected_version).bind(owner).bind(now.timestamp()).execute(&mut *tx).await?;
+        if changed.affected() == 0 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+        let deleted = sqlx::query(&self.render(
+            "DELETE FROM orchestration_pending_intents WHERE binding_id = ? AND (intent = ? OR priority < ?)",
+        ))
+        .bind(binding_id)
+        .bind(intent)
+        .bind(i64::from(priority))
+        .execute(&mut *tx)
+        .await?;
+        if deleted.affected() == 0 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+        tx.commit().await?;
+        self.fetch_orchestration_binding(binding_id).await
+    }
+
     async fn release_orchestration_binding_lease(
         &self,
         binding_id: Uuid,

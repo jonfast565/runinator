@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use runinator_models::{
-    orchestration::{BudgetExhaustion, BudgetPolicy},
+    orchestration::{BudgetExhaustion, BudgetPolicy, OrchestrationStatus},
     pipelines::{PipelineMemberAttempt, PipelineMemberAttemptStatus},
     value::Value,
     workflows::WorkflowStatus,
@@ -10,9 +10,33 @@ use runinator_models::{
 use uuid::Uuid;
 
 use super::{
-    FailureBudgetDecision, bucket_to_interval, consume_failure_budget, select_epoch_phase_attempt,
-    workspace_affinity_matches,
+    FailureBudgetDecision, OrchestrationCommandFence, bucket_to_interval, consume_failure_budget,
+    orchestration_command_fence, select_epoch_phase_attempt, workspace_affinity_matches,
 };
+
+#[test]
+fn orchestration_commands_are_fenced_by_epoch_and_binding_status() {
+    assert_eq!(
+        orchestration_command_fence(1, OrchestrationStatus::Running, 2, "start_epoch"),
+        OrchestrationCommandFence::Retry
+    );
+    assert!(matches!(
+        orchestration_command_fence(2, OrchestrationStatus::Running, 1, "start_epoch"),
+        OrchestrationCommandFence::Stale(_)
+    ));
+    assert_eq!(
+        orchestration_command_fence(2, OrchestrationStatus::Running, 1, "cancel_epoch"),
+        OrchestrationCommandFence::Execute
+    );
+    assert!(matches!(
+        orchestration_command_fence(2, OrchestrationStatus::Suspended, 1, "signal_epoch"),
+        OrchestrationCommandFence::Stale(_)
+    ));
+    assert_eq!(
+        orchestration_command_fence(2, OrchestrationStatus::Suspended, 2, "pause_epoch"),
+        OrchestrationCommandFence::Execute
+    );
+}
 
 fn pipeline_attempt(
     member: &str,

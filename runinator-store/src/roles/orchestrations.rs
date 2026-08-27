@@ -137,6 +137,18 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<Option<OrchestrationBinding>, SendableError>> + Send;
 
+    /// Atomically apply a leased binding CAS and remove the coalesced intent that produced it.
+    /// If the CAS loses, the pending intent remains available for the winning reducer to consume.
+    fn consume_orchestration_pending_intent(
+        &self,
+        binding_id: Uuid,
+        intent: String,
+        priority: i32,
+        owner: String,
+        update: OrchestrationBindingUpdate,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<OrchestrationBinding>, SendableError>> + Send;
+
     fn release_orchestration_binding_lease(
         &self,
         binding_id: Uuid,

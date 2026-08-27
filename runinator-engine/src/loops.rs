@@ -172,6 +172,24 @@ async fn execute_orchestration_command<
                 "orchestration command binding disappeared",
             )) as runinator_models::errors::SendableError
         })?;
+    match orchestration_command_fence(
+        binding.current_epoch,
+        binding.status,
+        command.epoch,
+        &command.command_type,
+    ) {
+        OrchestrationCommandFence::Execute => {}
+        OrchestrationCommandFence::Retry => {
+            return Err(Box::new(std::io::Error::other(format!(
+                "orchestration binding has not committed epoch {} yet",
+                command.epoch
+            ))));
+        }
+        OrchestrationCommandFence::Stale(reason) => {
+            return record_stale_orchestration_command(db.as_ref(), &binding, command, reason)
+                .await;
+        }
+    }
     let epoch = db
         .fetch_orchestration_epochs(binding.id)
         .await?
@@ -277,6 +295,74 @@ async fn execute_orchestration_command<
             format!("unknown orchestration command '{other}'"),
         ))),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrchestrationCommandFence {
+    Execute,
+    Retry,
+    Stale(&'static str),
+}
+
+fn orchestration_command_fence(
+    current_epoch: i64,
+    status: OrchestrationStatus,
+    command_epoch: i64,
+    command_type: &str,
+) -> OrchestrationCommandFence {
+    match command_type {
+        "start_epoch" if command_epoch > current_epoch => OrchestrationCommandFence::Retry,
+        "start_epoch"
+            if command_epoch < current_epoch || status != OrchestrationStatus::Running =>
+        {
+            OrchestrationCommandFence::Stale(
+                "start command no longer targets the current running epoch",
+            )
+        }
+        "pause_epoch"
+            if command_epoch != current_epoch || status != OrchestrationStatus::Suspended =>
+        {
+            OrchestrationCommandFence::Stale(
+                "pause command no longer targets the current suspended epoch",
+            )
+        }
+        "resume_epoch" | "signal_epoch"
+            if command_epoch != current_epoch || status != OrchestrationStatus::Running =>
+        {
+            OrchestrationCommandFence::Stale("command no longer targets the current running epoch")
+        }
+        _ => OrchestrationCommandFence::Execute,
+    }
+}
+
+async fn record_stale_orchestration_command<T: OrchestrationStore>(
+    db: &T,
+    binding: &runinator_models::orchestration::OrchestrationBinding,
+    command: &runinator_models::orchestration::OrchestrationCommand,
+    reason: &str,
+) -> Result<runinator_models::value::Value, runinator_models::errors::SendableError> {
+    let detail = runinator_models::json!({
+        "ignored": "stale_command",
+        "reason": reason,
+        "command_id": command.id,
+        "command_type": command.command_type,
+        "command_epoch": command.epoch,
+        "current_epoch": binding.current_epoch,
+        "binding_status": binding.status.as_str(),
+        "operation_key": command.operation_key,
+    });
+    db.append_orchestration_evidence(OrchestrationEvidence {
+        id: uuid::Uuid::now_v7(),
+        binding_id: binding.id,
+        epoch: Some(command.epoch),
+        kind: "stale_orchestration_command".into(),
+        subject_revision: binding.subject_revision.clone(),
+        payload: detail.clone(),
+        source_event_id: None,
+        created_at: chrono::Utc::now(),
+    })
+    .await?;
+    Ok(detail)
 }
 
 async fn prepare_epoch_workspaces<T: DefinitionStore + WorkspaceStore + ReplicaStore>(

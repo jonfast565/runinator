@@ -5,7 +5,8 @@ use runinator_models::{
     orchestration::{
         ControlEffect, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
         IngressAdmission, IngressAdmissionStatus, IngressTarget, IngressTargetKind, IntentPolicy,
-        NewOrchestrationBinding, OrchestrationPolicy, OrchestrationStatus,
+        NewOrchestrationBinding, OrchestrationPendingIntent, OrchestrationPolicy,
+        OrchestrationStatus,
     },
     pipelines::{Pipeline, PipelineGraph, PipelineMember, PipelineMemberFailureMode},
 };
@@ -218,6 +219,90 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             .await
             .unwrap()
             .is_none()
+    );
+
+    db.upsert_orchestration_pending_intent(OrchestrationPendingIntent {
+        id: Uuid::now_v7(),
+        binding_id,
+        intent: "pause".into(),
+        priority: 60,
+        source_event_ids: vec![ingress_event.entry.id],
+        latest_payload: runinator_models::json!({ "reason": "test" }),
+        wake_at: now,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    db.upsert_orchestration_pending_intent(OrchestrationPendingIntent {
+        id: Uuid::now_v7(),
+        binding_id,
+        intent: "audit".into(),
+        priority: 10,
+        source_event_ids: vec![ingress_event.entry.id],
+        latest_payload: Value::Null,
+        wake_at: now,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    let pending_update = OrchestrationBindingUpdate {
+        expected_version: 0,
+        status: OrchestrationStatus::Suspended,
+        current_phase: Some("member".into()),
+        current_attempt: 1,
+        current_epoch: 1,
+        restart_member: Some("member".into()),
+        resume_existing_epoch: false,
+        subject_revision: Some("r1".into()),
+        resources: runinator_models::json!({ "candidate": "r1" }),
+        budgets: BTreeMap::new(),
+        last_reduced_sequence: ingress_event.entry.sequence,
+        finished_at: None,
+    };
+    assert!(
+        db.consume_orchestration_pending_intent(
+            binding_id,
+            "pause".into(),
+            60,
+            "reducer-a".into(),
+            pending_update.clone(),
+            now,
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        db.fetch_orchestration_pending_intents(binding_id)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let consumed = db
+        .consume_orchestration_pending_intent(
+            binding_id,
+            "pause".into(),
+            60,
+            "reducer-a".into(),
+            OrchestrationBindingUpdate {
+                expected_version: 1,
+                ..pending_update
+            },
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(consumed.version, 2);
+    assert_eq!(consumed.status, OrchestrationStatus::Suspended);
+    assert!(
+        db.fetch_orchestration_pending_intents(binding_id)
+            .await
+            .unwrap()
+            .is_empty()
     );
 
     let epoch = db
