@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::{sync::Arc, time::Duration};
 
 use runinator_broker_core::{Broker, WakeMessage};
@@ -6,8 +7,11 @@ use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::{
     interrupt::InterruptSource,
-    orchestration::{IngressPromotion, IngressTargetKind, OrchestrationStatus},
-    pipelines::PipelineExecutionContext,
+    orchestration::{
+        BudgetExhaustion, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
+        IngressPromotion, IngressTargetKind, OrchestrationEvidence, OrchestrationStatus,
+    },
+    pipelines::{PipelineExecutionContext, PipelineMemberAttempt, PipelineMemberAttemptStatus},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
     value::Value,
     workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
@@ -16,8 +20,9 @@ use runinator_models::{
 use runinator_store::{
     RuntimeStore,
     roles::{
-        DefinitionStore, IngressStore, NotificationStore, OrchestrationBindingUpdate,
-        OrchestrationStore, OrgStore, ReplicaStore, ScheduleStore, WorkflowVmStore, WorkspaceStore,
+        DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCommand,
+        NewOrchestrationEpoch, NotificationStore, OrchestrationBindingUpdate, OrchestrationStore,
+        OrgStore, ReplicaStore, ScheduleStore, WorkflowVmStore, WorkspaceStore,
     },
 };
 
@@ -25,7 +30,13 @@ use runinator_store::{
 /// interpretation has already happened at the adapter edge; this loop only sees named intents and
 /// the engine's closed control-effect vocabulary.
 pub async fn run_correlated_orchestration_reducer<
-    T: RuntimeStore + WorkflowVmStore + DefinitionStore + IngressStore + OrchestrationStore,
+    T: RuntimeStore
+        + WorkflowVmStore
+        + DefinitionStore
+        + IngressStore
+        + OrchestrationStore
+        + WorkspaceStore
+        + ReplicaStore,
 >(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
@@ -88,7 +99,7 @@ pub async fn run_correlated_orchestration_reducer<
             Ok(commands) => {
                 for command in commands {
                     let outcome =
-                        execute_orchestration_command(db.as_ref(), broker.as_ref(), &command).await;
+                        execute_orchestration_command(db.clone(), broker.as_ref(), &command).await;
                     let (succeeded, result) = match outcome {
                         Ok(result) => (true, result),
                         Err(err) => {
@@ -121,9 +132,15 @@ pub async fn run_correlated_orchestration_reducer<
 }
 
 async fn execute_orchestration_command<
-    T: RuntimeStore + WorkflowVmStore + DefinitionStore + IngressStore + OrchestrationStore,
+    T: RuntimeStore
+        + WorkflowVmStore
+        + DefinitionStore
+        + IngressStore
+        + OrchestrationStore
+        + WorkspaceStore
+        + ReplicaStore,
 >(
-    db: &T,
+    db: Arc<T>,
     broker: &dyn Broker,
     command: &runinator_models::orchestration::OrchestrationCommand,
 ) -> Result<runinator_models::value::Value, runinator_models::errors::SendableError> {
@@ -157,8 +174,10 @@ async fn execute_orchestration_command<
                 .get("parameters")
                 .cloned()
                 .unwrap_or_default();
+            let parameters =
+                prepare_epoch_workspaces(db.clone(), &binding, &epoch, parameters).await?;
             let run = repository::create_manual_pipeline_run(
-                db,
+                db.as_ref(),
                 binding.pipeline_id,
                 parameters,
                 Some(binding.pipeline_revision),
@@ -192,19 +211,20 @@ async fn execute_orchestration_command<
         }
         "cancel_epoch" => {
             if let Some(run_id) = epoch.pipeline_run_id {
-                repository::cancel_pipeline_run(db, broker, run_id).await?;
+                repository::cancel_pipeline_run(db.as_ref(), broker, run_id).await?;
             }
+            abandon_canceled_epoch_workspaces(db.as_ref(), &binding, command.epoch).await?;
             Ok(runinator_models::json!({ "canceled": epoch.pipeline_run_id }))
         }
         "pause_epoch" => {
             if let Some(run_id) = epoch.pipeline_run_id {
-                repository::pause_pipeline_run(db, run_id).await?;
+                repository::pause_pipeline_run(db.as_ref(), run_id).await?;
             }
             Ok(runinator_models::json!({ "paused": epoch.pipeline_run_id }))
         }
         "resume_epoch" => {
             if let Some(run_id) = epoch.pipeline_run_id {
-                repository::resume_pipeline_run(db, run_id).await?;
+                repository::resume_pipeline_run(db.as_ref(), run_id).await?;
             }
             Ok(runinator_models::json!({ "resumed": epoch.pipeline_run_id }))
         }
@@ -220,7 +240,7 @@ async fn execute_orchestration_command<
                 .min_by_key(|run| run.created_at);
             if let Some(member) = member {
                 repository::request_run_interrupt(
-                    db,
+                    db.as_ref(),
                     member.id,
                     InterruptSource::External,
                     command.payload.clone(),
@@ -239,7 +259,155 @@ async fn execute_orchestration_command<
     }
 }
 
-async fn settle_current_orchestration_epoch<T: RuntimeStore + IngressStore + OrchestrationStore>(
+async fn prepare_epoch_workspaces<T: DefinitionStore + WorkspaceStore + ReplicaStore>(
+    db: Arc<T>,
+    binding: &runinator_models::orchestration::OrchestrationBinding,
+    epoch: &runinator_models::orchestration::OrchestrationEpoch,
+    mut parameters: Value,
+) -> Result<Value, runinator_models::errors::SendableError> {
+    let revision = db
+        .fetch_pipeline_revision(binding.pipeline_id, binding.pipeline_revision)
+        .await?
+        .ok_or_else(|| {
+            Box::new(std::io::Error::other(
+                "orchestration pipeline revision disappeared",
+            )) as runinator_models::errors::SendableError
+        })?;
+    let members = if let Some(start_member) = epoch.start_member.as_deref() {
+        vec![start_member.to_string()]
+    } else {
+        let downstream = revision
+            .graph
+            .links
+            .iter()
+            .filter(|link| link.enabled)
+            .map(|link| link.to.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        revision
+            .graph
+            .members
+            .iter()
+            .filter(|member| !downstream.contains(member.key.as_str()))
+            .map(|member| member.key.clone())
+            .collect()
+    };
+    let operations = WorkspaceOperations::new(db);
+    let mut workspaces = runinator_models::value::Map::new();
+    for member in members {
+        let Some(policy) = binding
+            .policy
+            .phases
+            .get(&member)
+            .and_then(|phase| phase.workspace.as_ref())
+        else {
+            continue;
+        };
+        let required_labels = workspace_labels(&policy.requirements)?;
+        let mut attempt = if policy.reuse { 1 } else { epoch.epoch };
+        let workspace = loop {
+            let workspace = operations
+                .allocate(crate::services::WorkspaceAllocationRequest {
+                    admission_id: binding.admission_id,
+                    generation: binding.generation,
+                    scope: policy.scope.clone(),
+                    attempt,
+                    required_labels: required_labels.clone(),
+                    lease_seconds: i64::try_from(policy.lease_seconds).ok(),
+                })
+                .await?;
+            if !workspace.status.is_terminal() {
+                break workspace;
+            }
+            match policy.recovery {
+                runinator_models::orchestration::WorkspaceRecovery::Replace => {
+                    attempt = attempt.saturating_add(1);
+                }
+                runinator_models::orchestration::WorkspaceRecovery::Wait => {
+                    return Err(Box::new(std::io::Error::other(format!(
+                        "workspace '{}' is waiting for recovery",
+                        policy.scope
+                    ))));
+                }
+                runinator_models::orchestration::WorkspaceRecovery::Fail => {
+                    return Err(Box::new(std::io::Error::other(format!(
+                        "workspace '{}' is unavailable",
+                        policy.scope
+                    ))));
+                }
+            }
+        };
+        let workspace =
+            if workspace.status == runinator_models::workspaces::WorkspaceStatus::Allocating {
+                operations
+                    .activate(workspace.id, workspace.version)
+                    .await?
+                    .unwrap_or(workspace)
+            } else {
+                workspace
+            };
+        workspaces.insert(
+            member,
+            Value::from(serde_json::to_value(workspace.affinity())?),
+        );
+    }
+    if workspaces.is_empty() {
+        return Ok(parameters);
+    }
+    let parameters_object = parameters.as_object_mut().ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workspace-enabled epoch parameters must be an object",
+        )) as runinator_models::errors::SendableError
+    })?;
+    let mut orchestration = match parameters_object.remove("orchestration") {
+        Some(Value::Object(values)) => values,
+        _ => runinator_models::value::Map::new(),
+    };
+    if workspaces.len() == 1 {
+        orchestration.insert(
+            "workspace_affinity".into(),
+            workspaces.values().next().cloned().unwrap_or_default(),
+        );
+    }
+    orchestration.insert("binding_id".into(), Value::String(binding.id.to_string()));
+    orchestration.insert("generation".into(), Value::from(binding.generation));
+    orchestration.insert("epoch".into(), Value::from(epoch.epoch));
+    orchestration.insert("workspaces".into(), Value::Object(workspaces));
+    parameters_object.insert("orchestration".into(), Value::Object(orchestration));
+    Ok(parameters)
+}
+
+fn workspace_labels(
+    requirements: &Value,
+) -> Result<BTreeMap<String, String>, runinator_models::errors::SendableError> {
+    let Some(values) = requirements.as_object() else {
+        if requirements.is_null() {
+            return Ok(BTreeMap::new());
+        }
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workspace requirements must be an object of worker labels",
+        )));
+    };
+    values
+        .iter()
+        .map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.clone(), value.to_string()))
+                .ok_or_else(|| {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("workspace label '{key}' must be a string"),
+                    )) as runinator_models::errors::SendableError
+                })
+        })
+        .collect()
+}
+
+async fn settle_current_orchestration_epoch<
+    T: RuntimeStore + IngressStore + OrchestrationStore + WorkspaceStore,
+>(
     db: &T,
     owner: &str,
     binding: &runinator_models::orchestration::OrchestrationBinding,
@@ -261,40 +429,340 @@ async fn settle_current_orchestration_epoch<T: RuntimeStore + IngressStore + Orc
     let Some(run) = db.fetch_pipeline_run(run_id).await? else {
         return Ok(());
     };
+    let attempts = db.fetch_pipeline_member_attempts(run_id).await?;
+    let phase_attempt = select_epoch_phase_attempt(&attempts, run.status);
     if !run.status.is_terminal() {
+        if let Some(attempt) = phase_attempt
+            && (binding.current_phase.as_deref() != Some(attempt.member_key.as_str())
+                || binding.current_attempt != attempt.attempt)
+        {
+            let now = chrono::Utc::now();
+            let update = OrchestrationBindingUpdate {
+                expected_version: binding.version,
+                status: binding.status,
+                current_phase: Some(attempt.member_key.clone()),
+                current_attempt: attempt.attempt,
+                current_epoch: binding.current_epoch,
+                restart_member: binding.restart_member.clone(),
+                resume_existing_epoch: binding.resume_existing_epoch,
+                subject_revision: binding.subject_revision.clone(),
+                resources: binding.resources.clone(),
+                budgets: binding.budgets.clone(),
+                last_reduced_sequence: binding.last_reduced_sequence,
+                finished_at: binding.finished_at,
+            };
+            let _ = db
+                .update_orchestration_binding(binding.id, owner.to_string(), update, now)
+                .await?;
+        }
         return Ok(());
     }
-    let now = chrono::Utc::now();
-    let status = if run.status == runinator_models::workflows::WorkflowStatus::Succeeded {
-        OrchestrationStatus::Completed
-    } else if binding.status == OrchestrationStatus::Suspended {
+    if binding.status == OrchestrationStatus::Suspended {
         return Ok(());
-    } else {
-        OrchestrationStatus::Failed
-    };
+    }
+
+    let now = chrono::Utc::now();
+    let mut status = OrchestrationStatus::Completed;
+    let mut current_phase = binding.current_phase.clone();
+    let mut current_attempt = binding.current_attempt;
+    let mut current_epoch = binding.current_epoch;
+    let mut restart_member = binding.restart_member.clone();
+    let mut subject_revision = binding.subject_revision.clone();
+    let mut resources = binding.resources.clone();
+    let mut budgets = binding.budgets.clone();
+    let mut mapped_evidence = None;
+    let mut retry_epoch = None;
+
+    if let Some(attempt) = phase_attempt {
+        current_phase = Some(attempt.member_key.clone());
+        current_attempt = attempt.attempt;
+        if let Some(phase) = binding.policy.phases.get(&attempt.member_key) {
+            if let Some(pointer) = phase.result.subject_revision.as_deref()
+                && let Some(revision) = attempt.result.pointer(pointer).and_then(Value::as_str)
+            {
+                subject_revision = Some(revision.to_string());
+            }
+            if let Some(pointer) = phase.result.resources.as_deref()
+                && let Some(mapped) = attempt.result.pointer(pointer)
+            {
+                resources = mapped.clone();
+            }
+            if let Some(pointer) = phase.result.evidence.as_deref()
+                && let Some(mapped) = attempt.result.pointer(pointer)
+            {
+                mapped_evidence = Some(mapped.clone());
+            }
+        }
+    }
+
+    if run.status != runinator_models::workflows::WorkflowStatus::Succeeded {
+        status = OrchestrationStatus::Failed;
+        if let Some(attempt) = phase_attempt
+            && let Some(phase) = binding.policy.phases.get(&attempt.member_key)
+            && let Some(pointer) = phase.result.failure_class.as_deref()
+            && let Some(failure_class) = attempt.result.pointer(pointer).and_then(Value::as_str)
+            && let Some(decision) =
+                consume_failure_budget(&binding.policy.budgets, &mut budgets, failure_class)
+        {
+            match decision {
+                FailureBudgetDecision::Retry => {
+                    current_epoch += 1;
+                    status = OrchestrationStatus::Running;
+                    restart_member = Some(attempt.member_key.clone());
+                    retry_epoch = Some((
+                        current_epoch,
+                        attempt.member_key.clone(),
+                        epoch.parameters.clone(),
+                        failure_class.to_string(),
+                    ));
+                }
+                FailureBudgetDecision::Fail => {}
+                FailureBudgetDecision::Pause => {
+                    status = OrchestrationStatus::Suspended;
+                    restart_member = Some(attempt.member_key.clone());
+                }
+                FailureBudgetDecision::Terminate => status = OrchestrationStatus::Terminated,
+            }
+        }
+    }
+
+    if let Some((next_epoch, member, parameters, failure_class)) = &retry_epoch {
+        db.create_orchestration_epoch(
+            NewOrchestrationEpoch {
+                id: uuid::Uuid::now_v7(),
+                binding_id: binding.id,
+                epoch: *next_epoch,
+                start_member: Some(member.clone()),
+                parameters: parameters.clone(),
+                reason: format!("failure budget '{failure_class}' retry"),
+            },
+            now,
+        )
+        .await?;
+        db.enqueue_orchestration_command(
+            NewOrchestrationCommand {
+                id: uuid::Uuid::now_v7(),
+                binding_id: binding.id,
+                epoch: *next_epoch,
+                command_type: "start_epoch".into(),
+                operation_key: format!("epoch:{next_epoch}:start"),
+                payload: runinator_models::json!({
+                    "parameters": parameters,
+                    "start_member": member,
+                    "failure_class": failure_class,
+                }),
+            },
+            now,
+        )
+        .await?;
+    }
+
+    let finished_at = status.is_terminal().then_some(now);
     let update = OrchestrationBindingUpdate {
         expected_version: binding.version,
         status,
-        current_phase: binding.current_phase.clone(),
-        current_attempt: binding.current_attempt,
-        current_epoch: binding.current_epoch,
-        restart_member: binding.restart_member.clone(),
-        resume_existing_epoch: binding.resume_existing_epoch,
-        subject_revision: binding.subject_revision.clone(),
-        resources: binding.resources.clone(),
-        budgets: binding.budgets.clone(),
+        current_phase,
+        current_attempt,
+        current_epoch,
+        restart_member,
+        resume_existing_epoch: false,
+        subject_revision: subject_revision.clone(),
+        resources,
+        budgets,
         last_reduced_sequence: binding.last_reduced_sequence,
-        finished_at: Some(now),
+        finished_at,
     };
-    if db
+    if let Some(updated) = db
         .update_orchestration_binding(binding.id, owner.to_string(), update, now)
         .await?
-        .is_some()
     {
-        db.settle_ingress_admission(binding.admission_id, binding.generation, now)
+        settle_epoch_workspaces(db, &updated, binding.current_epoch).await?;
+        if let Some(payload) = mapped_evidence {
+            db.append_orchestration_evidence(OrchestrationEvidence {
+                id: uuid::Uuid::now_v7(),
+                binding_id: binding.id,
+                epoch: Some(binding.current_epoch),
+                kind: updated
+                    .current_phase
+                    .as_deref()
+                    .map(|phase| format!("phase_result:{phase}"))
+                    .unwrap_or_else(|| "phase_result".into()),
+                subject_revision,
+                payload,
+                source_event_id: None,
+                created_at: now,
+            })
+            .await?;
+        }
+        if updated.status.is_terminal() {
+            db.settle_ingress_admission(binding.admission_id, binding.generation, now)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn abandon_canceled_epoch_workspaces<T: WorkspaceStore>(
+    db: &T,
+    binding: &runinator_models::orchestration::OrchestrationBinding,
+    canceled_epoch: i64,
+) -> Result<(), runinator_models::errors::SendableError> {
+    let workspaces = db
+        .fetch_workspaces_for_admission(binding.admission_id, binding.generation)
+        .await?;
+    for workspace in workspaces
+        .into_iter()
+        .filter(|workspace| !workspace.status.is_terminal())
+    {
+        let reusable = binding.policy.phases.values().any(|phase| {
+            phase
+                .workspace
+                .as_ref()
+                .is_some_and(|policy| policy.scope == workspace.scope && policy.reuse)
+        });
+        if reusable && binding.status != OrchestrationStatus::Terminated {
+            continue;
+        }
+        let _ = db
+            .transition_workspace_cas(
+                workspace.id,
+                workspace.version,
+                workspace.status,
+                runinator_models::workspaces::WorkspaceStatus::Abandoned,
+                Some(runinator_models::json!({
+                    "reason": "execution epoch canceled",
+                    "epoch": canceled_epoch,
+                    "binding_status": binding.status.as_str(),
+                })),
+                chrono::Utc::now(),
+            )
             .await?;
     }
     Ok(())
+}
+
+async fn settle_epoch_workspaces<T: WorkspaceStore>(
+    db: &T,
+    binding: &runinator_models::orchestration::OrchestrationBinding,
+    settled_epoch: i64,
+) -> Result<(), runinator_models::errors::SendableError> {
+    let workspaces = db
+        .fetch_workspaces_for_admission(binding.admission_id, binding.generation)
+        .await?;
+    for workspace in workspaces
+        .into_iter()
+        .filter(|workspace| !workspace.status.is_terminal())
+    {
+        let reusable = binding.policy.phases.values().any(|phase| {
+            phase
+                .workspace
+                .as_ref()
+                .is_some_and(|policy| policy.scope == workspace.scope && policy.reuse)
+        });
+        if !binding.status.is_terminal() && reusable {
+            continue;
+        }
+        let now = chrono::Utc::now();
+        let evidence = runinator_models::json!({
+            "reason": if binding.status.is_terminal() { "binding settled" } else { "epoch replaced" },
+            "epoch": settled_epoch,
+            "binding_status": binding.status.as_str(),
+        });
+        if binding.status.is_terminal() {
+            if db
+                .transition_workspace_cas(
+                    workspace.id,
+                    workspace.version,
+                    workspace.status,
+                    runinator_models::workspaces::WorkspaceStatus::Finalizing,
+                    None,
+                    now,
+                )
+                .await?
+            {
+                let _ = db
+                    .transition_workspace_cas(
+                        workspace.id,
+                        workspace.version + 1,
+                        runinator_models::workspaces::WorkspaceStatus::Finalizing,
+                        runinator_models::workspaces::WorkspaceStatus::Released,
+                        Some(evidence),
+                        now,
+                    )
+                    .await?;
+            }
+        } else {
+            let _ = db
+                .transition_workspace_cas(
+                    workspace.id,
+                    workspace.version,
+                    workspace.status,
+                    runinator_models::workspaces::WorkspaceStatus::Abandoned,
+                    Some(evidence),
+                    now,
+                )
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+fn select_epoch_phase_attempt(
+    attempts: &[PipelineMemberAttempt],
+    run_status: runinator_models::workflows::WorkflowStatus,
+) -> Option<&PipelineMemberAttempt> {
+    let failed_epoch = run_status.is_terminal()
+        && run_status != runinator_models::workflows::WorkflowStatus::Succeeded;
+    let failures = || {
+        attempts.iter().filter(|attempt| {
+            matches!(
+                attempt.status,
+                PipelineMemberAttemptStatus::Failed | PipelineMemberAttemptStatus::TimedOut
+            )
+        })
+    };
+    let by_recency = |attempt: &&PipelineMemberAttempt| {
+        (
+            attempt
+                .finished_at
+                .or(attempt.started_at)
+                .unwrap_or(attempt.created_at),
+            attempt.attempt,
+        )
+    };
+    if failed_epoch && let Some(attempt) = failures().max_by_key(by_recency) {
+        return Some(attempt);
+    }
+    attempts
+        .iter()
+        .filter(|attempt| attempt.status != PipelineMemberAttemptStatus::Skipped)
+        .max_by_key(by_recency)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureBudgetDecision {
+    Retry,
+    Fail,
+    Pause,
+    Terminate,
+}
+
+fn consume_failure_budget(
+    policies: &BTreeMap<String, runinator_models::orchestration::BudgetPolicy>,
+    counters: &mut BTreeMap<String, u32>,
+    failure_class: &str,
+) -> Option<FailureBudgetDecision> {
+    let policy = policies.get(failure_class)?;
+    let used = counters.entry(failure_class.to_string()).or_default();
+    *used = used.saturating_add(1);
+    if *used < policy.attempts {
+        return Some(FailureBudgetDecision::Retry);
+    }
+    Some(match policy.exhausted {
+        BudgetExhaustion::Fail => FailureBudgetDecision::Fail,
+        BudgetExhaustion::Pause => FailureBudgetDecision::Pause,
+        BudgetExhaustion::Terminate => FailureBudgetDecision::Terminate,
+    })
 }
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -632,7 +1100,9 @@ pub async fn run_timer_interrupt_scheduler<T: WorkflowVmStore>(
 
 /// Drain the VM effect outbox. The command was frozen in the same transaction as the suspended
 /// continuation, so this publisher never re-reads graph or node-run state to rebuild a delivery.
-pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore + WorkspaceStore>(
+pub async fn run_workflow_effect_dispatcher<
+    T: WorkflowVmStore + WorkspaceStore + OrchestrationStore + DefinitionStore,
+>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance: String,
@@ -701,6 +1171,25 @@ pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore + WorkspaceStore>
                             continue;
                         }
                     }
+                    let operation = match prepare_external_operation(
+                        db.as_ref(),
+                        &dispatch.command,
+                        now,
+                    )
+                    .await
+                    {
+                        Ok(operation) => operation,
+                        Err(error) => {
+                            warn!(error = %error, dispatch_id = %dispatch.id, "failed to prepare binding-scoped external operation");
+                            let _ = db
+                                .mark_workflow_effect_dispatch_failed(
+                                    dispatch.id,
+                                    error.to_string(),
+                                )
+                                .await;
+                            continue;
+                        }
+                    };
                     // kept for the deadline arming below, since publishing consumes the command.
                     let published_command = dispatch.command.clone();
                     match broker
@@ -712,6 +1201,23 @@ pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore + WorkspaceStore>
                         .await
                     {
                         Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
+                            if let Some(operation) = operation
+                                && let Err(error) = db
+                                    .update_external_operation(
+                                        operation.id,
+                                        ExternalOperationUpdate {
+                                            status: ExternalOperationStatus::Running,
+                                            attempt: i64::from(published_command.attempt),
+                                            ambiguous: false,
+                                            provenance: operation.provenance,
+                                            receipt: operation.receipt,
+                                        },
+                                        now,
+                                    )
+                                    .await
+                            {
+                                warn!(error = %error, operation_id = %operation.id, "failed to mark external operation running");
+                            }
                             // armed after publication, never before: the backstop must not be able
                             // to stop the work it protects.
                             crate::effect_deadline::arm_with_grace(
@@ -740,6 +1246,78 @@ pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore + WorkspaceStore>
             Err(err) => warn!(error = %err, "failed to claim VM effect dispatches"),
         }
         tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.effect_dispatch_poll_interval_ms)) => {} }
+    }
+}
+
+async fn prepare_external_operation<T: OrchestrationStore + DefinitionStore>(
+    db: &T,
+    command: &runinator_comm::EffectCommand,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<ExternalOperation>, runinator_models::errors::SendableError> {
+    let WorkflowEffectRequest::Action {
+        provider,
+        function,
+        idempotency_key,
+        ..
+    } = &command.request
+    else {
+        return Ok(None);
+    };
+    let Some(binding) = db
+        .fetch_current_orchestration_binding_for_workflow_run(command.workflow_run_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let semantics = match db
+        .fetch_catalog_item(crate::repository::provider_catalog_uri(provider))
+        .await?
+    {
+        Some(item) => crate::repository::provider_metadata_from_item(item)
+            .ok()
+            .and_then(|metadata| {
+                metadata
+                    .actions
+                    .into_iter()
+                    .find(|action| action.function_name == *function)
+                    .map(|action| action.delivery_semantics)
+            })
+            .unwrap_or(DeliverySemantics::AtLeastOnce),
+        None => DeliverySemantics::AtLeastOnce,
+    };
+    let provider_idempotency_key = idempotency_key.as_ref().map(operation_value_key);
+    let operation = ExternalOperation {
+        id: uuid::Uuid::now_v7(),
+        binding_id: binding.id,
+        epoch: binding.current_epoch,
+        workflow_run_id: Some(command.workflow_run_id),
+        effect_id: Some(command.effect_id),
+        operation_key: command.idempotency_key.clone(),
+        provider: provider.clone(),
+        action: function.clone(),
+        semantics,
+        attempt: i64::from(command.attempt),
+        status: ExternalOperationStatus::Pending,
+        ambiguous: false,
+        provenance: runinator_models::json!({
+            "binding_id": binding.id,
+            "generation": binding.generation,
+            "epoch": binding.current_epoch,
+            "workflow_run_id": command.workflow_run_id,
+            "effect_id": command.effect_id,
+            "provider_idempotency_key": provider_idempotency_key,
+        }),
+        receipt: runinator_models::value::Value::Null,
+        created_at: now,
+        updated_at: now,
+    };
+    db.create_external_operation(operation).await.map(Some)
+}
+
+fn operation_value_key(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        value => serde_json::to_string(value).unwrap_or_else(|_| value.to_string()),
     }
 }
 
@@ -773,6 +1351,7 @@ fn workspace_affinity_matches(
 ) -> bool {
     !workspace.status.is_terminal()
         && workspace.worker_instance_id == affinity.worker_instance_id
+        && workspace.local_key == affinity.local_key
         && workspace.attempt == affinity.attempt
         && workspace.version == affinity.version
 }

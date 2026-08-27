@@ -30,6 +30,12 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         attempt: i64,
     ) -> impl Future<Output = Result<Option<WorkspaceLease>, SendableError>> + Send;
 
+    fn fetch_workspaces_for_admission(
+        &self,
+        admission_id: Uuid,
+        generation: i64,
+    ) -> impl Future<Output = Result<Vec<WorkspaceLease>, SendableError>> + Send;
+
     /// Advance a workspace only while its current CAS version and state match.
     fn transition_workspace_cas(
         &self,

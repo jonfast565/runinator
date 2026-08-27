@@ -143,6 +143,10 @@
                     <Icon name="settings" />
                     <span>Defaults</span>
                   </button>
+                  <button class="btn" @click="openOrchestration">
+                    <Icon name="branch" />
+                    <span>Orchestration</span>
+                  </button>
                   <button class="btn" @click="openRename">
                     <Icon name="edit" />
                     <span>Settings</span>
@@ -334,6 +338,20 @@
         @save="submitDefaults"
       />
     </Modal>
+
+    <Modal
+      v-if="orchestrationModalOpen && selectedPipeline"
+      title="Pipeline orchestration"
+      width="min(1100px, 96vw)"
+      @close="orchestrationModalOpen = false"
+    >
+      <PipelineOrchestrationEditor
+        :pipeline="selectedPipeline"
+        :adapter-kinds="adapterKinds"
+        @cancel="orchestrationModalOpen = false"
+        @save="submitOrchestration"
+      />
+    </Modal>
   </section>
 </template>
 
@@ -350,8 +368,11 @@ import type {
   PipelineConcurrency,
   PipelineJoinMode,
   PipelineMemberFailureMode,
+  AdapterKindMetadata,
+  JsonRecord,
 } from "../../core/domain/models";
 import { pipelinePath } from "../../core/domain/models";
+import { fetchAdapterKinds } from "../../core/services/orchestrations";
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
 import SplitPane from "../components/shared/SplitPane.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -363,6 +384,7 @@ import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineDefaultsEditor from "../components/pipeline/PipelineDefaultsEditor.vue";
+import PipelineOrchestrationEditor from "../components/pipeline/PipelineOrchestrationEditor.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 
 const pipeline = usePipelineStore();
@@ -485,6 +507,8 @@ const validPipelineIdentity = computed(() =>
     .every((segment) => identifier.test(segment)),
 );
 const defaultsModalOpen = ref(false);
+const orchestrationModalOpen = ref(false);
+const adapterKinds = ref<AdapterKindMetadata[]>([]);
 const starting = ref(false);
 
 function choosePipeline(item: Pipeline) {
@@ -593,10 +617,26 @@ function openDefaults() {
   defaultsModalOpen.value = true;
 }
 
+async function openOrchestration() {
+  try {
+    adapterKinds.value = await fetchAdapterKinds();
+  } catch (error) {
+    adapterKinds.value = [];
+    app.setError(error instanceof Error ? error.message : String(error));
+  }
+
+  orchestrationModalOpen.value = true;
+}
+
 async function submitDefaults(defaults: PipelineDefaults, concurrency: PipelineConcurrency) {
   await pipeline.savePipelineDefaults(defaults);
   await pipeline.savePipelineConcurrency(concurrency);
   defaultsModalOpen.value = false;
+}
+
+async function submitOrchestration(metadata: JsonRecord) {
+  await pipeline.savePipelineMetadata(metadata);
+  orchestrationModalOpen.value = false;
 }
 
 async function confirmDelete() {

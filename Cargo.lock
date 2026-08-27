@@ -8674,8 +8674,11 @@ name = "runinator-ws-authoring"
 version = "0.2.368"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "log",
+ "reqwest",
+ "runinator-adapter-contract",
  "runinator-blob-core",
  "runinator-broker-core",
  "runinator-engine",

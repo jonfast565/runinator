@@ -1,12 +1,80 @@
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use runinator_models::{
+    orchestration::{BudgetExhaustion, BudgetPolicy},
+    pipelines::{PipelineMemberAttempt, PipelineMemberAttemptStatus},
     value::Value,
+    workflows::WorkflowStatus,
     workspaces::{WorkspaceAffinity, WorkspaceLease, WorkspaceStatus},
 };
 use uuid::Uuid;
 
-use super::{bucket_to_interval, workspace_affinity_matches};
+use super::{
+    FailureBudgetDecision, bucket_to_interval, consume_failure_budget, select_epoch_phase_attempt,
+    workspace_affinity_matches,
+};
+
+fn pipeline_attempt(
+    member: &str,
+    status: PipelineMemberAttemptStatus,
+    offset_seconds: i64,
+) -> PipelineMemberAttempt {
+    let created_at = chrono::DateTime::from_timestamp(1_700_000_100 + offset_seconds, 0).unwrap();
+    PipelineMemberAttempt {
+        id: Uuid::now_v7(),
+        pipeline_run_id: Uuid::now_v7(),
+        member_key: member.into(),
+        workflow_id: Uuid::now_v7(),
+        attempt: 1,
+        workflow_run_id: None,
+        status,
+        parameters: Value::Null,
+        result: Value::Null,
+        message: None,
+        created_at,
+        started_at: Some(created_at),
+        finished_at: status.is_terminal().then_some(created_at),
+    }
+}
+
+#[test]
+fn failed_epoch_maps_the_latest_failure_not_a_later_cancellation() {
+    let attempts = vec![
+        pipeline_attempt("implementation", PipelineMemberAttemptStatus::Failed, 1),
+        pipeline_attempt("cleanup", PipelineMemberAttemptStatus::Canceled, 2),
+    ];
+    let selected = select_epoch_phase_attempt(&attempts, WorkflowStatus::Failed).unwrap();
+    assert_eq!(selected.member_key, "implementation");
+}
+
+#[test]
+fn named_budget_retries_until_its_exhaustion_behavior() {
+    let policies = BTreeMap::from([(
+        "transient".into(),
+        BudgetPolicy {
+            attempts: 3,
+            exhausted: BudgetExhaustion::Pause,
+        },
+    )]);
+    let mut counters = BTreeMap::new();
+    assert_eq!(
+        consume_failure_budget(&policies, &mut counters, "transient"),
+        Some(FailureBudgetDecision::Retry)
+    );
+    assert_eq!(
+        consume_failure_budget(&policies, &mut counters, "transient"),
+        Some(FailureBudgetDecision::Retry)
+    );
+    assert_eq!(
+        consume_failure_budget(&policies, &mut counters, "transient"),
+        Some(FailureBudgetDecision::Pause)
+    );
+    assert_eq!(counters["transient"], 3);
+    assert_eq!(
+        consume_failure_budget(&policies, &mut counters, "unknown"),
+        None
+    );
+}
 
 // two timestamps in the same 300s window must floor to the identical key, so N-up samplers that read
 // slightly different wall clocks still converge to one (org, backend, kind, sampled_at) row.
@@ -69,6 +137,7 @@ fn workspace_fence_requires_current_version_attempt_and_instance() {
     let current = WorkspaceAffinity {
         workspace_id,
         worker_instance_id: "worker-a".into(),
+        local_key: "admissions/example/primary/3-workspace".into(),
         attempt: 3,
         version: 4,
     };

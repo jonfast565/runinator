@@ -458,6 +458,10 @@ pub struct OrchestrationBinding {
     pub pipeline_id: Uuid,
     pub pipeline_revision: i64,
     pub pipeline_digest: String,
+    #[serde(default)]
+    pub adapter_id: Option<Uuid>,
+    #[serde(default)]
+    pub adapter_revision: Option<i64>,
     pub policy: OrchestrationPolicy,
     pub status: OrchestrationStatus,
     #[serde(default)]
@@ -497,6 +501,8 @@ pub struct NewOrchestrationBinding {
     pub pipeline_id: Uuid,
     pub pipeline_revision: i64,
     pub pipeline_digest: String,
+    pub adapter_id: Option<Uuid>,
+    pub adapter_revision: Option<i64>,
     pub policy: OrchestrationPolicy,
 }
 
@@ -628,6 +634,12 @@ pub enum ExternalOperationStatus {
 pub struct ExternalOperation {
     pub id: Uuid,
     pub binding_id: Uuid,
+    /// Immutable execution coordinates used to reject stale receipts and operator retries.
+    pub epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_run_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_id: Option<Uuid>,
     pub operation_key: String,
     pub provider: String,
     pub action: String,

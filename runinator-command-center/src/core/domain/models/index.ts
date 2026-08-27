@@ -113,6 +113,19 @@ export { defaultPipelineDefaults, pipelinePath } from "./pipeline/pipeline";
 export type { PipelineTrigger } from "./pipeline/pipeline-trigger";
 export type { PipelineRun } from "./pipeline/pipeline-run";
 export type {
+  AdapterConfigurationField,
+  AdapterDefinition,
+  AdapterKindMetadata,
+  AdapterRevision,
+  DeliverySemantics,
+  ExternalOperation,
+  ExternalOperationStatus,
+  IngressAction,
+  IngressLifecycle,
+  IngressPolicy,
+  IngressPredicate,
+  IngressPredicateOperator,
+  IngressRoute,
   IntentPolicy,
   OrchestrationBinding,
   OrchestrationCommand,
@@ -121,6 +134,10 @@ export type {
   OrchestrationPolicy,
   OrchestrationReduction,
   OrchestrationStatus,
+  PhasePolicy,
+  ResultMapping,
+  WorkspacePolicy,
+  WorkspaceLease,
 } from "./orchestration/orchestration";
 export type { PipelineRunDetail, PipelineMemberAttempt, PipelineRunEdgeState } from "./pipeline/pipeline-run-detail";
 export { workflowEffectId, type WorkflowNodeRun } from "./workflow/node-run";

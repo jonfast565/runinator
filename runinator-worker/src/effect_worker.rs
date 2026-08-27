@@ -16,6 +16,7 @@ use runinator_models::{
     value::Value,
     workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
     workflows::{WorkflowAction, WorkflowObject},
+    workspaces::WorkspaceAffinity,
 };
 use runinator_plugin::{cancel::CancellationToken, plugin::Plugin, provider::ProviderEventSink};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -251,6 +252,7 @@ async fn process_provider_effect(
         input
     };
     let input = crate::file_inputs::materialize(&api_client, command.effect_id, input).await?;
+    let workspace_affinity = expose_workspace_path(workspace_affinity).await?;
     let configuration = WorkflowObject::from_value(input.clone()).map_err(|message| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -476,6 +478,79 @@ async fn process_provider_effect(
         .await
         .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
     Ok(())
+}
+
+async fn expose_workspace_path(
+    workspace_affinity: Option<Value>,
+) -> Result<Option<Value>, SendableError> {
+    let Some(value) = workspace_affinity else {
+        return Ok(None);
+    };
+    let affinity: WorkspaceAffinity = serde_json::from_value(value.into()).map_err(|error| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid workspace affinity: {error}"),
+        )) as SendableError
+    })?;
+    validate_workspace_key(&affinity.local_key)?;
+    let root = std::env::var_os("RUNINATOR_WORKSPACE_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            runinator_platform::app_data::app_data_path("workspaces")
+                .unwrap_or_else(|_| std::path::PathBuf::from(".runinator/workspaces"))
+        });
+    tokio::fs::create_dir_all(&root).await?;
+    let canonical_root = tokio::fs::canonicalize(&root).await?;
+    let workspace_path = canonical_root.join(&affinity.local_key);
+    tokio::fs::create_dir_all(&workspace_path).await?;
+    let workspace_path = tokio::fs::canonicalize(workspace_path).await?;
+    if !workspace_path.starts_with(&canonical_root) {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "workspace key resolves outside the configured workspace root",
+        )));
+    }
+    let mut exposed = serde_json::to_value(affinity)?;
+    exposed
+        .as_object_mut()
+        .expect("workspace affinity serializes as an object")
+        .insert(
+            "resolved_path".into(),
+            serde_json::Value::String(workspace_path.to_string_lossy().into_owned()),
+        );
+    Ok(Some(Value::from(exposed)))
+}
+
+fn validate_workspace_key(local_key: &str) -> Result<(), SendableError> {
+    let path = std::path::Path::new(local_key);
+    if local_key.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            !matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workspace local key must be a safe relative path",
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::validate_workspace_key;
+
+    #[test]
+    fn workspace_keys_cannot_escape_the_configured_root() {
+        assert!(validate_workspace_key("admissions/example/source/1-id").is_ok());
+        assert!(validate_workspace_key("../outside").is_err());
+        assert!(validate_workspace_key("/absolute").is_err());
+        assert!(validate_workspace_key("").is_err());
+    }
 }
 
 fn value_key(value: &Value) -> String {

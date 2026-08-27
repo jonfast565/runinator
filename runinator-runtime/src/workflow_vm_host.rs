@@ -358,6 +358,7 @@ mod locality_tests {
         let affinity = WorkspaceAffinity {
             workspace_id: Uuid::now_v7(),
             worker_instance_id: "desktop-a".into(),
+            local_key: "admissions/example/source/2-workspace".into(),
             attempt: 2,
             version: 4,
         };

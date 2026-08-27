@@ -664,6 +664,94 @@ export async function fetchOrchestrationCommands(orchestrationId: string) {
   });
 }
 
+export async function fetchOrchestrationWorkspaces(orchestrationId: string) {
+  return command<import("../domain/models").WorkspaceLease[]>("fetch_orchestration_workspaces", {
+    orchestrationId,
+  });
+}
+
+export async function fetchExternalOperations(orchestrationId: string) {
+  return command<import("../domain/models").ExternalOperation[]>("fetch_external_operations", {
+    orchestrationId,
+  });
+}
+
+export async function resolveExternalOperation(
+  orchestrationId: string,
+  operationId: string,
+  resolution: "succeeded" | "failed" | "retry",
+  reason: string,
+  receipt: unknown = null,
+) {
+  return command<import("../domain/models").ExternalOperation>("resolve_external_operation", {
+    orchestrationId,
+    operationId,
+    resolution,
+    reason,
+    receipt,
+  });
+}
+
+export async function fetchAdapterKinds() {
+  return command<import("../domain/models").AdapterKindMetadata[]>("fetch_adapter_kinds");
+}
+
+export async function fetchAdapters() {
+  return command<import("../domain/models").AdapterDefinition[]>("fetch_adapters");
+}
+
+export async function fetchAdapter(adapterId: string) {
+  return command<import("../domain/models").AdapterDefinition>("fetch_adapter", { adapterId });
+}
+
+export async function fetchAdapterRevisions(adapterId: string) {
+  return command<import("../domain/models").AdapterRevision[]>("fetch_adapter_revisions", { adapterId });
+}
+
+export interface AdapterApplyInput {
+  name: string;
+  kind: string;
+  kind_version: string;
+  configuration: unknown;
+  secret_bindings: Record<string, string>;
+  identity_configuration: unknown;
+  expected_revision?: number;
+}
+
+export async function applyAdapter(adapter: AdapterApplyInput, adapterId?: string) {
+  return command<import("../domain/models").AdapterDefinition>("apply_adapter", {
+    adapter,
+    adapterId,
+  });
+}
+
+export async function setAdapterEnabled(adapterId: string, enabled: boolean) {
+  return command<import("../domain/models").AdapterDefinition>("set_adapter_enabled", {
+    adapterId,
+    enabled,
+  });
+}
+
+export async function deleteAdapter(adapterId: string) {
+  return command("delete_adapter", { adapterId });
+}
+
+export async function testAdapter(
+  adapterId: string,
+  headers: Record<string, string>,
+  bodyBase64: string,
+) {
+  return command<unknown>("test_adapter", { adapterId, headers, bodyBase64 });
+}
+
+export async function fetchAdapterHealth() {
+  return command<unknown>("fetch_adapter_health");
+}
+
+export async function reloadAdapterHost() {
+  return command<unknown>("reload_adapter_host");
+}
+
 export async function sendOrchestrationIntent(
   orchestrationId: string,
   intent: string,
@@ -676,6 +764,18 @@ export async function sendOrchestrationIntent(
     intent,
     reason,
     payload,
+    idempotencyKey,
+  });
+}
+
+export async function requeueOrchestration(
+  orchestrationId: string,
+  reason: string,
+  idempotencyKey: string = crypto.randomUUID(),
+) {
+  return command<import("../domain/models").OrchestrationBinding>("requeue_orchestration", {
+    orchestrationId,
+    reason,
     idempotencyKey,
   });
 }

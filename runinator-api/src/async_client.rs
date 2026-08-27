@@ -41,8 +41,9 @@ use runinator_models::{
         ARTIFACT_MEDIA_TYPE,
     },
     orchestration::{
-        IdempotencyClaim, IdempotencyClaimRequest, IdempotencyCompleteRequest,
-        IdempotencyReleaseRequest, OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
+        AdapterDefinition, AdapterKindMetadata, AdapterRevision, IdempotencyClaim,
+        IdempotencyClaimRequest, IdempotencyCompleteRequest, IdempotencyReleaseRequest,
+        OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
         OrchestrationEventReduction, OrchestrationEvidence, ACTION_IDEMPOTENCY_SCOPE,
     },
     providers::ProviderMetadata,
@@ -64,6 +65,7 @@ use runinator_models::{
         WorkflowBundle, WorkflowDefinition, WorkflowRun, WorkflowSimulateRequest, WorkflowStatus,
         WorkflowTrigger,
     },
+    workspaces::WorkspaceLease,
 };
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
@@ -335,6 +337,11 @@ where
             .await
     }
 
+    pub async fn fetch_orchestration_workspaces(&self, id: Uuid) -> Result<Vec<WorkspaceLease>> {
+        self.get_json_path(&format!("/orchestrations/{id}/workspaces"))
+            .await
+    }
+
     pub async fn send_orchestration_intent(
         &self,
         id: Uuid,
@@ -356,6 +363,84 @@ where
             }))
             .send()
             .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn requeue_orchestration(
+        &self,
+        id: Uuid,
+        reason: &str,
+        idempotency_key: &str,
+    ) -> Result<OrchestrationBinding> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/requeue"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "reason": reason, "idempotency_key": idempotency_key }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn fetch_orchestration_adapter_kinds(&self) -> Result<Vec<AdapterKindMetadata>> {
+        self.get_json_path("/orchestrations/adapters/kinds").await
+    }
+
+    pub async fn fetch_orchestration_adapters(&self) -> Result<Vec<AdapterDefinition>> {
+        self.get_json_path("/orchestrations/adapters").await
+    }
+
+    pub async fn fetch_orchestration_adapter(&self, id: Uuid) -> Result<AdapterDefinition> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}"))
+            .await
+    }
+
+    pub async fn fetch_orchestration_adapter_revisions(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<AdapterRevision>> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/revisions"))
+            .await
+    }
+
+    pub async fn apply_orchestration_adapter(
+        &self,
+        id: Option<Uuid>,
+        definition: &Value,
+    ) -> Result<AdapterDefinition> {
+        let path = id
+            .map(|id| format!("/orchestrations/adapters/{id}"))
+            .unwrap_or_else(|| "/orchestrations/adapters".into());
+        let url = self.build_url(&path).await?;
+        let response = self.http_post(url.clone()).json(definition).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn test_orchestration_adapter(&self, id: Uuid, sample: &Value) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orchestrations/adapters/{id}/test"))
+            .await?;
+        let response = self.http_post(url.clone()).json(sample).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn delete_orchestration_adapter(&self, id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/orchestrations/adapters/{id}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn reload_orchestration_adapters(&self) -> Result<Value> {
+        let url = self.build_url("/orchestrations/adapters/reload").await?;
+        let response = self.http_post(url.clone()).json(&json!({})).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }

@@ -61,6 +61,66 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
 /// parity fail-closed without making descriptive documentation a prerequisite for enforcement.
 pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
+        "post",
+        "/webhooks/orchestration/{adapter_id}",
+        docs::EndpointPolicy::Public,
+    ),
+    (
+        "get",
+        "/orchestrations/adapters/kinds",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/adapters/health",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/adapters/reload",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/adapters",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/adapters",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/adapters/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/adapters/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/orchestrations/adapters/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/adapters/{id}/revisions",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/adapters/{id}/enabled",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/adapters/{id}/test",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
         "get",
         "/orchestrations",
         docs::EndpointPolicy::Authenticated,
@@ -93,6 +153,26 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "post",
         "/orchestrations/{id}/intents",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/{id}/requeue",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}/operations",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orchestrations/{id}/workspaces",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orchestrations/{id}/operations/{operation_id}/resolve",
         docs::EndpointPolicy::Authenticated,
     ),
     (
@@ -857,6 +937,7 @@ mod policy_tests {
             ("post", "/auth/login"),
             ("post", "/auth/refresh"),
             ("post", "/agents/enroll"),
+            ("post", "/webhooks/orchestration/{adapter_id}"),
             ("get", "/health"),
             ("get", "/ready"),
             ("get", "/metrics"),

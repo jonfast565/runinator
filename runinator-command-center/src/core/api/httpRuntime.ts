@@ -401,6 +401,61 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/commands`,
   },
+  fetch_orchestration_workspaces: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/workspaces`,
+  },
+  fetch_external_operations: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/operations`,
+  },
+  resolve_external_operation: {
+    method: "POST",
+    path: (args) =>
+      `orchestrations/${escape(arg(args, "orchestrationId"))}/operations/${escape(arg(args, "operationId"))}/resolve`,
+    body: (args) => ({
+      resolution: arg(args, "resolution"),
+      reason: arg(args, "reason"),
+      receipt: argOpt(args, "receipt") ?? null,
+    }),
+  },
+  fetch_adapter_kinds: { method: "GET", path: () => "orchestrations/adapters/kinds" },
+  fetch_adapters: { method: "GET", path: () => "orchestrations/adapters" },
+  fetch_adapter: {
+    method: "GET",
+    path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}`,
+  },
+  fetch_adapter_revisions: {
+    method: "GET",
+    path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}/revisions`,
+  },
+  apply_adapter: {
+    method: (args) => (argOpt(args, "adapterId") ? "POST" : "POST"),
+    path: (args) => {
+      const adapterId = argOpt(args, "adapterId");
+      return adapterId ? `orchestrations/adapters/${escape(adapterId)}` : "orchestrations/adapters";
+    },
+    body: (args) => arg(args, "adapter"),
+  },
+  set_adapter_enabled: {
+    method: "POST",
+    path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}/enabled`,
+    body: (args) => ({ enabled: arg(args, "enabled") }),
+  },
+  delete_adapter: {
+    method: "DELETE",
+    path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}`,
+  },
+  test_adapter: {
+    method: "POST",
+    path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}/test`,
+    body: (args) => ({
+      headers: argOpt(args, "headers") ?? {},
+      body_base64: arg(args, "bodyBase64"),
+    }),
+  },
+  fetch_adapter_health: { method: "GET", path: () => "orchestrations/adapters/health" },
+  reload_adapter_host: { method: "POST", path: () => "orchestrations/adapters/reload", body: () => ({}) },
   send_orchestration_intent: {
     method: "POST",
     path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/intents`,
@@ -408,6 +463,14 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       intent: arg(args, "intent"),
       reason: arg(args, "reason"),
       payload: argOpt(args, "payload") ?? {},
+      idempotency_key: arg(args, "idempotencyKey"),
+    }),
+  },
+  requeue_orchestration: {
+    method: "POST",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/requeue`,
+    body: (args) => ({
+      reason: arg(args, "reason"),
       idempotency_key: arg(args, "idempotencyKey"),
     }),
   },

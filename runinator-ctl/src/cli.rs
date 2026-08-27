@@ -944,6 +944,42 @@ pub enum OrchestrationCommands {
         #[arg(long)]
         idempotency_key: Option<String>,
     },
+    /// Create the next generation after a terminal orchestration outcome.
+    Requeue {
+        id: Uuid,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
+    /// Configure and diagnose out-of-process event adapters.
+    Adapters {
+        #[command(subcommand)]
+        command: OrchestrationAdapterCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrchestrationAdapterCommands {
+    /// List loaded adapter kinds and their typed metadata.
+    Kinds,
+    /// List adapter instances in the selected organization.
+    List,
+    /// Show an adapter and its immutable revisions.
+    Show { id: Uuid },
+    /// Create or update an adapter from a JSON definition. Secret values must be stored Secret IDs.
+    Apply {
+        file: PathBuf,
+        /// Existing adapter to update; omit to create a new instance.
+        #[arg(long)]
+        id: Option<Uuid>,
+    },
+    /// Verify and normalize a sample request described by a JSON file.
+    Test { id: Uuid, file: PathBuf },
+    /// Delete an adapter that has never admitted a binding.
+    Delete { id: Uuid },
+    /// Reload filesystem-installed adapter plugins. Platform admin only.
+    Reload,
 }
 
 /// CLI-facing decision for a pipeline run's open `inquire` pause.

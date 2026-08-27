@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     errors::SendableError,
     orchestration::{
+        AdapterDefinition, AdapterRevision, ExternalOperation, ExternalOperationStatus,
         NewOrchestrationBinding, OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
         OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
         OrchestrationStatus,
@@ -51,6 +52,41 @@ pub struct NewOrchestrationCommand {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct NewAdapterDefinition {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub name: String,
+    pub kind: String,
+    pub kind_version: String,
+    pub endpoint_identity: String,
+    pub configuration: Value,
+    pub secret_bindings: BTreeMap<String, Uuid>,
+    pub identity_configuration: Value,
+    pub actor_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAdapterRevision {
+    pub id: Uuid,
+    pub adapter_id: Uuid,
+    pub expected_revision: i64,
+    pub kind_version: String,
+    pub configuration: Value,
+    pub secret_bindings: BTreeMap<String, Uuid>,
+    pub identity_configuration: Value,
+    pub actor_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalOperationUpdate {
+    pub status: ExternalOperationStatus,
+    pub attempt: i64,
+    pub ambiguous: bool,
+    pub provenance: Value,
+    pub receipt: Value,
+}
+
 /// Owns binding CAS, reducer leasing, immutable reductions/epochs, and the command outbox.
 pub trait OrchestrationStore: Send + Sync + 'static {
     fn create_orchestration_binding(
@@ -67,6 +103,13 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         &self,
         admission_id: Uuid,
         generation: i64,
+    ) -> impl Future<Output = Result<Option<OrchestrationBinding>, SendableError>> + Send;
+
+    /// Resolve the current managed binding that owns a workflow effect. Historical epochs are
+    /// deliberately excluded so a late dispatch or receipt can only be recorded as stale.
+    fn fetch_current_orchestration_binding_for_workflow_run(
+        &self,
+        workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Option<OrchestrationBinding>, SendableError>> + Send;
 
     fn fetch_orchestration_bindings(
@@ -194,4 +237,87 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         &self,
         binding_id: Uuid,
     ) -> impl Future<Output = Result<Vec<OrchestrationEvidence>, SendableError>> + Send;
+
+    fn create_orchestration_adapter(
+        &self,
+        adapter: NewAdapterDefinition,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(AdapterDefinition, AdapterRevision), SendableError>> + Send;
+
+    fn fetch_orchestration_adapter(
+        &self,
+        adapter_id: Uuid,
+    ) -> impl Future<Output = Result<Option<AdapterDefinition>, SendableError>> + Send;
+
+    fn fetch_orchestration_adapter_by_endpoint(
+        &self,
+        endpoint_identity: String,
+    ) -> impl Future<Output = Result<Option<AdapterDefinition>, SendableError>> + Send;
+
+    fn fetch_orchestration_adapters(
+        &self,
+        org_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<AdapterDefinition>, SendableError>> + Send;
+
+    fn fetch_orchestration_adapter_revision(
+        &self,
+        adapter_id: Uuid,
+        revision: i64,
+    ) -> impl Future<Output = Result<Option<AdapterRevision>, SendableError>> + Send;
+
+    fn fetch_orchestration_adapter_revisions(
+        &self,
+        adapter_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<AdapterRevision>, SendableError>> + Send;
+
+    fn create_orchestration_adapter_revision(
+        &self,
+        revision: NewAdapterRevision,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<(AdapterDefinition, AdapterRevision)>, SendableError>> + Send;
+
+    fn set_orchestration_adapter_enabled(
+        &self,
+        adapter_id: Uuid,
+        enabled: bool,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<AdapterDefinition>, SendableError>> + Send;
+
+    fn mark_orchestration_adapter_admitted(
+        &self,
+        adapter_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn delete_orchestration_adapter(
+        &self,
+        adapter_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn create_external_operation(
+        &self,
+        operation: ExternalOperation,
+    ) -> impl Future<Output = Result<ExternalOperation, SendableError>> + Send;
+
+    fn fetch_external_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ExternalOperation>, SendableError>> + Send;
+
+    fn fetch_external_operation_for_effect(
+        &self,
+        effect_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ExternalOperation>, SendableError>> + Send;
+
+    fn fetch_external_operations(
+        &self,
+        binding_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ExternalOperation>, SendableError>> + Send;
+
+    fn update_external_operation(
+        &self,
+        operation_id: Uuid,
+        update: ExternalOperationUpdate,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ExternalOperation>, SendableError>> + Send;
 }

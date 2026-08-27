@@ -73,6 +73,15 @@ impl<T: OrchestrationStore + DefinitionStore> OrchestrationOperations<T> {
         admission: &IngressAdmission,
         pipeline: &Pipeline,
     ) -> Result<Option<OrchestrationBinding>, SendableError> {
+        self.admit_with_adapter(admission, pipeline, None).await
+    }
+
+    pub async fn admit_with_adapter(
+        &self,
+        admission: &IngressAdmission,
+        pipeline: &Pipeline,
+        adapter: Option<(Uuid, i64)>,
+    ) -> Result<Option<OrchestrationBinding>, SendableError> {
         let Some(policy_value) = pipeline.metadata.get("orchestration") else {
             return Ok(None);
         };
@@ -122,6 +131,8 @@ impl<T: OrchestrationStore + DefinitionStore> OrchestrationOperations<T> {
                 pipeline_id,
                 pipeline_revision: revision.revision,
                 pipeline_digest: revision.digest,
+                adapter_id: adapter.map(|value| value.0),
+                adapter_revision: adapter.map(|value| value.1),
                 policy,
             })
             .await

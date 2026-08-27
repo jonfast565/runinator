@@ -3,13 +3,15 @@ use std::collections::BTreeMap;
 use super::*;
 use runinator_models::{
     orchestration::{
-        ControlEffect, IngressAdmission, IngressAdmissionStatus, IngressTarget, IngressTargetKind,
-        IntentPolicy, NewOrchestrationBinding, OrchestrationPolicy, OrchestrationStatus,
+        ControlEffect, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
+        IngressAdmission, IngressAdmissionStatus, IngressTarget, IngressTargetKind, IntentPolicy,
+        NewOrchestrationBinding, OrchestrationPolicy, OrchestrationStatus,
     },
     pipelines::{Pipeline, PipelineGraph, PipelineMember, PipelineMemberFailureMode},
 };
 use runinator_store::roles::{
-    NewOrchestrationCommand, NewOrchestrationEpoch, OrchestrationBindingUpdate,
+    ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
+    NewOrchestrationEpoch, OrchestrationBindingUpdate,
 };
 
 #[tokio::test]
@@ -47,6 +49,28 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .await
         .unwrap();
     let pipeline_id = pipeline.id.unwrap();
+
+    let adapter_id = Uuid::now_v7();
+    let (adapter, adapter_revision) = db
+        .create_orchestration_adapter(
+            NewAdapterDefinition {
+                id: adapter_id,
+                org_id: Uuid::now_v7(),
+                name: "Webhook".into(),
+                kind: "generic_webhook".into(),
+                kind_version: "1".into(),
+                endpoint_identity: "endpoint-token".into(),
+                configuration: runinator_models::json!({ "authentication": "bearer" }),
+                secret_bindings: BTreeMap::new(),
+                identity_configuration: runinator_models::json!({ "correlation": "/id" }),
+                actor_id: None,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(adapter.current_revision, 1);
+    assert_eq!(adapter_revision.revision, 1);
 
     let admission_id = Uuid::now_v7();
     db.claim_ingress_admission(
@@ -98,6 +122,8 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             pipeline_id,
             pipeline_revision: 3,
             pipeline_digest: "sha256:test".into(),
+            adapter_id: Some(adapter_id),
+            adapter_revision: Some(1),
             policy,
         })
         .await
@@ -116,6 +142,8 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             pipeline_id,
             pipeline_revision: 3,
             pipeline_digest: "sha256:test".into(),
+            adapter_id: Some(adapter_id),
+            adapter_revision: Some(1),
             policy: binding.policy.clone(),
         })
         .await
@@ -224,6 +252,75 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .await
         .unwrap();
     assert_eq!(command.id, duplicate_command.id);
+
+    assert!(
+        db.mark_orchestration_adapter_admitted(adapter_id, now)
+            .await
+            .unwrap()
+    );
+    let changed_identity = db
+        .create_orchestration_adapter_revision(
+            NewAdapterRevision {
+                id: Uuid::now_v7(),
+                adapter_id,
+                expected_revision: 1,
+                kind_version: "1".into(),
+                configuration: Value::Null,
+                secret_bindings: BTreeMap::new(),
+                identity_configuration: runinator_models::json!({ "correlation": "/other" }),
+                actor_id: None,
+            },
+            now,
+        )
+        .await;
+    assert!(changed_identity.is_err());
+
+    let operation_id = Uuid::now_v7();
+    let operation = db
+        .create_external_operation(ExternalOperation {
+            id: operation_id,
+            binding_id,
+            epoch: 1,
+            workflow_run_id: Some(Uuid::now_v7()),
+            effect_id: Some(Uuid::now_v7()),
+            operation_key: "jira:comment:review".into(),
+            provider: "jira".into(),
+            action: "ensure_comment".into(),
+            semantics: DeliverySemantics::Reconcilable,
+            attempt: 1,
+            status: ExternalOperationStatus::Running,
+            ambiguous: false,
+            provenance: runinator_models::json!({ "marker": "op-1" }),
+            receipt: Value::Null,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+    let duplicate_operation = db
+        .create_external_operation(ExternalOperation {
+            id: Uuid::now_v7(),
+            ..operation.clone()
+        })
+        .await
+        .unwrap();
+    assert_eq!(duplicate_operation.id, operation_id);
+    let succeeded = db
+        .update_external_operation(
+            operation_id,
+            ExternalOperationUpdate {
+                status: ExternalOperationStatus::Succeeded,
+                attempt: 1,
+                ambiguous: false,
+                provenance: operation.provenance,
+                receipt: runinator_models::json!({ "id": "comment-1" }),
+            },
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(succeeded.status, ExternalOperationStatus::Succeeded);
 
     let _ = std::fs::remove_file(path);
 }

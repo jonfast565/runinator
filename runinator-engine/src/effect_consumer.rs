@@ -9,12 +9,14 @@ use runinator_models::workflow_vm::{
     WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowJournalEntry,
 };
 use runinator_models::{
-    notifications::NotificationDeliveryStatus, workflow_vm::WorkflowEffectStatus,
+    notifications::NotificationDeliveryStatus,
+    orchestration::{DeliverySemantics, ExternalOperationStatus, OrchestrationEvidence},
+    workflow_vm::WorkflowEffectStatus,
 };
 use runinator_runtime::workflow_vm::interrupt_handler_continuation;
 use runinator_store::{
     RuntimeStore,
-    roles::{NotificationStore, WorkflowVmStore},
+    roles::{ExternalOperationUpdate, NotificationStore, OrchestrationStore, WorkflowVmStore},
 };
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -23,7 +25,9 @@ const EFFECT_RESULT_CONSUMER_ID: &str = "runinator-ws-effects";
 
 /// Consume effect results independently of the legacy node-run result channel. A stale attempt is
 /// harmless: `settle_workflow_effect` returns `false`, after which this delivery is acknowledged.
-pub async fn run_effect_result_consumer<T: WorkflowVmStore + NotificationStore + RuntimeStore>(
+pub async fn run_effect_result_consumer<
+    T: WorkflowVmStore + NotificationStore + RuntimeStore + OrchestrationStore,
+>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     publisher: crate::events::EventSender,
@@ -81,6 +85,46 @@ pub async fn run_effect_result_consumer<T: WorkflowVmStore + NotificationStore +
                         .await
                     {
                         warn!(error = %err, "failed to requeue notification effect result");
+                    }
+                }
+            }
+            continue;
+        }
+
+        // A timeout cannot prove whether an at-least-once provider committed its side effect.
+        // Keep the continuation parked until an operator records the observed outcome; settling
+        // it here would let the graph advance while the ambiguity still exists.
+        let hold_ambiguity = match hold_ambiguous_at_least_once(db.as_ref(), &delivery.result).await
+        {
+            Ok(hold) => hold,
+            Err(err) => {
+                error!(error = %err, effect_id = %delivery.result.effect_id, "failed to classify external operation ambiguity");
+                if let Err(err) = broker
+                    .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                    .await
+                {
+                    warn!(error = %err, "failed to requeue unclassified external operation result");
+                }
+                continue;
+            }
+        };
+        if hold_ambiguity {
+            match record_external_operation_result(db.as_ref(), &delivery.result).await {
+                Ok(()) => {
+                    if let Err(err) = broker
+                        .ack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to ack ambiguous external operation result");
+                    }
+                }
+                Err(err) => {
+                    error!(error = %err, effect_id = %delivery.result.effect_id, "failed to record ambiguous external operation result");
+                    if let Err(err) = broker
+                        .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to requeue ambiguous external operation result");
                     }
                 }
             }
@@ -164,6 +208,18 @@ pub async fn run_effect_result_consumer<T: WorkflowVmStore + NotificationStore +
 
         match settled {
             Ok(applied) => {
+                if let Err(err) =
+                    record_external_operation_result(db.as_ref(), &delivery.result).await
+                {
+                    error!(error = %err, effect_id = %delivery.result.effect_id, "failed to record external operation receipt");
+                    if let Err(err) = broker
+                        .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to requeue external operation receipt");
+                    }
+                    continue;
+                }
                 if applied {
                     info!(effect_id = %delivery.result.effect_id, "settled workflow VM effect");
                     crate::events::emit_workflow_run_resolved(
@@ -191,6 +247,114 @@ pub async fn run_effect_result_consumer<T: WorkflowVmStore + NotificationStore +
             }
         }
     }
+}
+
+async fn hold_ambiguous_at_least_once<T: OrchestrationStore>(
+    db: &T,
+    result: &runinator_comm::EffectResult,
+) -> Result<bool, runinator_models::errors::SendableError> {
+    if !matches!(
+        &result.kind,
+        EffectResultKind::Status {
+            status: WorkflowEffectStatus::TimedOut,
+            ..
+        }
+    ) {
+        return Ok(false);
+    }
+    Ok(db
+        .fetch_external_operation_for_effect(result.effect_id)
+        .await?
+        .is_some_and(|operation| operation.semantics == DeliverySemantics::AtLeastOnce))
+}
+
+async fn record_external_operation_result<T: OrchestrationStore>(
+    db: &T,
+    result: &runinator_comm::EffectResult,
+) -> Result<(), runinator_models::errors::SendableError> {
+    let Some(operation) = db
+        .fetch_external_operation_for_effect(result.effect_id)
+        .await?
+    else {
+        return Ok(());
+    };
+    if operation.attempt > i64::from(result.attempt) {
+        return Ok(());
+    }
+    let current = db
+        .fetch_current_orchestration_binding_for_workflow_run(result.workflow_run_id)
+        .await?;
+    let stale = current.as_ref().is_none_or(|binding| {
+        binding.id != operation.binding_id || binding.current_epoch != operation.epoch
+    });
+    let (status, ambiguous, receipt) = match &result.kind {
+        EffectResultKind::Claimed {
+            executor_replica_id,
+        } => (
+            ExternalOperationStatus::Running,
+            false,
+            runinator_models::json!({
+                "kind": "claimed",
+                "executor_replica_id": executor_replica_id,
+                "event_id": result.event_id,
+                "stale": stale,
+            }),
+        ),
+        EffectResultKind::Status {
+            status,
+            output,
+            message,
+        } => {
+            let ambiguous = matches!(status, WorkflowEffectStatus::TimedOut);
+            let operation_status = if *status == WorkflowEffectStatus::Succeeded {
+                ExternalOperationStatus::Succeeded
+            } else if ambiguous && operation.semantics == DeliverySemantics::AtLeastOnce {
+                ExternalOperationStatus::Waiting
+            } else {
+                ExternalOperationStatus::Failed
+            };
+            (
+                operation_status,
+                ambiguous,
+                runinator_models::json!({
+                    "kind": "status",
+                    "status": status,
+                    "output": output,
+                    "message": message,
+                    "event_id": result.event_id,
+                    "stale": stale,
+                }),
+            )
+        }
+        EffectResultKind::Chunk { .. } | EffectResultKind::Artifact { .. } => return Ok(()),
+    };
+    let updated = db
+        .update_external_operation(
+            operation.id,
+            ExternalOperationUpdate {
+                status,
+                attempt: i64::from(result.attempt),
+                ambiguous,
+                provenance: operation.provenance.clone(),
+                receipt: receipt.clone(),
+            },
+            result.timestamp,
+        )
+        .await?;
+    if stale && updated.is_some() {
+        db.append_orchestration_evidence(OrchestrationEvidence {
+            id: uuid::Uuid::now_v7(),
+            binding_id: operation.binding_id,
+            epoch: Some(operation.epoch),
+            kind: "stale_external_operation_receipt".into(),
+            subject_revision: None,
+            payload: receipt,
+            source_event_id: None,
+            created_at: result.timestamp,
+        })
+        .await?;
+    }
+    Ok(())
 }
 
 /// Re-arm `effect_id` under its node's retry policy, returning whether it was re-armed.

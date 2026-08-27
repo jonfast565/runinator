@@ -104,6 +104,21 @@ where
             .transpose()
     }
 
+    async fn fetch_workspaces_for_admission(
+        &self,
+        admission_id: Uuid,
+        generation: i64,
+    ) -> Result<Vec<WorkspaceLease>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM workspace_leases WHERE admission_id = ? AND generation = ? ORDER BY scope, attempt"
+        )))
+        .bind(admission_id)
+        .bind(generation)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_workspace_lease).collect()
+    }
+
     async fn transition_workspace_cas(
         &self,
         workspace_id: Uuid,

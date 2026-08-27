@@ -78,18 +78,19 @@ impl<T: AuthStore + RbacStore> runinator_auth::CredentialStore for AuthState<T> 
 
 /// paths reachable without a credential.
 fn is_public_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/health"
-            | "/ready"
-            | "/metrics"
-            | "/openapi.json"
-            | "/docs"
-            | "/auth/config"
-            | "/auth/login"
-            | "/auth/refresh"
-            | "/agents/enroll"
-    )
+    path.starts_with("/webhooks/orchestration/")
+        || matches!(
+            path,
+            "/health"
+                | "/ready"
+                | "/metrics"
+                | "/openapi.json"
+                | "/docs"
+                | "/auth/config"
+                | "/auth/login"
+                | "/auth/refresh"
+                | "/agents/enroll"
+        )
 }
 
 /// pull a presented credential from `Authorization: Bearer …`, `X-Api-Key`, or `?token=` (the last

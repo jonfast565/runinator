@@ -1,3 +1,4 @@
+use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -316,6 +317,25 @@ pub async fn ingress_pipeline_run<
     {
         return reply;
     }
+    process_pipeline_ingress(db, service, pipeline_id, ctx.org_id, request, None).await
+}
+
+/// Provider-neutral ingress core shared by authenticated direct calls and verified adapter events.
+pub async fn process_pipeline_ingress<
+    T: DefinitionStore
+        + RuntimeStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + IngressStore
+        + OrchestrationStore,
+>(
+    db: Arc<T>,
+    service: Arc<PipelineOperations<T>>,
+    pipeline_id: Uuid,
+    caller_org_id: Option<Uuid>,
+    request: IngressEventRequest,
+    adapter: Option<(Uuid, i64)>,
+) -> (StatusCode, Json<ApiResponse>) {
     let pipeline = match service.fetch(pipeline_id).await {
         Ok(Some(pipeline)) => pipeline,
         Ok(None) => return not_found("pipeline not found"),
@@ -341,7 +361,7 @@ pub async fn ingress_pipeline_run<
         kind: IngressTargetKind::Pipeline,
         id: pipeline_id,
     };
-    let org_id = pipeline.org_id.or(ctx.org_id);
+    let org_id = pipeline.org_id.or(caller_org_id);
     let mut admission = match ingress
         .fetch(org_id, policy.scope.clone(), event.correlation_key.clone())
         .await
@@ -528,12 +548,25 @@ pub async fn ingress_pipeline_run<
     let start_entry = start_record.expect("start event record");
     if pipeline.metadata.get("orchestration").is_some() {
         let orchestrations = OrchestrationOperations::new(db.clone());
-        return match orchestrations.admit(&admission, &pipeline).await {
-            Ok(Some(binding)) => pipeline_orchestration_ingress_reply(
-                &start_entry,
-                binding.id,
-                "managed orchestration generation admitted",
-            ),
+        return match orchestrations
+            .admit_with_adapter(&admission, &pipeline, adapter)
+            .await
+        {
+            Ok(Some(binding)) => {
+                if let Some((adapter_id, _)) = adapter {
+                    if let Err(error) = db
+                        .mark_orchestration_adapter_admitted(adapter_id, Utc::now())
+                        .await
+                    {
+                        return api_error(error.to_string());
+                    }
+                }
+                pipeline_orchestration_ingress_reply(
+                    &start_entry,
+                    binding.id,
+                    "managed orchestration generation admitted",
+                )
+            }
             Ok(None) => api_error("managed orchestration policy disappeared"),
             Err(err) => api_error(err.to_string()),
         };

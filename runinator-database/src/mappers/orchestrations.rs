@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use super::*;
 use runinator_models::orchestration::{
-    OrchestrationBinding, OrchestrationCommand, OrchestrationCommandStatus, OrchestrationEpoch,
-    OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
-    OrchestrationPolicy, OrchestrationStatus,
+    AdapterDefinition, AdapterRevision, DeliverySemantics, ExternalOperation,
+    ExternalOperationStatus, OrchestrationBinding, OrchestrationCommand,
+    OrchestrationCommandStatus, OrchestrationEpoch, OrchestrationEventReduction,
+    OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationPolicy, OrchestrationStatus,
 };
 
 fn timestamp(value: i64) -> DateTime<Utc> {
@@ -43,6 +44,8 @@ fallible_row_mapper!(row_to_orchestration_binding(row) -> OrchestrationBinding {
         pipeline_id: row.get("pipeline_id"),
         pipeline_revision: row.get("pipeline_revision"),
         pipeline_digest: row.get("pipeline_digest"),
+        adapter_id: row.get("adapter_id"),
+        adapter_revision: row.get("adapter_revision"),
         policy,
         status: status(&row.get::<String, _>("status"))?,
         current_phase: row.get("current_phase"),
@@ -120,5 +123,50 @@ fallible_row_mapper!(row_to_orchestration_evidence(row) -> OrchestrationEvidence
         id: row.get("id"), binding_id: row.get("binding_id"), epoch: row.get("epoch"),
         kind: row.get("kind"), subject_revision: row.get("subject_revision"), payload: parse_json(row.get("payload")),
         source_event_id: row.get("source_event_id"), created_at: timestamp(row.get("created_at")),
+    })
+});
+
+fallible_row_mapper!(row_to_orchestration_adapter(row) -> AdapterDefinition {
+    Ok(AdapterDefinition {
+        id: row.get("id"), org_id: row.get("org_id"), name: row.get("name"), kind: row.get("kind"),
+        current_revision: row.get("current_revision"), enabled: row.get("enabled"),
+        endpoint_identity: row.get("endpoint_identity"), has_admitted_binding: row.get("has_admitted_binding"),
+        created_at: timestamp(row.get("created_at")), updated_at: timestamp(row.get("updated_at")),
+    })
+});
+
+fallible_row_mapper!(row_to_orchestration_adapter_revision(row) -> AdapterRevision {
+    Ok(AdapterRevision {
+        id: row.get("id"), adapter_id: row.get("adapter_id"), revision: row.get("revision"),
+        kind_version: row.get("kind_version"), configuration: parse_json(row.get("configuration")),
+        secret_bindings: serde_json::from_str(&row.get::<String, _>("secret_bindings"))?,
+        identity_configuration: parse_json(row.get("identity_configuration")),
+        created_at: timestamp(row.get("created_at")), actor_id: row.get("actor_id"),
+    })
+});
+
+fallible_row_mapper!(row_to_external_operation(row) -> ExternalOperation {
+    let semantics = match row.get::<String, _>("semantics").as_str() {
+        "at_least_once" => DeliverySemantics::AtLeastOnce,
+        "idempotent" => DeliverySemantics::Idempotent,
+        "reconcilable" => DeliverySemantics::Reconcilable,
+        other => return Err(Box::new(std::io::Error::other(format!("unknown delivery semantics {other}")))),
+    };
+    let status = match row.get::<String, _>("status").as_str() {
+        "pending" => ExternalOperationStatus::Pending,
+        "running" => ExternalOperationStatus::Running,
+        "waiting" => ExternalOperationStatus::Waiting,
+        "succeeded" => ExternalOperationStatus::Succeeded,
+        "failed" => ExternalOperationStatus::Failed,
+        other => return Err(Box::new(std::io::Error::other(format!("unknown external operation status {other}")))),
+    };
+    Ok(ExternalOperation {
+        id: row.get("id"), binding_id: row.get("binding_id"), epoch: row.get("epoch"),
+        workflow_run_id: row.get("workflow_run_id"), effect_id: row.get("effect_id"),
+        operation_key: row.get("operation_key"),
+        provider: row.get("provider"), action: row.get("action"), semantics, attempt: row.get("attempt"),
+        status, ambiguous: row.get("ambiguous"), provenance: parse_json(row.get("provenance")),
+        receipt: parse_json(row.get("receipt")), created_at: timestamp(row.get("created_at")),
+        updated_at: timestamp(row.get("updated_at")),
     })
 });

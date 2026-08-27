@@ -6,6 +6,7 @@ import type {
   PipelineConcurrency,
   PipelineJoinMode,
   PipelineMemberFailureMode,
+  JsonRecord,
   WorkflowDefinition,
 } from "../../../../core/domain/models";
 import { defaultPipelineDefaults } from "../../../../core/domain/models";
@@ -199,6 +200,10 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
   function savePipelineConcurrency(concurrency: PipelineConcurrency) {
     return persistSelected((draft) => ({ ...draft, concurrency }));
+  }
+
+  function savePipelineMetadata(metadata: JsonRecord) {
+    return persistSelected((draft) => ({ ...draft, metadata }));
   }
 
   function updateJoin(target: string, mode: PipelineJoinMode, parameters: Record<string, unknown>) {
@@ -467,6 +472,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
     renamePipeline,
     savePipelineDefaults,
     savePipelineConcurrency,
+    savePipelineMetadata,
     updateJoin,
     addWorkflowToPipeline,
     removeWorkflowFromPipeline,

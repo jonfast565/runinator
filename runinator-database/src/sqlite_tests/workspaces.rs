@@ -65,6 +65,12 @@ async fn workspace_allocation_and_transitions_are_idempotent_and_cas_guarded() {
     assert_eq!(first.id, duplicate.id);
     assert_eq!(first.version, 1);
     assert_eq!(first.status, WorkspaceStatus::Allocating);
+    let listed = db
+        .fetch_workspaces_for_admission(admission_id, 1)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, workspace_id);
     assert_eq!(
         first
             .requirements

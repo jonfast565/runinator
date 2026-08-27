@@ -55,6 +55,9 @@ impl TryFrom<&str> for WorkspaceStatus {
 pub struct WorkspaceAffinity {
     pub workspace_id: Uuid,
     pub worker_instance_id: String,
+    /// Opaque relative key resolved beneath the selected worker's configured workspace root.
+    #[serde(default)]
+    pub local_key: String,
     pub attempt: i64,
     pub version: i64,
 }
@@ -92,6 +95,7 @@ impl WorkspaceLease {
         WorkspaceAffinity {
             workspace_id: self.id,
             worker_instance_id: self.worker_instance_id.clone(),
+            local_key: self.local_key.clone(),
             attempt: self.attempt,
             version: self.version,
         }

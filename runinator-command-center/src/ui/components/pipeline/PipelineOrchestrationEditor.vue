@@ -1,0 +1,205 @@
+<template>
+  <div class="grid gap-4">
+    <label class="flex items-center gap-2 text-sm">
+      <input v-model="enabled" type="checkbox" />
+      <span>Manage correlated executions for this pipeline</span>
+    </label>
+
+    <template v-if="enabled">
+      <nav class="flex flex-wrap gap-1 border-b border-border">
+        <button
+          v-for="item in tabs"
+          :key="item"
+          type="button"
+          class="px-3 py-2 text-sm"
+          :class="tab === item ? 'border-b-2 border-accent text-fg' : 'text-fg-muted'"
+          @click="tab = item"
+        >
+          {{ item }}
+        </button>
+      </nav>
+
+      <div v-if="tab === 'Admission Routes'" class="grid gap-3">
+        <label class="grid gap-1 text-sm"><span>Correlation scope</span><input v-model="scope" required /></label>
+        <article v-for="(route, routeIndex) in routes" :key="route.id" class="grid gap-2 rounded border border-border p-3">
+          <div class="grid gap-2 md:grid-cols-5">
+            <label class="grid gap-1 text-xs"><span>Event</span><input v-model="route.event_type" list="orchestration-events" /></label>
+            <label class="grid gap-1 text-xs"><span>Lifecycle</span><select v-model="route.lifecycle" @change="normalizeRoute(route)"><option value="unbound">Unbound</option><option value="active">Active</option><option value="terminal">Terminal</option></select></label>
+            <label class="grid gap-1 text-xs"><span>Action</span><select v-model="route.action" @change="normalizeRoute(route)"><option v-for="action in actionsFor(route.lifecycle)" :key="action" :value="action">{{ action }}</option></select></label>
+            <label class="grid gap-1 text-xs"><span>Intent</span><select v-model="route.intent" :disabled="route.action !== 'dispatch'"><option value="">Select intent</option><option v-for="intent in intents" :key="intent.id" :value="intent.name">{{ intent.name }}</option></select></label>
+            <button type="button" class="btn btn-danger self-end" @click="routes.splice(routeIndex, 1)">Remove</button>
+          </div>
+          <div v-for="(predicate, predicateIndex) in route.predicates" :key="predicate.id" class="grid gap-2 md:grid-cols-[1fr_10rem_1fr_auto]">
+            <input v-model="predicate.pointer" list="orchestration-pointers" placeholder="/payload/path" />
+            <select v-model="predicate.operator"><option value="equal">equals</option><option value="not_equal">not equal</option><option value="in">in</option><option value="contains">contains</option><option value="exists">exists</option></select>
+            <input v-model="predicate.valueText" :disabled="predicate.operator === 'exists'" placeholder='JSON value, e.g. "ready"' />
+            <button type="button" class="btn btn-sm" @click="route.predicates.splice(predicateIndex, 1)">×</button>
+          </div>
+          <button type="button" class="btn btn-sm w-fit" @click="addPredicate(route)">Add predicate</button>
+        </article>
+        <button type="button" class="btn w-fit" @click="addRoute">Add route</button>
+      </div>
+
+      <div v-else-if="tab === 'Intents'" class="grid gap-3">
+        <article v-for="(intent, index) in intents" :key="intent.id" class="grid gap-2 rounded border border-border p-3 md:grid-cols-4">
+          <label class="grid gap-1 text-xs"><span>Name</span><input v-model="intent.name" /></label>
+          <label class="grid gap-1 text-xs"><span>Effect</span><select v-model="intent.effect"><option v-for="effect in effects" :key="effect" :value="effect">{{ effect }}</option></select></label>
+          <label class="grid gap-1 text-xs"><span>Unique priority</span><input v-model.number="intent.priority" type="number" /></label>
+          <label class="grid gap-1 text-xs"><span>Coalesce seconds</span><input v-model.number="intent.coalesce_seconds" min="0" type="number" /></label>
+          <label class="grid gap-1 text-xs"><span>Stop epoch</span><select v-model="intent.stop"><option value="cancel">cancel</option><option value="pause">pause</option><option value="none">none</option></select></label>
+          <label class="grid gap-1 text-xs"><span>Restart</span><select v-model="intent.restart_kind"><option value="entry">entry</option><option value="current">current</option><option value="member">member</option></select></label>
+          <label class="grid gap-1 text-xs"><span>Restart member</span><select v-model="intent.restart_member" :disabled="intent.restart_kind !== 'member'"><option value="">Select member</option><option v-for="member in members" :key="member" :value="member">{{ member }}</option></select></label>
+          <label class="flex items-end gap-2 text-xs"><input v-model="intent.allow_self_originated" type="checkbox" />Allow self-originated</label>
+          <button type="button" class="btn btn-danger w-fit" @click="intents.splice(index, 1)">Remove</button>
+        </article>
+        <button type="button" class="btn w-fit" @click="addIntent">Add intent</button>
+      </div>
+
+      <div v-else-if="tab === 'Budgets'" class="grid gap-3">
+        <article v-for="(budget, index) in budgets" :key="budget.id" class="grid gap-2 rounded border border-border p-3 md:grid-cols-[1fr_10rem_12rem_auto]">
+          <input v-model="budget.name" placeholder="failure class" />
+          <input v-model.number="budget.attempts" type="number" min="1" />
+          <select v-model="budget.exhausted"><option value="fail">fail</option><option value="pause">pause</option><option value="terminate">terminate</option></select>
+          <button type="button" class="btn btn-danger" @click="budgets.splice(index, 1)">Remove</button>
+        </article>
+        <button type="button" class="btn w-fit" @click="addBudget">Add budget</button>
+      </div>
+
+      <div v-else-if="tab === 'Phase Mappings'" class="grid gap-3">
+        <article v-for="phase in phases" :key="phase.member" class="grid gap-2 rounded border border-border p-3 md:grid-cols-2">
+          <strong class="md:col-span-2">{{ phase.member }}</strong>
+          <label v-for="pointer in resultPointers" :key="pointer.key" class="grid gap-1 text-xs"><span>{{ pointer.label }}</span><input v-model="phase[pointer.key]" list="orchestration-pointers" placeholder="/result/path" /></label>
+        </article>
+      </div>
+
+      <div v-else-if="tab === 'Workspaces'" class="grid gap-3">
+        <article v-for="phase in phases" :key="phase.member" class="grid gap-2 rounded border border-border p-3 md:grid-cols-3">
+          <label class="flex items-center gap-2 text-sm md:col-span-3"><input v-model="phase.workspace_enabled" type="checkbox" /><strong>{{ phase.member }}</strong></label>
+          <template v-if="phase.workspace_enabled">
+            <label class="grid gap-1 text-xs"><span>Opaque scope</span><input v-model="phase.workspace_scope" /></label>
+            <label class="grid gap-1 text-xs"><span>Lease seconds</span><input v-model.number="phase.lease_seconds" type="number" min="1" /></label>
+            <label class="grid gap-1 text-xs"><span>Recovery</span><select v-model="phase.recovery"><option value="replace">replace</option><option value="wait">wait</option><option value="fail">fail</option></select></label>
+            <label class="flex items-center gap-2 text-xs"><input v-model="phase.reuse" type="checkbox" />Reuse compatible workspace</label>
+            <label class="grid gap-1 text-xs md:col-span-2"><span>Worker requirements JSON</span><input v-model="phase.requirementsText" /></label>
+          </template>
+        </article>
+      </div>
+
+      <pre v-else class="max-h-[32rem] overflow-auto rounded bg-surface-raised p-3 text-xs">{{ sourcePreview }}</pre>
+      <datalist id="orchestration-events"><option v-for="event in canonicalEvents" :key="event" :value="event" /></datalist>
+      <datalist id="orchestration-pointers"><option v-for="pointer in canonicalPointers" :key="pointer" :value="pointer" /></datalist>
+      <p v-if="errors.length" class="error m-0 whitespace-pre-line text-sm">{{ errors.join("\n") }}</p>
+    </template>
+
+    <div class="flex justify-end gap-2">
+      <button type="button" class="btn" @click="emit('cancel')">Cancel</button>
+      <button type="button" class="btn btn-primary" :disabled="errors.length > 0" @click="save">Save pipeline revision</button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, reactive, ref } from "vue";
+import type {
+  AdapterKindMetadata,
+  IngressAction,
+  IngressLifecycle,
+  IngressPolicy,
+  IngressPredicateOperator,
+  JsonRecord,
+  JsonValue,
+  OrchestrationPolicy,
+  Pipeline,
+} from "../../../core/domain/models";
+
+const props = defineProps<{ pipeline: Pipeline; adapterKinds: AdapterKindMetadata[] }>();
+const emit = defineEmits<{ save: [metadata: JsonRecord]; cancel: [] }>();
+const tabs = ["Admission Routes", "Intents", "Budgets", "Phase Mappings", "Workspaces", "Preview"] as const;
+type Tab = (typeof tabs)[number];
+type Effect = "terminate" | "suspend" | "resume" | "supersede" | "observe" | "signal";
+type RestartKind = "entry" | "current" | "member";
+type Exhaustion = "fail" | "pause" | "terminate";
+type Recovery = "replace" | "wait" | "fail";
+interface PredicateDraft { id: string; pointer: string; operator: IngressPredicateOperator; valueText: string }
+interface RouteDraft { id: string; event_type: string; lifecycle: IngressLifecycle; action: IngressAction; intent: string; predicates: PredicateDraft[] }
+interface IntentDraft { id: string; name: string; effect: Effect; priority: number; coalesce_seconds: number; stop: "pause" | "cancel" | "none"; restart_kind: RestartKind; restart_member: string; allow_self_originated: boolean }
+interface BudgetDraft { id: string; name: string; attempts: number; exhausted: Exhaustion }
+interface PhaseDraft { member: string; subject_revision: string; resources: string; evidence: string; failure_class: string; workspace_enabled: boolean; workspace_scope: string; lease_seconds: number; reuse: boolean; recovery: Recovery; requirementsText: string }
+
+const metadata = props.pipeline.metadata;
+const existingIngress = metadata.ingress as IngressPolicy | undefined;
+const existingPolicy = metadata.orchestration as OrchestrationPolicy | undefined;
+const enabled = ref(Boolean(existingPolicy));
+const tab = ref<Tab>("Admission Routes");
+const scope = ref(existingIngress?.scope ?? "correlations");
+const members = props.pipeline.graph.members.map((member) => member.key);
+const effects: Effect[] = ["terminate", "suspend", "resume", "supersede", "observe", "signal"];
+const resultPointers = [
+  { key: "subject_revision", label: "Subject revision" },
+  { key: "resources", label: "Resources" },
+  { key: "evidence", label: "Evidence" },
+  { key: "failure_class", label: "Failure class" },
+] as const;
+
+const routes = reactive<RouteDraft[]>((existingIngress?.routes ?? []).map((route) => ({
+  id: crypto.randomUUID(), event_type: route.event_type, lifecycle: route.lifecycle,
+  action: route.action, intent: route.intent ?? "", predicates: route.predicates.map((predicate) => ({
+    id: crypto.randomUUID(), pointer: predicate.pointer, operator: predicate.operator,
+    valueText: predicate.value === undefined ? "null" : JSON.stringify(predicate.value),
+  })),
+})));
+const intents = reactive<IntentDraft[]>(Object.entries(existingPolicy?.intents ?? {}).map(([name, intent]) => ({
+  id: crypto.randomUUID(), name, effect: intent.effect, priority: intent.priority,
+  coalesce_seconds: intent.coalesce_seconds ?? 0, stop: intent.stop ?? "cancel",
+  restart_kind: intent.restart?.kind ?? "entry", restart_member: intent.restart?.member ?? "",
+  allow_self_originated: intent.allow_self_originated ?? false,
+})));
+const budgets = reactive<BudgetDraft[]>(Object.entries(existingPolicy?.budgets ?? {}).map(([name, budget]) => ({ id: crypto.randomUUID(), name, attempts: budget.attempts, exhausted: budget.exhausted })));
+const phases = reactive<PhaseDraft[]>(members.map((member) => {
+  const phase = existingPolicy?.phases[member];
+  return { member, subject_revision: phase?.result.subject_revision ?? "", resources: phase?.result.resources ?? "", evidence: phase?.result.evidence ?? "", failure_class: phase?.result.failure_class ?? "", workspace_enabled: Boolean(phase?.workspace), workspace_scope: phase?.workspace?.scope ?? "", lease_seconds: phase?.workspace?.lease_seconds ?? 300, reuse: phase?.workspace?.reuse ?? false, recovery: phase?.workspace?.recovery ?? "replace", requirementsText: JSON.stringify(phase?.workspace?.requirements ?? {}, null, 0) };
+}));
+
+const canonicalEvents = computed(() => [...new Set(props.adapterKinds.flatMap((kind) => kind.event_names))].sort());
+const canonicalPointers = computed(() => [...new Set(props.adapterKinds.flatMap((kind) => kind.canonical_pointers))].sort());
+const errors = computed(() => validate());
+const sourcePreview = computed(() => renderSource());
+
+function actionsFor(lifecycle: IngressLifecycle): IngressAction[] { return lifecycle === "unbound" ? ["start", "record"] : lifecycle === "terminal" ? ["requeue", "record"] : ["dispatch", "interrupt", "queue", "record"]; }
+
+function normalizeRoute(route: RouteDraft): void { if (!actionsFor(route.lifecycle).includes(route.action)) {route.action = actionsFor(route.lifecycle)[0];} if (route.action !== "dispatch") {route.intent = "";} }
+
+function addRoute(): void { routes.push({ id: crypto.randomUUID(), event_type: canonicalEvents.value[0] ?? "updated", lifecycle: "active", action: "dispatch", intent: intents.length > 0 ? intents[0].name : "", predicates: [] }); }
+
+function addPredicate(route: RouteDraft): void { route.predicates.push({ id: crypto.randomUUID(), pointer: canonicalPointers.value[0] ?? "/", operator: "equal", valueText: "null" }); }
+
+function addIntent(): void { intents.push({ id: crypto.randomUUID(), name: `intent_${String(intents.length + 1)}`, effect: "observe", priority: 10 - intents.length, coalesce_seconds: 0, stop: "cancel", restart_kind: "entry", restart_member: "", allow_self_originated: false }); }
+
+function addBudget(): void { budgets.push({ id: crypto.randomUUID(), name: `failure_${String(budgets.length + 1)}`, attempts: 1, exhausted: "pause" }); }
+
+function parseJson(text: string): JsonValue { return JSON.parse(text) as JsonValue; }
+
+function pointerValid(pointer: string): boolean { return pointer === "" || pointer.startsWith("/"); }
+
+function validate(): string[] {
+  if (!enabled.value) {return [];}
+  const issues: string[] = [];
+  if (!scope.value.trim()) {issues.push("Admission scope is required.");}
+  const priorities = new Set<number>();
+  const names = new Set(intents.map((intent) => intent.name));
+  for (const intent of intents) { if (!intent.name.trim()) {issues.push("Intent names are required.");} if (priorities.has(intent.priority)) {issues.push(`Intent priority ${String(intent.priority)} is duplicated.`);} priorities.add(intent.priority); if (intent.restart_kind === "member" && !members.includes(intent.restart_member)) {issues.push(`Intent ${intent.name} has an unknown restart member.`);} }
+  for (const route of routes) { if (!route.event_type.trim()) {issues.push("Every route needs an event name.");} if (route.action === "dispatch" && !names.has(route.intent)) {issues.push(`Route ${route.event_type} needs a known intent.`);} for (const predicate of route.predicates) { if (!pointerValid(predicate.pointer)) {issues.push(`Predicate pointer ${predicate.pointer} is invalid.`);} if (predicate.operator !== "exists") { try { parseJson(predicate.valueText); } catch { issues.push(`Predicate ${predicate.pointer} has invalid JSON.`); } } } }
+  for (const phase of phases) { for (const pointer of resultPointers) { if (phase[pointer.key] && !pointerValid(phase[pointer.key])) {issues.push(`${phase.member} ${pointer.label} pointer is invalid.`);} } if (phase.workspace_enabled) { if (!phase.workspace_scope.trim()) {issues.push(`${phase.member} workspace scope is required.`);} try { parseJson(phase.requirementsText); } catch { issues.push(`${phase.member} workspace requirements are invalid JSON.`); } } }
+  return [...new Set(issues)];
+}
+
+function buildIngress(): IngressPolicy { return { scope: scope.value.trim(), routes: routes.map((route) => ({ event_type: route.event_type.trim(), lifecycle: route.lifecycle, action: route.action, predicates: route.predicates.map((predicate) => ({ pointer: predicate.pointer, operator: predicate.operator, ...(predicate.operator === "exists" ? {} : { value: parseJson(predicate.valueText) }) })), ...(route.action === "dispatch" ? { intent: route.intent } : {}) })) }; }
+
+function buildPolicy(): OrchestrationPolicy { return { intents: Object.fromEntries(intents.map((intent) => [intent.name, { effect: intent.effect, priority: intent.priority, ...(intent.coalesce_seconds > 0 ? { coalesce_seconds: intent.coalesce_seconds } : {}), stop: intent.stop, restart: { kind: intent.restart_kind, ...(intent.restart_kind === "member" ? { member: intent.restart_member } : {}) }, allow_self_originated: intent.allow_self_originated }])), budgets: Object.fromEntries(budgets.map((budget) => [budget.name, { attempts: budget.attempts, exhausted: budget.exhausted }])), phases: Object.fromEntries(phases.map((phase) => [phase.member, { result: { ...(phase.subject_revision ? { subject_revision: phase.subject_revision } : {}), ...(phase.resources ? { resources: phase.resources } : {}), ...(phase.evidence ? { evidence: phase.evidence } : {}), ...(phase.failure_class ? { failure_class: phase.failure_class } : {}) }, ...(phase.workspace_enabled ? { workspace: { scope: phase.workspace_scope, requirements: parseJson(phase.requirementsText), lease_seconds: phase.lease_seconds, reuse: phase.reuse, recovery: phase.recovery } } : {}) }])), defaults: existingPolicy?.defaults ?? null }; }
+
+function save(): void { const next: JsonRecord = { ...metadata }; if (enabled.value) { next.ingress = buildIngress(); next.orchestration = buildPolicy(); } else { delete next.ingress; delete next.orchestration; } emit("save", next); }
+
+function quote(value: string): string { return JSON.stringify(value); }
+
+function renderSource(): string { if (!enabled.value) {return "# orchestration disabled";} const lines = [`ingress scope ${quote(scope.value)} {`]; for (const route of routes) { lines.push(`  on ${quote(route.event_type)} when ${route.lifecycle}`); for (const predicate of route.predicates) {lines.push(`    if ${quote(predicate.pointer)} ${predicate.operator} ${predicate.operator === "exists" ? "" : predicate.valueText}`.trimEnd());} lines.push(`    -> ${route.action}${route.action === "dispatch" ? ` ${quote(route.intent)}` : ""}`, ""); } lines.push("}", "", "orchestration {"); for (const intent of intents) {lines.push(`  intent ${quote(intent.name)} effect ${intent.effect} priority ${String(intent.priority)}${intent.coalesce_seconds > 0 ? ` coalesce ${String(intent.coalesce_seconds)}s` : ""}`);} for (const budget of budgets) {lines.push(`  budget ${quote(budget.name)} attempts ${String(budget.attempts)} exhausted ${budget.exhausted}`);} for (const phase of phases) { lines.push("", `  phase ${quote(phase.member)} {`); for (const pointer of resultPointers) {if (phase[pointer.key]) {lines.push(`    ${pointer.key} from ${quote(phase[pointer.key])}`);}} if (phase.workspace_enabled) {lines.push(`    workspace scope ${quote(phase.workspace_scope)}${phase.reuse ? " reuse" : ""}`);} lines.push("  }"); } lines.push("}"); return lines.join("\n"); }
+</script>

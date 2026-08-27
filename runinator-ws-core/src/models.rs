@@ -29,6 +29,7 @@ use runinator_models::{
     },
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -126,6 +127,14 @@ pub enum ApiResponse {
     OrchestrationReductionList(Vec<runinator_models::orchestration::OrchestrationEventReduction>),
     OrchestrationEvidenceList(Vec<runinator_models::orchestration::OrchestrationEvidence>),
     OrchestrationCommandList(Vec<runinator_models::orchestration::OrchestrationCommand>),
+    WorkspaceList(Vec<runinator_models::workspaces::WorkspaceLease>),
+    OrchestrationAdapter(runinator_models::orchestration::AdapterDefinition),
+    OrchestrationAdapterList(Vec<runinator_models::orchestration::AdapterDefinition>),
+    OrchestrationAdapterRevision(runinator_models::orchestration::AdapterRevision),
+    OrchestrationAdapterRevisionList(Vec<runinator_models::orchestration::AdapterRevision>),
+    AdapterKindList(Vec<runinator_models::orchestration::AdapterKindMetadata>),
+    ExternalOperationList(Vec<runinator_models::orchestration::ExternalOperation>),
+    ExternalOperation(runinator_models::orchestration::ExternalOperation),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
@@ -236,6 +245,51 @@ pub struct OrchestrationIntentRequest {
     pub payload: Value,
     pub reason: String,
     pub idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OrchestrationRequeueRequest {
+    pub reason: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdapterApplyRequest {
+    pub name: String,
+    pub kind: String,
+    pub kind_version: String,
+    #[serde(default)]
+    pub configuration: Value,
+    #[serde(default)]
+    pub secret_bindings: BTreeMap<String, Uuid>,
+    #[serde(default)]
+    pub identity_configuration: Value,
+    #[serde(default)]
+    pub expected_revision: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdapterEnableRequest {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdapterTestRequest {
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    pub body_base64: String,
+    #[serde(default)]
+    pub configuration: Option<Value>,
+    #[serde(default)]
+    pub secret_bindings: Option<BTreeMap<String, Uuid>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExternalOperationResolutionRequest {
+    pub resolution: String,
+    pub reason: String,
+    #[serde(default)]
+    pub receipt: Value,
 }
 
 /// Opaque provider-neutral event submitted to a workflow or pipeline ingress policy.

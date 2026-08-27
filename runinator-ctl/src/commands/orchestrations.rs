@@ -2,7 +2,7 @@ use super::*;
 
 use runinator_models::orchestration::{OrchestrationBinding, OrchestrationEventReduction};
 
-use crate::cli::OrchestrationCommands;
+use crate::cli::{OrchestrationAdapterCommands, OrchestrationCommands};
 
 const WATCH_INTERVAL_MINIMUM: u64 = 1;
 
@@ -85,6 +85,124 @@ pub(super) async fn orchestrations(
             }
             println!("accepted intent {name} for orchestration {id} [{key}]");
             Ok(())
+        }
+        OrchestrationCommands::Requeue {
+            id,
+            reason,
+            idempotency_key,
+        } => {
+            let key = idempotency_key
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            let binding = client.requeue_orchestration(*id, reason, &key).await?;
+            if json_output {
+                return output::json(&binding);
+            }
+            println!(
+                "requeued orchestration {} as generation {} ({})",
+                binding.id, binding.generation, key
+            );
+            Ok(())
+        }
+        OrchestrationCommands::Adapters { command } => {
+            orchestration_adapters(client, command, json_output).await
+        }
+    }
+}
+
+async fn orchestration_adapters(
+    client: &Client,
+    command: &OrchestrationAdapterCommands,
+    json_output: bool,
+) -> Result<()> {
+    match command {
+        OrchestrationAdapterCommands::Kinds => {
+            let kinds = client.fetch_orchestration_adapter_kinds().await?;
+            if json_output {
+                return output::json(&kinds);
+            }
+            let rows = kinds
+                .into_iter()
+                .map(|kind| {
+                    vec![
+                        kind.kind,
+                        kind.version,
+                        kind.display_name,
+                        kind.capabilities.join(","),
+                        kind.event_names.join(","),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(
+                    &["KIND", "VERSION", "NAME", "CAPABILITIES", "EVENTS"],
+                    &rows
+                )
+            );
+            Ok(())
+        }
+        OrchestrationAdapterCommands::List => {
+            let adapters = client.fetch_orchestration_adapters().await?;
+            if json_output {
+                return output::json(&adapters);
+            }
+            let rows = adapters
+                .into_iter()
+                .map(|adapter| {
+                    vec![
+                        adapter.id.to_string(),
+                        adapter.name,
+                        adapter.kind,
+                        adapter.current_revision.to_string(),
+                        adapter.enabled.to_string(),
+                        adapter.endpoint_identity,
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(
+                    &["ID", "NAME", "KIND", "REVISION", "ENABLED", "ENDPOINT"],
+                    &rows,
+                )
+            );
+            Ok(())
+        }
+        OrchestrationAdapterCommands::Show { id } => {
+            let adapter = client.fetch_orchestration_adapter(*id).await?;
+            let revisions = client.fetch_orchestration_adapter_revisions(*id).await?;
+            let value = json!({ "adapter": adapter, "revisions": revisions });
+            output::json(&value)
+        }
+        OrchestrationAdapterCommands::Apply { file, id } => {
+            let definition: Value = serde_json::from_slice(&fs::read(file)?)?;
+            let adapter = client.apply_orchestration_adapter(*id, &definition).await?;
+            if json_output {
+                return output::json(&adapter);
+            }
+            println!(
+                "applied adapter {} ({}) revision {}",
+                adapter.name, adapter.id, adapter.current_revision
+            );
+            Ok(())
+        }
+        OrchestrationAdapterCommands::Test { id, file } => {
+            let sample: Value = serde_json::from_slice(&fs::read(file)?)?;
+            let result = client.test_orchestration_adapter(*id, &sample).await?;
+            output::json(&result)
+        }
+        OrchestrationAdapterCommands::Delete { id } => {
+            let result = client.delete_orchestration_adapter(*id).await?;
+            if json_output {
+                return output::json(&result);
+            }
+            println!("{}", result.message);
+            Ok(())
+        }
+        OrchestrationAdapterCommands::Reload => {
+            let result = client.reload_orchestration_adapters().await?;
+            output::json(&result)
         }
     }
 }
