@@ -5,7 +5,7 @@ Use these task-oriented guides in place of the former monolithic repository READ
 ## Start and operate Runinator
 
 - [Local development and runtime](local-development.md) — prerequisites, the supervisor stack, authentication, topology, transports, dashboards, and the cross-platform local runner.
-- [Workflow authoring and import](workflow-authoring.md) — REXRAP packs, local testing, dry runs, control flow, triggers, ingress, notifications, schedules, and settings.
+- [Workflow authoring and import](workflow-authoring.md) — REXRAP packs, local testing, dry runs, control flow, pipelines, correlated orchestration, ingress adapters, notifications, schedules, and settings.
 - [Console and MCP](console-and-mcp.md) — the terminal and browser consoles, command completion, session behavior, and MCP integration.
 - [Packaged functions](packaged-functions.md) — immutable function packages, workflow and HTTP invocation, pack integration, execution, and retention.
 - [Observability](observability.md) — logs, metrics, traces, the local telemetry stack, Kubernetes observability, dead letters, and audit logs.

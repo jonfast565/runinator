@@ -4,7 +4,7 @@ Guidance for agents working in the `runinator-rexrap` crate family.
 
 ## Ownership
 
-The REXRAP family owns the author-time workflow language: grammar, parser, semantic diagnostics, lowering to JSON workflow definitions, formatting, desugaring, and decompilation. Runtime execution belongs to `runinator-ws`, validation shared with JSON workflows belongs in `runinator-workflows`, and the editor surface (completion, hover) belongs in `runinator-rexrap-ide`.
+The REXRAP family owns the author-time workflow language: grammar, parser, semantic diagnostics, lowering to JSON workflow definitions, formatting, desugaring, and decompilation. Durable execution belongs to `runinator-engine` and `runinator-runtime` (hosted by `runinator-ws` by default), validation shared with JSON workflows belongs in `runinator-workflows`, and the editor surface (completion, hover) belongs in `runinator-rexrap-ide`.
 
 ## The Four Crates
 

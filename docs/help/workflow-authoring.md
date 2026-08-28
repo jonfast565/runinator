@@ -1,14 +1,15 @@
 # Workflow authoring and import
 
-Use this guide to compile, import, test, simulate, and edit REXRAP workflow packs. It also covers runtime control-flow, triggers, ingress, notifications, schedules, and settings references.
+Use this guide to compile, import, test, simulate, and edit REXRAP workflow packs. It also covers runtime control-flow, pipelines, correlated orchestration, ingress adapters, notifications, schedules, and settings references.
 
 ## Workflow Import
 
 `runinatorctl workflows apply <path>` imports a workflow pack in one shot. The
 path can be a `.rrx` source file or directory (each source is a unified REXRAP
 container with workflow, pipeline, settings, package-manifest, and test blocks),
-or a workflow/bundle JSON file. The local supervisor config applies
-`./packs/sdlc/sdlc.rrx`. To load local credentials and config, import an `.rrx`
+or one standalone workflow-definition JSON file. Compiled workflow bundles are
+not accepted. The checked-in local supervisor config applies `packs/hello-world`
+and `packs/creds-sync`. To load local credentials and config, import an `.rrx`
 source containing a `settings` block with `runinatorctl settings import <file>`. Each entry carries a `kind`
 (`secret` — the default — or `config`) and a `value`; secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
@@ -17,11 +18,11 @@ repository sample if needed:
 
 ```bash
 mkdir -p ~/.runinator/workflows
-cp -R packs/sdlc ~/.runinator/workflows/sdlc
+cp -R packs/hello-world ~/.runinator/workflows/hello-world
 ```
 
-Compiled JSON workflow packs are no longer checked in. Use the unified `sdlc.rrx`
-source and its referenced `.rrx` sources for imports.
+Compiled JSON workflow packs are never authored or checked in. Use a unified
+`.rrx` source or a directory containing one or more `.rrx` sources for pack imports.
 
 Because `workflows apply` overwrites stored definitions wholesale, every accepted
 definition is also captured as an immutable revision. `runinatorctl workflows
@@ -167,9 +168,51 @@ active member. `requeue` compare-and-swaps a terminal admission into its next ge
 route is an explicit no-op/rejection and never starts work. `(source, event_id)` is deduplicated in
 the admission ledger, so retries receive the original disposition and run reference.
 
+`dispatch "<intent>"` is the pipeline-only handoff to a correlated orchestration policy. It does
+not start a second pipeline: it records a durable intent against the existing scope/correlation
+binding, then the policy resolves it by priority and coalescing rules.
+
 Submit events to `POST /workflows/{id}/ingress` or `POST /pipelines/{id}/ingress`. Authenticated
 operators can inspect the owner at `GET /ingress/admission?scope=…&correlation_key=…` and its ordered
 timeline at `GET /ingress/admission/events?scope=…&correlation_key=…`.
+
+#### Correlated pipeline orchestration
+
+Place an `orchestration { ... }` block inside a pipeline when later events must control one durable,
+ticket- or resource-scoped execution rather than merely start another run. The engine creates one
+binding per ingress scope, correlation key, and generation; it pins the pipeline revision and tracks
+the active epoch and phase. `intent` declarations give normalized external control events a priority,
+optional coalescing period, effect (`terminate`, `suspend`, `resume`, `supersede`, `observe`, or
+`signal`), and restart/stop behavior. `budget` declarations bound retry classes and select a terminal
+handoff. `phase` declarations project selected workflow output fields into the durable binding and can
+lease a labeled workspace for reuse across member workflows.
+
+```rexrap
+pipeline "Ticket automation" {
+    ingress scope "ticket.lifecycle" {
+        on "ready" when unbound -> start
+        on "cancel" when active -> dispatch "stop"
+    }
+
+    orchestration {
+        intent "stop" effect terminate priority 100
+        budget "transient" attempts 3 exhausted pause via "handoff"
+        phase "implement" {
+            evidence from "/evidence"
+            workspace scope "source" reuse lease 30m labels { "capability": "git" }
+        }
+    }
+
+    workflow "implement"
+    workflow "handoff"
+}
+```
+
+The **Orchestrations** command-center view and `runinatorctl orchestrations` expose bindings,
+timelines, aliases, and operator intents; `runinatorctl orchestrations adapters` manages the inbound
+adapter definitions and reports polling health. See
+[`packs/autonomous-development`](../../packs/autonomous-development/README.md) for the complete
+ticket-scoped example.
 
 #### Webhook and polling adapters
 

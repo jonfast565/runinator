@@ -93,7 +93,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.rrx`, `packs/hello-world/hello-world.rrx`, and the `packs/creds-sync` directory — compiling the referenced `.rrx` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=desktop` worker. The desktop agent advertises that label by default, so its scheduled runs use the local desktop agent; without a matching connected worker, they park then fail (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
+The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports `packs/hello-world` and `packs/creds-sync`, compiling their `.rrx` sources before sending each bundle to the API. The `creds-sync` workflows require a usable `runner=desktop` worker session; the local desktop agent advertises that label by default, but its headless supervisor instance cannot complete interactive login prompts (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want to re-apply the default hello-world pack, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -109,7 +109,7 @@ password: admin
 That seed happens even while HTTP auth is still disabled by default, so the usual local stack keeps working unchanged. If you later enable `RUNINATOR_AUTH_ENABLED=true` for the web service, you can immediately log in with that account and rotate it.
 
 The same bootstrap step also seeds a dev-only service API key and feeds it to
-the supervisor-managed development worker, one-shot `runinatorctl workflows apply`,
+the supervisor-managed development worker, desktop agent, and one-shot `runinatorctl workflows apply`,
 and the `bash scripts/run-local.sh sync|dev|smoke-sync` helpers. That means the
 default local stack continues to work unchanged with auth off, and starts
 working against an auth-enabled local web service without hand-editing
@@ -133,7 +133,7 @@ RUNINATOR_PASSWORD=… runinatorctl --username admin status
 Keep the password in the environment rather than on the command line so it stays out of shell
 history and the process listing.
 
-`runinatorctl` will refresh that session automatically on later commands and will ask you to log in before calling an auth-enabled server when no valid local session, credentials, or `--api-key` is available. Remove the stored session with:
+An enabled organization membership is required to log in or refresh a session. Login first creates an org-less session; choose an active organization with `/auth/switch-org` (the command center does this as you change organization) before making organization-scoped requests. `runinatorctl` will refresh its stored session automatically on later commands and will ask you to log in before calling an auth-enabled server when no valid local session, credentials, or `--api-key` is available. Remove the stored session with:
 
 ```bash
 runinatorctl logout
@@ -161,7 +161,7 @@ bash scripts/run-local.sh dev
 Pass `--run` to create and watch a workflow run after each successful import:
 
 ```bash
-bash scripts/run-local.sh dev --run "SDLC: Development"
+bash scripts/run-local.sh dev --run "Hello World Test"
 ```
 
 When you only need to prove the local ws/waker/worker wiring with a tiny import
@@ -185,10 +185,12 @@ This uses `runinator-supervisor.json` to start:
 
 - `runinator-broker`
 - `runinator-blob`
+- `runinator-adapter-host`
 - `runinator-ws`
 - `runinator-waker`
 - `runinator-worker`
-- `runinatorctl workflows apply` (one-shot pack import)
+- `runinator-desktop-agent --headless`
+- `runinatorctl workflows apply` (two one-shot pack imports)
 
 The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
@@ -303,8 +305,9 @@ SQLite, this includes the database at `~/.runinator/runinator.db` (which also
 holds config and secrets in the `settings` table, with each value encrypted at rest by
 `RUNINATOR_CREDENTIAL_KEY`), application logs under `~/.runinator/logs/`, and
 supervisor state under `~/.runinator/supervisor/`.
-The local supervisor runs `runinatorctl workflows apply` against the pack at
-`packs/sdlc/sdlc.rrx`.
+`bash scripts/run-local.sh sync` and `dev` re-apply `packs/hello-world` by
+default; use `--workflows-file` or `RUNINATOR_WORKFLOWS_FILE` to target another
+`.rrx` source or pack directory.
 Child process stdout and stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 

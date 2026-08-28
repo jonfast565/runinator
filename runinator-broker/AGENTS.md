@@ -21,7 +21,7 @@ re-exports that surface for binaries that construct a backend.
 
 ## Boundaries
 
-- Channels are `action`, `control`, `agent`, `result`, `wake`, `ingress`, and fan-out `events`; adding a channel requires every backend and wire transport to be updated together.
+- Channels are provider `effect`, `infrastructure_effect`, `effect_result`, target-routed `control` and `agent`, `wake`, `ingress`, and fan-out `events`; adding a channel requires every backend and wire transport to be updated together. Provider workers receive only provider effects, while the engine's infrastructure host receives infrastructure effects.
 - Shared command payloads crossing worker/waker/ws boundaries belong in `runinator-comm`, not broker-local copies.
 - The broker should not know about concrete providers, database schema, web handlers, or workflow VM logic.
 - Preserve delivery acknowledgement semantics: consumers acknowledge only after processing is complete at the service layer.

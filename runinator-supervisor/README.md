@@ -85,11 +85,12 @@ When `state_dir` is omitted, supervisor state defaults to
 - `<state_dir>/control/` — dynamic add/start/stop/remove command queue
 
 The repository's local supervisor config runs `runinatorctl workflows apply`
-once per pack on startup to import the workflow packs. The checked-in supervisor
-config imports all three pack directories under `packs/` — `packs/sdlc`,
-`packs/hello-world`, and `packs/creds-sync` — compiling their unified `.rrx`
-sources during import. The `creds-sync` runs park
-then fail locally without a `runner=desktop` worker. It also passes `--advertise-host 127.0.0.1` to the web service,
+once per configured pack on startup. The checked-in config imports
+`packs/hello-world` and `packs/creds-sync`, compiling their unified `.rrx`
+sources during import. It also starts `runinator-adapter-host` for inbound
+orchestration adapters and a headless desktop agent for desktop-routed work.
+The `creds-sync` runs park then fail locally without a usable desktop session
+and its local credentials. The config passes `--advertise-host 127.0.0.1` to the web service,
 waker, and worker, plus stable local instance ids for the waker and worker, so
 the replicas view shows host/IP/version data instead of blank fields after a
 restart. The local web-service command runs `runinator-bootstrap` first, then
@@ -97,6 +98,6 @@ execs `runinator-ws`; the checked-in config passes
 `RUNINATOR_AUTH_BOOTSTRAP_ADMIN=admin:admin` into that bootstrap step so the
 admin account is seeded into an empty local database on first start without
 enabling auth by default. It also seeds a dev-only bootstrap service API key
-and passes that key to the local waker, worker, and one-shot pack import so the
-same checked-in config works against both auth-disabled and auth-enabled local
-web-service runs.
+and passes that key to the worker, desktop agent, and one-shot pack imports so
+the same checked-in config works against both auth-disabled and auth-enabled
+local web-service runs.

@@ -6,6 +6,14 @@ Guidance for agents working in this repository. Keep changes aligned with the ex
 
 Increment the build number for every new feature. For a substantial, multi-phase feature, increment the minor version as well.
 
+## Deployment
+
+Redeploy the cluster after every change. The sole exception is a UI-only change: deploy only `runinator-command-center` in that case.
+
+## Development Cycle Verification
+
+Run compilations, Clippy, and tests only at the end of a development cycle, rather than after individual edits.
+
 ## Project Shape
 
 Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime using a resumable state-machine orchestrator.
@@ -99,13 +107,14 @@ There is also a Tauri `runinator-command-center` client. It discovers and calls 
 
 Layout:
 
-Two areas were added with packaged functions and the console: `Functions` (packages, aliases, exports)
-and `Console` (the terminal, whose portable command surface lives in `core/console/` and whose
-transcript state lives in `core/services/console-terminal.ts`). Both follow the per-area layout below — `core/domain/models/<area>/`,
+The `Functions`, `Console`, and `Orchestrations` areas follow the per-area layout below. Functions
+owns packages, aliases, and exports; Console owns the terminal surface (`core/console/`) and its
+transcript state (`core/services/console-terminal.ts`); Orchestrations owns correlated pipeline
+instances and adapter operations. Each follows `core/domain/models/<area>/`,
 `core/services/<area>.ts`, `ui/adapters/pinia/<area>.ts`, `ui/views/<Area>View.vue` — plus entries in
 `core/domain/models/index.ts`, `core/api/commandCenterApi.ts`, `core/api/httpRuntime.ts`'s `REGISTRY`,
 `core/services/index.ts`, `core/navigation/app.ts`'s `AppTab`, `core/navigation/nav-config.ts`,
-`App.vue`, and — for desktop parity — `src-tauri/src/commands/functions.rs` and `app.rs`'s
+`App.vue`, and the corresponding Tauri commands in `src-tauri/src/commands/` and `app.rs`'s
 `generate_handler![]`.
 
 The Functions tab can publish as well as read: `PublishFunctionDialog.vue` takes an archive the
@@ -146,7 +155,7 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-comm`: shared communication contracts and gossip/discovery types. It can depend on models, but should not know about concrete services, databases, providers, or broker backends.
 - `runinator-api`: HTTP client facade for talking to the web service. Keep URL discovery behind locator types; do not spread raw web-service endpoint construction through worker or ctl code.
 - `runinator-store`: the persistence **contract** — trait definitions and the plain types they exchange, with no sqlx and no backend. The surface is split two ways:
-  - `roles/` holds one trait per domain (`RunStore`, `ScheduleStore`, `AuthStore`, `OrgStore`, `DefinitionStore`, `DispatchStore`, `FunctionStore`, `NotificationStore`, `ReplicaStore`, `AutomationStore`, `SettingStore`, `ArchiveStore`). `DatabaseImpl` composes all of them and keeps only `run_init_scripts` of its own.
+  - `roles/` holds one trait per domain (`ArchiveStore`, `AuthStore`, `AutomationStore`, `ConsoleStore`, `DefinitionStore`, `DeliveryStore`, `FileStore`, `FunctionStore`, `IngressStore`, `NotificationStore`, `OrchestrationStore`, `OrgStore`, `RbacStore`, `ReplicaStore`, `RunStore`, `ScheduleStore`, `SettingStore`, `WorkflowVmStore`, `WorkspaceStore`). `DatabaseImpl` composes those roles plus `RuntimeStore` and `PackTransactionStore`, and keeps only `run_init_scripts` of its own.
   - `RuntimeStore` is a **use-case** persistence trait, cut to exactly what the graph runtime's store-backed host calls. It deliberately spans several domains — keeping it small makes the in-memory runtime fake practical.
 
   Add a new operation to the role that owns it (or `RuntimeStore` if the runtime host calls it), never to `DatabaseImpl`. Bound as narrowly as the caller allows: `runinator-archiver` bounds on `ArchiveStore`, not `DatabaseImpl`. Because the roles are separate traits, a caller using several must import each — glob `runinator_store::prelude::*` when that list would be long and uninformative.

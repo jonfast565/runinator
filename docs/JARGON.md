@@ -5,6 +5,7 @@ plain-English meaning.
 
 - **ADF** — Atlassian Document Format, the tree-shaped format used for Jira text.
 - **action** — a provider function invoked by a workflow action node. Its execution is represented by an effect.
+- **adapter** — an inbound integration that verifies or polls an external system, normalizes its events, and sends them to an ingress policy. Adapters are not outbound workflow providers.
 - **admission** — the durable record that tracks how a workflow or pipeline handles related external ingress events under one scope and correlation key.
 - **AMQP** — Advanced Message Queuing Protocol; a standard for message brokers.
 - **arm** — create a pending effect or wake so the runtime can act on it later; **re-arm** creates its next retry attempt without resuming the workflow yet.
@@ -28,6 +29,7 @@ plain-English meaning.
 - **deduplicate / dedupe** — recognize repeated delivery of the same logical event or request and apply it only once.
 - **DNS** — Domain Name System; turns host names into network addresses.
 - **dispatch** — the durable instruction to deliver an effect to its executor, usually followed by publication on a broker channel.
+- **epoch** — one replacement attempt at an active correlated orchestration. A superseding intent retires the old epoch according to its stop rule and starts the selected next epoch.
 - **drive** — advance a runnable continuation through VM instructions until it reaches a durable boundary such as an effect, fork, join, or terminal result.
 - **durable** — persisted so the state survives process restarts and can be recovered by another replica.
 - **egress** — data leaving a service or network.
@@ -45,6 +47,7 @@ plain-English meaning.
 - **idempotent** — safe to repeat because later repeats have the same result.
 - **in-flight** — started but not yet terminal; for a run, this includes work that is executing or parked.
 - **ingress** — data entering a service or network. In Runinator, it is also the broker path that carries external events and results into the engine.
+- **intent** — a named, durable control request sent to a correlated orchestration by an ingress route or an operator. Its policy decides priority, coalescing, and effect.
 - **infrastructure effect** — an effect owned by the engine's coordination host rather than a provider worker, such as a timer, approval, gate, signal, or mutex wait.
 - **JSON-RPC** — a remote procedure call format that uses JSON messages.
 - **JSON** — JavaScript Object Notation; a text format for structured data.
@@ -64,9 +67,11 @@ plain-English meaning.
 - **OAuth** — an authorization protocol that lets one service grant limited access to another.
 - **OpenTelemetry** — a standard for collecting traces, metrics, and logs.
 - **outbox** — durable pending work that has been recorded before it is published to a broker, so a crash cannot lose it between persistence and delivery.
+- **orchestration** — the durable, correlation-scoped controller for a pipeline generation. It pins a pipeline revision and coordinates phases, control intents, budgets, output evidence, and workspace leases.
 - **park / parked** — pause an open workflow run or continuation because it is waiting for an external condition or result. A parked run has a waiting, approval-required, input-required, or blocked status; it is not progressing but has not ended.
 - **pause / paused** — an operator or debugger has intentionally stopped a run or continuation. It will not progress until explicitly resumed; this is distinct from waiting for an effect or being suspended by an interrupt handler.
 - **payload** — the data carried by a message or request.
+- **phase** — the currently selected pipeline member inside a correlated orchestration, together with its configured result projection and optional workspace policy.
 - **pin / pinned** — bind a run, effect, or function call to an immutable revision, version, or digest so later edits cannot change what it executes.
 - **poison message** — a broker message that repeatedly cannot be processed and must be retained or surfaced rather than silently discarded.
 - **provider** — an integration that implements named actions, such as an API connector or local capability. Workers resolve provider effects to these implementations.

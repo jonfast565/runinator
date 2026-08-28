@@ -4,11 +4,14 @@ Use this guide to validate workflow packs and exercise the local end-to-end runt
 
 ## Verification
 
-For workflow pack import changes, run:
+For workflow pack import changes, first start the target API: `rexrap check` reads its provider
+and packaged-function catalog so strict type checks match the server that will receive the pack.
+Then run:
 
 ```bash
-runinatorctl rexrap check packs/sdlc/sdlc.rrx
 runinatorctl rexrap check packs/hello-world/hello-world.rrx
+runinatorctl rexrap check packs/creds-sync/creds-sync.rrx
+runinatorctl rexrap check packs/autonomous-development/autonomous-development.rrx
 cargo test -p runinator-ctl
 ```
 

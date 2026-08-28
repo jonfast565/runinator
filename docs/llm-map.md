@@ -7,7 +7,7 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 1. `runinator-ws` owns HTTP/WebSocket transport and auth, and hosts `runinator-engine` by default.
 2. `runinator-engine` owns persistence orchestration: the workflow VM/effect loops, effect-result handling, triggers, agent directives, and maintenance. `runinator-ws` hosts it by default; `runinator-engine-worker` is the optional out-of-process host for independently scaled engine replicas. It does not execute providers or run the removed legacy reducer/ingress loops.
 3. `runinator-runtime` owns the continuation-driven graph interpreter, cursor fibers, host boundary, transitions, and node-kind behavior.
-4. `runinator-waker` consumes `wake`, waits until due, then publishes `WsIngressCommand::Drive` on `ingress`.
+4. `runinator-waker` consumes `wake`, waits until due, then relays its prebuilt `WsIngressCommand::SettleEffect` on `ingress`.
 5. `runinator-worker` consumes provider effects, executes providers/plugins, and publishes effect results; `runinator-desktop-agent` hosts that runtime as an exclusive desktop worker.
 6. `runinator-broker` provides backend-neutral channels and transports, and `runinator-database` owns concrete persistence.
 
@@ -22,6 +22,9 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change editor completion or hover: `runinator-rexrap-ide/src/`; if it needs something new from the language core, add it to `runinator-rexrap/src/analysis.rs`.
 - Change persistence behavior: add to the owning role trait in `runinator-store/src/roles/`, then the matching file in `runinator-database/src/operations/`.
 - Change durable orchestration/repository behavior: `runinator-engine/src/repository/`, the VM/effect loops, and their focused tests.
+- Change correlated pipeline orchestration, ingress intents, phase policies, or workspace leases:
+  `runinator-models/src/orchestration.rs`, `runinator-engine/src/services/{orchestration_operations,pipeline_ingress,pipeline_operations}.rs`, and the matching store role/database operations.
+- Change inbound adapter behavior: the shared ABI in `runinator-adapter-contract`, adapter loading and built-ins in `runinator-adapter-host`, the HTTP client in `runinator-adapter-client`, and the authoring/engine callers. Keep inbound adapters separate from outbound `runinator-provider-*` crates.
 - Change web API behavior: the handler's file in `runinator-ws-identity/`, `runinator-ws-authoring/`, or `runinator-ws-runtime/`'s `src/handlers/` (authoring = what can run, runtime = what is running, identity = who may do either); `runinator-ws/src/router.rs` only merges them. Shared wire types and the response envelope are in `runinator-ws-core`; auth/authz/rate-limit/overload are in `runinator-ws-middleware`. A handler reaches persistence through `runinator-engine/src/repository/`; only the allowlist in `runinator-ws/src/store_access_tests.rs` calls the store directly.
 - Change API client behavior: `runinator-api/src/`.
 - Change broker channel payloads: update `runinator-comm` contracts first, then every relevant broker transport/backend and service consumer.
@@ -39,7 +42,8 @@ When adding or renaming shared fields, inspect:
 - `runinator-models`
 - `runinator-comm`
 - `runinator-database/src/mappers.rs`
-- SQLite and Postgres backend implementations
+- SQLite, Postgres, and MariaDB backend implementations
+- `runinator-db-cli` when backend selection or connection handling changes
 - `runinator-api`
 - `runinator-ctl` import paths
 - `runinator-command-center/src/core/domain/models/` if user-facing

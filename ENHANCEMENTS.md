@@ -1,5 +1,9 @@
 # Runinator Enhancement Roadmap
 
+> Historical planning record. Entries describe the repository when they were written; use
+> `AGENTS.md`, `docs/architecture.md`, and the current code for active architecture. In particular,
+> historical MySQL and MongoDB references do not describe supported backends today.
+
 ## Context
 
 This is an advisory survey, not a single implementation task. It tracks the remaining gaps in **operational maturity**, **frontend polish/accessibility**, and **runtime/product completeness**, ordered by priority rather than by the survey that discovered them.

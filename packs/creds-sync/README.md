@@ -13,7 +13,7 @@ credential files — add a new job, no workflow change.
 
 ## How it runs on the right machine
 
-Each node uses `@runner("desktop")`. The reducer routes a node with a required label to a live
+Each node uses `@runner("desktop")`. The engine routes a node with a required label to a live
 worker advertising that label, and **parks then fails** (on the node `timeout`) when none is
 connected. So these workflows only ever execute on a worker you start on the operator's workstation,
 either a standalone worker:

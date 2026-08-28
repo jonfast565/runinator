@@ -28,6 +28,11 @@ flowchart LR
         GATE["ws middleware\nauth · authz · rate limits · overload"]
     end
 
+    subgraph Inbound["Inbound integration"]
+        ADAPTER["runinator-adapter-host\nloopback adapter sidecar"]
+        EXTERNAL["GitHub · Jira · other external systems"]
+    end
+
     subgraph Orchestration["Durable orchestration"]
         ENGINE["runinator-engine\nrepository and background loops"]
         RUNTIME["runinator-runtime\ncontinuation-driven WorkflowMachine"]
@@ -59,6 +64,9 @@ flowchart LR
     WS --> GATE --> HANDLERS
     HANDLERS --> ENGINE
     WS -. "default host" .-> ENGINE
+    HANDLERS <--> |"webhook verification and tests"| ADAPTER
+    ENGINE <--> |"durable polling"| ADAPTER
+    ADAPTER <--> EXTERNAL
 
     ENGINE --> RUNTIME
     RUNTIME --> GRAPH
@@ -107,6 +115,12 @@ Pack compilation is client-side. `runinator-pack` compiles `.rrx` sources into a
 
 `runinator-engine` is that runtime's durable orchestrator. Its loops drive cursors, fire triggers, drain durable effect dispatches, consume effect results and ingress commands, handle effect retry/deadline policy, publish wakes and agent directives, and run repository maintenance. Its repository layer coordinates persistence through trait contracts rather than placing persistence logic in the web handlers.
 
+### Inbound adapters and correlated orchestration
+
+Inbound orchestration adapters are deliberately separate from outbound providers. `runinator-adapter-host` runs adapter code on loopback only: authoring handlers use it for kind discovery, webhook verification, and adapter tests, while the engine uses it for durable polling. It ships as a sidecar of the web-service and standalone-engine pods, not as a network Service. The adapter client, shared request contract, and SDK keep both call paths on one authenticated protocol.
+
+An admitted pipeline can additionally carry an orchestration policy. The engine binds each admitted scope and correlation key to a durable generation, pins the pipeline revision, then applies intent priority, coalescing, phase output mapping, workspace leases, and retry budgets. This makes later webhooks and polls converge on one durable orchestration rather than independently starting duplicate workflow runs.
+
 ### Brokered execution
 
 `runinator-broker-core` defines the backend-neutral `Broker` trait, delivery wrappers, and in-memory implementation. `runinator-broker` adds the selectable TCP, HTTP, WebSocket, Kafka, and RabbitMQ transports. The serializable commands and results that cross those boundaries live in `runinator-comm`. Components that only publish or receive through `dyn Broker` depend on the core crate; binaries that construct a backend use the transport crate.
@@ -134,7 +148,9 @@ Workflow and task state, cursors, effect dispatches, triggers, and metadata are 
 5. Timed infrastructure effects do not occupy an engine task. The engine publishes a due-time `wake`; the stateless waker relays the already-built settlement back through `ingress` at that time.
 6. Each non-web-service runtime also announces startup, heartbeat, and clean shutdown through
    `ingress`; the engine persists those observations in the fleet registry.
-7. When the last real cursor retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
+7. An inbound adapter can verify a webhook or claim a due poll; the normalized event enters the
+   same durable admission path as any other ingress event.
+8. When the last real cursor retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
 
 ## Extension guide
 

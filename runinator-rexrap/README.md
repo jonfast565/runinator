@@ -547,20 +547,21 @@ REXRAP commands default to `--typing strict`. `--typing permissive` exists only 
 investigation; pack import paths keep strict typing.
 
 `runinatorctl workflows apply` accepts a unified `.rrx` source or a directory of `.rrx`
-sources directly alongside JSON packs. The ctl compiles the pack
-client-side, zips the compiled artifacts (`workflows.json` + optional `secrets.json`), and
-uploads a single `application/zip` to the web service's `/packs/import` endpoint — compilation
-never happens on the backend. With no path argument, `workflows apply` falls back to the
+sources, plus one standalone workflow-definition JSON file. It rejects raw workflow bundles.
+For an REXRAP pack, ctl compiles client-side, zips the compiled artifacts (`workflows.json` plus
+optional `secrets.json` and `pipelines.json`), and uploads one `application/zip` to the web
+service's `/packs/import` endpoint — compilation never happens on the backend. With no path
+argument, `workflows apply` falls back to the
 `~/.runinator/workflows` folder (honoring `RUNINATOR_HOME`) if it exists.
 Directory pack compilation runs in two passes: first it reads every workflow signature,
 then it compiles each workflow with the full pack-local signature table so subflow calls are typed
 before upload.
 
-Re-applying a pack updates what changed: ctl stamps each compiled workflow / secret with its source
-file's mtime, so the web service's newer-wins reconciliation overwrites an edited file and skips an
-unedited one — without clobbering a workflow a user has since edited in the UI (whose stored
-timestamp is newer). A subflow that targets a workflow neither in the pack nor already stored is
-rejected at apply time.
+Re-applying a pack is an explicit force update: the web service replaces the pack's stored
+definitions, then reconciles its managed triggers, notifications, and pipeline links. Every accepted
+workflow definition is captured as an immutable revision, so rolling back creates a new revision
+rather than overwriting history. A subflow that targets a workflow neither in the pack nor already
+stored is rejected at apply time.
 
 ## Settings blocks
 
@@ -583,6 +584,32 @@ secret `key` under scope `jira` named `api/key`). `secret` entries are stored as
 Standalone secret/config import requires an `.rrx` source containing a settings block (JSON is not accepted):
 `runinatorctl settings import secrets.rrx`. The MCP `runinator_import_workflow_bundle` tool
 likewise takes REXRAP `source` text, compiled client-side, rather than a JSON bundle.
+
+## Pipelines and correlated orchestration
+
+A unified `.rrx` pack can also declare a pipeline. A pipeline names its member workflows and links,
+and can declare an `ingress` policy for correlation-scoped external events. Its optional
+`orchestration` block turns those events into a durable controller: `intent` declares the
+priority/coalescing/control effect, `budget` bounds retry classes and selects exhaustion behavior,
+and `phase` maps member outputs and workspace leases into the correlated binding. The pack importer
+resolves member names, persists the immutable pipeline revision, and materializes managed links.
+
+```rexrap
+pipeline "Ticket automation" {
+    ingress scope "ticket.lifecycle" {
+        on "ready" when unbound -> start
+        on "cancel" when active -> dispatch "stop"
+    }
+    orchestration {
+        intent "stop" effect terminate priority 100
+        phase "implement" { evidence from "/evidence" }
+    }
+    workflow "implement"
+}
+```
+
+The full checked-in reference is
+[`packs/autonomous-development/autonomous-development.rrx`](../packs/autonomous-development/autonomous-development.rrx).
 
 ## Decompiler scope
 

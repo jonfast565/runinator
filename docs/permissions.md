@@ -14,6 +14,11 @@ The canonical vocabulary lives in `runinator-models/src/rbac.rs` and is returned
 actions. Middleware reloads the enabled principal, session, assignments, and API-key restrictions on
 every request, so revocation and demotion take effect immediately.
 
+An enabled organization membership is required to create or refresh a user session. Login returns
+an org-less token; the client selects an active organization through `/auth/switch-org` before
+performing organization-scoped work. This prevents a credential that has lost all organization
+membership from retaining a usable session.
+
 Top-level shareable resources—workflows, pipelines, function packages, and console sessions—have an
 authoritative ownership row and generic grants using `View < Run < Edit < Own` (`Edit` includes
 `Run`). Runs, workflow effects, continuations, triggers, artifacts, invocations, cells, gates, approvals, and automation
