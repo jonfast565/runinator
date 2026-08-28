@@ -11,7 +11,7 @@ use runinator_auth::enroll::EnrollToken;
 use runinator_engine::services::ReplicaRegistry;
 use runinator_models::auth::{
     AgentEnrollmentRequestBody, AgentEnrollmentToken, AgentEnrollmentTokenRecord,
-    EnrollAgentRequest,
+    EnrollAgentRequest, LoginRequest,
 };
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
@@ -113,6 +113,63 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn login_requires_an_enabled_organization_membership() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let user = db
+        .create_user(
+            "unassigned".into(),
+            None,
+            Some(crate::auth::hash_password("secret-pass").unwrap()),
+        )
+        .await
+        .unwrap();
+    let user_id = user.id.expect("user id");
+    let auth_config = Arc::new(crate::auth::AuthConfig {
+        enabled: true,
+        jwt_secret: b"test-secret".to_vec(),
+        jwt_secret_previous: None,
+        access_ttl_secs: 3600,
+        refresh_ttl_secs: 86_400,
+    });
+    let login = || LoginRequest {
+        username: "unassigned".into(),
+        password: "secret-pass".into(),
+    };
+
+    let (status, _) = crate::handlers::auth::login::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(auth_config.clone()),
+        ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))),
+        Json(login()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let org_id = db
+        .create_org("Acme".into(), "acme".into())
+        .await
+        .unwrap()
+        .id
+        .expect("organization id");
+    db.add_org_member(org_id, user_id, OrgRole::Member)
+        .await
+        .unwrap();
+
+    let (status, _) = crate::handlers::auth::login::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(auth_config),
+        ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 1))),
+        Json(login()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    drop(db);
     let _ = std::fs::remove_file(path);
 }
 

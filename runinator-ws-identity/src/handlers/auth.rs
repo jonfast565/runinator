@@ -26,7 +26,7 @@ use runinator_models::value::Value;
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
     RuntimeStore,
-    roles::{AuthStore, RbacStore, SettingStore},
+    roles::{AuthStore, OrgStore, RbacStore, SettingStore},
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -44,6 +44,9 @@ use runinator_ws_middleware::auth::{
 use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
+
+const ORGANIZATION_MEMBERSHIP_REQUIRED: &str =
+    "user must belong to an enabled organization before signing in";
 
 #[derive(serde::Deserialize)]
 pub struct AuthSettingsRequest {
@@ -173,13 +176,23 @@ async fn user_with_platform_role<T: AuthStore + RbacStore + RuntimeStore>(
 
 // ---- session helpers ----
 
-async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+async fn has_enabled_organization<T: OrgStore>(db: &T, user_id: Uuid) -> Result<bool, Reply> {
+    db.list_user_orgs(user_id)
+        .await
+        .map(|memberships| memberships.into_iter().any(|(org, _)| !org.disabled))
+        .map_err(|err| api_error(err.to_string()))
+}
+
+async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
     db: &T,
     config: &AuthConfig,
     user: User,
     refresh_count: i64,
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
+    if !has_enabled_organization(db, user_id).await? {
+        return Err(forbidden(ORGANIZATION_MEMBERSHIP_REQUIRED));
+    }
     let (refresh_token, refresh_hash) = new_refresh_token();
     let session = AuthSession {
         id: Uuid::new_v4(),
@@ -255,9 +268,10 @@ pub async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -> Reply
     responses(
         (status = 200, description = "token pair and the authenticated user", body = LoginResponseSchema),
         (status = 401, description = "invalid username or password", body = ApiError),
+        (status = 403, description = "user has no enabled organization membership", body = ApiError),
     ),
 )]
-pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -295,6 +309,16 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
         return unauthorized("invalid username or password");
     }
     let user_id = credential.user.id;
+    if let Some(user_id) = user_id {
+        let has_membership = match has_enabled_organization(db.as_ref(), user_id).await {
+            Ok(value) => value,
+            Err(reply) => return reply,
+        };
+        if !has_membership {
+            audit_login_failure(db.as_ref(), &username, "no enabled organization membership").await;
+            return forbidden(ORGANIZATION_MEMBERSHIP_REQUIRED);
+        }
+    }
     match issue_session(db.as_ref(), &config, credential.user, 0).await {
         Ok(response) => {
             crate::audit::record_audit(
@@ -361,9 +385,10 @@ async fn audit_credential_change<T: AuthStore + RbacStore + RuntimeStore>(
     responses(
         (status = 200, description = "rotated token pair and authenticated user", body = LoginResponseSchema),
         (status = 401, description = "invalid or expired refresh token", body = ApiError),
+        (status = 403, description = "user has no enabled organization membership", body = ApiError),
     ),
 )]
-pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     Json(request): Json<RefreshRequest>,
@@ -1434,7 +1459,7 @@ pub async fn remove_team_member<T: AuthStore + RbacStore + RuntimeStore>(
 }
 
 /// the `auth` endpoints.
-pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::Extension;

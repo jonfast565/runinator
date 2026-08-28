@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed } from "vue";
 import { orgsService } from "../../../core/services";
+import type { RefreshOrgsOptions } from "../../../core/services/orgs";
 import { mirrorServiceState } from "./sync";
 
 export type { OrgRole } from "../../../core/api/commandCenterApi";
@@ -16,7 +17,7 @@ export const useOrgsStore = defineStore("orgs", () => {
     activeRole: computed(() => orgsService.activeRole()),
     isActiveOrgAdmin: computed(() => orgsService.isActiveOrgAdmin()),
     hasOrgs: computed(() => orgsService.hasOrgs()),
-    refresh: () => orgsService.refresh(),
+    refresh: (options?: RefreshOrgsOptions) => orgsService.refresh(options),
     setActive: (orgId: string) => orgsService.setActive(orgId),
     create: (name: string) => orgsService.create(name),
     clear: () => { orgsService.clear(); },

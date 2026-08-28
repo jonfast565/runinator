@@ -18,6 +18,11 @@ export interface OrgsState {
   activeOrgId: string | null;
 }
 
+export interface RefreshOrgsOptions {
+  /** Select the first organization returned by the server, ignoring a remembered choice. */
+  selectDefault?: boolean;
+}
+
 function safeGet(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -77,12 +82,18 @@ export function createOrgsService(app: AppService, auth: AuthService) {
       store.setState((state) => ({ ...state, activeOrgId: orgId }));
       safeSet(ACTIVE_ORG_KEY, orgId);
     },
-    async refresh() {
+    async refresh({ selectDefault = false }: RefreshOrgsOptions = {}) {
       const memberships = await app
         .runOperation("Loading organizations", () => listMyOrgs())
         .catch(() => []);
 
-      let activeOrgId = store.getState().activeOrgId;
+      let activeOrgId = selectDefault ? null : store.getState().activeOrgId;
+
+      if (selectDefault) {
+        // A new sign-in starts in the server's stable default order, not a previous user's
+        // browser-local selection. The following switch mints a token with that org's scope.
+        service.setActiveLocal(null);
+      }
 
       if (activeOrgId && !memberships.some((membership) => membership.org.id === activeOrgId)) {
         service.setActiveLocal(null);
@@ -91,7 +102,9 @@ export function createOrgsService(app: AppService, auth: AuthService) {
 
       store.setState((state) => ({ ...state, memberships }));
 
-      if (!activeOrgId && memberships.length > 0) {
+      if (selectDefault && memberships.length > 0) {
+        await service.setActive(memberships[0].org.id);
+      } else if (!activeOrgId && memberships.length > 0) {
         await service.setActive(memberships[0].org.id);
       }
     },
