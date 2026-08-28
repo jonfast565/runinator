@@ -743,10 +743,15 @@ export async function fetchAdapterRevisions(adapterId: string) {
   return command<import("../domain/models").AdapterRevision[]>("fetch_adapter_revisions", { adapterId });
 }
 
+export async function fetchAdapterPollStatus(adapterId: string) {
+  return command<import("../domain/models").AdapterPollStatus>("fetch_adapter_poll_status", { adapterId });
+}
+
 export interface AdapterApplyInput {
   name: string;
   kind: string;
   kind_version: string;
+  transport: "webhook" | "polling";
   configuration: unknown;
   secret_bindings: Record<string, string>;
   identity_configuration: unknown;

@@ -470,6 +470,14 @@ where
             .await
     }
 
+    pub async fn fetch_orchestration_adapter_poll_status(
+        &self,
+        id: Uuid,
+    ) -> Result<runinator_models::orchestration::AdapterPollStatus> {
+        self.get_json_path(&format!("/orchestrations/adapters/{id}/poll-status"))
+            .await
+    }
+
     pub async fn apply_orchestration_adapter(
         &self,
         id: Option<Uuid>,

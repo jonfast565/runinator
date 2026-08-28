@@ -60,6 +60,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
                 name: "Webhook".into(),
                 kind: "generic_webhook".into(),
                 kind_version: "1".into(),
+                transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 endpoint_identity: "endpoint-token".into(),
                 configuration: runinator_models::json!({ "authentication": "bearer" }),
                 secret_bindings: BTreeMap::new(),
@@ -428,6 +429,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
                 adapter_id,
                 expected_revision: 1,
                 kind_version: "1".into(),
+                transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 configuration: Value::Null,
                 secret_bindings: BTreeMap::new(),
                 identity_configuration: runinator_models::json!({ "correlation": "/other" }),
@@ -484,6 +486,113 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .unwrap()
         .unwrap();
     assert_eq!(succeeded.status, ExternalOperationStatus::Succeeded);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
+    use runinator_models::orchestration::AdapterTransport;
+
+    let path = std::env::temp_dir().join(format!("runinator-adapter-poll-{}.db", Uuid::now_v7()));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let now = Utc::now();
+    let adapter_id = Uuid::now_v7();
+    db.create_orchestration_adapter(
+        NewAdapterDefinition {
+            id: adapter_id,
+            org_id: Uuid::now_v7(),
+            name: "GitHub poll".into(),
+            kind: "github".into(),
+            kind_version: "1".into(),
+            transport: AdapterTransport::Polling,
+            endpoint_identity: "poll-endpoint".into(),
+            configuration: runinator_models::json!({"repositories": ["acme/repo"]}),
+            secret_bindings: BTreeMap::new(),
+            identity_configuration: Value::Null,
+            actor_id: None,
+        },
+        now,
+    )
+    .await
+    .unwrap();
+
+    let initial = db
+        .fetch_orchestration_adapter_poll_status(adapter_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(initial.checkpoint.is_null());
+    let claims = db
+        .claim_due_orchestration_adapter_polls(
+            "engine-a".into(),
+            now,
+            now + chrono::TimeDelta::seconds(60),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(claims.len(), 1);
+    assert!(
+        db.claim_due_orchestration_adapter_polls(
+            "engine-b".into(),
+            now,
+            now + chrono::TimeDelta::seconds(60),
+            10
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        db.complete_orchestration_adapter_poll(
+            adapter_id,
+            "engine-a".into(),
+            1,
+            runinator_models::json!({"updated_at": "2026-08-27T00:00:00Z"}),
+            now + chrono::TimeDelta::seconds(60),
+            now
+        )
+        .await
+        .unwrap()
+    );
+    let completed = db
+        .fetch_orchestration_adapter_poll_status(adapter_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        completed
+            .checkpoint
+            .get("updated_at")
+            .and_then(|value| value.as_str()),
+        Some("2026-08-27T00:00:00Z")
+    );
+
+    db.create_orchestration_adapter_revision(
+        NewAdapterRevision {
+            id: Uuid::now_v7(),
+            adapter_id,
+            expected_revision: 1,
+            kind_version: "1".into(),
+            transport: AdapterTransport::Webhook,
+            configuration: Value::Null,
+            secret_bindings: BTreeMap::new(),
+            identity_configuration: Value::Null,
+            actor_id: None,
+        },
+        now,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        db.fetch_orchestration_adapter_poll_status(adapter_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let _ = std::fs::remove_file(path);
 }

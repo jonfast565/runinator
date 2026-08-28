@@ -7,10 +7,11 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     errors::SendableError,
     orchestration::{
-        AdapterDefinition, AdapterRevision, ExternalOperation, ExternalOperationStatus,
-        NewOrchestrationBinding, OrchestrationBinding, OrchestrationCommand,
-        OrchestrationCorrelationAlias, OrchestrationEpoch, OrchestrationEventReduction,
-        OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationStatus,
+        AdapterDefinition, AdapterPollStatus, AdapterRevision, AdapterTransport, ExternalOperation,
+        ExternalOperationStatus, NewOrchestrationBinding, OrchestrationBinding,
+        OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
+        OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
+        OrchestrationStatus,
     },
     value::Value,
 };
@@ -70,6 +71,7 @@ pub struct NewAdapterDefinition {
     pub name: String,
     pub kind: String,
     pub kind_version: String,
+    pub transport: AdapterTransport,
     pub endpoint_identity: String,
     pub configuration: Value,
     pub secret_bindings: BTreeMap<String, Uuid>,
@@ -83,6 +85,7 @@ pub struct NewAdapterRevision {
     pub adapter_id: Uuid,
     pub expected_revision: i64,
     pub kind_version: String,
+    pub transport: AdapterTransport,
     pub configuration: Value,
     pub secret_bindings: BTreeMap<String, Uuid>,
     pub identity_configuration: Value,
@@ -359,6 +362,38 @@ pub trait OrchestrationStore: Send + Sync + 'static {
     fn delete_orchestration_adapter(
         &self,
         adapter_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn claim_due_orchestration_adapter_polls(
+        &self,
+        instance_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<AdapterPollStatus>, SendableError>> + Send;
+
+    fn fetch_orchestration_adapter_poll_status(
+        &self,
+        adapter_id: Uuid,
+    ) -> impl Future<Output = Result<Option<AdapterPollStatus>, SendableError>> + Send;
+
+    fn complete_orchestration_adapter_poll(
+        &self,
+        adapter_id: Uuid,
+        instance_id: String,
+        revision: i64,
+        checkpoint: Value,
+        next_poll_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn fail_orchestration_adapter_poll(
+        &self,
+        adapter_id: Uuid,
+        instance_id: String,
+        next_poll_at: DateTime<Utc>,
+        error: String,
+        now: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     fn create_external_operation(

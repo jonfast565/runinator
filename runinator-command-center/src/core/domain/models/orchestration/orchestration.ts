@@ -240,11 +240,23 @@ export interface AdapterRevision {
   adapter_id: string;
   revision: number;
   kind_version: string;
+  transport: "webhook" | "polling";
   configuration: JsonValue;
   secret_bindings: Record<string, string>;
   identity_configuration: JsonValue;
   created_at: string;
   actor_id?: string | null;
+}
+
+export interface AdapterPollStatus {
+  adapter_id: string;
+  revision: number;
+  checkpoint: JsonValue;
+  next_poll_at: string;
+  claimed_until?: string | null;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_error?: string | null;
 }
 
 export type DeliverySemantics = "at_least_once" | "idempotent" | "reconcilable";

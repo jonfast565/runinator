@@ -31,8 +31,8 @@ use crate::repository;
 /// the optional latency hint for an embedded engine.
 #[derive(Clone)]
 pub struct PipelineOperations<T> {
-    store: Arc<T>,
-    broker: Arc<dyn Broker>,
+    pub(super) store: Arc<T>,
+    pub(super) broker: Arc<dyn Broker>,
     events: UiEventPublisher,
     signals: Option<EmbeddedEngineSignals>,
 }

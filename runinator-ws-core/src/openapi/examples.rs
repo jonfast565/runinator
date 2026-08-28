@@ -114,6 +114,7 @@ pub enum Example {
     AdapterDefinition,
     AdapterDefinitionList,
     AdapterRevisionList,
+    AdapterPollStatus,
     AdapterApply,
     AdapterEnable,
     AdapterTest,
@@ -380,12 +381,20 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::AdapterDefinitionList => json!([adapter_definition_example()]),
         Example::AdapterRevisionList => json!([{
             "id": UUID_EXAMPLE, "adapter_id": UUID_EXAMPLE, "revision": 1,
-            "kind_version": "1", "configuration": { "delivery_id_pointer": "/delivery_id" },
+            "kind_version": "1", "transport": "webhook", "configuration": { "delivery_id_pointer": "/delivery_id" },
             "secret_bindings": { "signing_secret": UUID_EXAMPLE },
             "identity_configuration": {}, "created_at": TIMESTAMP_EXAMPLE, "actor_id": UUID_EXAMPLE
         }]),
+        Example::AdapterPollStatus => json!({
+            "adapter_id": UUID_EXAMPLE, "revision": 2,
+            "checkpoint": { "updated_at": TIMESTAMP_EXAMPLE },
+            "next_poll_at": TIMESTAMP_EXAMPLE, "claimed_until": null,
+            "last_attempt_at": TIMESTAMP_EXAMPLE, "last_success_at": TIMESTAMP_EXAMPLE,
+            "last_error": null
+        }),
         Example::AdapterApply => json!({
             "name": "work item events", "kind": "generic-webhook", "kind_version": "1",
+            "transport": "webhook",
             "configuration": {
                 "delivery_id_pointer": "/delivery_id", "scope_pointer": "/scope",
                 "correlation_pointer": "/subject/id", "event_pointer": "/event"

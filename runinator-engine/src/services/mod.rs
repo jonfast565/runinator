@@ -14,6 +14,7 @@ mod ingress_operations;
 mod notification_operations;
 mod orchestration_operations;
 mod pack_operations;
+mod pipeline_ingress;
 mod pipeline_operations;
 mod replica_registry;
 mod run_operations;
@@ -33,6 +34,7 @@ pub use ingress_operations::IngressOperations;
 pub use notification_operations::NotificationOperations;
 pub use orchestration_operations::{IntentDecision, OrchestrationOperations, choose_intent};
 pub use pack_operations::PackOperations;
+pub use pipeline_ingress::{PipelineIngressError, PipelineIngressRequest, PipelineIngressResult};
 pub use pipeline_operations::PipelineOperations;
 pub use replica_registry::{
     DEFAULT_REPLICA_DELETE_SECONDS, DEFAULT_REPLICA_REAP_SECONDS, REPLICA_SAMPLE_RETENTION_SECONDS,

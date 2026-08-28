@@ -2,12 +2,22 @@
 
 pub use runinator_adapter_contract as contract;
 
-use contract::{AdapterRequest, AdapterResponse};
+use contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse};
 use runinator_models::orchestration::AdapterKindMetadata;
 
 pub trait Adapter: Default {
     fn metadata(&self) -> AdapterKindMetadata;
     fn handle(&self, request: AdapterRequest) -> AdapterResponse;
+
+    /// Polling is opt-in so existing webhook-only dynamic adapters remain source-compatible.
+    fn poll(&self, _request: AdapterPollRequest) -> AdapterPollResponse {
+        AdapterPollResponse {
+            events: Vec::new(),
+            checkpoint: serde_json::Value::Null,
+            retry_after_seconds: None,
+            error: Some("adapter does not support polling".into()),
+        }
+    }
 }
 
 /// Export the stable file-based ABI for an [`Adapter`] implementation.
@@ -39,6 +49,14 @@ macro_rules! export_adapter {
         ) -> i32 {
             $crate::handle_files::<$adapter>(request_path, response_path)
         }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn runinator_adapter_poll(
+            request_path: *const ::std::ffi::c_char,
+            response_path: *const ::std::ffi::c_char,
+        ) -> i32 {
+            $crate::poll_files::<$adapter>(request_path, response_path)
+        }
     };
 }
 
@@ -69,6 +87,22 @@ pub unsafe fn handle_files<T: Adapter>(
         let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
         let request: AdapterRequest = serde_json::from_slice(&std::fs::read(request)?)?;
         std::fs::write(response, serde_json::to_vec(&T::default().handle(request))?)?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })();
+    if result.is_ok() { 0 } else { 1 }
+}
+
+/// Called by the generated ABI wrapper for a durable polling invocation.
+pub unsafe fn poll_files<T: Adapter>(
+    request_path: *const std::ffi::c_char,
+    response_path: *const std::ffi::c_char,
+) -> i32 {
+    let result = (|| {
+        // SAFETY: same bounded-file contract as `handle_files`.
+        let request = unsafe { std::ffi::CStr::from_ptr(request_path) }.to_str()?;
+        let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
+        let request: AdapterPollRequest = serde_json::from_slice(&std::fs::read(request)?)?;
+        std::fs::write(response, serde_json::to_vec(&T::default().poll(request))?)?;
         Ok::<(), Box<dyn std::error::Error>>(())
     })();
     if result.is_ok() { 0 } else { 1 }

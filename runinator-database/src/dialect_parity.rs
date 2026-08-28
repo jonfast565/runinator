@@ -159,6 +159,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
                 org_id,
                 name: format!("parity adapter {suffix}"),
                 kind: "generic_webhook".into(),
+                transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 kind_version: "1".into(),
                 endpoint_identity: format!("parity-{suffix}"),
                 configuration: json!({ "authentication": "bearer" }),

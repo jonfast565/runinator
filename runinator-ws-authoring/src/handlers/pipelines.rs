@@ -1,4 +1,3 @@
-use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -9,11 +8,6 @@ use axum::{
 };
 use runinator_models::{
     auth::{AuthContext, Permission},
-    orchestration::{
-        IngressAction, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
-        IngressEventDisposition, IngressInboxEntry, IngressLifecycle, IngressPolicy, IngressTarget,
-        IngressTargetKind,
-    },
     pipelines::{Pipeline, PipelineTrigger},
 };
 use runinator_store::{
@@ -22,7 +16,9 @@ use runinator_store::{
 };
 use serde::Deserialize;
 
-use runinator_engine::services::{IngressOperations, OrchestrationOperations, PipelineOperations};
+use runinator_engine::services::{
+    OrchestrationOperations, PipelineIngressError, PipelineIngressRequest, PipelineOperations,
+};
 use runinator_ws_core::models::{
     ApiError, ApiResponse, IngressEventRequest, IngressResponse, ManagedRunOverrideRequest,
     PipelineMemberRetryRequest, PipelineRunInquiryDecision, PipelineRunRequest,
@@ -330,318 +326,49 @@ pub async fn process_pipeline_ingress<
         + IngressStore
         + OrchestrationStore,
 >(
-    db: Arc<T>,
+    _db: Arc<T>,
     service: Arc<PipelineOperations<T>>,
     pipeline_id: Uuid,
     caller_org_id: Option<Uuid>,
     request: IngressEventRequest,
     adapter: Option<(Uuid, i64)>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let pipeline = match service.fetch(pipeline_id).await {
-        Ok(Some(pipeline)) => pipeline,
-        Ok(None) => return not_found("pipeline not found"),
-        Err(err) => return api_error(err.to_string()),
-    };
-    let policy = match pipeline.metadata.get("ingress") {
-        Some(value) => match serde_json::from_value::<IngressPolicy>(value.clone().into()) {
-            Ok(policy) => policy,
-            Err(error) => return bad_request(format!("invalid pipeline ingress policy: {error}")),
-        },
-        None => return bad_request("pipeline has no ingress policy"),
-    };
-    let event = IngressEvent {
-        source: request.source,
-        event_id: request.event_id,
-        event_type: request.event_type,
-        correlation_key: request.correlation_key,
-        payload: request.payload,
-        provenance: request.provenance,
-        occurred_at: request.occurred_at,
-    };
-    let ingress = IngressOperations::new(db.clone());
-    let target = IngressTarget {
-        kind: IngressTargetKind::Pipeline,
-        id: pipeline_id,
-    };
-    let org_id = pipeline.org_id.or(caller_org_id);
-    let mut admission = match ingress
-        .fetch(org_id, policy.scope.clone(), event.correlation_key.clone())
-        .await
-    {
-        Ok(value) => value,
-        Err(err) => return api_error(err.to_string()),
-    };
-    let mut start_record = None;
-    if admission.is_none() {
-        match ingress
-            .claim_start(org_id, target, policy.clone(), &event)
-            .await
-        {
-            Ok(Some(IngressAdmissionClaim::Acquired(value))) => {
-                start_record = match ingress
-                    .persist_event(&value, &event, IngressEventDisposition::Started, false)
-                    .await
-                {
-                    Ok(record) => Some(record.entry),
-                    Err(err) => {
-                        let _ = ingress.release_unbound(value.id.unwrap()).await;
-                        return api_error(err.to_string());
-                    }
-                };
-                admission = Some(value);
-            }
-            Ok(Some(IngressAdmissionClaim::Existing(value))) => admission = Some(value),
-            Ok(None) => {
-                return bad_request(
-                    "ingress event has no configured unbound start route; no run was started",
-                );
-            }
-            Err(err) => return bad_request(err.to_string()),
-        }
-    }
-    let mut admission = admission.expect("ingress admission resolved");
-    let admission_id = admission.id.expect("stored admission id");
-    if start_record.is_none() {
-        match ingress.duplicate(admission_id, &event).await {
-            Ok(Some(entry)) => {
-                return pipeline_ingress_reply(&entry, true, "duplicate ingress event");
-            }
-            Ok(None) => {}
-            Err(err) => return api_error(err.to_string()),
-        }
-        if admission.target.kind != IngressTargetKind::Pipeline
-            || admission.target.id != pipeline_id
-        {
-            return pipeline_ingress_conflict(
-                "this scope and correlation key is owned by a different ingress target",
-            );
-        }
-        let snapshot_policy: IngressPolicy =
-            match serde_json::from_value(admission.policy.clone().into()) {
-                Ok(value) => value,
-                Err(err) => return api_error(format!("stored ingress policy is invalid: {err}")),
-            };
-        let lifecycle = match admission.status {
-            IngressAdmissionStatus::Active => IngressLifecycle::Active,
-            IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,
-        };
-        let dispatched =
-            snapshot_policy.dispatches_for(&event.event_type, lifecycle, &event.payload);
-        if !dispatched.is_empty() {
-            return match ingress
-                .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)
-                .await
-            {
-                Ok(record) => pipeline_ingress_reply(
-                    &record.entry,
-                    record.duplicate,
-                    "orchestration intent event accepted",
-                ),
-                Err(err) => api_error(err.to_string()),
-            };
-        }
-        match snapshot_policy.action_for_payload(&event.event_type, lifecycle, &event.payload) {
-            Some(IngressAction::Record) => {
-                return match ingress
-                    .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)
-                    .await
-                {
-                    Ok(record) => pipeline_ingress_reply(
-                        &record.entry,
-                        record.duplicate,
-                        "ingress event recorded",
-                    ),
-                    Err(err) => api_error(err.to_string()),
-                };
-            }
-            Some(IngressAction::Queue) if lifecycle == IngressLifecycle::Active => {
-                return match ingress
-                    .persist_event(&admission, &event, IngressEventDisposition::Queued, true)
-                    .await
-                {
-                    Ok(record) => pipeline_ingress_reply(
-                        &record.entry,
-                        record.duplicate,
-                        "ingress event queued",
-                    ),
-                    Err(err) => api_error(err.to_string()),
-                };
-            }
-            Some(IngressAction::Interrupt) if lifecycle == IngressLifecycle::Active => {
-                let Some(run_id) = admission.pipeline_run_id else {
-                    return api_error("active ingress admission is not bound to a pipeline run");
-                };
-                let record = match ingress
-                    .persist_event(
-                        &admission,
-                        &event,
-                        IngressEventDisposition::InterruptRequested,
-                        false,
-                    )
-                    .await
-                {
-                    Ok(record) => record,
-                    Err(err) => return api_error(err.to_string()),
-                };
-                if record.duplicate {
-                    return pipeline_ingress_reply(
-                        &record.entry,
-                        true,
-                        "duplicate pipeline interrupt event",
-                    );
-                }
-                let _ = ingress
-                    .bind_event_pipeline_run(record.entry.id, run_id)
-                    .await;
-                return match service.cancel_run(run_id).await {
-                    Ok(_) => pipeline_ingress_reply(
-                        &record.entry,
-                        record.duplicate,
-                        "pipeline and active members canceled",
-                    ),
-                    Err(err) => bad_request(err.to_string()),
-                };
-            }
-            Some(IngressAction::Requeue) if lifecycle == IngressLifecycle::Terminal => {
-                match ingress
-                    .requeue_terminal_event(&admission, &snapshot_policy, &event)
-                    .await
-                {
-                    Ok(Some(record)) if record.duplicate => {
-                        return pipeline_ingress_reply(
-                            &record.entry,
-                            true,
-                            "duplicate terminal requeue event",
-                        );
-                    }
-                    Ok(Some(record)) => {
-                        admission = match ingress
-                            .fetch(
-                                org_id,
-                                snapshot_policy.scope.clone(),
-                                event.correlation_key.clone(),
-                            )
-                            .await
-                        {
-                            Ok(Some(value)) => value,
-                            Ok(None) => return api_error("requeued ingress admission disappeared"),
-                            Err(err) => return api_error(err.to_string()),
-                        };
-                        start_record = Some(record.entry);
-                    }
-                    Ok(None) => {
-                        return pipeline_ingress_conflict(
-                            "another ingress event already started the next generation",
-                        );
-                    }
-                    Err(err) => return api_error(err.to_string()),
-                }
-            }
-            _ => {
-                let _ = ingress
-                    .persist_event(&admission, &event, IngressEventDisposition::Rejected, false)
-                    .await;
-                return pipeline_ingress_conflict(
-                    "ingress event has no configured route for the admission lifecycle; no run was started",
-                );
-            }
-        }
-    }
-    let start_entry = start_record.expect("start event record");
-    if pipeline.metadata.get("orchestration").is_some() {
-        let orchestrations = OrchestrationOperations::new(db.clone());
-        return match orchestrations
-            .admit_with_adapter(&admission, &pipeline, adapter)
-            .await
-        {
-            Ok(Some(binding)) => {
-                if let Some((adapter_id, _)) = adapter {
-                    if let Err(error) = db
-                        .mark_orchestration_adapter_admitted(adapter_id, Utc::now())
-                        .await
-                    {
-                        return api_error(error.to_string());
-                    }
-                }
-                pipeline_orchestration_ingress_reply(
-                    &start_entry,
-                    binding.id,
-                    "managed orchestration generation admitted",
-                )
-            }
-            Ok(None) => api_error("managed orchestration policy disappeared"),
-            Err(err) => api_error(err.to_string()),
-        };
-    }
     match service
-        .create_run(
-            admission.target.id,
-            event.payload.clone(),
-            None,
-            Some(format!("ingress:{}", event.event_id)),
-            None,
+        .process_ingress(
+            pipeline_id,
+            caller_org_id,
+            PipelineIngressRequest {
+                source: request.source,
+                event_id: request.event_id,
+                event_type: request.event_type,
+                correlation_key: request.correlation_key,
+                payload: request.payload,
+                provenance: request.provenance,
+                occurred_at: request.occurred_at,
+            },
+            adapter,
         )
         .await
     {
-        Ok(run) => match ingress.bind_pipeline_run(admission_id, run.id).await {
-            Ok(true) => {
-                let _ = ingress
-                    .bind_event_pipeline_run(start_entry.id, run.id)
-                    .await;
-                let mut entry = start_entry;
-                entry.pipeline_run_id = Some(run.id);
-                pipeline_ingress_reply(&entry, false, "pipeline ingress generation started")
-            }
-            Ok(false) => api_error("ingress admission could not be bound to the pipeline run"),
-            Err(err) => api_error(err.to_string()),
-        },
-        Err(err) => {
-            let _ = ingress.release_unbound(admission_id).await;
-            api_error(err.to_string())
-        }
+        Ok(value) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::Ingress(IngressResponse {
+                admission_id: value.admission_id,
+                generation: value.generation,
+                disposition: value.disposition,
+                duplicate: value.duplicate,
+                queue_position: value.queue_position,
+                workflow_run_id: value.workflow_run_id,
+                pipeline_run_id: value.pipeline_run_id,
+                orchestration_binding_id: value.orchestration_binding_id,
+                message: value.message,
+            })),
+        ),
+        Err(PipelineIngressError::NotFound(message)) => not_found(message),
+        Err(PipelineIngressError::Invalid(message)) => bad_request(message),
+        Err(PipelineIngressError::Conflict(message)) => pipeline_ingress_conflict(message),
+        Err(PipelineIngressError::Internal(message)) => api_error(message),
     }
-}
-
-fn pipeline_ingress_reply(
-    entry: &IngressInboxEntry,
-    duplicate: bool,
-    message: &str,
-) -> (StatusCode, Json<ApiResponse>) {
-    (
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::Ingress(IngressResponse {
-            admission_id: entry.admission_id,
-            generation: entry.promoted_generation.unwrap_or(entry.generation),
-            disposition: format!("{:?}", entry.disposition).to_ascii_lowercase(),
-            duplicate,
-            queue_position: entry.queue_position,
-            workflow_run_id: entry.workflow_run_id,
-            pipeline_run_id: entry.pipeline_run_id,
-            orchestration_binding_id: None,
-            message: message.into(),
-        })),
-    )
-}
-
-fn pipeline_orchestration_ingress_reply(
-    entry: &IngressInboxEntry,
-    binding_id: Uuid,
-    message: &str,
-) -> (StatusCode, Json<ApiResponse>) {
-    (
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::Ingress(IngressResponse {
-            admission_id: entry.admission_id,
-            generation: entry.promoted_generation.unwrap_or(entry.generation),
-            disposition: "started".into(),
-            duplicate: false,
-            queue_position: entry.queue_position,
-            workflow_run_id: None,
-            pipeline_run_id: None,
-            orchestration_binding_id: Some(binding_id),
-            message: message.into(),
-        })),
-    )
 }
 
 fn pipeline_ingress_conflict(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {

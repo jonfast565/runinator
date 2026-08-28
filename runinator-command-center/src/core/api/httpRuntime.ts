@@ -447,6 +447,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}/revisions`,
   },
+  fetch_adapter_poll_status: {
+    method: "GET",
+    path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}/poll-status`,
+  },
   apply_adapter: {
     method: (args) => (argOpt(args, "adapterId") ? "POST" : "POST"),
     path: (args) => {

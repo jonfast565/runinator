@@ -117,6 +117,7 @@ export type {
   AdapterDefinition,
   AdapterKindCatalogEntry,
   AdapterKindMetadata,
+  AdapterPollStatus,
   AdapterRevision,
   DeliverySemantics,
   ExternalOperation,

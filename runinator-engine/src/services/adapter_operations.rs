@@ -101,6 +101,13 @@ impl<T: OrchestrationStore> AdapterOperations<T> {
     pub async fn delete(&self, id: Uuid) -> Result<bool, SendableError> {
         self.store.delete_orchestration_adapter(id).await
     }
+
+    pub async fn poll_status(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<runinator_models::orchestration::AdapterPollStatus>, SendableError> {
+        self.store.fetch_orchestration_adapter_poll_status(id).await
+    }
 }
 
 impl<T: RuntimeStore> AdapterOperations<T> {

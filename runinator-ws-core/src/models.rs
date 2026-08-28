@@ -263,6 +263,8 @@ pub struct AdapterApplyRequest {
     pub kind: String,
     pub kind_version: String,
     #[serde(default)]
+    pub transport: runinator_models::orchestration::AdapterTransport,
+    #[serde(default)]
     pub configuration: Value,
     #[serde(default)]
     pub secret_bindings: BTreeMap<String, Uuid>,
@@ -281,6 +283,7 @@ pub struct AdapterEnableRequest {
 pub struct AdapterTestRequest {
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    #[serde(default)]
     pub body_base64: String,
     #[serde(default)]
     pub configuration: Option<Value>,

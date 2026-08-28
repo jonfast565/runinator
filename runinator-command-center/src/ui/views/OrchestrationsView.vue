@@ -124,8 +124,16 @@
         </aside>
 
         <main v-if="store.selectedAdapter" class="min-h-0 overflow-auto rounded border border-border bg-surface p-4">
-          <div class="flex flex-wrap justify-between gap-3"><div><h2 class="text-lg font-semibold">{{ store.selectedAdapter.name }}</h2><p class="text-sm text-fg-muted">{{ selectedKind?.display_name || store.selectedAdapter.kind }} · immutable revision {{ store.selectedAdapter.current_revision }}</p></div><div class="flex flex-wrap gap-2"><button class="button" @click="copyWebhook">Copy webhook URL</button><button class="button" @click="openAdapterForm(store.selectedAdapter)">Edit</button><button class="button" @click="openAdapterForm(store.selectedAdapter, true)">Clone</button><button class="button" @click="toggleSelectedAdapter">{{ store.selectedAdapter.enabled ? 'Disable' : 'Enable' }}</button><button class="button" :disabled="store.selectedAdapter.has_admitted_binding" @click="removeSelectedAdapter">Delete</button></div></div>
-          <code class="mt-3 block break-all rounded bg-surface-raised p-2 text-xs">{{ webhookPath }}</code><p v-if="store.selectedAdapter.has_admitted_binding" class="mt-2 text-xs text-fg-muted">Identity extraction is locked because this adapter has admitted a correlation.</p>
+          <div class="flex flex-wrap justify-between gap-3"><div><h2 class="text-lg font-semibold">{{ store.selectedAdapter.name }}</h2><p class="text-sm text-fg-muted">{{ selectedKind?.display_name || store.selectedAdapter.kind }} · {{ currentTransport }} · immutable revision {{ store.selectedAdapter.current_revision }}</p></div><div class="flex flex-wrap gap-2"><button v-if="currentTransport === 'webhook'" class="button" @click="copyWebhook">Copy webhook URL</button><button class="button" @click="openAdapterForm(store.selectedAdapter)">Edit</button><button class="button" @click="openAdapterForm(store.selectedAdapter, true)">Clone</button><button class="button" @click="toggleSelectedAdapter">{{ store.selectedAdapter.enabled ? 'Disable' : 'Enable' }}</button><button class="button" :disabled="store.selectedAdapter.has_admitted_binding" @click="removeSelectedAdapter">Delete</button></div></div>
+          <code v-if="currentTransport === 'webhook'" class="mt-3 block break-all rounded bg-surface-raised p-2 text-xs">{{ webhookPath }}</code>
+          <section v-else-if="store.adapterPollStatus" class="mt-3 grid gap-3 rounded border border-border bg-surface-raised p-3 text-sm md:grid-cols-3">
+            <div><strong>Next poll</strong><p class="text-fg-muted">{{ formatTimestamp(store.adapterPollStatus.next_poll_at) }}</p></div>
+            <div><strong>Last success</strong><p class="text-fg-muted">{{ formatTimestamp(store.adapterPollStatus.last_success_at) }}</p></div>
+            <div><strong>Last attempt</strong><p class="text-fg-muted">{{ formatTimestamp(store.adapterPollStatus.last_attempt_at) }}</p></div>
+            <div v-if="store.adapterPollStatus.last_error" class="md:col-span-3"><strong class="text-danger">Last error</strong><p class="mt-1 text-danger">{{ store.adapterPollStatus.last_error }}</p></div>
+            <details class="md:col-span-3"><summary class="cursor-pointer text-xs text-fg-muted">Durable checkpoint</summary><pre class="mt-2 overflow-auto text-xs">{{ pretty(store.adapterPollStatus.checkpoint) }}</pre></details>
+          </section>
+          <p v-if="store.selectedAdapter.has_admitted_binding" class="mt-2 text-xs text-fg-muted">Identity extraction and transport are locked because this adapter has admitted a correlation.</p>
           <div v-if="selectedKind" class="mt-3 grid gap-2 text-xs md:grid-cols-3"><div><strong>Capabilities</strong><p class="text-fg-muted">{{ selectedKind.capabilities.join(', ') || 'normalize' }}</p></div><div><strong>Canonical events</strong><p class="text-fg-muted">{{ selectedKind.event_names.join(', ') || 'provider-defined' }}</p></div><div><strong>Canonical pointers</strong><p class="break-all text-fg-muted">{{ selectedKind.canonical_pointers.join(', ') || 'provider-defined' }}</p></div></div>
           <section v-if="selectedKind?.setup_instructions?.length" class="mt-3 rounded border border-border bg-surface-raised p-3 text-sm">
             <strong>Provider setup</strong>
@@ -165,8 +173,8 @@
     <div v-if="intentName" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="intentName = null"><form class="w-full max-w-md rounded border border-border bg-surface p-4 shadow-xl" @submit.prevent="submitIntent"><h2 class="font-semibold">Dispatch {{ intentName }}</h2><label class="mt-3 block text-sm text-fg-muted">Reason</label><textarea v-model="reason" required class="input mt-1 min-h-24 w-full" /><label class="mt-3 block text-sm text-fg-muted">Payload JSON</label><textarea v-model="intentPayload" class="input mt-1 min-h-28 w-full font-mono text-xs" /><p v-if="intentPayloadError" class="mt-2 text-sm text-danger">{{ intentPayloadError }}</p><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="intentName = null">Cancel</button><button class="button" type="submit">Dispatch</button></div></form></div>
     <div v-if="requeueOpen" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="requeueOpen = false"><form class="w-full max-w-md rounded border border-border bg-surface p-4 shadow-xl" @submit.prevent="submitRequeue"><h2 class="font-semibold">Requeue next generation</h2><p class="mt-1 text-xs text-fg-muted">The next generation snapshots the current immutable pipeline and adapter revisions.</p><label class="mt-3 block text-sm text-fg-muted">Reason</label><textarea v-model="reason" required class="input mt-1 min-h-24 w-full" /><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="requeueOpen = false">Cancel</button><button class="button" type="submit">Requeue</button></div></form></div>
     <div v-if="resolvingOperation" class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" @click.self="resolvingOperation = null"><form class="w-full max-w-lg rounded border border-border bg-surface p-4" @submit.prevent="submitResolution"><h2 class="font-semibold">Resolve {{ resolvingOperation.provider }}.{{ resolvingOperation.action }}</h2><p class="mt-1 text-xs text-fg-muted">{{ resolution }} · {{ resolvingOperation.semantics }}</p><label class="mt-3 block text-sm">Reason<textarea v-model="resolutionReason" required class="input mt-1 min-h-20 w-full" /></label><label class="mt-3 block text-sm">Receipt JSON<textarea v-model="resolutionReceipt" class="input mt-1 min-h-28 w-full font-mono text-xs" /></label><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="resolvingOperation = null">Cancel</button><button class="button" type="submit">Apply resolution</button></div></form></div>
-    <div v-if="adapterFormOpen" class="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" @click.self="adapterFormOpen = false"><form class="my-8 w-full max-w-2xl rounded border border-border bg-surface p-4" @submit.prevent="saveAdapter"><h2 class="font-semibold">{{ editingAdapterId ? 'Edit adapter' : 'New adapter' }}</h2><div class="mt-3 grid gap-3 md:grid-cols-2"><label class="text-sm">Name<input v-model="adapterForm.name" required class="input mt-1 w-full" /></label><label class="text-sm">Kind<select v-model="adapterForm.kind" required class="input mt-1 w-full" :disabled="!!editingAdapterId" @change="initializeKind"><option value="" disabled>Select a loaded kind</option><option v-for="kind in store.adapterKinds" :key="kind.kind" :value="kind.kind">{{ kind.display_name }} v{{ kind.version }}</option></select></label></div>
-      <div v-if="formKind" class="mt-4 grid gap-3"><p class="text-sm text-fg-muted">{{ formKind.description }}</p><label v-for="field in configurationFields" :key="field.name" class="text-sm"><span>{{ field.name }}<template v-if="field.required"> *</template></span><TypedValueEditor class="mt-1" :model-value="adapterForm.configuration[field.name]" :ty="field.value_type" :allow-expressions="false" @update:model-value="updateConfigField(field.name, $event)" /><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label v-for="field in secretFields" :key="field.name" class="text-sm">{{ field.name }} Secret<template v-if="field.required"> *</template><select v-model="adapterForm.secret_bindings[field.name]" class="input mt-1 w-full" :required="field.required"><option value="">Select stored Secret</option><option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">{{ secret.scope }}/{{ secret.name }}</option></select><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label class="text-sm">Identity extraction JSON<textarea v-model="identityText" class="input mt-1 min-h-28 w-full font-mono text-xs" :disabled="identityLocked" /></label></div><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="adapterFormOpen = false">Cancel</button><button class="button" type="submit">Save immutable revision</button></div></form></div>
+    <div v-if="adapterFormOpen" class="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4" @click.self="adapterFormOpen = false"><form class="my-8 w-full max-w-2xl rounded border border-border bg-surface p-4" @submit.prevent="saveAdapter"><h2 class="font-semibold">{{ editingAdapterId ? 'Edit adapter' : 'New adapter' }}</h2><div class="mt-3 grid gap-3 md:grid-cols-3"><label class="text-sm">Name<input v-model="adapterForm.name" required class="input mt-1 w-full" /></label><label class="text-sm">Kind<select v-model="adapterForm.kind" required class="input mt-1 w-full" :disabled="!!editingAdapterId" @change="initializeKind"><option value="" disabled>Select a loaded kind</option><option v-for="kind in store.adapterKinds" :key="kind.kind" :value="kind.kind">{{ kind.display_name }} v{{ kind.version }}</option></select></label><label class="text-sm">Transport<select v-model="adapterForm.transport" class="input mt-1 w-full" :disabled="identityLocked"><option value="webhook">Webhook</option><option v-if="adapterForm.kind === 'github' || adapterForm.kind === 'jira'" value="polling">Polling</option></select></label></div>
+      <div v-if="formKind" class="mt-4 grid gap-3"><p class="text-sm text-fg-muted">{{ formKind.description }}</p><template v-if="adapterForm.transport === 'polling'"><label class="text-sm">Poll interval (seconds)<input v-model.number="adapterForm.configuration.poll_interval_seconds" type="number" min="30" max="3600" required class="input mt-1 w-full" /></label><label v-if="adapterForm.kind === 'github'" class="text-sm">Repositories (JSON array)<textarea v-model="pollRepositories" class="input mt-1 min-h-20 w-full font-mono text-xs" /></label><template v-if="adapterForm.kind === 'jira'"><label class="text-sm">Jira instance identity<input v-model="adapterForm.configuration.instance_id" required class="input mt-1 w-full" placeholder="acme.atlassian.net" /></label><label class="text-sm">Jira base URL<input v-model="adapterForm.configuration.base_url" required class="input mt-1 w-full" /></label><label class="text-sm">Jira account email<input v-model="adapterForm.configuration.email" required class="input mt-1 w-full" /></label><label class="text-sm">JQL<input v-model="adapterForm.configuration.jql" required class="input mt-1 w-full" /></label></template><label class="text-sm">{{ adapterForm.kind === 'github' ? 'access_token' : 'api_token' }} Secret<select v-model="adapterForm.secret_bindings[adapterForm.kind === 'github' ? 'access_token' : 'api_token']" required class="input mt-1 w-full"><option value="">Select stored Secret</option><option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">{{ secret.scope }}/{{ secret.name }}</option></select></label></template><template v-else><label v-for="field in configurationFields" :key="field.name" class="text-sm"><span>{{ field.name }}<template v-if="field.required"> *</template></span><TypedValueEditor class="mt-1" :model-value="adapterForm.configuration[field.name]" :ty="field.value_type" :allow-expressions="false" @update:model-value="updateConfigField(field.name, $event)" /><small v-if="field.description" class="mt-1 block text-fg-muted">{{ field.description }}</small></label><label v-for="field in secretFields" :key="field.name" class="text-sm">{{ field.name }} Secret<template v-if="field.required"> *</template><select v-model="adapterForm.secret_bindings[field.name]" class="input mt-1 w-full" :required="field.required"><option value="">Select stored Secret</option><option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">{{ secret.scope }}/{{ secret.name }}</option></select></label></template><label class="text-sm">Identity extraction JSON<textarea v-model="identityText" class="input mt-1 min-h-28 w-full font-mono text-xs" :disabled="identityLocked" /></label></div><div class="mt-4 flex justify-end gap-2"><button type="button" class="button" @click="adapterFormOpen = false">Cancel</button><button class="button" type="submit">Save immutable revision</button></div></form></div>
   </section>
 </template>
 
@@ -259,12 +267,14 @@ const identityText = ref("{}");
 interface AdapterFormState {
   name: string;
   kind: string;
+  transport: "webhook" | "polling";
   configuration: Record<string, JsonValue>;
   secret_bindings: Record<string, string>;
 }
 const adapterForm = reactive<AdapterFormState>({
   name: "",
   kind: "",
+  transport: "webhook",
   configuration: {},
   secret_bindings: {},
 });
@@ -276,6 +286,7 @@ const formKind = computed<AdapterKindMetadata | undefined>(
   () => store.adapterKinds.find((kind) => kind.kind === adapterForm.kind),
 );
 const configurationFields = computed(() => formKind.value?.fields.filter((field) => !field.secret) ?? []);
+const pollRepositories = ref("[]");
 const secretFields = computed(() => formKind.value?.fields.filter((field) => field.secret) ?? []);
 const selectableSecrets = computed(() => secrets.secretEntries.filter((secret) => Boolean(secret.id)));
 const currentAdapterRevision = computed<AdapterRevision | undefined>(
@@ -283,6 +294,7 @@ const currentAdapterRevision = computed<AdapterRevision | undefined>(
     (revision) => revision.revision === store.selectedAdapter?.current_revision,
   ) ?? store.adapterRevisions[0],
 );
+const currentTransport = computed(() => currentAdapterRevision.value?.transport ?? "webhook");
 const webhookPath = computed(() => store.selectedAdapter ? `/webhooks/orchestration/${store.selectedAdapter.endpoint_identity}` : "");
 const identityLocked = computed(() => Boolean(editingAdapterId.value && store.selectedAdapter?.has_admitted_binding));
 const isSelectedTerminal = computed(() => Boolean(
@@ -311,6 +323,10 @@ const currentEpochDetail = computed<PipelineRunDetail | null>(() => {
 
 function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function formatTimestamp(value?: string | null): string {
+  return value ? new Date(value).toLocaleString() : "Never";
 }
 
 function safeFileSegment(value: string): string {
@@ -541,6 +557,11 @@ async function runTest(): Promise<void> {
 function initializeKind(): void {
   adapterForm.configuration = {};
   adapterForm.secret_bindings = {};
+  pollRepositories.value = "[]";
+
+  if (adapterForm.kind !== "github" && adapterForm.kind !== "jira") {
+    adapterForm.transport = "webhook";
+  }
 
   for (const field of formKind.value?.fields ?? []) {
     if (!field.secret) {
@@ -558,8 +579,10 @@ function openAdapterForm(adapter?: AdapterDefinition, clone = false): void {
   editingAdapterId.value = adapter && !clone ? adapter.id : null;
   adapterForm.name = adapter ? `${adapter.name}${clone ? " copy" : ""}` : "";
   adapterForm.kind = adapter ? adapter.kind : (firstKind ? firstKind.kind : "");
+  adapterForm.transport = revision?.transport ?? "webhook";
   adapterForm.configuration = revision ? jsonObject(revision.configuration) : {};
   adapterForm.secret_bindings = revision ? { ...revision.secret_bindings } : {};
+  pollRepositories.value = pretty(adapterForm.configuration.repositories ?? []);
   identityText.value = pretty(revision?.identity_configuration ?? {});
 
   if (!revision) {
@@ -581,6 +604,12 @@ async function saveAdapter(): Promise<void> {
   }
 
   const identity = parseJson(identityText.value || "{}");
+  const configuration = { ...adapterForm.configuration };
+
+  if (adapterForm.transport === "polling" && adapterForm.kind === "github") {
+    configuration.repositories = parseJson(pollRepositories.value || "[]") as JsonValue;
+  }
+
   const bindings = Object.fromEntries(
     Object.entries(adapterForm.secret_bindings).filter(([, value]) => value),
   );
@@ -589,7 +618,8 @@ async function saveAdapter(): Promise<void> {
     name: adapterForm.name.trim(),
     kind: kind.kind,
     kind_version: kind.version,
-    configuration: adapterForm.configuration,
+    transport: adapterForm.transport,
+    configuration,
     secret_bindings: bindings,
     identity_configuration: identity,
     ...(editingAdapterId.value && store.selectedAdapter

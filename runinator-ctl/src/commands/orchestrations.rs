@@ -243,6 +243,43 @@ async fn orchestration_adapters(
             let value = json!({ "adapter": adapter, "revisions": revisions });
             output::json(&value)
         }
+        OrchestrationAdapterCommands::PollStatus { id } => {
+            let status = client.fetch_orchestration_adapter_poll_status(*id).await?;
+            if json_output {
+                return output::json(&status);
+            }
+            let rows = vec![vec![
+                status.adapter_id.to_string(),
+                status.revision.to_string(),
+                status.next_poll_at.to_rfc3339(),
+                status
+                    .last_attempt_at
+                    .map(|value| value.to_rfc3339())
+                    .unwrap_or_else(|| "-".into()),
+                status
+                    .last_success_at
+                    .map(|value| value.to_rfc3339())
+                    .unwrap_or_else(|| "-".into()),
+                status.last_error.unwrap_or_else(|| "-".into()),
+                status.checkpoint.to_string(),
+            ]];
+            print!(
+                "{}",
+                output::table(
+                    &[
+                        "ADAPTER",
+                        "REVISION",
+                        "NEXT POLL",
+                        "LAST ATTEMPT",
+                        "LAST SUCCESS",
+                        "LAST ERROR",
+                        "CHECKPOINT",
+                    ],
+                    &rows,
+                )
+            );
+            Ok(())
+        }
         OrchestrationAdapterCommands::Apply { file, id } => {
             let definition: Value = serde_json::from_slice(&fs::read(file)?)?;
             let adapter = client.apply_orchestration_adapter(*id, &definition).await?;

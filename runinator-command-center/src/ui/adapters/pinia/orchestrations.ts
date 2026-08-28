@@ -3,6 +3,7 @@ import { ref, shallowRef } from "vue";
 import type {
   AdapterDefinition,
   AdapterKindMetadata,
+  AdapterPollStatus,
   AdapterRevision,
   ExternalOperation,
   OrchestrationBinding,
@@ -19,6 +20,7 @@ import {
   deleteAdapter,
   deleteOrchestrationAlias,
   fetchAdapterKinds,
+  fetchAdapterPollStatus,
   fetchAdapterRevisions,
   fetchAdapters,
   fetchExternalOperations,
@@ -53,7 +55,8 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   const adapters = ref<AdapterDefinition[]>([]);
   const selectedAdapterId = ref<string | null>(null);
   const selectedAdapter = ref<AdapterDefinition | null>(null);
-  const adapterRevisions = ref<AdapterRevision[]>([]);
+  const adapterRevisions = shallowRef<AdapterRevision[]>([]);
+  const adapterPollStatus = shallowRef<AdapterPollStatus | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
 
@@ -153,6 +156,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
         selectedAdapterId.value = null;
         selectedAdapter.value = null;
         adapterRevisions.value = [];
+        adapterPollStatus.value = null;
       }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause);
@@ -165,6 +169,12 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     selectedAdapterId.value = id;
     selectedAdapter.value = adapters.value.find((item) => item.id === id) ?? null;
     adapterRevisions.value = await fetchAdapterRevisions(id);
+    const current = adapterRevisions.value.find(
+      (revision) => revision.revision === selectedAdapter.value?.current_revision,
+    ) ?? adapterRevisions.value[0];
+    adapterPollStatus.value = current.transport === "polling"
+      ? await fetchAdapterPollStatus(id)
+      : null;
   }
 
   async function saveAdapter(input: AdapterApplyInput, adapterId?: string): Promise<void> {
@@ -203,7 +213,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
 
   return {
     bindings, selectedId, selected, epochs, events, evidence, commands, operations, workspaces, aliases,
-    adapterKinds, adapters, selectedAdapterId, selectedAdapter, adapterRevisions,
+    adapterKinds, adapters, selectedAdapterId, selectedAdapter, adapterRevisions, adapterPollStatus,
     loading, error, refresh, select, currentBinding, dispatch, requeue, addAlias, removeAlias, refreshAdapters, selectAdapter, saveAdapter,
     toggleAdapter, removeAdapter, runAdapterTest, resolveOperation,
   };

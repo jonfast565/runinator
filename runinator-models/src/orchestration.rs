@@ -802,6 +802,10 @@ pub struct AdapterRevision {
     pub adapter_id: Uuid,
     pub revision: i64,
     pub kind_version: String,
+    /// Selects the external delivery mechanism for this immutable revision. Missing values in
+    /// older persisted revisions are intentionally interpreted as `webhook`.
+    #[serde(default)]
+    pub transport: AdapterTransport,
     #[serde(default)]
     pub configuration: Value,
     #[serde(default)]
@@ -811,6 +815,42 @@ pub struct AdapterRevision {
     pub created_at: DateTime<Utc>,
     #[serde(default)]
     pub actor_id: Option<Uuid>,
+}
+
+/// How an orchestration adapter obtains external events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterTransport {
+    #[default]
+    Webhook,
+    Polling,
+}
+
+impl AdapterTransport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Webhook => "webhook",
+            Self::Polling => "polling",
+        }
+    }
+}
+
+/// Durable scheduling and diagnostic state for one polling adapter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterPollStatus {
+    pub adapter_id: Uuid,
+    pub revision: i64,
+    #[serde(default)]
+    pub checkpoint: Value,
+    pub next_poll_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_until: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

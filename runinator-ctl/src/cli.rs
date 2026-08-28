@@ -985,6 +985,8 @@ pub enum OrchestrationAdapterCommands {
     List,
     /// Show an adapter and its immutable revisions.
     Show { id: Uuid },
+    /// Show durable checkpoint, schedule, and health for a polling adapter.
+    PollStatus { id: Uuid },
     /// Create or update an adapter from a JSON definition. Secret values must be stored Secret IDs.
     Apply {
         file: PathBuf,

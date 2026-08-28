@@ -10,12 +10,14 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use runinator_adapter_contract::{AdapterRequest, AdapterResponse};
+use runinator_adapter_contract::{
+    AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse,
+};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
 use runinator_engine::services::{AdapterOperations, PipelineOperations};
 use runinator_models::{
     auth::AuthContext,
-    orchestration::{AdapterDefinition, AdapterKindMetadata},
+    orchestration::{AdapterDefinition, AdapterKindMetadata, AdapterTransport},
     rbac::Action,
     web::TaskResponse,
 };
@@ -138,6 +140,24 @@ async fn current_revision<T: OrchestrationStore>(
     }
 }
 
+fn valid_github_repositories(configuration: &runinator_models::value::Value) -> bool {
+    configuration
+        .get("repositories")
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| {
+            !items.is_empty()
+                && items.iter().all(|item| {
+                    item.as_str().is_some_and(|value| {
+                        let value = value.trim();
+                        !value.is_empty()
+                            && value.split_once('/').is_some_and(|(owner, repository)| {
+                                !owner.is_empty() && !repository.is_empty()
+                            })
+                    })
+                })
+        })
+}
+
 fn validate_definition(
     request: &AdapterApplyRequest,
     kind: &AdapterKindMetadata,
@@ -150,6 +170,24 @@ fn validate_definition(
             "adapter kind '{}' is loaded at version {}, not {}",
             kind.kind, kind.version, request.kind_version
         ));
+    }
+    if request.transport == AdapterTransport::Polling {
+        let interval = request
+            .configuration
+            .get("poll_interval_seconds")
+            .and_then(|value| value.as_i64())
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(60);
+        if !(30..=3_600).contains(&interval) {
+            return Err("poll_interval_seconds must be between 30 and 3600".into());
+        }
+        match request.kind.as_str() {
+            "github" if valid_github_repositories(&request.configuration) && request.secret_bindings.contains_key("access_token") => return Ok(()),
+            "jira" if ["instance_id", "base_url", "email", "jql"].iter().all(|field| request.configuration.get(*field).and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty())) && request.secret_bindings.contains_key("api_token") => return Ok(()),
+            "github" => return Err("GitHub polling requires repositories and access_token secret binding".into()),
+            "jira" => return Err("Jira polling requires instance_id, base_url, email, jql, and api_token secret binding".into()),
+            _ => return Err("only GitHub and Jira adapters support polling".into()),
+        }
     }
     for field in &kind.fields {
         if field.secret {
@@ -195,6 +233,7 @@ fn identity_projection(
             "correlation_pointer",
         ],
         "jira" => &["instance_id"],
+        "github" => &["repositories"],
         _ => &[],
     };
     serde_json::Value::Object(
@@ -306,6 +345,27 @@ pub async fn revisions<T: OrchestrationStore + RbacStore>(
     }
 }
 
+pub async fn poll_status<T: OrchestrationStore + RbacStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let operations = AdapterOperations::new(db);
+    if let Err(reply) = authorized_adapter(&operations, &ctx, id, Action::View).await {
+        return reply;
+    }
+    match operations.poll_status(id).await {
+        Ok(Some(status)) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                serde_json::to_value(status).unwrap_or_default().into(),
+            )),
+        ),
+        Ok(None) => not_found("adapter is not configured for polling"),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
 pub async fn create<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
@@ -341,6 +401,7 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
                 name: request.name,
                 kind: request.kind,
                 kind_version: request.kind_version,
+                transport: request.transport,
                 endpoint_identity: Uuid::new_v4().to_string(),
                 configuration: request.configuration,
                 secret_bindings: request.secret_bindings,
@@ -396,6 +457,11 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
             Ok(value) => value,
             Err(reply) => return reply,
         };
+        if current.transport != request.transport {
+            return bad_request(
+                "adapter transport is immutable after its first admitted binding; clone the adapter instead",
+            );
+        }
         if identity_projection(&adapter.kind, &current.configuration)
             != identity_projection(&adapter.kind, &request.configuration)
         {
@@ -414,6 +480,7 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
                 adapter_id: id,
                 expected_revision,
                 kind_version: request.kind_version,
+                transport: request.transport,
                 configuration: request.configuration,
                 secret_bindings: request.secret_bindings,
                 identity_configuration: request.identity_configuration,
@@ -522,6 +589,39 @@ pub async fn test<
         Ok(value) => value,
         Err(error) => return bad_request(error),
     };
+    if revision.transport == AdapterTransport::Polling {
+        let configuration = request.configuration.unwrap_or(revision.configuration);
+        let response: AdapterPollResponse = match host_post(
+            "/poll",
+            serde_json::json!({
+                "kind": adapter.kind,
+                "request": AdapterPollRequest {
+                    configuration: serde_json::to_value(configuration).unwrap_or_default(),
+                    secrets,
+                    checkpoint: serde_json::Value::Null,
+                    initialize: false,
+                }
+            }),
+        )
+        .await
+        .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
+        {
+            Ok(value) => value,
+            Err(error) => return api_error(error),
+        };
+        let mut previews = Vec::new();
+        for event in &response.events {
+            match operations.preview_event(&adapter, event).await {
+                Ok(preview) => previews.push(preview),
+                Err(error) => return api_error(error),
+            }
+        }
+        return (StatusCode::OK, Json(ApiResponse::JsonValue(serde_json::json!({
+            "verified": response.error.is_none(), "events": response.events,
+            "errors": response.error.into_iter().collect::<Vec<_>>(), "previews": previews,
+            "checkpoint": response.checkpoint, "retry_after_seconds": response.retry_after_seconds,
+        }).into())));
+    }
     let headers = request
         .headers
         .into_iter()
@@ -659,6 +759,9 @@ pub async fn webhook<
         Ok(value) => value,
         Err(reply) => return reply,
     };
+    if revision.transport != AdapterTransport::Webhook {
+        return not_found("adapter is configured for polling, not webhook delivery");
+    }
     let secrets = match operations
         .resolve_secrets(adapter.org_id, &revision.secret_bindings)
         .await
@@ -780,6 +883,10 @@ where
         .route(
             "/orchestrations/adapters/{id}/revisions",
             get(revisions::<T>),
+        )
+        .route(
+            "/orchestrations/adapters/{id}/poll-status",
+            get(poll_status::<T>),
         )
         .route(
             "/orchestrations/adapters/{id}/enabled",
@@ -917,11 +1024,24 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::AdapterRevisionList,
     ),
     endpoint_with_policy(
+        "get",
+        "/orchestrations/adapters/{id}/poll-status",
+        "Orchestration Adapters",
+        "Show polling adapter status",
+        "Returns the durable checkpoint, next scheduled poll, claim lease, and last attempt, success, or error for a polling adapter.",
+        EndpointPolicy::ScopedAction(Action::View),
+        None,
+        &[],
+        200,
+        "polling adapter status",
+        Example::AdapterPollStatus,
+    ),
+    endpoint_with_policy(
         "post",
         "/orchestrations/adapters/{id}/enabled",
         "Orchestration Adapters",
         "Enable or disable an adapter",
-        "Changes whether the adapter accepts new webhook requests without altering its immutable revisions.",
+        "Changes whether the adapter accepts new webhook requests or polling claims without altering its immutable revisions.",
         EndpointPolicy::ScopedAction(Action::Edit),
         json_body("Desired enabled state.", Example::AdapterEnable),
         &[],
@@ -934,7 +1054,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/orchestrations/adapters/{id}/test",
         "Orchestration Adapters",
         "Test adapter verification and routing",
-        "Verifies and normalizes a sample request, then previews matching routes and candidate intents without persisting ingress.",
+        "Verifies a webhook sample or performs a non-persisting polling preview, then normalizes events and previews matching routes and candidate intents.",
         EndpointPolicy::ScopedAction(Action::Edit),
         json_body(
             "Sample headers and base64 body, with optional temporary configuration and Secret bindings.",
@@ -967,11 +1087,12 @@ mod tests {
     use super::{identity_projection, validate_definition};
     use runinator_models::{
         json,
-        orchestration::{AdapterConfigurationField, AdapterKindMetadata},
+        orchestration::{AdapterConfigurationField, AdapterKindMetadata, AdapterTransport},
         types::RuninatorType,
         value::Value,
     };
     use runinator_ws_core::models::AdapterApplyRequest;
+    use uuid::Uuid;
 
     #[test]
     fn generic_identity_projection_ignores_non_identity_configuration() {
@@ -1044,6 +1165,7 @@ mod tests {
             name: "adapter".into(),
             kind: "example".into(),
             kind_version: "1".into(),
+            transport: AdapterTransport::Webhook,
             configuration: json!({ "pointer": 42 }),
             secret_bindings: BTreeMap::new(),
             identity_configuration: Value::Null,
@@ -1053,6 +1175,59 @@ mod tests {
             validate_definition(&request, &metadata)
                 .unwrap_err()
                 .contains("declared type")
+        );
+    }
+
+    #[test]
+    fn polling_uses_transport_specific_configuration() {
+        let metadata = AdapterKindMetadata {
+            kind: "github".into(),
+            version: "1".into(),
+            display_name: "GitHub".into(),
+            description: None,
+            fields: vec![],
+            event_names: vec![],
+            canonical_pointers: vec![],
+            capabilities: vec![],
+            setup_instructions: vec![],
+        };
+        let github = AdapterApplyRequest {
+            name: "GitHub poller".into(),
+            kind: "github".into(),
+            kind_version: "1".into(),
+            transport: AdapterTransport::Polling,
+            configuration: json!({
+                "repositories": ["octo/example"],
+                "poll_interval_seconds": 60
+            }),
+            secret_bindings: BTreeMap::from([("access_token".into(), Uuid::new_v4())]),
+            identity_configuration: Value::Null,
+            expected_revision: None,
+        };
+        assert!(validate_definition(&github, &metadata).is_ok());
+
+        let mut missing_token = github;
+        missing_token.secret_bindings.clear();
+        assert!(
+            validate_definition(&missing_token, &metadata)
+                .unwrap_err()
+                .contains("access_token")
+        );
+
+        let unsupported = AdapterApplyRequest {
+            name: "Unsupported poller".into(),
+            kind: "generic_webhook".into(),
+            kind_version: "1".into(),
+            transport: AdapterTransport::Polling,
+            configuration: json!({ "poll_interval_seconds": 60 }),
+            secret_bindings: BTreeMap::new(),
+            identity_configuration: Value::Null,
+            expected_revision: None,
+        };
+        assert!(
+            validate_definition(&unsupported, &metadata)
+                .unwrap_err()
+                .contains("only GitHub and Jira")
         );
     }
 }

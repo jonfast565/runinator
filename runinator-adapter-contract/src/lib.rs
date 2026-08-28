@@ -14,6 +14,7 @@ pub const MARKER_SYMBOL: &[u8] = b"runinator_adapter_abi_version\0";
 pub const NAME_SYMBOL: &[u8] = b"runinator_adapter_name\0";
 pub const METADATA_SYMBOL: &[u8] = b"runinator_adapter_metadata\0";
 pub const HANDLE_SYMBOL: &[u8] = b"runinator_adapter_handle\0";
+pub const POLL_SYMBOL: &[u8] = b"runinator_adapter_poll\0";
 
 /// Verify a bearer credential without leaking a length-dependent early mismatch.
 pub fn verify_bearer(expected: &str, authorization: &str) -> bool {
@@ -71,6 +72,34 @@ pub struct AdapterResponse {
     pub events: Vec<NormalizedAdapterEvent>,
     #[serde(default)]
     pub errors: Vec<String>,
+}
+
+/// A pull request made by the durable adapter scheduler. `checkpoint` is opaque to Runinator and
+/// belongs to the adapter kind; implementations must return a replacement only after they have
+/// completely enumerated the associated event batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterPollRequest {
+    #[serde(default)]
+    pub configuration: Value,
+    #[serde(default)]
+    pub secrets: Value,
+    #[serde(default)]
+    pub checkpoint: Value,
+    /// A first poll establishes a high-water mark without replaying history.
+    #[serde(default)]
+    pub initialize: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterPollResponse {
+    #[serde(default)]
+    pub events: Vec<NormalizedAdapterEvent>,
+    #[serde(default)]
+    pub checkpoint: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl AdapterResponse {

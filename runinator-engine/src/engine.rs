@@ -6,7 +6,7 @@ use runinator_store::{
     RuntimeStore,
     roles::{
         DefinitionStore, IngressStore, NotificationStore, OrchestrationStore, OrgStore,
-        ReplicaStore, RunStore, ScheduleStore, WorkflowVmStore, WorkspaceStore,
+        ReplicaStore, RunStore, ScheduleStore, SettingStore, WorkflowVmStore, WorkspaceStore,
     },
 };
 use tokio::sync::Notify;
@@ -65,6 +65,7 @@ pub trait BackgroundEngineStore:
     + IngressStore
     + WorkspaceStore
     + OrchestrationStore
+    + SettingStore
 {
 }
 
@@ -80,6 +81,7 @@ impl<T> BackgroundEngineStore for T where
         + IngressStore
         + WorkspaceStore
         + OrchestrationStore
+        + SettingStore
 {
 }
 
@@ -173,6 +175,14 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         publisher.clone(),
         instance.clone(),
         server_settings.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(crate::adapter_polling::run_adapter_poll_loop(
+        pool.clone(),
+        broker.clone(),
+        publisher.clone(),
+        local_signals.clone(),
+        instance.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_agent_directive_publisher(

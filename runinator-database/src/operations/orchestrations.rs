@@ -2,10 +2,11 @@
 
 use super::*;
 use runinator_models::orchestration::{
-    AdapterDefinition, AdapterRevision, DeliverySemantics, ExternalOperation,
-    ExternalOperationStatus, NewOrchestrationBinding, OrchestrationBinding, OrchestrationCommand,
-    OrchestrationCorrelationAlias, OrchestrationEpoch, OrchestrationEventReduction,
-    OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationStatus,
+    AdapterDefinition, AdapterPollStatus, AdapterRevision, AdapterTransport, DeliverySemantics,
+    ExternalOperation, ExternalOperationStatus, NewOrchestrationBinding, OrchestrationBinding,
+    OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
+    OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
+    OrchestrationStatus,
 };
 use runinator_store::roles::{
     ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
@@ -22,7 +23,7 @@ const COMMAND_COLUMNS: &str = "id, binding_id, epoch, command_type, operation_ke
 const EVIDENCE_COLUMNS: &str =
     "id, binding_id, epoch, kind, subject_revision, payload, source_event_id, created_at";
 const ADAPTER_COLUMNS: &str = "id, org_id, name, kind, current_revision, enabled, endpoint_identity, has_admitted_binding, created_at, updated_at";
-const ADAPTER_REVISION_COLUMNS: &str = "id, adapter_id, revision, kind_version, configuration, secret_bindings, identity_configuration, created_at, actor_id";
+const ADAPTER_REVISION_COLUMNS: &str = "id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, identity_configuration, created_at, actor_id";
 const EXTERNAL_OPERATION_COLUMNS: &str = "id, binding_id, epoch, workflow_run_id, effect_id, operation_key, provider, action, semantics, attempt, status, ambiguous, provenance, receipt, created_at, updated_at";
 
 fn external_status(value: ExternalOperationStatus) -> &'static str {
@@ -694,11 +695,15 @@ where
             .bind(adapter.id).bind(adapter.org_id).bind(adapter.name).bind(adapter.kind)
             .bind(true).bind(adapter.endpoint_identity).bind(false).bind(now.timestamp()).bind(now.timestamp())
             .execute(&mut *tx).await?;
-        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, configuration, secret_bindings, identity_configuration, created_at, actor_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)"))
-            .bind(Uuid::now_v7()).bind(adapter.id).bind(adapter.kind_version)
+        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, identity_configuration, created_at, actor_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)"))
+            .bind(Uuid::now_v7()).bind(adapter.id).bind(adapter.kind_version).bind(adapter.transport.as_str())
             .bind(adapter.configuration.to_string()).bind(serde_json::to_string(&adapter.secret_bindings)?)
             .bind(adapter.identity_configuration.to_string()).bind(now.timestamp()).bind(adapter.actor_id)
             .execute(&mut *tx).await?;
+        if adapter.transport == AdapterTransport::Polling {
+            sqlx::query(&self.render("INSERT INTO orchestration_adapter_polls (adapter_id, revision, checkpoint, next_poll_at) VALUES (?, 1, 'null', ?)"))
+                .bind(adapter.id).bind(now.timestamp()).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         let definition = self
             .fetch_orchestration_adapter(adapter.id)
@@ -800,7 +805,8 @@ where
                     as SendableError
             })?;
         if existing.has_admitted_binding
-            && current.identity_configuration != revision.identity_configuration
+            && (current.identity_configuration != revision.identity_configuration
+                || current.transport != revision.transport)
         {
             return Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -816,11 +822,26 @@ where
             tx.rollback().await?;
             return Ok(None);
         }
-        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, configuration, secret_bindings, identity_configuration, created_at, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
-            .bind(revision.id).bind(revision.adapter_id).bind(next).bind(revision.kind_version)
+        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, identity_configuration, created_at, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+            .bind(revision.id).bind(revision.adapter_id).bind(next).bind(revision.kind_version).bind(revision.transport.as_str())
             .bind(revision.configuration.to_string()).bind(serde_json::to_string(&revision.secret_bindings)?)
             .bind(revision.identity_configuration.to_string()).bind(now.timestamp()).bind(revision.actor_id)
             .execute(&mut *tx).await?;
+        if revision.transport == AdapterTransport::Polling {
+            let updated_poll = sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET revision = ?, checkpoint = 'null', next_poll_at = ?, claimed_by = NULL, claimed_until = NULL, last_error = NULL WHERE adapter_id = ?"))
+                .bind(next).bind(now.timestamp()).bind(revision.adapter_id).execute(&mut *tx).await?;
+            if updated_poll.affected() == 0 {
+                sqlx::query(&self.render("INSERT INTO orchestration_adapter_polls (adapter_id, revision, checkpoint, next_poll_at) VALUES (?, ?, 'null', ?)"))
+                    .bind(revision.adapter_id).bind(next).bind(now.timestamp()).execute(&mut *tx).await?;
+            }
+        } else {
+            sqlx::query(
+                &self.render("DELETE FROM orchestration_adapter_polls WHERE adapter_id = ?"),
+            )
+            .bind(revision.adapter_id)
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
         let definition = self
             .fetch_orchestration_adapter(revision.adapter_id)
@@ -967,5 +988,93 @@ where
             return Ok(None);
         }
         self.fetch_external_operation(operation_id).await
+    }
+
+    async fn claim_due_orchestration_adapter_polls(
+        &self,
+        instance_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<AdapterPollStatus>, SendableError> {
+        let rows = sqlx::query(&self.render("SELECT p.adapter_id, p.revision, p.checkpoint, p.next_poll_at, p.claimed_until, p.last_attempt_at, p.last_success_at, p.last_error FROM orchestration_adapter_polls p JOIN orchestration_adapters a ON a.id = p.adapter_id WHERE a.enabled = ? AND a.current_revision = p.revision AND p.next_poll_at <= ? AND (p.claimed_until IS NULL OR p.claimed_until <= ?) ORDER BY p.next_poll_at, p.adapter_id LIMIT ?"))
+            .bind(true).bind(now.timestamp()).bind(now.timestamp()).bind(limit as i64).fetch_all(self.pool()).await?;
+        let mut claimed = Vec::new();
+        for row in rows {
+            let adapter_id = row.get::<Uuid, _>("adapter_id");
+            let revision = row.get::<i64, _>("revision");
+            let changed = sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET claimed_by = ?, claimed_until = ?, last_attempt_at = ? WHERE adapter_id = ? AND revision = ? AND next_poll_at <= ? AND (claimed_until IS NULL OR claimed_until <= ?)"))
+                .bind(&instance_id).bind(lease_until.timestamp()).bind(now.timestamp()).bind(adapter_id).bind(revision).bind(now.timestamp()).bind(now.timestamp()).execute(self.pool()).await?;
+            if changed.affected() != 0 {
+                let at = |timestamp: i64| {
+                    chrono::TimeZone::timestamp_opt(&Utc, timestamp, 0)
+                        .single()
+                        .unwrap_or(now)
+                };
+                claimed.push(AdapterPollStatus {
+                    adapter_id,
+                    revision,
+                    checkpoint: serde_json::from_str(&row.get::<String, _>("checkpoint"))
+                        .unwrap_or_default(),
+                    next_poll_at: at(row.get("next_poll_at")),
+                    claimed_until: Some(lease_until),
+                    last_attempt_at: Some(now),
+                    last_success_at: row.get::<Option<i64>, _>("last_success_at").map(at),
+                    last_error: row.get("last_error"),
+                });
+            }
+        }
+        Ok(claimed)
+    }
+
+    async fn fetch_orchestration_adapter_poll_status(
+        &self,
+        adapter_id: Uuid,
+    ) -> Result<Option<AdapterPollStatus>, SendableError> {
+        let row = sqlx::query(&self.render("SELECT adapter_id, revision, checkpoint, next_poll_at, claimed_until, last_attempt_at, last_success_at, last_error FROM orchestration_adapter_polls WHERE adapter_id = ?"))
+            .bind(adapter_id).fetch_optional(self.pool()).await?;
+        Ok(row.map(|row| {
+            let at = |timestamp: i64| {
+                chrono::TimeZone::timestamp_opt(&Utc, timestamp, 0)
+                    .single()
+                    .unwrap_or_else(Utc::now)
+            };
+            AdapterPollStatus {
+                adapter_id: row.get("adapter_id"),
+                revision: row.get("revision"),
+                checkpoint: serde_json::from_str(&row.get::<String, _>("checkpoint"))
+                    .unwrap_or_default(),
+                next_poll_at: at(row.get("next_poll_at")),
+                claimed_until: row.get::<Option<i64>, _>("claimed_until").map(at),
+                last_attempt_at: row.get::<Option<i64>, _>("last_attempt_at").map(at),
+                last_success_at: row.get::<Option<i64>, _>("last_success_at").map(at),
+                last_error: row.get("last_error"),
+            }
+        }))
+    }
+
+    async fn complete_orchestration_adapter_poll(
+        &self,
+        adapter_id: Uuid,
+        instance_id: String,
+        revision: i64,
+        checkpoint: Value,
+        next_poll_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        Ok(sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET revision = ?, checkpoint = ?, next_poll_at = ?, claimed_by = NULL, claimed_until = NULL, last_success_at = ?, last_error = NULL WHERE adapter_id = ? AND claimed_by = ?"))
+            .bind(revision).bind(checkpoint.to_string()).bind(next_poll_at.timestamp()).bind(now.timestamp()).bind(adapter_id).bind(instance_id).execute(self.pool()).await?.affected() != 0)
+    }
+
+    async fn fail_orchestration_adapter_poll(
+        &self,
+        adapter_id: Uuid,
+        instance_id: String,
+        next_poll_at: DateTime<Utc>,
+        error: String,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        Ok(sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET next_poll_at = ?, claimed_by = NULL, claimed_until = NULL, last_error = ?, last_attempt_at = ? WHERE adapter_id = ? AND claimed_by = ?"))
+            .bind(next_poll_at.timestamp()).bind(error).bind(now.timestamp()).bind(adapter_id).bind(instance_id).execute(self.pool()).await?.affected() != 0)
     }
 }

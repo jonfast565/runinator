@@ -2,6 +2,10 @@
 
 Guidance for agents working in this repository. Keep changes aligned with the existing architecture before adding new abstractions or cross-crate dependencies.
 
+## Versioning
+
+Increment the build number for every new feature. For a substantial, multi-phase feature, increment the minor version as well.
+
 ## Project Shape
 
 Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime using a resumable state-machine orchestrator.

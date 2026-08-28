@@ -14,9 +14,9 @@ use axum::{
     routing::{get, post},
 };
 use runinator_adapter_contract::{
-    ADAPTER_ABI_VERSION, AdapterMetadataEnvelope, AdapterRequest, AdapterResponse, FileOperationFn,
-    HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn, verify_bearer,
-    verify_hmac_sha256,
+    ADAPTER_ABI_VERSION, AdapterMetadataEnvelope, AdapterPollRequest, AdapterPollResponse,
+    AdapterRequest, AdapterResponse, FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL,
+    METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, verify_bearer, verify_hmac_sha256,
 };
 use runinator_models::{
     orchestration::{
@@ -87,6 +87,12 @@ struct InvokeRequest {
     request: AdapterRequest,
 }
 
+#[derive(Debug, Deserialize)]
+struct PollInvokeRequest {
+    kind: String,
+    request: AdapterPollRequest,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().collect::<Vec<_>>();
@@ -98,6 +104,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.get(1).map(String::as_str) == Some("--child-handle") {
         return child_handle(
+            Path::new(required_arg(&args, 2)?),
+            Path::new(required_arg(&args, 3)?),
+            Path::new(required_arg(&args, 4)?),
+        );
+    }
+    if args.get(1).map(String::as_str) == Some("--child-poll") {
+        return child_poll(
             Path::new(required_arg(&args, 2)?),
             Path::new(required_arg(&args, 3)?),
             Path::new(required_arg(&args, 4)?),
@@ -132,6 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/kinds", get(kinds))
         .route("/reload", post(reload))
         .route("/verify-normalize", post(invoke))
+        .route("/poll", post(poll))
         .layer(DefaultBodyLimit::max(host_request_limit))
         .with_state(state);
     axum::serve(listener, router).await?;
@@ -221,6 +235,50 @@ async fn invoke(
             .unwrap_or_else(|error| AdapterResponse::rejected(error))
     };
     if response.events.len() > state.limits.event_count {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "adapter emitted too many events" })),
+        );
+    }
+    let value = serde_json::to_value(response).unwrap_or_default();
+    if serde_json::to_vec(&value).is_ok_and(|bytes| bytes.len() > state.limits.output_bytes) {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "adapter output exceeds limit" })),
+        );
+    }
+    (StatusCode::OK, Json(value))
+}
+
+async fn poll(
+    State(state): State<HostState>,
+    headers: HeaderMap,
+    Json(request): Json<PollInvokeRequest>,
+) -> (StatusCode, Json<Value>) {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    let entry = state.catalog.read().await.get(&request.kind).cloned();
+    let Some(entry) = entry else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "adapter kind not found" })),
+        );
+    };
+    let response = if entry.origin == "builtin" {
+        builtin_poll(&request.kind, request.request).await
+    } else {
+        let checkpoint = request.request.checkpoint.clone();
+        invoke_dynamic_poll(Path::new(&entry.origin), &request.request, state.limits)
+            .await
+            .unwrap_or_else(|error| AdapterPollResponse {
+                events: Vec::new(),
+                checkpoint,
+                retry_after_seconds: None,
+                error: Some(error),
+            })
+    };
+    if response.events.len() > state.limits.event_count.max(256) {
         return (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "error": "adapter emitted too many events" })),
@@ -369,6 +427,40 @@ async fn invoke_dynamic(
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
+async fn invoke_dynamic_poll(
+    path: &Path,
+    request: &AdapterPollRequest,
+    limits: HostLimits,
+) -> Result<AdapterPollResponse, String> {
+    let request_file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+    let response_file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+    let request_bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
+    if request_bytes.len() > limits.body_bytes {
+        return Err("adapter poll request exceeds limit".into());
+    }
+    std::fs::write(request_file.path(), request_bytes).map_err(|error| error.to_string())?;
+    let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .arg("--child-poll")
+        .arg(path)
+        .arg(request_file.path())
+        .arg(response_file.path())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let status = timeout(limits.timeout, child.wait())
+        .await
+        .map_err(|_| "adapter poll invocation timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Err(format!("adapter poll child exited with {status}"));
+    }
+    let bytes = std::fs::read(response_file.path()).map_err(|error| error.to_string())?;
+    if bytes.len() > limits.output_bytes {
+        return Err("adapter poll output exceeds limit".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
 fn child_metadata(
     library_path: &Path,
     response_path: &Path,
@@ -401,6 +493,24 @@ fn child_handle(
             return Err("adapter ABI version mismatch".into());
         }
         let operation = library.get::<FileOperationFn>(HANDLE_SYMBOL)?;
+        invoke_file_operation(*operation, Some(request_path), response_path)?;
+    }
+    Ok(())
+}
+
+fn child_poll(
+    library_path: &Path,
+    request_path: &Path,
+    response_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // SAFETY: all dynamically loaded code is contained in this disposable child process.
+    unsafe {
+        let library = libloading::Library::new(library_path)?;
+        let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
+        if marker() != ADAPTER_ABI_VERSION {
+            return Err("adapter ABI version mismatch".into());
+        }
+        let operation = library.get::<FileOperationFn>(POLL_SYMBOL)?;
         invoke_file_operation(*operation, Some(request_path), response_path)?;
     }
     Ok(())
@@ -609,10 +719,11 @@ fn jira_metadata() -> AdapterKindMetadata {
             "/changes".into(),
             "/provenance".into(),
         ],
-        capabilities: vec!["bearer".into()],
+        capabilities: vec!["bearer".into(), "polling".into()],
         setup_instructions: vec![
-            "Configure Jira automation or a webhook to POST issue, change, and comment deliveries to the webhook URL above.".into(),
-            "Send Authorization: Bearer <token> using the same value as the selected Secret.".into(),
+            "Choose webhook delivery or polling when creating the adapter.".into(),
+            "For webhooks, configure Jira automation to POST issue and comment deliveries and send the selected Secret as a bearer token.".into(),
+            "For polling, select an API-token Secret and configure the Jira base URL, account email, JQL, and cadence.".into(),
             "Set the stable Jira instance identity before enabling the adapter; it becomes part of every correlation scope.".into(),
         ],
     }
@@ -643,11 +754,11 @@ fn github_metadata() -> AdapterKindMetadata {
             "/subject_revision".into(),
             "/provenance".into(),
         ],
-        capabilities: vec!["hmac_sha256".into()],
+        capabilities: vec!["hmac_sha256".into(), "polling".into()],
         setup_instructions: vec![
-            "In the repository or organization webhook settings, use the webhook URL above and application/json content type.".into(),
-            "Use the same webhook secret as the selected stored Secret; signature verification is mandatory.".into(),
-            "Subscribe to pull request, check run, and workflow run events needed by the pipeline admission routes.".into(),
+            "Choose webhook delivery or polling when creating the adapter.".into(),
+            "For webhooks, use the displayed URL with application/json, select a matching webhook Secret, and subscribe to the required pull request, check run, and workflow run events.".into(),
+            "For polling, select an access-token Secret, list repositories as owner/name, and configure the cadence.".into(),
         ],
     }
 }
@@ -659,6 +770,321 @@ fn builtin_handle(kind: &str, request: AdapterRequest, body_limit: usize) -> Ada
         "jira" => handle_jira(request, body_limit),
         _ => AdapterResponse::rejected("unknown built-in adapter"),
     }
+}
+
+/// Built-in polling deliberately produces the same normalized identities as webhook ingestion.
+/// Checkpoints are high-water timestamps, not opaque page tokens, so a failed claim can replay an
+/// overlap without losing updates; delivery IDs include the upstream update marker for dedupe.
+async fn builtin_poll(kind: &str, request: AdapterPollRequest) -> AdapterPollResponse {
+    match kind {
+        "github" => poll_github(request).await,
+        "jira" => poll_jira(request).await,
+        _ => AdapterPollResponse {
+            events: Vec::new(),
+            checkpoint: request.checkpoint,
+            retry_after_seconds: None,
+            error: Some("adapter kind does not support polling".into()),
+        },
+    }
+}
+
+fn poll_secret<'a>(request: &'a AdapterPollRequest, name: &str) -> Result<&'a str, String> {
+    configured_string(&request.secrets, name)
+        .or_else(|_| configured_string(&request.configuration, name))
+}
+
+fn poll_checkpoint(value: &Value) -> Option<&str> {
+    value.get("updated_at").and_then(Value::as_str)
+}
+
+fn jira_jql_timestamp(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .or_else(|_| chrono::DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f%z"))
+        .map(|value| value.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|_| value.to_owned())
+}
+
+fn canonical_poll_timestamp(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .or_else(|_| chrono::DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f%z"))
+        .map(|value| value.with_timezone(&chrono::Utc).to_rfc3339())
+        .unwrap_or_else(|_| value.to_owned())
+}
+
+fn poll_response(events: Vec<NormalizedAdapterEvent>, checkpoint: Value) -> AdapterPollResponse {
+    AdapterPollResponse {
+        events,
+        checkpoint,
+        retry_after_seconds: None,
+        error: None,
+    }
+}
+
+fn github_repository_id(repository: &str, value: &Value) -> Result<String, String> {
+    value
+        .get("id")
+        .map(value_string)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("GitHub repository '{repository}' has no stable id"))
+}
+
+fn github_poll_correlation(event_type: &str, id: &str, value: &Value) -> String {
+    if event_type == "pull_request" {
+        return format!("pr:{id}");
+    }
+    value
+        .pointer("/pull_requests/0/id")
+        .map(|value| format!("pr:{}", value_string(value)))
+        .unwrap_or_else(|| format!("workflow:{id}"))
+}
+
+async fn poll_github(request: AdapterPollRequest) -> AdapterPollResponse {
+    let fallback_checkpoint = request.checkpoint.clone();
+    let result = async {
+        let token = poll_secret(&request, "access_token")?;
+        let repositories = request.configuration.get("repositories").and_then(Value::as_array)
+            .ok_or_else(|| "GitHub polling requires configuration.repositories".to_string())?;
+        let client = reqwest::Client::new();
+        let previous = poll_checkpoint(&request.checkpoint).map(str::to_owned);
+        let mut newest = previous.clone();
+        let mut events = Vec::new();
+        for repository in repositories.iter().filter_map(Value::as_str) {
+            let repository_info = client
+                .get(format!("https://api.github.com/repos/{repository}"))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "runinator-adapter-host")
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?
+                .json::<Value>()
+                .await
+                .map_err(|error| error.to_string())?;
+            let repository_id = github_repository_id(repository, &repository_info)?;
+            for (path, event_type, key) in [
+                (format!("https://api.github.com/repos/{repository}/pulls?state=all&sort=updated&direction=desc&per_page=100"), "pull_request", "pull_request"),
+                (format!("https://api.github.com/repos/{repository}/actions/runs?per_page=100"), "workflow_run", "workflow_run"),
+            ] {
+                let body = client.get(path).header("Authorization", format!("Bearer {token}"))
+                    .header("Accept", "application/vnd.github+json").header("User-Agent", "runinator-adapter-host")
+                    .send().await.map_err(|error| error.to_string())?;
+                if body.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    let retry_after_seconds = body.headers().get("retry-after").and_then(|value| value.to_str().ok()).and_then(|value| value.parse().ok());
+                    return Ok::<_, String>(AdapterPollResponse { events: Vec::new(), checkpoint: request.checkpoint, retry_after_seconds, error: Some("GitHub rate limit reached".into()) });
+                }
+                let body = body.error_for_status().map_err(|error| error.to_string())?.json::<Value>().await.map_err(|error| error.to_string())?;
+                let values = body.get("workflow_runs").and_then(Value::as_array).or_else(|| body.as_array()).cloned().unwrap_or_default();
+                for value in values {
+                    let updated = canonical_poll_timestamp(value.get("updated_at").and_then(Value::as_str).unwrap_or_default());
+                    if previous.as_deref().is_some_and(|checkpoint| !updated.is_empty() && updated.as_str() < checkpoint) { continue; }
+                    if updated.as_str() > newest.as_deref().unwrap_or("") { newest = Some(updated.clone()); }
+                    let id = value.get("id").map(value_string).unwrap_or_default();
+                    if id.is_empty() { continue; }
+                    let mut payload = value.clone();
+                    if let Some(object) = payload.as_object_mut() {
+                        object.insert("repository".into(), repository_info.clone());
+                        object.insert(key.into(), value.clone());
+                    }
+                    let correlation_key = github_poll_correlation(event_type, &id, &value);
+                    events.push(NormalizedAdapterEvent {
+                        source: "github".into(), delivery_id: format!("github:{repository_id}:{event_type}:{id}:{updated}"),
+                        event_type: event_type.into(), scope: format!("github:repository:{repository_id}"), correlation_key,
+                        subject_revision: value.get("head_sha").or_else(|| value.pointer("/head/sha")).and_then(Value::as_str).map(str::to_owned),
+                        occurred_at: parse_occurred_at(&Value::String(updated)).ok(), payload: payload.into(), provenance: Value::Null.into(),
+                    });
+                }
+            }
+            let mut commits_url = format!("https://api.github.com/repos/{repository}/commits?per_page=100");
+            if let Some(since) = &previous {
+                commits_url.push_str("&since=");
+                commits_url.push_str(&urlencoding::encode(since));
+            }
+            let commits = client.get(commits_url)
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "runinator-adapter-host")
+                .send().await.map_err(|error| error.to_string())?
+                .error_for_status().map_err(|error| error.to_string())?
+                .json::<Value>().await.map_err(|error| error.to_string())?;
+            for commit in commits.as_array().cloned().unwrap_or_default() {
+                let Some(sha) = commit.get("sha").and_then(Value::as_str) else { continue };
+                let checks = client.get(format!("https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "runinator-adapter-host")
+                    .send().await.map_err(|error| error.to_string())?
+                    .error_for_status().map_err(|error| error.to_string())?
+                    .json::<Value>().await.map_err(|error| error.to_string())?;
+                for check in checks.get("check_runs").and_then(Value::as_array).cloned().unwrap_or_default() {
+                    let updated = canonical_poll_timestamp(check.get("completed_at").or_else(|| check.get("started_at")).and_then(Value::as_str).unwrap_or_default());
+                    if previous.as_deref().is_some_and(|checkpoint| !updated.is_empty() && updated.as_str() < checkpoint) { continue; }
+                    if updated.as_str() > newest.as_deref().unwrap_or("") { newest = Some(updated.clone()); }
+                    let id = check.get("id").map(value_string).unwrap_or_default();
+                    if id.is_empty() { continue; }
+                    events.push(NormalizedAdapterEvent {
+                        source: "github".into(), delivery_id: format!("github:{repository_id}:check_run:{id}:{updated}"), event_type: "check_run".into(),
+                        scope: format!("github:repository:{repository_id}"), correlation_key: check.pointer("/pull_requests/0/id").map(|value| format!("pr:{}", value_string(value))).unwrap_or_else(|| format!("check:{id}")),
+                        subject_revision: Some(sha.to_owned()), occurred_at: parse_occurred_at(&Value::String(updated)).ok(),
+                        payload: json!({ "repository": repository_info, "check_run": check }).into(), provenance: Value::Null.into(),
+                    });
+                }
+            }
+        }
+        if request.initialize {
+            events.clear();
+            newest = Some(chrono::Utc::now().to_rfc3339());
+        }
+        Ok(AdapterPollResponse { events, checkpoint: json!({ "updated_at": newest }), retry_after_seconds: None, error: None })
+    }.await;
+    result.unwrap_or_else(|error| AdapterPollResponse {
+        events: Vec::new(),
+        checkpoint: fallback_checkpoint,
+        retry_after_seconds: None,
+        error: Some(error),
+    })
+}
+
+async fn poll_jira(request: AdapterPollRequest) -> AdapterPollResponse {
+    let result = async {
+        let base_url = configured_string(&request.configuration, "base_url")?.trim_end_matches('/');
+        let email = configured_string(&request.configuration, "email")?;
+        let token = poll_secret(&request, "api_token")?;
+        let instance_id = configured_string(&request.configuration, "instance_id")?;
+        let jql = configured_string(&request.configuration, "jql")?;
+        let previous = poll_checkpoint(&request.checkpoint).map(str::to_owned);
+        let query = match &previous {
+            Some(value) => format!("({jql}) AND updated >= \"{}\"", jira_jql_timestamp(value)),
+            None => jql.to_owned(),
+        };
+        let client = reqwest::Client::new();
+        let mut issues = Vec::new();
+        let mut next_page_token: Option<String> = None;
+        let mut page_count = 0usize;
+        loop {
+            page_count += 1;
+            if page_count > 100 {
+                return Err("Jira polling exceeded 100 result pages".to_string());
+            }
+            let requested_page_token = next_page_token.clone();
+            let mut call = client
+                .get(format!("{base_url}/rest/api/3/search/jql"))
+                .basic_auth(email, Some(token))
+                .query(&[
+                    ("jql", query.as_str()),
+                    ("maxResults", "100"),
+                    ("fields", "summary,project,updated,comment"),
+                ]);
+            if let Some(token) = &next_page_token {
+                call = call.query(&[("nextPageToken", token)]);
+            }
+            let response = call
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?
+                .json::<Value>()
+                .await
+                .map_err(|error| error.to_string())?;
+            issues.extend(
+                response
+                    .get("issues")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            next_page_token = response
+                .get("nextPageToken")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .filter(|value| !value.is_empty());
+            if next_page_token.is_some() && next_page_token == requested_page_token {
+                return Err("Jira polling received a repeated page token".to_string());
+            }
+            if next_page_token.is_none() {
+                break;
+            }
+        }
+        let mut newest = previous.clone();
+        let mut events = Vec::new();
+        for issue in issues {
+            let updated = canonical_poll_timestamp(
+                issue
+                    .pointer("/fields/updated")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
+            if updated.as_str() > newest.as_deref().unwrap_or("") {
+                newest = Some(updated.clone());
+            }
+            let issue_id = issue.get("id").map(value_string).unwrap_or_default();
+            let project = issue
+                .pointer("/fields/project/id")
+                .map(value_string)
+                .unwrap_or_default();
+            if issue_id.is_empty() || project.is_empty() {
+                continue;
+            }
+            events.push(NormalizedAdapterEvent {
+                source: "jira".into(),
+                delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
+                event_type: "issue_updated".into(),
+                scope: format!("jira:{instance_id}:project:{project}"),
+                correlation_key: format!("issue:{issue_id}"),
+                subject_revision: None,
+                occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
+                payload: json!({ "issue": issue.clone() }).into(),
+                provenance: Value::Null.into(),
+            });
+            for comment in issue
+                .pointer("/fields/comment/comments")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let comment_updated = canonical_poll_timestamp(
+                    comment
+                        .get("updated")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&updated),
+                );
+                if previous
+                    .as_deref()
+                    .is_some_and(|checkpoint| comment_updated.as_str() < checkpoint)
+                {
+                    continue;
+                }
+                events.push(NormalizedAdapterEvent {
+                    source: "jira".into(),
+                    delivery_id: format!(
+                        "jira:{instance_id}:comment:{}:{comment_updated}",
+                        comment.get("id").map(value_string).unwrap_or_default()
+                    ),
+                    event_type: "comment_created".into(),
+                    scope: format!("jira:{instance_id}:project:{project}"),
+                    correlation_key: format!("issue:{issue_id}"),
+                    subject_revision: None,
+                    occurred_at: parse_occurred_at(&Value::String(comment_updated)).ok(),
+                    payload: json!({"issue": issue, "comment": comment}).into(),
+                    provenance: Value::Null.into(),
+                });
+            }
+        }
+        if request.initialize {
+            events.clear();
+            newest = Some(chrono::Utc::now().to_rfc3339());
+        }
+        Ok(poll_response(events, json!({ "updated_at": newest })))
+    }
+    .await;
+    result.unwrap_or_else(|error| AdapterPollResponse {
+        events: Vec::new(),
+        checkpoint: request.checkpoint,
+        retry_after_seconds: None,
+        error: Some(error),
+    })
 }
 
 fn decode_body(request: &AdapterRequest, body_limit: usize) -> Result<(Vec<u8>, Value), String> {
@@ -1127,6 +1553,35 @@ mod tests {
             pull_request.events[0].correlation_key
         );
         assert_eq!(check.events[0].subject_revision.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn github_polling_uses_the_same_stable_scope_and_correlation_as_webhooks() {
+        let repository = json!({ "id": 10, "full_name": "octo/example" });
+        assert_eq!(
+            github_repository_id("octo/example", &repository).unwrap(),
+            "10"
+        );
+        assert_eq!(
+            github_poll_correlation("pull_request", "20", &json!({ "id": 20 })),
+            "pr:20"
+        );
+        assert_eq!(
+            github_poll_correlation(
+                "workflow_run",
+                "30",
+                &json!({ "pull_requests": [{ "id": 20 }] }),
+            ),
+            "pr:20"
+        );
+    }
+
+    #[test]
+    fn jira_checkpoint_is_rendered_in_jqls_supported_date_format() {
+        assert_eq!(
+            jira_jql_timestamp("2026-08-27T12:34:56.789+0000"),
+            "2026-08-27 12:34"
+        );
     }
 
     #[test]

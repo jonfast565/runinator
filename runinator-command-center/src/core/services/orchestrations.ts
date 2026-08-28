@@ -6,6 +6,7 @@ export {
   fetchAdapter,
   fetchAdapterHealth,
   fetchAdapterKinds,
+  fetchAdapterPollStatus,
   fetchAdapterRevisions,
   fetchAdapters,
   fetchExternalOperations,

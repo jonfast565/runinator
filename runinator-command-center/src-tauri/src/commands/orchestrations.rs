@@ -1,7 +1,7 @@
 use runinator_models::orchestration::{
-    AdapterDefinition, AdapterKindCatalogEntry, AdapterRevision, ExternalOperation,
-    OrchestrationBinding, OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
-    OrchestrationEventReduction, OrchestrationEvidence,
+    AdapterDefinition, AdapterKindCatalogEntry, AdapterPollStatus, AdapterRevision,
+    ExternalOperation, OrchestrationBinding, OrchestrationCommand, OrchestrationCorrelationAlias,
+    OrchestrationEpoch, OrchestrationEventReduction, OrchestrationEvidence,
 };
 use runinator_models::workspaces::WorkspaceLease;
 use serde_json::{json, Value};
@@ -208,6 +208,18 @@ pub async fn fetch_adapter_revisions(
     get_json(
         &state,
         &format!("orchestrations/adapters/{adapter_id}/revisions"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_adapter_poll_status(
+    state: State<'_, CommandCenterState>,
+    adapter_id: Uuid,
+) -> CommandResult<AdapterPollStatus> {
+    get_json(
+        &state,
+        &format!("orchestrations/adapters/{adapter_id}/poll-status"),
     )
     .await
 }

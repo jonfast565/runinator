@@ -102,6 +102,7 @@ pub fn run() {
             crate::commands::fetch_adapters,
             crate::commands::fetch_adapter,
             crate::commands::fetch_adapter_revisions,
+            crate::commands::fetch_adapter_poll_status,
             crate::commands::apply_adapter,
             crate::commands::set_adapter_enabled,
             crate::commands::delete_adapter,

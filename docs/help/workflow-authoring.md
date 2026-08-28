@@ -171,6 +171,28 @@ Submit events to `POST /workflows/{id}/ingress` or `POST /pipelines/{id}/ingress
 operators can inspect the owner at `GET /ingress/admission?scope=…&correlation_key=…` and its ordered
 timeline at `GET /ingress/admission/events?scope=…&correlation_key=…`.
 
+#### Webhook and polling adapters
+
+Adapters are inbound translators: they authenticate or fetch provider events, normalize them, and
+hand them to the durable ingress policy above. Providers are outbound executors used by workflow
+steps. They share a plugin-style boundary, but they serve opposite directions and are not
+interchangeable.
+
+GitHub and Jira adapters accept `"transport": "webhook"` (the default) or
+`"transport": "polling"`. A polling revision is scheduled durably by the engine, so embedded and
+standalone engine deployments use the same claim/checkpoint path and multiple replicas do not poll
+the same revision concurrently. GitHub polling requires `configuration.repositories` plus an
+`access_token` Secret binding. Jira polling requires `instance_id`, `base_url`, `email`, and `jql`
+plus an `api_token` Secret binding. Both accept `poll_interval_seconds` from 30 through 3600,
+defaulting to 60.
+
+The first successful poll establishes a high-water checkpoint without admitting historical events.
+Later polls normalize events through the same pipeline-ingress service as webhooks; the checkpoint
+advances only after every returned event has been accepted. Inspect schedule and health with
+`runinatorctl orchestrations adapters poll-status <adapter-id>` or
+`GET /orchestrations/adapters/{id}/poll-status`. Transport and identity configuration become
+immutable after the adapter admits its first correlation.
+
 #### Failure alerting
 
 Workflows declare alerting policies in the REXRAP header, materialized from

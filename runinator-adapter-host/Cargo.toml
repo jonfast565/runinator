@@ -12,8 +12,10 @@ hmac = "0.12"
 libloading = "0.9"
 runinator-adapter-contract = { path = "../runinator-adapter-contract" }
 runinator-models = { path = "../runinator-models" }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "query", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
+urlencoding = "2"
 tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "sync", "time"] }
