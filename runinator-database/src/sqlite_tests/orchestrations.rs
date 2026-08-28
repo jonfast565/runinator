@@ -8,12 +8,51 @@ use runinator_models::{
         NewOrchestrationBinding, OrchestrationPendingIntent, OrchestrationPolicy,
         OrchestrationStatus,
     },
-    pipelines::{Pipeline, PipelineGraph, PipelineMember, PipelineMemberFailureMode},
+    pipelines::{
+        Pipeline, PipelineExecutionContext, PipelineGraph, PipelineMember,
+        PipelineMemberFailureMode,
+    },
+    workflow_vm::{WorkflowInstruction, WorkflowModule},
 };
 use runinator_store::roles::{
     ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
-    NewOrchestrationEpoch, OrchestrationBindingUpdate,
+    NewOrchestrationEpoch, NewWorkflowVmRun, OrchestrationBindingUpdate,
 };
+
+#[tokio::test]
+async fn standalone_workflow_run_has_no_orchestration_binding() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-standalone-orchestration-{}.db",
+        Uuid::now_v7()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let snapshot = db.upsert_workflow(&workflow("standalone")).await.unwrap();
+    let workflow_id = snapshot.id.unwrap();
+    let run = db
+        .create_workflow_vm_run(NewWorkflowVmRun {
+            workflow_id,
+            workflow_snapshot: snapshot,
+            parameters: Value::Null,
+            config: Value::Null,
+            state: Value::Null,
+            name: None,
+            provenance: Default::default(),
+            pipeline_run_id: None,
+            pipeline_member_attempt_id: None,
+            module: WorkflowModule::new(vec![WorkflowInstruction::Return]),
+            instruction_pointer: 0,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        db.fetch_current_orchestration_binding_for_workflow_run(run.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
 
 #[tokio::test]
 async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() {
@@ -220,6 +259,58 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             .await
             .unwrap()
             .is_none()
+    );
+
+    let pipeline_run = db
+        .create_pipeline_run(
+            pipeline_id,
+            pipeline.clone(),
+            Value::Null,
+            Value::Null,
+            Default::default(),
+            PipelineExecutionContext {
+                orchestration_binding_id: Some(binding_id),
+                execution_epoch: Some(1),
+                start_member: None,
+            },
+        )
+        .await
+        .unwrap();
+    let workflow_id = member.id.unwrap();
+    let attempt = db
+        .create_pipeline_member_attempt(
+            pipeline_run.id,
+            "member".into(),
+            workflow_id,
+            1,
+            Value::Null,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let workflow_run = db
+        .create_workflow_vm_run(NewWorkflowVmRun {
+            workflow_id,
+            workflow_snapshot: member,
+            parameters: Value::Null,
+            config: Value::Null,
+            state: Value::Null,
+            name: None,
+            provenance: Default::default(),
+            pipeline_run_id: Some(pipeline_run.id),
+            pipeline_member_attempt_id: Some(attempt.id),
+            module: WorkflowModule::new(vec![WorkflowInstruction::Return]),
+            instruction_pointer: 0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        db.fetch_current_orchestration_binding_for_workflow_run(workflow_run.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        binding_id
     );
 
     db.upsert_orchestration_pending_intent(OrchestrationPendingIntent {

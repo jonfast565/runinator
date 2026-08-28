@@ -14,6 +14,7 @@ use runinator_store::roles::{
 };
 
 const BINDING_COLUMNS: &str = "id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, current_phase, current_attempt, current_epoch, restart_member, resume_existing_epoch, subject_revision, resources, budgets, last_reduced_sequence, version, reducer_lease_owner, reducer_leased_until, created_at, updated_at, finished_at";
+const BINDING_COLUMNS_FROM_BINDING: &str = "b.id, b.admission_id, b.org_id, b.scope, b.correlation_key, b.generation, b.pipeline_id, b.pipeline_revision, b.pipeline_digest, b.adapter_id, b.adapter_revision, b.policy, b.status, b.current_phase, b.current_attempt, b.current_epoch, b.restart_member, b.resume_existing_epoch, b.subject_revision, b.resources, b.budgets, b.last_reduced_sequence, b.version, b.reducer_lease_owner, b.reducer_leased_until, b.created_at, b.updated_at, b.finished_at";
 const EPOCH_COLUMNS: &str = "id, binding_id, epoch, pipeline_run_id, start_member, parameters, status, reason, created_at, started_at, finished_at";
 const CORRELATION_ALIAS_COLUMNS: &str =
     "id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at";
@@ -217,7 +218,7 @@ where
         workflow_run_id: Uuid,
     ) -> Result<Option<OrchestrationBinding>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings b \
+            "SELECT {BINDING_COLUMNS_FROM_BINDING} FROM orchestration_bindings b \
              INNER JOIN pipeline_runs p ON p.orchestration_binding_id = b.id AND p.execution_epoch = b.current_epoch \
              INNER JOIN workflow_runs w ON w.pipeline_run_id = p.id \
              WHERE w.id = ? AND b.status IN ('pending', 'running', 'waiting', 'suspended')"

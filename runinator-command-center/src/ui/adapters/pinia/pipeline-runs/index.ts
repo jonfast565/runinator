@@ -2,10 +2,12 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { Pipeline, PipelineRun, PipelineRunDetail } from "../../../../core/domain/models";
 import type { ManagedRunOverrideOptions } from "../../../../core/api/commandCenterApi";
+import type { BulkResult } from "../../../../core/utils/bulk";
 import {
   cancelPipelineRun as cancelPipelineRunService,
   createPipelineRun as createPipelineRunService,
   deletePipelineRun as deletePipelineRunService,
+  deletePipelineRuns as deletePipelineRunsService,
   fetchPipelineRun,
   fetchPipelineRuns,
   fetchPipelines,
@@ -88,6 +90,18 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     await refresh();
   }
 
+  async function deleteRuns(pipelineRunIds: readonly string[]): Promise<BulkResult<string>> {
+    const result = await deletePipelineRunsService(pipelineRunIds);
+
+    if (selectedRunId.value && result.succeeded.includes(selectedRunId.value)) {
+      selectedRunId.value = null;
+      detail.value = null;
+    }
+
+    await refresh();
+    return result;
+  }
+
   async function pauseRun(
     pipelineRunId: string,
     override?: ManagedRunOverrideOptions,
@@ -115,10 +129,7 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
   }
 
   // resolve a pending inquiry (a member with the `inquire` failure mode paused the run).
-  async function resolveRun(
-    pipelineRunId: string,
-    decision: "continue" | "abort",
-  ): Promise<void> {
+  async function resolveRun(pipelineRunId: string, decision: "continue" | "abort"): Promise<void> {
     await resolvePipelineRunService(pipelineRunId, decision);
     await refresh();
   }
@@ -126,7 +137,10 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
   // refetch the open detail when one of its member workflow runs changes, so step status/timing in
   // the detail track live rather than waiting on the next pipeline-run event or fallback poll.
   async function refreshDetailIfMember(workflowRunId: string): Promise<void> {
-    if (selectedRunId.value && detail.value?.members.some((member) => member.id === workflowRunId)) {
+    if (
+      selectedRunId.value &&
+      detail.value?.members.some((member) => member.id === workflowRunId)
+    ) {
       await loadDetail(selectedRunId.value);
     }
   }
@@ -144,6 +158,7 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     startRun,
     cancelRun,
     deleteRun,
+    deleteRuns,
     pauseRun,
     resumeRun,
     resolveRun,

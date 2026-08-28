@@ -12,6 +12,7 @@ import {
 import type { JsonRecord } from "../../domain/json";
 import type { PipelineRun, PipelineRunDetail } from "../../domain/models";
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
+import { runBulk, type BulkResult } from "../../utils/bulk";
 
 /** Start a manual run of a pipeline (starts its entry members). */
 export async function createPipelineRun(
@@ -35,6 +36,12 @@ export async function deletePipelineRun(pipelineRunId: string): Promise<void> {
   if (!response.success) {
     throw new Error(response.message || "Failed to delete pipeline run");
   }
+}
+
+// Pipeline-run deletion also removes every member workflow's history. Keep the fan-out here so
+// callers get one consistent partial-success result and refresh only once after the batch.
+export function deletePipelineRuns(pipelineRunIds: readonly string[]): Promise<BulkResult<string>> {
+  return runBulk(pipelineRunIds, deletePipelineRun);
 }
 
 export async function cancelPipelineRun(

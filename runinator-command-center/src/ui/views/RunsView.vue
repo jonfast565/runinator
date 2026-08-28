@@ -18,7 +18,11 @@
             title="Runs"
             description="Recent workflow executions, filtered by the current search when present."
           >
-            <button class="btn" :disabled="loadingRuns" @click="workflows.fetchRecentWorkflowRuns()">
+            <button
+              class="btn"
+              :disabled="loadingRuns"
+              @click="workflows.fetchRecentWorkflowRuns()"
+            >
               <LoadingSpinner v-if="loadingRuns" size="sm" label="Refreshing runs" />
               <Icon v-else name="refresh" />
               <span>Refresh</span>
@@ -157,7 +161,19 @@
                           <td>{{ artifact.uri }}</td>
                           <td>{{ formatDate(artifact.created_at) }}</td>
                           <td>
-                            <button class="btn btn-sm" type="button" @click="downloadArtifact(artifact.workflow_node_run_id ?? workflows.selectedWorkflowNodeRunId ?? '', artifact.id, artifact.name)">
+                            <button
+                              class="btn btn-sm"
+                              type="button"
+                              @click="
+                                downloadArtifact(
+                                  artifact.workflow_node_run_id ??
+                                    workflows.selectedWorkflowNodeRunId ??
+                                    '',
+                                  artifact.id,
+                                  artifact.name,
+                                )
+                              "
+                            >
                               Download
                             </button>
                           </td>
@@ -198,7 +214,13 @@
                           <td>{{ artifact.size_bytes }}</td>
                           <td>{{ formatDate(artifact.created_at) }}</td>
                           <td>
-                            <button class="btn btn-sm" type="button" @click="downloadArtifact(artifact.node_id, artifact.id, artifact.name)">
+                            <button
+                              class="btn btn-sm"
+                              type="button"
+                              @click="
+                                downloadArtifact(artifact.node_id, artifact.id, artifact.name)
+                              "
+                            >
                               Download
                             </button>
                           </td>
@@ -299,6 +321,7 @@ const bulkActions = computed<BulkAction[]>(() => [
     disabled: !selection.selectedRows.value.some((run) => isActiveRunStatus(run.status)),
   },
   { key: "replay", label: "Replay", icon: "replay" },
+  { key: "delete", label: "Delete", icon: "trash", variant: "danger" },
 ]);
 
 async function runBulkAction(key: string) {
@@ -318,18 +341,25 @@ async function runBulkAction(key: string) {
   }
 
   bulkBusy.value = key;
+  let completed = false;
 
   try {
     if (key === "cancel") {
       await workflows.cancelWorkflowRuns(selected);
-    } else {
+      completed = true;
+    } else if (key === "replay") {
       await workflows.replayWorkflowRuns(selected);
+      completed = true;
+    } else if (key === "delete") {
+      completed = await workflows.deleteWorkflowRuns(selected);
     }
   } finally {
     bulkBusy.value = "";
   }
 
-  selection.clear();
+  if (completed) {
+    selection.clear();
+  }
 }
 
 useWorkflowRunStream();
@@ -356,5 +386,4 @@ watch(
   },
   { immediate: true },
 );
-
 </script>

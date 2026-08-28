@@ -63,22 +63,38 @@
             title="No pipeline runs yet"
             description="Start a pipeline above, or trigger one via a cron/chained pipeline trigger."
           />
-          <div
-            v-else
-            class="table-scroll min-h-0 flex-1"
-            :class="{ 'opacity-60 transition-opacity duration-100': store.loading }"
-          >
-            <RunTable
-              :runs="runRows"
-              :selected-run-id="store.selectedRunId"
-              :workflow-names="pipelineNames"
-              show-workflow
-              entity-label="Pipeline"
-              deletable
-              @select="onSelectRun"
-              @delete="deletePipelineRunFromList"
+          <template v-else>
+            <BulkActionBar
+              class="mb-2"
+              noun="pipeline run"
+              :count="selection.count.value"
+              :actions="bulkActions"
+              :busy="bulkBusy"
+              @run="runBulkAction"
+              @clear="selection.clear"
             />
-          </div>
+            <div
+              class="table-scroll min-h-0 flex-1"
+              :class="{ 'opacity-60 transition-opacity duration-100': store.loading }"
+            >
+              <RunTable
+                :runs="runRows"
+                :selected-run-id="store.selectedRunId"
+                :workflow-names="pipelineNames"
+                show-workflow
+                entity-label="Pipeline"
+                selectable
+                :selected-run-ids="selection.selectedKeys.value as string[]"
+                :all-selected="selection.allSelected.value"
+                :some-selected="selection.someSelected.value"
+                deletable
+                @select="onSelectRun"
+                @toggle-row="selection.toggle"
+                @toggle-all="selection.toggleAll"
+                @delete="deletePipelineRunFromList"
+              />
+            </div>
+          </template>
         </div>
       </template>
 
@@ -111,7 +127,11 @@
               <button
                 v-if="!managedBindingId"
                 class="btn btn-sm"
-                :disabled="store.detail.run.status === 'paused' || !isActiveRunStatus(store.detail.run.status) || runControlBusy"
+                :disabled="
+                  store.detail.run.status === 'paused' ||
+                  !isActiveRunStatus(store.detail.run.status) ||
+                  runControlBusy
+                "
                 title="Pause after the current member workflow run finishes"
                 @click="pauseRun(store.detail.run.id)"
               >
@@ -205,12 +225,17 @@
               </div>
               <p class="m-0 text-xs text-fg-muted">
                 This immutable pipeline run is controlled by its correlated orchestration. Direct
-                pause, cancel, retry, and deletion are disabled so the binding remains authoritative.
+                pause, cancel, retry, and deletion are disabled so the binding remains
+                authoritative.
               </p>
               <div class="flex flex-wrap items-end gap-2">
                 <label class="grid min-w-[260px] flex-1 gap-1 text-xs text-fg-muted">
                   <span>Reason for intent or emergency override</span>
-                  <input v-model="managedReason" class="input" placeholder="Required operator reason" />
+                  <input
+                    v-model="managedReason"
+                    class="input"
+                    placeholder="Required operator reason"
+                  />
                 </label>
                 <button
                   v-for="control in managedControls"
@@ -237,17 +262,23 @@
                     class="btn btn-sm"
                     :disabled="!managedReason.trim() || runControlBusy"
                     @click="forceManagedControl('pause')"
-                  >Force pause</button>
+                  >
+                    Force pause
+                  </button>
                   <button
                     class="btn btn-sm"
                     :disabled="!managedReason.trim() || runControlBusy"
                     @click="forceManagedControl('resume')"
-                  >Force resume</button>
+                  >
+                    Force resume
+                  </button>
                   <button
                     class="btn btn-danger btn-sm"
                     :disabled="!managedReason.trim() || runControlBusy"
                     @click="forceManagedControl('cancel')"
-                  >Force cancel</button>
+                  >
+                    Force cancel
+                  </button>
                 </div>
               </div>
             </section>
@@ -256,7 +287,9 @@
               <div class="flex items-baseline justify-between gap-2">
                 <h2 class="m-0 text-base font-semibold text-fg">Execution Graph</h2>
               </div>
-              <div class="h-[360px] min-h-[260px] overflow-hidden rounded-md border border-border-subtle bg-surface-subtle">
+              <div
+                class="h-[360px] min-h-[260px] overflow-hidden rounded-md border border-border-subtle bg-surface-subtle"
+              >
                 <PipelineCanvas :detail="store.detail" readonly @open-run="openMemberRunById" />
               </div>
             </section>
@@ -274,7 +307,11 @@
                 run now.
               </p>
               <div class="flex gap-2">
-                <button v-if="managedBindingId" class="btn btn-primary btn-sm" @click="openOrchestration">
+                <button
+                  v-if="managedBindingId"
+                  class="btn btn-primary btn-sm"
+                  @click="openOrchestration"
+                >
                   <span>Resolve through orchestration</span>
                 </button>
                 <button
@@ -340,10 +377,16 @@
                     <strong>{{ attempt.member_key }}</strong>
                     <span>#{{ attempt.attempt }}</span>
                     <StatusBadge :status="attempt.status" />
-                    <span class="ml-auto text-xs text-fg-muted">{{ formatDate(attempt.finished_at ?? attempt.started_at) }}</span>
+                    <span class="ml-auto text-xs text-fg-muted">{{
+                      formatDate(attempt.finished_at ?? attempt.started_at)
+                    }}</span>
                   </summary>
-                  <p v-if="attempt.message" class="error mb-2 mt-2 text-xs">{{ attempt.message }}</p>
-                  <pre class="max-h-56 overflow-auto rounded bg-surface p-2 text-xs">{{ JSON.stringify(attempt.result, null, 2) }}</pre>
+                  <p v-if="attempt.message" class="error mb-2 mt-2 text-xs">
+                    {{ attempt.message }}
+                  </p>
+                  <pre class="max-h-56 overflow-auto rounded bg-surface p-2 text-xs">{{
+                    JSON.stringify(attempt.result, null, 2)
+                  }}</pre>
                   <div class="mt-2 flex gap-2">
                     <button
                       v-if="isRetryableAttempt(attempt)"
@@ -363,7 +406,11 @@
                       <Icon name="refresh" />
                       <span>Force retry member</span>
                     </button>
-                    <button v-if="attempt.workflow_run_id" class="btn btn-sm" @click.prevent="openMemberRunById(attempt.workflow_run_id)">
+                    <button
+                      v-if="attempt.workflow_run_id"
+                      class="btn btn-sm"
+                      @click.prevent="openMemberRunById(attempt.workflow_run_id)"
+                    >
                       <span>Open workflow run</span>
                     </button>
                   </div>
@@ -381,6 +428,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import BulkActionBar, { type BulkAction } from "../components/shared/BulkActionBar.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
@@ -390,6 +438,7 @@ import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
+import { useBulkSelection } from "../composables/useBulkSelection";
 import { usePipelineRunsStore } from "../../ui/adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useAppStore } from "../../ui/adapters/pinia/app";
@@ -403,6 +452,7 @@ import type {
 } from "../../core/domain/models";
 import { formatDate } from "../../core/utils/format";
 import { countActiveRuns, isActiveRunStatus } from "../../core/utils/status";
+import { describeBulkResult } from "../../core/utils/bulk";
 
 const store = usePipelineRunsStore();
 const workflows = useWorkflowsStore();
@@ -425,7 +475,9 @@ const managedBinding = computed<OrchestrationBinding | null>(() => {
 });
 const managedControls = computed(() =>
   Object.entries(managedBinding.value?.policy.intents ?? {})
-    .filter(([, policy]) => ["terminate", "suspend", "resume", "supersede", "signal"].includes(policy.effect))
+    .filter(([, policy]) =>
+      ["terminate", "suspend", "resume", "supersede", "signal"].includes(policy.effect),
+    )
     .sort(([, left], [, right]) => right.priority - left.priority)
     .map(([name, policy]) => ({ name, effect: policy.effect })),
 );
@@ -487,9 +539,17 @@ const runRows = computed<RunSummary[]>(() =>
   })),
 );
 
+const selection = useBulkSelection(runRows, (run) => run.id);
+const bulkBusy = ref("");
+const bulkActions = computed<BulkAction[]>(() => [
+  { key: "delete", label: "Delete", icon: "trash", variant: "danger" },
+]);
+
 const pipelineNames = computed(() =>
   Object.fromEntries(
-    store.pipelines.flatMap((pipeline) => (pipeline.id ? ([[pipeline.id, pipeline.name]] as const) : [])),
+    store.pipelines.flatMap((pipeline) =>
+      pipeline.id ? ([[pipeline.id, pipeline.name]] as const) : [],
+    ),
   ),
 );
 
@@ -502,9 +562,7 @@ const workflowNames = computed(() =>
 );
 
 const activeRunCount = computed(() => countActiveRuns(store.runs));
-const selectedRunLabel = computed(() =>
-  store.selectedRunId ? `#${store.selectedRunId}` : "None",
-);
+const selectedRunLabel = computed(() => (store.selectedRunId ? `#${store.selectedRunId}` : "None"));
 
 function pipelineName(pipelineId: string): string {
   return store.pipelines.find((pipeline) => pipeline.id === pipelineId)?.name ?? pipelineId;
@@ -532,29 +590,42 @@ function openMemberRunById(workflowRunId: string): void {
 }
 
 function isRetryableAttempt(attempt: PipelineMemberAttempt): boolean {
-  if (managedBindingId.value) {return false;}
-  if (!store.detail || !["failed", "timed_out"].includes(attempt.status)) {return false;}
+  if (managedBindingId.value) {
+    return false;
+  }
+
+  if (!store.detail || !["failed", "timed_out"].includes(attempt.status)) {
+    return false;
+  }
+
   return !store.detail.attempts.some(
-    (candidate) => candidate.member_key === attempt.member_key && candidate.attempt > attempt.attempt,
+    (candidate) =>
+      candidate.member_key === attempt.member_key && candidate.attempt > attempt.attempt,
   );
 }
 
 function canForceRetryAttempt(attempt: PipelineMemberAttempt): boolean {
   return Boolean(
-    managedBindingId.value
-      && isPlatformAdmin.value
-      && ["failed", "timed_out"].includes(attempt.status),
+    managedBindingId.value &&
+    isPlatformAdmin.value &&
+    ["failed", "timed_out"].includes(attempt.status),
   );
 }
 
 async function openOrchestration(): Promise<void> {
-  if (!managedBindingId.value) {return;}
+  if (!managedBindingId.value) {
+    return;
+  }
+
   await orchestrations.select(managedBindingId.value);
   app.activeTab = "Orchestrations";
 }
 
 async function dispatchManagedIntent(intent: string): Promise<void> {
-  if (!managedBindingId.value || !managedReason.value.trim() || managedIntentBusy.value) {return;}
+  if (!managedBindingId.value || !managedReason.value.trim() || managedIntentBusy.value) {
+    return;
+  }
+
   managedIntentBusy.value = true;
 
   try {
@@ -577,7 +648,10 @@ async function dispatchManagedIntent(intent: string): Promise<void> {
 }
 
 async function retryAttempt(attempt: PipelineMemberAttempt): Promise<void> {
-  if (!store.detail || retrying.value) {return;}
+  if (!store.detail || retrying.value) {
+    return;
+  }
+
   retrying.value = attempt.id;
 
   try {
@@ -593,15 +667,28 @@ async function forceRetryAttempt(attempt: PipelineMemberAttempt): Promise<void> 
   const run = store.detail?.run;
   const reason = managedReason.value.trim();
 
-  if (!run || !reason || retrying.value || !isPlatformAdmin.value) {return;}
-  if (!window.confirm(`Force retry member '${attempt.member_key}' outside orchestration control?`)) {return;}
+  if (!run || !reason || retrying.value || !isPlatformAdmin.value) {
+    return;
+  }
+
+  if (
+    !window.confirm(`Force retry member '${attempt.member_key}' outside orchestration control?`)
+  ) {
+    return;
+  }
+
   retrying.value = attempt.id;
 
   try {
-    await store.retryMember(run.id, attempt.member_key, {}, {
-      reason,
-      idempotencyKey: crypto.randomUUID(),
-    });
+    await store.retryMember(
+      run.id,
+      attempt.member_key,
+      {},
+      {
+        reason,
+        idempotencyKey: crypto.randomUUID(),
+      },
+    );
     managedReason.value = "";
   } catch (err) {
     app.setError(err instanceof Error ? err.message : String(err));
@@ -614,8 +701,14 @@ async function forceManagedControl(action: "cancel" | "pause" | "resume"): Promi
   const run = store.detail?.run;
   const reason = managedReason.value.trim();
 
-  if (!run || !reason || !isPlatformAdmin.value || runControlBusy.value) {return;}
-  if (!window.confirm(`Force ${action} this managed pipeline run outside orchestration control?`)) {return;}
+  if (!run || !reason || !isPlatformAdmin.value || runControlBusy.value) {
+    return;
+  }
+
+  if (!window.confirm(`Force ${action} this managed pipeline run outside orchestration control?`)) {
+    return;
+  }
+
   const override = { reason, idempotencyKey: crypto.randomUUID() };
   await runControl(async () => {
     if (action === "cancel") {
@@ -684,6 +777,68 @@ async function deletePipelineRunFromList(run: RunSummary): Promise<void> {
   await deleteRun(run.id);
 }
 
+async function runBulkAction(key: string): Promise<void> {
+  const selected = selection.selectedRows.value;
+
+  if (!selected.length || bulkBusy.value || key !== "delete") {
+    return;
+  }
+
+  if (
+    !window.confirm(
+      `Permanently delete ${String(selected.length)} pipeline run${selected.length === 1 ? "" : "s"} and all member workflow history?\n\nThis cannot be undone.`,
+    )
+  ) {
+    return;
+  }
+
+  bulkBusy.value = key;
+
+  try {
+    const result = await app.runOperation(`Deleting ${String(selected.length)} pipeline runs`, () =>
+      store.deleteRuns(selected.map((run) => run.id)),
+    );
+    const text = describeBulkResult(result, "Deleted", "pipeline run");
+
+    if (!result.failed.length) {
+      app.setStatus(text);
+    } else {
+      const retryable = result.failed.map((failure) => failure.item);
+      app.setError(text, {
+        label: `Retry ${String(retryable.length)} failed`,
+        run: () => {
+          void deletePipelineRuns(retryable);
+        },
+      });
+    }
+
+    selection.clear();
+  } finally {
+    bulkBusy.value = "";
+  }
+}
+
+async function deletePipelineRuns(pipelineRunIds: readonly string[]): Promise<void> {
+  const result = await app.runOperation(
+    `Deleting ${String(pipelineRunIds.length)} pipeline runs`,
+    () => store.deleteRuns(pipelineRunIds),
+  );
+  const text = describeBulkResult(result, "Deleted", "pipeline run");
+
+  if (!result.failed.length) {
+    app.setStatus(text);
+    return;
+  }
+
+  const retryable = result.failed.map((failure) => failure.item);
+  app.setError(text, {
+    label: `Retry ${String(retryable.length)} failed`,
+    run: () => {
+      void deletePipelineRuns(retryable);
+    },
+  });
+}
+
 onMounted(() => {
   if (!workflows.workflows.length) {
     void workflows.refreshWorkflows();
@@ -692,11 +847,15 @@ onMounted(() => {
   void store.refresh();
 });
 
-watch(managedBindingId, (bindingId) => {
-  managedReason.value = "";
+watch(
+  managedBindingId,
+  (bindingId) => {
+    managedReason.value = "";
 
-  if (bindingId) {
-    void orchestrations.select(bindingId);
-  }
-}, { immediate: true });
+    if (bindingId) {
+      void orchestrations.select(bindingId);
+    }
+  },
+  { immediate: true },
+);
 </script>

@@ -152,7 +152,8 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       debug
         ? `Running workflow ${workflow.name} in debug mode`
         : `Running workflow ${workflow.name}`,
-      () => createWorkflowRun(workflowId, { debug, parameters, fileIds: collectFileIds(parameters) }),
+      () =>
+        createWorkflowRun(workflowId, { debug, parameters, fileIds: collectFileIds(parameters) }),
     );
     host.state.selectedWorkflowRunId = response.id;
     host.ctx.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);
@@ -297,6 +298,65 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
+  // delete many historical runs. Each request is independent, so a permission or transport
+  // failure for one run must not prevent the operator from clearing the rest of the selection.
+  async function deleteWorkflowRuns(
+    runs: RunSummary[],
+    options?: { confirmed?: boolean },
+  ): Promise<boolean> {
+    if (!runs.length) {
+      return false;
+    }
+
+    if (
+      !options?.confirmed &&
+      !host.deps.confirm(
+        `Permanently delete ${String(runs.length)} workflow run${runs.length === 1 ? "" : "s"} and all execution history?\n\nThis cannot be undone.`,
+      )
+    ) {
+      return false;
+    }
+
+    const result = await host.ctx.runOperation(
+      `Deleting ${String(runs.length)} workflow runs`,
+      () =>
+        runBulk(runs, async (run) => {
+          const response = await deleteWorkflowRun(run.id);
+
+          if (!response.success) {
+            throw new Error(response.message || `Failed to delete run ${run.id}`);
+          }
+        }),
+    );
+
+    if (
+      host.state.selectedWorkflowRunId &&
+      result.succeeded.some((run) => run.id === host.state.selectedWorkflowRunId)
+    ) {
+      host.state.selectedWorkflowRunId = null;
+      host.state.workflowRunDetail = null;
+    }
+
+    await fetchRecentWorkflowRuns();
+    const text = describeBulkResult(result, "Deleted", "run");
+
+    if (!result.failed.length) {
+      host.ctx.setStatus(text);
+    } else {
+      // Deletes are idempotent from the operator's perspective, so retry only the failed calls.
+      const retryable = result.failed.map((failure) => failure.item);
+      host.ctx.setError(text, {
+        label: `Retry ${String(retryable.length)} failed`,
+        run: () => {
+          void deleteWorkflowRuns(retryable, { confirmed: true });
+        },
+      });
+    }
+
+    host.notify();
+    return true;
+  }
+
   /**
    * ask the selected run to raise an interrupt.
    *
@@ -392,14 +452,14 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       return;
     }
 
-    const invoke = action === "cancel"
-      ? cancelWorkflowRun
-      : action === "pause"
-        ? pauseWorkflowRun
-        : resumeWorkflowRun;
-    const response = await host.ctx.runOperation(
-      `Force ${action} workflow run ${runId}`,
-      () => invoke(runId, override),
+    const invoke =
+      action === "cancel"
+        ? cancelWorkflowRun
+        : action === "pause"
+          ? pauseWorkflowRun
+          : resumeWorkflowRun;
+    const response = await host.ctx.runOperation(`Force ${action} workflow run ${runId}`, () =>
+      invoke(runId, override),
     );
 
     if (!response.success) {
@@ -1108,6 +1168,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     cancelSelectedWorkflowRun,
     deleteSelectedWorkflowRun,
     deleteWorkflowRunById,
+    deleteWorkflowRuns,
     requestSelectedRunInterrupt,
     pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun,
