@@ -669,16 +669,20 @@ impl TypeContext {
             Value::Number(_) => Ok(WorkflowType::Number),
             Value::String(_) => Ok(WorkflowType::String),
             Value::Array(items) => {
-                let mut item_type = None;
+                // widen to a union rather than rejecting, exactly as the coalesce and ternary
+                // branches above already do. a heterogeneous array is frequently what a node kind
+                // asked for: `assert` declares `assertions` as `Array(Any)` and each entry's
+                // lowered condition is shaped by whatever it compares, so `x == "s"` beside
+                // `n == 0` produced two different item structs and was rejected here -- against
+                // the kind's own declared shape. `invocation` was already exempted from this pass
+                // for the same reason. a genuine mismatch still fails, at the assignability check
+                // against the declared type, which names what was expected.
+                let mut item_type: Option<WorkflowType> = None;
                 for item in items {
                     let ty = self.infer_value_type(item)?;
                     item_type = Some(match item_type {
                         None => ty,
-                        Some(existing) => common_type(existing, ty).ok_or_else(|| {
-                            WorkflowValidationError::TypeError(
-                                "array literal contains incompatible item types".into(),
-                            )
-                        })?,
+                        Some(existing) => existing.unify(&ty),
                     });
                 }
                 Ok(WorkflowType::Array(Box::new(

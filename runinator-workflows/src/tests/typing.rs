@@ -494,3 +494,94 @@ fn a_loop_without_items_is_rejected() {
 
     assert!(validate_workflow_with_providers(&wf, &[]).is_err());
 }
+
+#[test]
+fn an_assert_block_may_compare_different_types_in_one_node() {
+    // `assert` declares `assertions` as `Array(Any)`, and each entry's lowered condition is shaped
+    // by whatever that assertion compares -- a string in one, an integer in the next. Inferring
+    // the array by requiring one common item type contradicted the kind's own declared shape and
+    // made any mixed-comparison assert block unrepresentable. This is the exact node REXRAP lowers
+    // `assert { "a": x == y, "b": n == 0 }` into.
+    let provider = ProviderMetadata {
+        name: "checks".into(),
+        actions: vec![
+            ActionMetadata::new("summary", "check summary").with_results(vec![
+                ResultMetadata::new("revision", RuninatorType::String),
+                ResultMetadata::new("status", RuninatorType::String),
+                ResultMetadata::new("failed", RuninatorType::Integer),
+            ]),
+        ],
+        metadata: ProviderRuntimeMetadata::default(),
+    };
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "checks" } } },
+            {
+                "id": "checks",
+                "kind": "action",
+                "action": { "provider": "checks", "function": "summary", "configuration": {} },
+                "transitions": { "on_success": { "$node": "verify" } }
+            },
+            {
+                "id": "verify",
+                "kind": "assert",
+                "parameters": {
+                    "assertions": [
+                        {
+                            "name": "checks_complete",
+                            "message": "checks_complete",
+                            "condition": {
+                                "value": { "$ref": { "node": "checks", "output": ["status"] } },
+                                "equals": "completed"
+                            }
+                        },
+                        {
+                            "name": "checks_passed",
+                            "message": "checks_passed",
+                            "condition": {
+                                "value": { "$ref": { "node": "checks", "output": ["failed"] } },
+                                "equals": 0
+                            }
+                        }
+                    ]
+                },
+                "transitions": {
+                    "on_success": { "$node": "done" },
+                    "on_failure": { "$node": "done" }
+                }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    validate_workflow_with_providers(&wf, &[provider])
+        .expect("assertions comparing a string and an integer validate together");
+}
+
+#[test]
+fn a_heterogeneous_array_still_fails_against_a_typed_parameter() {
+    // widening must not silently accept a real mismatch: the union is reported where the value is
+    // assigned to a declared type, which names what was expected instead of the shapeless
+    // "incompatible item types".
+    let wf = typed_workflow(
+        RuninatorType::Any,
+        runinator_models::json!({
+            "id": "checked",
+            "kind": "action",
+            "action": {
+                "provider": "typed",
+                "function": "make",
+                "configuration": { "name": [1, "two"] }
+            },
+            "transitions": { "on_success": { "$node": "done" } }
+        }),
+    );
+
+    let error = validate_workflow_with_providers(&wf, &[typed_provider()])
+        .expect_err("an array is not a string parameter");
+    assert!(
+        error.to_string().contains("name"),
+        "the error should name the parameter that did not accept it, got: {error}"
+    );
+}

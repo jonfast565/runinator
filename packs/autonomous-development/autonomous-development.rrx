@@ -12,9 +12,30 @@ namespace runinator.autodev {
 
 workflow "Plan Work Item" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key plan
@@ -38,9 +59,30 @@ workflow "Plan Work Item" v1 {
 
 workflow "Implement Work Item" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key implement
@@ -83,9 +125,30 @@ workflow "Implement Work Item" v1 {
 
 workflow "Verify and Repair" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key verify
@@ -135,9 +198,30 @@ workflow "Verify and Repair" v1 {
 
 workflow "Publish Candidate" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key publish
@@ -173,7 +257,7 @@ workflow "Publish Candidate" v1 {
                 correlations: [{
                     source: "github",
                     scope: params.repository.github_scope,
-                    correlation_key: "pr:${request.response.id}"
+                    correlation_key: "pr:${string(request.response.id)}"
                 }],
                 evidence: {
                     promotion: promoted,
@@ -187,9 +271,30 @@ workflow "Publish Candidate" v1 {
 
 workflow "Verify Exact Revision" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key ci
@@ -220,9 +325,30 @@ workflow "Verify Exact Revision" v1 {
 
 workflow "Review Handoff" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key handoff
@@ -255,9 +381,30 @@ workflow "Review Handoff" v1 {
 
 workflow "Exhaustion Handoff" v1 {
     params {
-        ticket: any
-        repository: any
-        automation: any
+        ticket: {
+            key: string,
+            summary: string,
+            jira_base_url: string,
+            jira_email: string,
+            ...: any
+        }
+        repository: {
+            owner: string,
+            name: string,
+            remote: string,
+            base_branch: string,
+            base_ref: string,
+            local_path: string,
+            github_scope: string,
+            ...: any
+        }
+        automation: {
+            branch: string,
+            local_check_command: string,
+            review_status: string,
+            review_transition_id: string,
+            ...: any
+        }
         orchestration: any
     }
     key exhaustion
