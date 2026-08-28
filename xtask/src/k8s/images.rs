@@ -61,6 +61,12 @@ const IMAGES: &[ImageSpec] = &[
         context: ".",
     },
     ImageSpec {
+        name: "runinator-adapter-host",
+        dockerfile: "deploy/Dockerfile",
+        target: Some("adapter-host"),
+        context: ".",
+    },
+    ImageSpec {
         name: "runinator-bootstrap",
         dockerfile: "deploy/Dockerfile",
         target: Some("bootstrap"),

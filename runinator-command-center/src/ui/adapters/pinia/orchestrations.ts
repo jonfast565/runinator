@@ -169,10 +169,12 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     selectedAdapterId.value = id;
     selectedAdapter.value = adapters.value.find((item) => item.id === id) ?? null;
     adapterRevisions.value = await fetchAdapterRevisions(id);
+    // `.at(0)` rather than `[0]`: an index read is typed as always present, which is what let an
+    // adapter with no readable revisions throw here instead of simply having no poll status.
     const current = adapterRevisions.value.find(
       (revision) => revision.revision === selectedAdapter.value?.current_revision,
-    ) ?? adapterRevisions.value[0];
-    adapterPollStatus.value = current.transport === "polling"
+    ) ?? adapterRevisions.value.at(0);
+    adapterPollStatus.value = current?.transport === "polling"
       ? await fetchAdapterPollStatus(id)
       : null;
   }

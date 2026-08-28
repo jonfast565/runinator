@@ -351,6 +351,7 @@ jobs:
             -p runinator-bootstrap \
             -p runinator-broker \
             -p runinator-blob \
+            -p runinator-adapter-host \
             --features runinator-ws/postgres,runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-engine-worker/postgres,runinator-engine-worker/rabbitmq,runinator-worker/rabbitmq,runinator-worker/db-postgres,runinator-waker/rabbitmq,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres,runinator-broker/tcp,runinator-blob/server
 
       - name: Check kafka backend

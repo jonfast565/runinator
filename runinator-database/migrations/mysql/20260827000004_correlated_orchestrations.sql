@@ -1,3 +1,9 @@
+-- Index widths here are bounded by mysql's 3072-byte limit (four bytes per utf8mb4 character).
+-- Note which indexes may carry a column prefix and which may not: a prefix on a *unique* key is a
+-- weaker constraint, not an optimization, so two distinct values sharing the prefix would collide
+-- and be falsely rejected -- while sqlite and postgres constrain the whole value. Every unique key
+-- below is therefore exact. A prefix on a plain lookup index is fine, since it only narrows the
+-- rows the engine then re-checks.
 ALTER TABLE pipeline_runs ADD COLUMN orchestration_binding_id BINARY(16) NULL;
 ALTER TABLE pipeline_runs ADD COLUMN execution_epoch BIGINT NULL;
 ALTER TABLE pipeline_runs ADD COLUMN start_member VARCHAR(255) NULL;
@@ -5,7 +11,7 @@ CREATE INDEX idx_pipeline_runs_orchestration ON pipeline_runs(orchestration_bind
 
 CREATE TABLE orchestration_bindings (
     id BINARY(16) PRIMARY KEY, admission_id BINARY(16) NOT NULL, org_id BINARY(16) NULL,
-    scope VARCHAR(255) NOT NULL, correlation_key VARCHAR(512) NOT NULL, generation BIGINT NOT NULL,
+    scope VARCHAR(255) NOT NULL, correlation_key VARCHAR(255) NOT NULL, generation BIGINT NOT NULL,
     pipeline_id BINARY(16) NOT NULL, pipeline_revision BIGINT NOT NULL, pipeline_digest VARCHAR(80) NOT NULL,
     policy LONGTEXT NOT NULL, status VARCHAR(32) NOT NULL, current_phase VARCHAR(255) NULL,
     current_attempt BIGINT NOT NULL DEFAULT 0, current_epoch BIGINT NOT NULL DEFAULT 0,
@@ -18,7 +24,7 @@ CREATE TABLE orchestration_bindings (
     CONSTRAINT fk_orchestration_pipeline FOREIGN KEY (pipeline_id) REFERENCES pipelines(id),
     UNIQUE KEY idx_orchestration_generation (admission_id, generation),
     KEY idx_orchestration_bindings_claim (status, reducer_leased_until, updated_at),
-    KEY idx_orchestration_bindings_lookup (org_id, scope, correlation_key(191), generation)
+    KEY idx_orchestration_bindings_lookup (org_id, scope, correlation_key, generation)
 );
 CREATE TABLE orchestration_epochs (
     id BINARY(16) PRIMARY KEY, binding_id BINARY(16) NOT NULL, epoch BIGINT NOT NULL,
@@ -52,7 +58,7 @@ CREATE TABLE orchestration_commands (
     status VARCHAR(32) NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, claimed_by VARCHAR(255) NULL,
     claimed_until BIGINT NULL, result LONGTEXT NOT NULL, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
     CONSTRAINT fk_orchestration_command_binding FOREIGN KEY (binding_id) REFERENCES orchestration_bindings(id) ON DELETE CASCADE,
-    UNIQUE KEY idx_orchestration_command_key (binding_id, operation_key(191)),
+    UNIQUE KEY idx_orchestration_command_key (binding_id, operation_key),
     KEY idx_orchestration_commands_claim (status, claimed_until, created_at)
 );
 CREATE TABLE orchestration_evidence (
@@ -84,6 +90,6 @@ CREATE TABLE external_operations (
     attempt BIGINT NOT NULL DEFAULT 0, status VARCHAR(32) NOT NULL, ambiguous BOOLEAN NOT NULL DEFAULT FALSE,
     provenance LONGTEXT NOT NULL, receipt LONGTEXT NOT NULL, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
     CONSTRAINT fk_external_operation_binding FOREIGN KEY (binding_id) REFERENCES orchestration_bindings(id) ON DELETE CASCADE,
-    UNIQUE KEY idx_external_operation_key (binding_id, operation_key(191)),
+    UNIQUE KEY idx_external_operation_key (binding_id, operation_key),
     KEY idx_external_operations_status (binding_id, status, updated_at)
 );

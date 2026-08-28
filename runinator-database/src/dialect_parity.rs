@@ -20,9 +20,9 @@ use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
     json,
     orchestration::{
-        ControlEffect, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
-        IngressAdmission, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
-        IngressEventDisposition, IngressTarget, IngressTargetKind, IntentPolicy,
+        AdapterTransport, ControlEffect, DeliverySemantics, ExternalOperation,
+        ExternalOperationStatus, IngressAdmission, IngressAdmissionClaim, IngressAdmissionStatus,
+        IngressEvent, IngressEventDisposition, IngressTarget, IngressTargetKind, IntentPolicy,
         NewOrchestrationBinding, OrchestrationEventReduction, OrchestrationPendingIntent,
         OrchestrationPolicy, OrchestrationStatus,
     },
@@ -47,8 +47,8 @@ use uuid::Uuid;
 // scope without importing the roles one by one.
 use runinator_store::DatabaseImpl;
 use runinator_store::roles::{
-    ExternalOperationUpdate, NewAdapterDefinition, NewOrchestrationCommand, NewOrchestrationEpoch,
-    OrchestrationBindingUpdate, WorkflowVmStore,
+    ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
+    NewOrchestrationEpoch, OrchestrationBindingUpdate, WorkflowVmStore,
 };
 
 fn sample_workflow(name: &str) -> WorkflowDefinition {
@@ -159,7 +159,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
                 org_id,
                 name: format!("parity adapter {suffix}"),
                 kind: "generic_webhook".into(),
-                transport: runinator_models::orchestration::AdapterTransport::Webhook,
+                transport: AdapterTransport::Webhook,
                 kind_version: "1".into(),
                 endpoint_identity: format!("parity-{suffix}"),
                 configuration: json!({ "authentication": "bearer" }),
@@ -173,6 +173,186 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
         .unwrap();
     assert_eq!(adapter.current_revision, 1);
     assert_eq!(revision.revision, 1);
+    assert_eq!(revision.transport, AdapterTransport::Webhook);
+
+    // a polling adapter carries a durable claim/checkpoint schedule beside its revisions. this is
+    // the only place those operations run against postgres and both mysql engines: `rows_affected`
+    // alone differs between them (mysql reports rows *changed*, not matched), which is exactly the
+    // kind of divergence a sqlite-only suite cannot see.
+    let polling_id = Uuid::now_v7();
+    let (polling, polling_revision) = db
+        .create_orchestration_adapter(
+            NewAdapterDefinition {
+                id: polling_id,
+                org_id,
+                name: format!("parity poller {suffix}"),
+                kind: "github".into(),
+                transport: AdapterTransport::Polling,
+                kind_version: "1".into(),
+                endpoint_identity: format!("parity-poll-{suffix}"),
+                configuration: json!({ "repositories": ["octo/example"] }),
+                secret_bindings: BTreeMap::new(),
+                identity_configuration: json!({ "repositories": ["octo/example"] }),
+                actor_id: None,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(polling_revision.transport, AdapterTransport::Polling);
+
+    let status = db
+        .fetch_orchestration_adapter_poll_status(polling_id)
+        .await
+        .unwrap()
+        .expect("creating a polling adapter schedules its first poll");
+    assert_eq!(status.revision, 1);
+    assert!(status.checkpoint.is_null());
+
+    let lease_until = now + chrono::TimeDelta::seconds(300);
+    let claimed = db
+        .claim_due_orchestration_adapter_polls("parity-a".into(), now, lease_until, 8)
+        .await
+        .unwrap();
+    assert!(
+        claimed.iter().any(|claim| claim.adapter_id == polling_id),
+        "a due poll must be claimable"
+    );
+
+    // a live lease excludes the row from every other claimant.
+    let contended = db
+        .claim_due_orchestration_adapter_polls("parity-b".into(), now, lease_until, 8)
+        .await
+        .unwrap();
+    assert!(
+        !contended.iter().any(|claim| claim.adapter_id == polling_id),
+        "a leased poll must not be claimable by a second instance"
+    );
+
+    // completion is gated on still holding the claim, so a stale worker cannot write a checkpoint
+    // over whoever holds the lease now.
+    assert!(
+        !db.complete_orchestration_adapter_poll(
+            polling_id,
+            "parity-b".into(),
+            1,
+            json!({ "streams": { "1:pull_request": "2026-08-27T00:00:00+00:00" } }).into(),
+            now + chrono::TimeDelta::seconds(60),
+            now,
+        )
+        .await
+        .unwrap(),
+        "a poll completion from a non-holder must not apply"
+    );
+    assert!(
+        db.complete_orchestration_adapter_poll(
+            polling_id,
+            "parity-a".into(),
+            1,
+            json!({ "streams": { "1:pull_request": "2026-08-27T01:00:00+00:00" } }).into(),
+            now + chrono::TimeDelta::seconds(60),
+            now,
+        )
+        .await
+        .unwrap()
+    );
+
+    let settled = db
+        .fetch_orchestration_adapter_poll_status(polling_id)
+        .await
+        .unwrap()
+        .expect("the schedule survives completion");
+    assert_eq!(
+        settled.checkpoint.pointer("/streams/1:pull_request"),
+        Some(&runinator_models::value::Value::String(
+            "2026-08-27T01:00:00+00:00".into()
+        )),
+        "the durable checkpoint must round-trip through every backend's json column"
+    );
+    assert!(
+        settled.claimed_until.is_none(),
+        "completion releases the lease"
+    );
+    assert!(settled.last_success_at.is_some());
+    assert!(settled.last_error.is_none());
+
+    // a failure records the error, backs the schedule off, and likewise releases the lease.
+    let reclaimed = db
+        .claim_due_orchestration_adapter_polls(
+            "parity-a".into(),
+            now + chrono::TimeDelta::seconds(120),
+            now + chrono::TimeDelta::seconds(420),
+            8,
+        )
+        .await
+        .unwrap();
+    assert!(reclaimed.iter().any(|claim| claim.adapter_id == polling_id));
+    assert!(
+        db.fail_orchestration_adapter_poll(
+            polling_id,
+            "parity-a".into(),
+            now + chrono::TimeDelta::seconds(300),
+            "adapter host is unavailable".into(),
+            now + chrono::TimeDelta::seconds(120),
+        )
+        .await
+        .unwrap()
+    );
+    let failed = db
+        .fetch_orchestration_adapter_poll_status(polling_id)
+        .await
+        .unwrap()
+        .expect("the schedule survives failure");
+    assert_eq!(
+        failed.last_error.as_deref(),
+        Some("adapter host is unavailable")
+    );
+    assert!(failed.claimed_until.is_none());
+    assert_eq!(
+        failed.checkpoint.pointer("/streams/1:pull_request"),
+        Some(&runinator_models::value::Value::String(
+            "2026-08-27T01:00:00+00:00".into()
+        )),
+        "a failed poll must not disturb the checkpoint"
+    );
+
+    // switching a polling adapter to webhook retires its schedule rather than orphaning it.
+    db.create_orchestration_adapter_revision(
+        NewAdapterRevision {
+            id: Uuid::now_v7(),
+            adapter_id: polling_id,
+            expected_revision: 1,
+            kind_version: "1".into(),
+            transport: AdapterTransport::Webhook,
+            configuration: json!({ "repositories": ["octo/example"] }),
+            secret_bindings: BTreeMap::new(),
+            identity_configuration: json!({ "repositories": ["octo/example"] }),
+            actor_id: None,
+        },
+        now,
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.fetch_orchestration_adapter_poll_status(polling_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "leaving the polling transport must drop the schedule"
+    );
+    assert!(
+        !db.claim_due_orchestration_adapter_polls(
+            "parity-a".into(),
+            now + chrono::TimeDelta::seconds(600),
+            now + chrono::TimeDelta::seconds(900),
+            8,
+        )
+        .await
+        .unwrap()
+        .iter()
+        .any(|claim| claim.adapter_id == polling_id)
+    );
+    let _ = polling;
 
     let admission_id = Uuid::now_v7();
     db.claim_ingress_admission(
@@ -467,6 +647,45 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
         .await
         .unwrap();
     assert_eq!(duplicate_command.id, command.id);
+
+    // dedupe must key on the *whole* operation key. mysql indexed this one with a 191-character
+    // prefix, which made two distinct keys sharing a long prefix collide and silently return the
+    // first command instead of enqueuing the second -- while sqlite and postgres constrained the
+    // full value. the padding here is deliberately longer than that prefix.
+    let shared_prefix = "x".repeat(240);
+    let first_long = db
+        .enqueue_orchestration_command(
+            NewOrchestrationCommand {
+                id: Uuid::now_v7(),
+                binding_id,
+                epoch: 1,
+                command_type: "start_epoch".into(),
+                operation_key: format!("{shared_prefix}:a:{suffix}"),
+                payload: Value::Null,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    let second_long = db
+        .enqueue_orchestration_command(
+            NewOrchestrationCommand {
+                id: Uuid::now_v7(),
+                binding_id,
+                epoch: 1,
+                command_type: "start_epoch".into(),
+                operation_key: format!("{shared_prefix}:b:{suffix}"),
+                payload: Value::Null,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        first_long.id, second_long.id,
+        "two operation keys differing only past a long shared prefix are distinct commands"
+    );
+
     let command_owner = format!("parity-command-{suffix}");
     let claimed_command = db
         .claim_orchestration_commands(command_owner.clone(), now, now + Duration::minutes(1), 100)

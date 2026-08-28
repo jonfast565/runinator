@@ -187,11 +187,27 @@ plus an `api_token` Secret binding. Both accept `poll_interval_seconds` from 30 
 defaulting to 60.
 
 The first successful poll establishes a high-water checkpoint without admitting historical events.
-Later polls normalize events through the same pipeline-ingress service as webhooks; the checkpoint
-advances only after every returned event has been accepted. Inspect schedule and health with
-`runinatorctl orchestrations adapters poll-status <adapter-id>` or
-`GET /orchestrations/adapters/{id}/poll-status`. Transport and identity configuration become
-immutable after the adapter admits its first correlation.
+Later polls normalize events through the same pipeline-ingress service as webhooks.
+
+Checkpoints are per stream — pull requests, workflow runs, check runs, Jira issues, and Jira
+comments each carry their own high-water mark — because those streams advance independently and one
+shared mark would let a busy stream drag the watermark past events a quiet one had not emitted yet.
+
+A polling adapter enumerates everything upstream has, so most batches contain events no pipeline
+admits. Those are skipped and counted, not treated as failures: failing the poll would leave the
+checkpoint unadvanced and replay the identical batch forever, so one unroutable event would stall
+the adapter permanently. Only a fault that would recur for every event — the adapter host being
+unreachable, the store being down — abandons the batch and retries. Rate limits are honored
+separately: the adapter returns the provider's `Retry-After` and the checkpoint is left untouched.
+
+Inspect schedule and health with `runinatorctl orchestrations adapters poll-status <adapter-id>` or
+`GET /orchestrations/adapters/{id}/poll-status`; `last_error` carries the most recent failure.
+Transport and identity configuration become immutable after the adapter admits its first
+correlation.
+
+Both webhook verification and polling run in the `runinator-adapter-host` process, which must be
+running for any adapter to work — see [Kubernetes](kubernetes.md) and
+[Local development](local-development.md).
 
 #### Failure alerting
 

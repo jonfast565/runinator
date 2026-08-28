@@ -34,6 +34,17 @@ const DEFAULT_OUTPUT_LIMIT: usize = 1024 * 1024;
 const DEFAULT_EVENT_LIMIT: usize = 16;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Paging and fan-out budgets for the built-in pollers. These bound one poll's cost against the
+/// provider's hourly quota: without a page cap a large backlog would walk indefinitely, and
+/// without a commit budget a busy repository would spend the whole GitHub quota on check-run
+/// lookups in a single pass.
+const GITHUB_MAX_PAGES: usize = 10;
+const GITHUB_CHECK_RUN_COMMIT_BUDGET: usize = 20;
+const JIRA_MAX_PAGES: usize = 100;
+/// Clock skew allowance between this host and Jira, and the furthest back a relative bound reaches.
+const JIRA_SKEW_MARGIN_MINUTES: i64 = 5;
+const JIRA_MAX_LOOKBACK_MINUTES: i64 = 90 * 24 * 60;
+
 #[derive(Clone, Copy)]
 struct HostLimits {
     body_bytes: usize,
@@ -141,6 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let listener = tokio::net::TcpListener::bind(address).await?;
     let router = Router::new()
+        .route("/live", get(live))
         .route("/health", get(health))
         .route("/kinds", get(kinds))
         .route("/reload", post(reload))
@@ -156,6 +168,13 @@ fn required_arg(args: &[String], index: usize) -> Result<&str, Box<dyn std::erro
     args.get(index)
         .map(String::as_str)
         .ok_or_else(|| format!("missing argument {index}").into())
+}
+
+/// Unauthenticated liveness. Deliberately reports nothing but that the process is serving: a
+/// container probe cannot present the host credential without writing it into the pod spec, and
+/// `/health` below discloses the plugin paths and limits, so the two cannot be the same endpoint.
+async fn live() -> (StatusCode, Json<Value>) {
+    (StatusCode::OK, Json(json!({ "status": "ok" })))
 }
 
 async fn health(State(state): State<HostState>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
@@ -793,15 +812,39 @@ fn poll_secret<'a>(request: &'a AdapterPollRequest, name: &str) -> Result<&'a st
         .or_else(|_| configured_string(&request.configuration, name))
 }
 
-fn poll_checkpoint(value: &Value) -> Option<&str> {
-    value.get("updated_at").and_then(Value::as_str)
+/// Read one stream's high-water mark. Checkpoints are per stream rather than per adapter: pull
+/// requests, workflow runs, and check runs advance independently, and a single shared mark would
+/// let a busy stream drag the watermark past events a quiet one had not emitted yet. The legacy
+/// flat `{"updated_at": ...}` form seeds every stream so an in-flight adapter keeps its position.
+fn stream_checkpoint(checkpoint: &Value, stream: &str) -> Option<String> {
+    checkpoint
+        .get("streams")
+        .and_then(|streams| streams.get(stream))
+        .and_then(Value::as_str)
+        .or_else(|| checkpoint.get("updated_at").and_then(Value::as_str))
+        .map(str::to_owned)
 }
 
-fn jira_jql_timestamp(value: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .or_else(|_| chrono::DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f%z"))
-        .map(|value| value.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_else(|_| value.to_owned())
+fn stream_checkpoints(marks: BTreeMap<String, String>) -> Value {
+    json!({ "streams": marks })
+}
+
+/// Seed the next checkpoint with every mark the current one carries. A stream that reports nothing
+/// new this pass must keep its position; rebuilding the map from only the streams that produced
+/// events would reset the quiet ones to a cold start on the very next poll.
+fn existing_streams(checkpoint: &Value) -> BTreeMap<String, String> {
+    checkpoint
+        .get("streams")
+        .and_then(Value::as_object)
+        .map(|streams| {
+            streams
+                .iter()
+                .filter_map(|(name, value)| {
+                    value.as_str().map(|value| (name.clone(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn canonical_poll_timestamp(value: &str) -> String {
@@ -818,6 +861,134 @@ fn poll_response(events: Vec<NormalizedAdapterEvent>, checkpoint: Value) -> Adap
         retry_after_seconds: None,
         error: None,
     }
+}
+
+/// A poll that ran out of upstream quota. This is not an adapter fault: the checkpoint must be
+/// preserved verbatim and the caller told when to come back, which is why it is distinct from an
+/// ordinary error string.
+struct RateLimited {
+    retry_after_seconds: Option<u64>,
+}
+
+enum PollError {
+    RateLimited(RateLimited),
+    Failed(String),
+}
+
+impl From<String> for PollError {
+    fn from(value: String) -> Self {
+        Self::Failed(value)
+    }
+}
+
+fn retry_after_header(response: &reqwest::Response) -> Option<u64> {
+    response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+}
+
+/// The `Link: <url>; rel="next"` cursor GitHub returns on every paginated collection. Kept pure so
+/// the header grammar is assertable without standing up a response.
+fn parse_next_link(header: &str) -> Option<String> {
+    header.split(',').find_map(|part| {
+        let (url, rel) = part.split_once(';')?;
+        rel.contains("rel=\"next\"").then(|| {
+            url.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_owned()
+        })
+    })
+}
+
+fn github_next_link(response: &reqwest::Response) -> Option<String> {
+    parse_next_link(response.headers().get("link")?.to_str().ok()?)
+}
+
+/// GitHub reports exhausted quota two ways: 429, and 403 with a zeroed remaining counter. Treating
+/// only the former as a rate limit turns the common case into a generic failure with the wrong
+/// retry delay, so both are recognized here rather than at each call site.
+fn github_rate_limited(response: &reqwest::Response) -> Option<RateLimited> {
+    let exhausted = response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (response.status() == reqwest::StatusCode::FORBIDDEN
+            && response
+                .headers()
+                .get("x-ratelimit-remaining")
+                .and_then(|value| value.to_str().ok())
+                == Some("0"));
+    exhausted.then(|| RateLimited {
+        retry_after_seconds: retry_after_header(response),
+    })
+}
+
+async fn github_get(
+    client: &reqwest::Client,
+    token: &str,
+    url: &str,
+) -> Result<(Value, Option<String>), PollError> {
+    let response = client
+        .get(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", "runinator-adapter-host")
+        .send()
+        .await
+        .map_err(|error| PollError::Failed(error.to_string()))?;
+    if let Some(limited) = github_rate_limited(&response) {
+        return Err(PollError::RateLimited(limited));
+    }
+    let next = github_next_link(&response);
+    let response = response
+        .error_for_status()
+        .map_err(|error| PollError::Failed(error.to_string()))?;
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|error| PollError::Failed(error.to_string()))?;
+    Ok((body, next))
+}
+
+/// Walk a GitHub collection newest-first, stopping at the first page whose items are all older
+/// than `since`. Without this a repository with more than one page of activity silently dropped
+/// everything past the first hundred items the moment the watermark moved past them.
+async fn github_collect(
+    client: &reqwest::Client,
+    token: &str,
+    first_url: String,
+    array_key: Option<&str>,
+    since: Option<&str>,
+    timestamp_of: impl Fn(&Value) -> String,
+) -> Result<Vec<Value>, PollError> {
+    let mut url = Some(first_url);
+    let mut collected = Vec::new();
+    for _ in 0..GITHUB_MAX_PAGES {
+        let Some(current) = url.take() else { break };
+        let (body, next) = github_get(client, token, &current).await?;
+        let values = array_key
+            .and_then(|key| body.get(key))
+            .and_then(Value::as_array)
+            .or_else(|| body.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if values.is_empty() {
+            break;
+        }
+        let exhausted = since.is_some_and(|since| {
+            values.iter().all(|value| {
+                let stamp = timestamp_of(value);
+                !stamp.is_empty() && stamp.as_str() < since
+            })
+        });
+        collected.extend(values);
+        if exhausted {
+            break;
+        }
+        url = next;
+    }
+    Ok(collected)
 }
 
 fn github_repository_id(repository: &str, value: &Value) -> Result<String, String> {
@@ -838,253 +1009,392 @@ fn github_poll_correlation(event_type: &str, id: &str, value: &Value) -> String 
         .unwrap_or_else(|| format!("workflow:{id}"))
 }
 
-async fn poll_github(request: AdapterPollRequest) -> AdapterPollResponse {
-    let fallback_checkpoint = request.checkpoint.clone();
-    let result = async {
-        let token = poll_secret(&request, "access_token")?;
-        let repositories = request.configuration.get("repositories").and_then(Value::as_array)
-            .ok_or_else(|| "GitHub polling requires configuration.repositories".to_string())?;
-        let client = reqwest::Client::new();
-        let previous = poll_checkpoint(&request.checkpoint).map(str::to_owned);
-        let mut newest = previous.clone();
-        let mut events = Vec::new();
-        for repository in repositories.iter().filter_map(Value::as_str) {
-            let repository_info = client
-                .get(format!("https://api.github.com/repos/{repository}"))
-                .header("Authorization", format!("Bearer {token}"))
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "runinator-adapter-host")
-                .send()
-                .await
-                .map_err(|error| error.to_string())?
-                .error_for_status()
-                .map_err(|error| error.to_string())?
-                .json::<Value>()
-                .await
-                .map_err(|error| error.to_string())?;
-            let repository_id = github_repository_id(repository, &repository_info)?;
-            for (path, event_type, key) in [
-                (format!("https://api.github.com/repos/{repository}/pulls?state=all&sort=updated&direction=desc&per_page=100"), "pull_request", "pull_request"),
-                (format!("https://api.github.com/repos/{repository}/actions/runs?per_page=100"), "workflow_run", "workflow_run"),
-            ] {
-                let body = client.get(path).header("Authorization", format!("Bearer {token}"))
-                    .header("Accept", "application/vnd.github+json").header("User-Agent", "runinator-adapter-host")
-                    .send().await.map_err(|error| error.to_string())?;
-                if body.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    let retry_after_seconds = body.headers().get("retry-after").and_then(|value| value.to_str().ok()).and_then(|value| value.parse().ok());
-                    return Ok::<_, String>(AdapterPollResponse { events: Vec::new(), checkpoint: request.checkpoint, retry_after_seconds, error: Some("GitHub rate limit reached".into()) });
-                }
-                let body = body.error_for_status().map_err(|error| error.to_string())?.json::<Value>().await.map_err(|error| error.to_string())?;
-                let values = body.get("workflow_runs").and_then(Value::as_array).or_else(|| body.as_array()).cloned().unwrap_or_default();
-                for value in values {
-                    let updated = canonical_poll_timestamp(value.get("updated_at").and_then(Value::as_str).unwrap_or_default());
-                    if previous.as_deref().is_some_and(|checkpoint| !updated.is_empty() && updated.as_str() < checkpoint) { continue; }
-                    if updated.as_str() > newest.as_deref().unwrap_or("") { newest = Some(updated.clone()); }
-                    let id = value.get("id").map(value_string).unwrap_or_default();
-                    if id.is_empty() { continue; }
-                    let mut payload = value.clone();
-                    if let Some(object) = payload.as_object_mut() {
-                        object.insert("repository".into(), repository_info.clone());
-                        object.insert(key.into(), value.clone());
-                    }
-                    let correlation_key = github_poll_correlation(event_type, &id, &value);
-                    events.push(NormalizedAdapterEvent {
-                        source: "github".into(), delivery_id: format!("github:{repository_id}:{event_type}:{id}:{updated}"),
-                        event_type: event_type.into(), scope: format!("github:repository:{repository_id}"), correlation_key,
-                        subject_revision: value.get("head_sha").or_else(|| value.pointer("/head/sha")).and_then(Value::as_str).map(str::to_owned),
-                        occurred_at: parse_occurred_at(&Value::String(updated)).ok(), payload: payload.into(), provenance: Value::Null.into(),
-                    });
-                }
-            }
-            let mut commits_url = format!("https://api.github.com/repos/{repository}/commits?per_page=100");
-            if let Some(since) = &previous {
-                commits_url.push_str("&since=");
-                commits_url.push_str(&urlencoding::encode(since));
-            }
-            let commits = client.get(commits_url)
-                .header("Authorization", format!("Bearer {token}"))
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "runinator-adapter-host")
-                .send().await.map_err(|error| error.to_string())?
-                .error_for_status().map_err(|error| error.to_string())?
-                .json::<Value>().await.map_err(|error| error.to_string())?;
-            for commit in commits.as_array().cloned().unwrap_or_default() {
-                let Some(sha) = commit.get("sha").and_then(Value::as_str) else { continue };
-                let checks = client.get(format!("https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100"))
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "runinator-adapter-host")
-                    .send().await.map_err(|error| error.to_string())?
-                    .error_for_status().map_err(|error| error.to_string())?
-                    .json::<Value>().await.map_err(|error| error.to_string())?;
-                for check in checks.get("check_runs").and_then(Value::as_array).cloned().unwrap_or_default() {
-                    let updated = canonical_poll_timestamp(check.get("completed_at").or_else(|| check.get("started_at")).and_then(Value::as_str).unwrap_or_default());
-                    if previous.as_deref().is_some_and(|checkpoint| !updated.is_empty() && updated.as_str() < checkpoint) { continue; }
-                    if updated.as_str() > newest.as_deref().unwrap_or("") { newest = Some(updated.clone()); }
-                    let id = check.get("id").map(value_string).unwrap_or_default();
-                    if id.is_empty() { continue; }
-                    events.push(NormalizedAdapterEvent {
-                        source: "github".into(), delivery_id: format!("github:{repository_id}:check_run:{id}:{updated}"), event_type: "check_run".into(),
-                        scope: format!("github:repository:{repository_id}"), correlation_key: check.pointer("/pull_requests/0/id").map(|value| format!("pr:{}", value_string(value))).unwrap_or_else(|| format!("check:{id}")),
-                        subject_revision: Some(sha.to_owned()), occurred_at: parse_occurred_at(&Value::String(updated)).ok(),
-                        payload: json!({ "repository": repository_info, "check_run": check }).into(), provenance: Value::Null.into(),
-                    });
-                }
-            }
-        }
-        if request.initialize {
-            events.clear();
-            newest = Some(chrono::Utc::now().to_rfc3339());
-        }
-        Ok(AdapterPollResponse { events, checkpoint: json!({ "updated_at": newest }), retry_after_seconds: None, error: None })
-    }.await;
-    result.unwrap_or_else(|error| AdapterPollResponse {
-        events: Vec::new(),
-        checkpoint: fallback_checkpoint,
-        retry_after_seconds: None,
-        error: Some(error),
-    })
+/// Advance a stream's mark only for an event that was actually emitted. Advancing before the
+/// caller decides to skip a malformed item would carry the watermark past events that were never
+/// reported, and they would never be enumerated again.
+fn advance(marks: &mut BTreeMap<String, String>, stream: &str, stamp: &str) {
+    if stamp.is_empty() {
+        return;
+    }
+    let entry = marks.entry(stream.to_owned()).or_default();
+    if stamp > entry.as_str() {
+        *entry = stamp.to_owned();
+    }
 }
 
-async fn poll_jira(request: AdapterPollRequest) -> AdapterPollResponse {
-    let result = async {
-        let base_url = configured_string(&request.configuration, "base_url")?.trim_end_matches('/');
-        let email = configured_string(&request.configuration, "email")?;
-        let token = poll_secret(&request, "api_token")?;
-        let instance_id = configured_string(&request.configuration, "instance_id")?;
-        let jql = configured_string(&request.configuration, "jql")?;
-        let previous = poll_checkpoint(&request.checkpoint).map(str::to_owned);
-        let query = match &previous {
-            Some(value) => format!("({jql}) AND updated >= \"{}\"", jira_jql_timestamp(value)),
-            None => jql.to_owned(),
-        };
-        let client = reqwest::Client::new();
-        let mut issues = Vec::new();
-        let mut next_page_token: Option<String> = None;
-        let mut page_count = 0usize;
-        loop {
-            page_count += 1;
-            if page_count > 100 {
-                return Err("Jira polling exceeded 100 result pages".to_string());
-            }
-            let requested_page_token = next_page_token.clone();
-            let mut call = client
-                .get(format!("{base_url}/rest/api/3/search/jql"))
-                .basic_auth(email, Some(token))
-                .query(&[
-                    ("jql", query.as_str()),
-                    ("maxResults", "100"),
-                    ("fields", "summary,project,updated,comment"),
-                ]);
-            if let Some(token) = &next_page_token {
-                call = call.query(&[("nextPageToken", token)]);
-            }
-            let response = call
-                .send()
-                .await
-                .map_err(|error| error.to_string())?
-                .error_for_status()
-                .map_err(|error| error.to_string())?
-                .json::<Value>()
-                .await
-                .map_err(|error| error.to_string())?;
-            issues.extend(
-                response
-                    .get("issues")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
-            );
-            next_page_token = response
-                .get("nextPageToken")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .filter(|value| !value.is_empty());
-            if next_page_token.is_some() && next_page_token == requested_page_token {
-                return Err("Jira polling received a repeated page token".to_string());
-            }
-            if next_page_token.is_none() {
-                break;
-            }
-        }
-        let mut newest = previous.clone();
-        let mut events = Vec::new();
-        for issue in issues {
-            let updated = canonical_poll_timestamp(
-                issue
-                    .pointer("/fields/updated")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            );
-            if updated.as_str() > newest.as_deref().unwrap_or("") {
-                newest = Some(updated.clone());
-            }
-            let issue_id = issue.get("id").map(value_string).unwrap_or_default();
-            let project = issue
-                .pointer("/fields/project/id")
-                .map(value_string)
-                .unwrap_or_default();
-            if issue_id.is_empty() || project.is_empty() {
-                continue;
-            }
-            events.push(NormalizedAdapterEvent {
-                source: "jira".into(),
-                delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
-                event_type: "issue_updated".into(),
-                scope: format!("jira:{instance_id}:project:{project}"),
-                correlation_key: format!("issue:{issue_id}"),
-                subject_revision: None,
-                occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
-                payload: json!({ "issue": issue.clone() }).into(),
-                provenance: Value::Null.into(),
-            });
-            for comment in issue
-                .pointer("/fields/comment/comments")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
+fn github_updated_at(value: &Value) -> String {
+    canonical_poll_timestamp(
+        value
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+}
+
+fn github_check_stamp(value: &Value) -> String {
+    canonical_poll_timestamp(
+        value
+            .get("completed_at")
+            .or_else(|| value.get("started_at"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+}
+
+async fn poll_github(request: AdapterPollRequest) -> AdapterPollResponse {
+    let fallback_checkpoint = request.checkpoint.clone();
+    match poll_github_inner(&request).await {
+        Ok(response) => response,
+        Err(PollError::RateLimited(limited)) => AdapterPollResponse {
+            events: Vec::new(),
+            checkpoint: fallback_checkpoint,
+            retry_after_seconds: limited.retry_after_seconds,
+            error: Some("GitHub rate limit reached".into()),
+        },
+        Err(PollError::Failed(error)) => AdapterPollResponse {
+            events: Vec::new(),
+            checkpoint: fallback_checkpoint,
+            retry_after_seconds: None,
+            error: Some(error),
+        },
+    }
+}
+
+async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollResponse, PollError> {
+    let token = poll_secret(request, "access_token")?;
+    let repositories = request
+        .configuration
+        .get("repositories")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "GitHub polling requires configuration.repositories".to_string())?;
+    let client = reqwest::Client::new();
+    let mut marks = existing_streams(&request.checkpoint);
+    let mut events = Vec::new();
+
+    for repository in repositories.iter().filter_map(Value::as_str) {
+        let (repository_info, _) = github_get(
+            &client,
+            token,
+            &format!("https://api.github.com/repos/{repository}"),
+        )
+        .await?;
+        let repository_id = github_repository_id(repository, &repository_info)?;
+
+        for (url, event_type, array_key) in [
+            (
+                format!(
+                    "https://api.github.com/repos/{repository}/pulls?state=all&sort=updated&direction=desc&per_page=100"
+                ),
+                "pull_request",
+                None,
+            ),
+            (
+                format!("https://api.github.com/repos/{repository}/actions/runs?per_page=100"),
+                "workflow_run",
+                Some("workflow_runs"),
+            ),
+        ] {
+            let stream = format!("{repository_id}:{event_type}");
+            let since = stream_checkpoint(&request.checkpoint, &stream);
+            for value in github_collect(
+                &client,
+                token,
+                url,
+                array_key,
+                since.as_deref(),
+                github_updated_at,
+            )
+            .await?
             {
-                let comment_updated = canonical_poll_timestamp(
-                    comment
-                        .get("updated")
-                        .and_then(Value::as_str)
-                        .unwrap_or(&updated),
-                );
-                if previous
+                let updated = github_updated_at(&value);
+                if since
                     .as_deref()
-                    .is_some_and(|checkpoint| comment_updated.as_str() < checkpoint)
+                    .is_some_and(|mark| !updated.is_empty() && updated.as_str() < mark)
                 {
                     continue;
                 }
+                let id = value.get("id").map(value_string).unwrap_or_default();
+                if id.is_empty() {
+                    continue;
+                }
+                let mut payload = value.clone();
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("repository".into(), repository_info.clone());
+                    object.insert(event_type.into(), value.clone());
+                }
+                advance(&mut marks, &stream, &updated);
                 events.push(NormalizedAdapterEvent {
-                    source: "jira".into(),
-                    delivery_id: format!(
-                        "jira:{instance_id}:comment:{}:{comment_updated}",
-                        comment.get("id").map(value_string).unwrap_or_default()
-                    ),
-                    event_type: "comment_created".into(),
-                    scope: format!("jira:{instance_id}:project:{project}"),
-                    correlation_key: format!("issue:{issue_id}"),
-                    subject_revision: None,
-                    occurred_at: parse_occurred_at(&Value::String(comment_updated)).ok(),
-                    payload: json!({"issue": issue, "comment": comment}).into(),
+                    source: "github".into(),
+                    delivery_id: format!("github:{repository_id}:{event_type}:{id}:{updated}"),
+                    event_type: event_type.into(),
+                    scope: format!("github:repository:{repository_id}"),
+                    correlation_key: github_poll_correlation(event_type, &id, &value),
+                    subject_revision: value
+                        .get("head_sha")
+                        .or_else(|| value.pointer("/head/sha"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    occurred_at: parse_occurred_at(&Value::String(updated)).ok(),
+                    payload: payload.into(),
                     provenance: Value::Null.into(),
                 });
             }
         }
-        if request.initialize {
-            events.clear();
-            newest = Some(chrono::Utc::now().to_rfc3339());
+
+        let stream = format!("{repository_id}:check_run");
+        let since = stream_checkpoint(&request.checkpoint, &stream);
+        let mut commits_url =
+            format!("https://api.github.com/repos/{repository}/commits?per_page=100");
+        if let Some(since) = &since {
+            commits_url.push_str("&since=");
+            commits_url.push_str(&urlencoding::encode(since));
         }
-        Ok(poll_response(events, json!({ "updated_at": newest })))
+        let (commits, _) = github_get(&client, token, &commits_url).await?;
+        // one check-runs request per commit is the expensive part of this poll. bounding it keeps a
+        // busy repository from spending the hourly quota in a single pass; `since` above is what
+        // keeps the steady-state list short in the first place.
+        for commit in commits
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .take(GITHUB_CHECK_RUN_COMMIT_BUDGET)
+        {
+            let Some(sha) = commit.get("sha").and_then(Value::as_str) else {
+                continue;
+            };
+            let checks = github_collect(
+                &client,
+                token,
+                format!(
+                    "https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100"
+                ),
+                Some("check_runs"),
+                None,
+                github_check_stamp,
+            )
+            .await?;
+            for check in checks {
+                let updated = github_check_stamp(&check);
+                if since
+                    .as_deref()
+                    .is_some_and(|mark| !updated.is_empty() && updated.as_str() < mark)
+                {
+                    continue;
+                }
+                let id = check.get("id").map(value_string).unwrap_or_default();
+                if id.is_empty() {
+                    continue;
+                }
+                advance(&mut marks, &stream, &updated);
+                events.push(NormalizedAdapterEvent {
+                    source: "github".into(),
+                    delivery_id: format!("github:{repository_id}:check_run:{id}:{updated}"),
+                    event_type: "check_run".into(),
+                    scope: format!("github:repository:{repository_id}"),
+                    correlation_key: check
+                        .pointer("/pull_requests/0/id")
+                        .map(|value| format!("pr:{}", value_string(value)))
+                        .unwrap_or_else(|| format!("check:{id}")),
+                    subject_revision: Some(sha.to_owned()),
+                    occurred_at: parse_occurred_at(&Value::String(updated)).ok(),
+                    payload: json!({ "repository": repository_info, "check_run": check }).into(),
+                    provenance: Value::Null.into(),
+                });
+            }
+        }
     }
-    .await;
-    result.unwrap_or_else(|error| AdapterPollResponse {
-        events: Vec::new(),
-        checkpoint: request.checkpoint,
-        retry_after_seconds: None,
-        error: Some(error),
-    })
+
+    if request.initialize {
+        // a first poll establishes the high-water mark without replaying history, so every stream
+        // that reported anything is stamped at its newest item and no event is emitted.
+        events.clear();
+    }
+    Ok(poll_response(events, stream_checkpoints(marks)))
+}
+
+/// Bound a JQL query by how long ago the checkpoint was, not by an absolute timestamp.
+///
+/// Jira interprets an absolute JQL timestamp in the *authenticating account's* timezone, while the
+/// checkpoint is UTC. On any non-UTC account that silently shifts the window by the offset and
+/// skips hours of updates. A relative bound carries no timezone at all, so it means the same thing
+/// on every instance. The margin absorbs clock skew between this host and Jira; the overlap it
+/// creates is deduplicated downstream by delivery id.
+fn jira_relative_bound(previous: &str) -> Option<String> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(previous)
+        .or_else(|_| chrono::DateTime::parse_from_str(previous, "%Y-%m-%dT%H:%M:%S%.f%z"))
+        .ok()?;
+    let elapsed = chrono::Utc::now().signed_duration_since(parsed.with_timezone(&chrono::Utc));
+    let minutes = elapsed
+        .num_minutes()
+        .saturating_add(JIRA_SKEW_MARGIN_MINUTES);
+    Some(format!(
+        "-{}m",
+        minutes.clamp(JIRA_SKEW_MARGIN_MINUTES, JIRA_MAX_LOOKBACK_MINUTES)
+    ))
+}
+
+async fn poll_jira(request: AdapterPollRequest) -> AdapterPollResponse {
+    let fallback_checkpoint = request.checkpoint.clone();
+    match poll_jira_inner(&request).await {
+        Ok(response) => response,
+        Err(PollError::RateLimited(limited)) => AdapterPollResponse {
+            events: Vec::new(),
+            checkpoint: fallback_checkpoint,
+            retry_after_seconds: limited.retry_after_seconds,
+            error: Some("Jira rate limit reached".into()),
+        },
+        Err(PollError::Failed(error)) => AdapterPollResponse {
+            events: Vec::new(),
+            checkpoint: fallback_checkpoint,
+            retry_after_seconds: None,
+            error: Some(error),
+        },
+    }
+}
+
+async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResponse, PollError> {
+    let base_url = configured_string(&request.configuration, "base_url")?.trim_end_matches('/');
+    let email = configured_string(&request.configuration, "email")?;
+    let token = poll_secret(request, "api_token")?;
+    let instance_id = configured_string(&request.configuration, "instance_id")?;
+    let jql = configured_string(&request.configuration, "jql")?;
+
+    let issue_stream = format!("{instance_id}:issue");
+    let comment_stream = format!("{instance_id}:comment");
+    let previous = stream_checkpoint(&request.checkpoint, &issue_stream);
+    let comment_previous = stream_checkpoint(&request.checkpoint, &comment_stream);
+    let query = match previous.as_deref().and_then(jira_relative_bound) {
+        Some(bound) => format!("({jql}) AND updated >= \"{bound}\""),
+        None => jql.to_owned(),
+    };
+
+    let client = reqwest::Client::new();
+    let mut issues = Vec::new();
+    let mut next_page_token: Option<String> = None;
+    for page in 0..JIRA_MAX_PAGES {
+        let requested_page_token = next_page_token.clone();
+        let mut call = client
+            .get(format!("{base_url}/rest/api/3/search/jql"))
+            .basic_auth(email, Some(token))
+            .query(&[
+                ("jql", query.as_str()),
+                ("maxResults", "100"),
+                ("fields", "summary,project,updated,comment"),
+            ]);
+        if let Some(token) = &next_page_token {
+            call = call.query(&[("nextPageToken", token)]);
+        }
+        let response = call
+            .send()
+            .await
+            .map_err(|error| PollError::Failed(error.to_string()))?;
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(PollError::RateLimited(RateLimited {
+                retry_after_seconds: retry_after_header(&response),
+            }));
+        }
+        let response = response
+            .error_for_status()
+            .map_err(|error| PollError::Failed(error.to_string()))?
+            .json::<Value>()
+            .await
+            .map_err(|error| PollError::Failed(error.to_string()))?;
+        issues.extend(
+            response
+                .get("issues")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        next_page_token = response
+            .get("nextPageToken")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .filter(|value| !value.is_empty());
+        if next_page_token.is_some() && next_page_token == requested_page_token {
+            return Err(PollError::Failed(
+                "Jira polling received a repeated page token".to_string(),
+            ));
+        }
+        if next_page_token.is_none() {
+            break;
+        }
+        if page + 1 == JIRA_MAX_PAGES {
+            return Err(PollError::Failed(format!(
+                "Jira polling exceeded {JIRA_MAX_PAGES} result pages"
+            )));
+        }
+    }
+
+    let mut marks = existing_streams(&request.checkpoint);
+    let mut events = Vec::new();
+    for issue in issues {
+        let updated = canonical_poll_timestamp(
+            issue
+                .pointer("/fields/updated")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        let issue_id = issue.get("id").map(value_string).unwrap_or_default();
+        let project = issue
+            .pointer("/fields/project/id")
+            .map(value_string)
+            .unwrap_or_default();
+        if issue_id.is_empty() || project.is_empty() {
+            continue;
+        }
+        advance(&mut marks, &issue_stream, &updated);
+        events.push(NormalizedAdapterEvent {
+            source: "jira".into(),
+            delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
+            event_type: "issue_updated".into(),
+            scope: format!("jira:{instance_id}:project:{project}"),
+            correlation_key: format!("issue:{issue_id}"),
+            subject_revision: None,
+            occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
+            payload: json!({ "issue": issue.clone() }).into(),
+            provenance: Value::Null.into(),
+        });
+        for comment in issue
+            .pointer("/fields/comment/comments")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let comment_updated = canonical_poll_timestamp(
+                comment
+                    .get("updated")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&updated),
+            );
+            if comment_previous
+                .as_deref()
+                .is_some_and(|mark| comment_updated.as_str() < mark)
+            {
+                continue;
+            }
+            advance(&mut marks, &comment_stream, &comment_updated);
+            events.push(NormalizedAdapterEvent {
+                source: "jira".into(),
+                delivery_id: format!(
+                    "jira:{instance_id}:comment:{}:{comment_updated}",
+                    comment.get("id").map(value_string).unwrap_or_default()
+                ),
+                event_type: "comment_created".into(),
+                scope: format!("jira:{instance_id}:project:{project}"),
+                correlation_key: format!("issue:{issue_id}"),
+                subject_revision: None,
+                occurred_at: parse_occurred_at(&Value::String(comment_updated)).ok(),
+                payload: json!({"issue": issue, "comment": comment}).into(),
+                provenance: Value::Null.into(),
+            });
+        }
+    }
+    if request.initialize {
+        events.clear();
+    }
+    Ok(poll_response(events, stream_checkpoints(marks)))
 }
 
 fn decode_body(request: &AdapterRequest, body_limit: usize) -> Result<(Vec<u8>, Value), String> {
@@ -1576,11 +1886,123 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn liveness_is_unauthenticated_and_discloses_nothing() {
+        // this endpoint exists so a container probe can check the sidecar without the host
+        // credential being written into the pod spec. that only stays safe while it reports
+        // nothing: `/health` keeps the catalog, plugin paths, and limits behind the bearer.
+        let (status, body) = live().await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.0;
+        assert_eq!(body, json!({ "status": "ok" }));
+        for leaked in ["plugin_paths", "limits", "kinds", "healthy"] {
+            assert!(
+                body.get(leaked).is_none(),
+                "liveness must not disclose {leaked}; it is served without authentication"
+            );
+        }
+    }
+
     #[test]
-    fn jira_checkpoint_is_rendered_in_jqls_supported_date_format() {
+    fn each_stream_keeps_its_own_high_water_mark() {
+        // one shared mark let a busy stream drag the watermark past events a quiet one had not
+        // emitted yet, silently dropping them. the marks must move independently.
+        let mut marks = BTreeMap::new();
+        advance(&mut marks, "7:pull_request", "2026-08-27T10:00:00+00:00");
+        advance(&mut marks, "7:workflow_run", "2026-08-27T12:00:00+00:00");
+        advance(&mut marks, "7:pull_request", "2026-08-27T09:00:00+00:00");
+
+        let checkpoint = stream_checkpoints(marks);
         assert_eq!(
-            jira_jql_timestamp("2026-08-27T12:34:56.789+0000"),
-            "2026-08-27 12:34"
+            stream_checkpoint(&checkpoint, "7:pull_request").as_deref(),
+            Some("2026-08-27T10:00:00+00:00"),
+            "a later mark on another stream must not drag this one forward, and a mark never moves back"
+        );
+        assert_eq!(
+            stream_checkpoint(&checkpoint, "7:workflow_run").as_deref(),
+            Some("2026-08-27T12:00:00+00:00")
+        );
+        assert_eq!(stream_checkpoint(&checkpoint, "7:check_run"), None);
+    }
+
+    #[test]
+    fn a_quiet_stream_keeps_its_position_across_a_poll() {
+        // rebuilding the map from only the streams that produced events would reset every quiet
+        // stream to a cold start, replaying its whole history on the next poll.
+        let checkpoint = json!({ "streams": { "7:check_run": "2026-08-27T08:00:00+00:00" } });
+        let mut marks = existing_streams(&checkpoint.clone().into());
+        advance(&mut marks, "7:pull_request", "2026-08-27T10:00:00+00:00");
+
+        let next = stream_checkpoints(marks);
+        assert_eq!(
+            stream_checkpoint(&next, "7:check_run").as_deref(),
+            Some("2026-08-27T08:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn a_legacy_flat_checkpoint_seeds_every_stream() {
+        // adapters already in flight carry the old single-mark shape; it must keep its position
+        // rather than reading as a cold start.
+        let legacy: Value = json!({ "updated_at": "2026-08-27T08:00:00+00:00" }).into();
+        assert_eq!(
+            stream_checkpoint(&legacy, "7:pull_request").as_deref(),
+            Some("2026-08-27T08:00:00+00:00")
+        );
+        assert_eq!(
+            stream_checkpoint(&legacy, "7:check_run").as_deref(),
+            Some("2026-08-27T08:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn a_next_page_cursor_is_read_from_the_link_header() {
+        // without following this cursor a repository with more than one page of activity dropped
+        // everything past the first hundred items as soon as the watermark moved past them.
+        assert_eq!(
+            parse_next_link(
+                "<https://api.github.com/repos/o/r/pulls?page=2>; rel=\"next\", <https://api.github.com/repos/o/r/pulls?page=9>; rel=\"last\""
+            )
+            .as_deref(),
+            Some("https://api.github.com/repos/o/r/pulls?page=2")
+        );
+        assert_eq!(
+            parse_next_link("<https://api.github.com/repos/o/r/pulls?page=9>; rel=\"last\""),
+            None,
+            "the last page has no next cursor and must end the walk"
+        );
+    }
+
+    #[test]
+    fn jira_checkpoint_is_bounded_relatively_so_no_timezone_can_shift_it() {
+        // an absolute JQL timestamp is read in the jira account's timezone while the checkpoint is
+        // utc, so the bound is expressed as an offset from now instead. two checkpoints an hour
+        // apart must therefore differ by about an hour of lookback, whatever zone either side is in.
+        let recent = chrono::Utc::now() - chrono::TimeDelta::minutes(30);
+        let bound = jira_relative_bound(&recent.to_rfc3339()).expect("a bound for a valid stamp");
+        let minutes: i64 = bound
+            .trim_start_matches('-')
+            .trim_end_matches('m')
+            .parse()
+            .expect("relative minutes");
+        assert!(
+            (33..=38).contains(&minutes),
+            "expected ~30m plus the skew margin, got {bound}"
+        );
+
+        // the same instant written in a non-utc offset must produce the same lookback.
+        let offset = recent.with_timezone(&chrono::FixedOffset::east_opt(5 * 3600).unwrap());
+        assert_eq!(jira_relative_bound(&offset.to_rfc3339()), Some(bound));
+
+        assert_eq!(jira_relative_bound("not a timestamp"), None);
+    }
+
+    #[test]
+    fn jira_lookback_is_clamped_to_the_supported_window() {
+        let ancient = chrono::Utc::now() - chrono::TimeDelta::days(365);
+        assert_eq!(
+            jira_relative_bound(&ancient.to_rfc3339()),
+            Some(format!("-{JIRA_MAX_LOOKBACK_MINUTES}m"))
         );
     }
 

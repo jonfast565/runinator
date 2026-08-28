@@ -870,14 +870,36 @@ pub struct NormalizedAdapterEvent {
     pub provenance: Value,
 }
 
+/// The narrowest identity widths every database backend can store. `scope` and `correlation_key`
+/// both sit inside one exact unique key, which mysql caps at 3072 utf8mb4 bytes, so they are far
+/// smaller than the payload limits around them. Keep these in step with the column widths in
+/// `migrations/*/20260827000002_ingress_admissions.sql`.
+pub const INGRESS_SOURCE_LIMIT: usize = 128;
+pub const INGRESS_DELIVERY_ID_LIMIT: usize = 512;
+pub const INGRESS_EVENT_TYPE_LIMIT: usize = 256;
+pub const INGRESS_SCOPE_LIMIT: usize = 255;
+pub const INGRESS_CORRELATION_KEY_LIMIT: usize = 255;
+
 impl NormalizedAdapterEvent {
     pub fn validate_identity(&self) -> Result<(), String> {
         for (name, value, limit) in [
-            ("source", self.source.as_str(), 128usize),
-            ("delivery_id", self.delivery_id.as_str(), 512usize),
-            ("event_type", self.event_type.as_str(), 256usize),
-            ("scope", self.scope.as_str(), 1024usize),
-            ("correlation_key", self.correlation_key.as_str(), 1024usize),
+            ("source", self.source.as_str(), INGRESS_SOURCE_LIMIT),
+            (
+                "delivery_id",
+                self.delivery_id.as_str(),
+                INGRESS_DELIVERY_ID_LIMIT,
+            ),
+            (
+                "event_type",
+                self.event_type.as_str(),
+                INGRESS_EVENT_TYPE_LIMIT,
+            ),
+            ("scope", self.scope.as_str(), INGRESS_SCOPE_LIMIT),
+            (
+                "correlation_key",
+                self.correlation_key.as_str(),
+                INGRESS_CORRELATION_KEY_LIMIT,
+            ),
         ] {
             if value.trim().is_empty() {
                 return Err(format!("normalized adapter {name} must not be empty"));

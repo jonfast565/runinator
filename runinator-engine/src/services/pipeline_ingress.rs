@@ -3,6 +3,7 @@
 use chrono::Utc;
 use runinator_models::{
     orchestration::{
+        INGRESS_CORRELATION_KEY_LIMIT, INGRESS_DELIVERY_ID_LIMIT, INGRESS_EVENT_TYPE_LIMIT,
         IngressAction, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
         IngressEventDisposition, IngressInboxEntry, IngressLifecycle, IngressPolicy, IngressTarget,
         IngressTargetKind,
@@ -26,6 +27,44 @@ pub struct PipelineIngressRequest {
     pub payload: Value,
     pub provenance: Value,
     pub occurred_at: Option<chrono::DateTime<Utc>>,
+}
+
+impl PipelineIngressRequest {
+    /// Reject an identity no backend can store before it reaches an insert. `scope` and
+    /// `correlation_key` share one exact unique key that mysql caps at 3072 utf8mb4 bytes, so an
+    /// oversized value is a dialect-dependent insert failure rather than a clean rejection.
+    /// `source` here is the composed `adapter:<id>:<source>` form, which is why its bound is wider
+    /// than the adapter-side one.
+    fn validate_identity(&self) -> Result<(), String> {
+        for (name, value, limit) in [
+            ("source", self.source.as_str(), 191usize),
+            (
+                "event_id",
+                self.event_id.as_str(),
+                INGRESS_DELIVERY_ID_LIMIT,
+            ),
+            (
+                "event_type",
+                self.event_type.as_str(),
+                INGRESS_EVENT_TYPE_LIMIT,
+            ),
+            (
+                "correlation_key",
+                self.correlation_key.as_str(),
+                INGRESS_CORRELATION_KEY_LIMIT,
+            ),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("ingress {name} must not be empty"));
+            }
+            if value.len() > limit {
+                return Err(format!(
+                    "ingress {name} is longer than the {limit} characters every backend can store"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +142,9 @@ where
         .map_err(|error| {
             PipelineIngressError::Invalid(format!("invalid pipeline ingress policy: {error}"))
         })?;
+        request
+            .validate_identity()
+            .map_err(PipelineIngressError::Invalid)?;
         let event = IngressEvent {
             source: request.source,
             event_id: request.event_id,
@@ -153,8 +195,15 @@ where
                 }
             }
         }
-        let mut admission = admission.expect("ingress admission resolved");
-        let admission_id = admission.id.expect("stored admission id");
+        // these were `expect`s when this lived in an http handler, where a panic cost one request.
+        // the same code now also runs on the engine's poll loop, where a panic takes down every
+        // background loop with it, so an impossible state degrades to an error instead.
+        let mut admission = admission.ok_or_else(|| {
+            PipelineIngressError::Internal("ingress admission was not resolved".into())
+        })?;
+        let admission_id = admission.id.ok_or_else(|| {
+            PipelineIngressError::Internal("resolved ingress admission has no stored id".into())
+        })?;
         if start_record.is_none() {
             if let Some(entry) = ingress
                 .duplicate(admission_id, &event)
@@ -291,7 +340,9 @@ where
                 }
             }
         }
-        let start_entry = start_record.expect("start event record");
+        let start_entry = start_record.ok_or_else(|| {
+            PipelineIngressError::Internal("ingress start event was not recorded".into())
+        })?;
         if pipeline.metadata.get("orchestration").is_some() {
             let orchestrations = OrchestrationOperations::new(self.store.clone());
             let binding = orchestrations

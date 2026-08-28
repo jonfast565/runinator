@@ -10,9 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use runinator_adapter_contract::{
-    AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse,
-};
+use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
 use runinator_engine::services::{AdapterOperations, PipelineOperations};
 use runinator_models::{
@@ -41,52 +39,9 @@ use uuid::Uuid;
 
 use super::pipelines::process_pipeline_ingress;
 
-fn host_url() -> String {
-    std::env::var("RUNINATOR_ADAPTER_HOST_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8790".into())
-        .trim_end_matches('/')
-        .to_owned()
-}
-
-fn host_token() -> Result<String, String> {
-    std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN")
-        .map_err(|_| "RUNINATOR_ADAPTER_HOST_TOKEN is not configured".into())
-}
-
-async fn host_get(path: &str) -> Result<serde_json::Value, String> {
-    let token = host_token()?;
-    let response = reqwest::Client::new()
-        .get(format!("{}{path}", host_url()))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("adapter host is unavailable: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("adapter host returned {}", response.status()));
-    }
-    response.json().await.map_err(|error| error.to_string())
-}
-
-async fn host_post(path: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
-    let token = host_token()?;
-    let response = reqwest::Client::new()
-        .post(format!("{}{path}", host_url()))
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| format!("adapter host is unavailable: {error}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let message = response.text().await.unwrap_or_default();
-        return Err(format!("adapter host returned {status}: {message}"));
-    }
-    response.json().await.map_err(|error| error.to_string())
-}
-
 async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String>
 {
-    serde_json::from_value(host_get("/kinds").await?).map_err(|error| error.to_string())
+    runinator_adapter_client::kinds().await
 }
 
 fn org_id(ctx: &AuthContext) -> Result<Uuid, (StatusCode, Json<ApiResponse>)> {
@@ -172,14 +127,19 @@ fn validate_definition(
         ));
     }
     if request.transport == AdapterTransport::Polling {
-        let interval = request
-            .configuration
-            .get("poll_interval_seconds")
-            .and_then(|value| value.as_i64())
-            .and_then(|value| u64::try_from(value).ok())
-            .unwrap_or(60);
-        if !(30..=3_600).contains(&interval) {
-            return Err("poll_interval_seconds must be between 30 and 3600".into());
+        // an absent interval takes the default; a present one must be a valid integer in range.
+        // folding a negative or non-numeric value into the default would accept a configuration the
+        // poll loop then silently clamps to something the author never asked for.
+        match request.configuration.get("poll_interval_seconds") {
+            None | Some(runinator_models::value::Value::Null) => {}
+            Some(value) => {
+                let interval = value.as_i64().ok_or(
+                    "poll_interval_seconds must be an integer number of seconds".to_string(),
+                )?;
+                if !(30..=3_600).contains(&interval) {
+                    return Err("poll_interval_seconds must be between 30 and 3600".into());
+                }
+            }
         }
         match request.kind.as_str() {
             "github" if valid_github_repositories(&request.configuration) && request.secret_bindings.contains_key("access_token") => return Ok(()),
@@ -591,20 +551,16 @@ pub async fn test<
     };
     if revision.transport == AdapterTransport::Polling {
         let configuration = request.configuration.unwrap_or(revision.configuration);
-        let response: AdapterPollResponse = match host_post(
-            "/poll",
-            serde_json::json!({
-                "kind": adapter.kind,
-                "request": AdapterPollRequest {
-                    configuration: serde_json::to_value(configuration).unwrap_or_default(),
-                    secrets,
-                    checkpoint: serde_json::Value::Null,
-                    initialize: false,
-                }
-            }),
+        let response: AdapterPollResponse = match runinator_adapter_client::poll(
+            &adapter.kind,
+            AdapterPollRequest {
+                configuration: serde_json::to_value(configuration).unwrap_or_default(),
+                secrets,
+                checkpoint: serde_json::Value::Null,
+                initialize: false,
+            },
         )
         .await
-        .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
         {
             Ok(value) => value,
             Err(error) => return api_error(error),
@@ -637,19 +593,8 @@ pub async fn test<
         .unwrap_or_default(),
         secrets,
     };
-    match host_post(
-        "/verify-normalize",
-        serde_json::json!({ "kind": adapter.kind, "request": adapter_request }),
-    )
-    .await
-    {
-        Ok(value) => {
-            let normalized: AdapterResponse = match serde_json::from_value(value) {
-                Ok(value) => value,
-                Err(error) => {
-                    return api_error(format!("adapter host returned malformed output: {error}"));
-                }
-            };
+    match runinator_adapter_client::verify_normalize(&adapter.kind, adapter_request).await {
+        Ok(normalized) => {
             let mut previews = Vec::new();
             if normalized.verified {
                 for event in &normalized.events {
@@ -683,15 +628,15 @@ pub async fn health<T: RbacStore>(
     if !ctx.is_platform_admin() {
         return forbidden();
     }
-    match host_get("/health").await {
+    match runinator_adapter_client::health().await {
         Ok(value) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(
                 serde_json::json!({
                     "host": value,
                     "web_service": {
-                        "adapter_host_url": host_url(),
-                        "adapter_host_token_configured": host_token().is_ok(),
+                        "adapter_host_url": runinator_adapter_client::host_url(),
+                        "adapter_host_token_configured": runinator_adapter_client::host_token().is_ok(),
                         "webhook_body_limit_bytes": webhook_body_limit(),
                         "webhook_header_allowlist": webhook_header_allowlist(),
                     }
@@ -710,7 +655,7 @@ pub async fn reload<T: RbacStore>(
     if !ctx.is_platform_admin() {
         return forbidden();
     }
-    match host_post("/reload", serde_json::json!({})).await {
+    match runinator_adapter_client::reload().await {
         Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value.into()))),
         Err(error) => api_error(error),
     }
@@ -777,18 +722,9 @@ pub async fn webhook<
         configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
         secrets,
     };
-    let normalized: AdapterResponse = match host_post(
-        "/verify-normalize",
-        serde_json::json!({ "kind": adapter.kind, "request": request }),
-    )
-    .await
+    let normalized = match runinator_adapter_client::verify_normalize(&adapter.kind, request).await
     {
-        Ok(value) => match serde_json::from_value(value) {
-            Ok(response) => response,
-            Err(error) => {
-                return api_error(format!("adapter host returned malformed output: {error}"));
-            }
-        },
+        Ok(value) => value,
         Err(error) => return api_error(error),
     };
     if !normalized.verified {
@@ -826,7 +762,6 @@ pub async fn webhook<
             Err(error) => return bad_request(error),
         };
         let reply = process_pipeline_ingress(
-            db.clone(),
             pipelines.clone(),
             pipeline_id,
             Some(adapter.org_id),

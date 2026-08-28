@@ -16,7 +16,7 @@ export const buildInfo: BuildInfo = {
   builtAt: __APP_BUILD_TIME__,
 };
 
-/** compact one-line stamp for chrome: `v0.3.496 · a1b2c3d`. */
+/** compact one-line stamp for chrome: `v0.3.498 · a1b2c3d`. */
 export function versionLabel(info: BuildInfo = buildInfo): string {
   const version = `v${info.version}`;
   return info.buildId ? `${version} · ${info.buildId}` : version;

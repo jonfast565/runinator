@@ -46,6 +46,15 @@ That script runs `cargo build --workspace`, starts the supervisor in daemon mode
 http://127.0.0.1:8080/
 ```
 
+The supervisor also starts `runinator-adapter-host` on `127.0.0.1:8790`, which
+verifies orchestration webhook deliveries and performs adapter polling. It binds
+loopback only, deliberately, because it is the process that loads adapter code.
+The web service reaches it through `RUNINATOR_ADAPTER_HOST_URL` and shares its
+`RUNINATOR_ADAPTER_HOST_TOKEN`; both are set in `runinator-supervisor.json`. Point
+`RUNINATOR_ADAPTER_PLUGIN_PATHS` at a directory of built adapter libraries to load
+dynamic adapter kinds alongside the built-in GitHub, Jira, and generic-webhook
+ones. Without this process running, every orchestration adapter surface fails.
+
 ### API reference (OpenAPI)
 
 The web service generates an OpenAPI 3.1 document automatically from `utoipa`

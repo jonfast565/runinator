@@ -31,6 +31,7 @@ members = [
     "runinator-console",
     "runinator-api",
     "runinator-plugin",
+    "runinator-adapter-client",
     "runinator-adapter-contract",
     "runinator-adapter-sdk",
     "runinator-adapter-host",
@@ -73,4 +74,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.497"
+version = "0.3.498"

@@ -314,7 +314,7 @@ pub async fn ingress_pipeline_run<
     {
         return reply;
     }
-    process_pipeline_ingress(db, service, pipeline_id, ctx.org_id, request, None).await
+    process_pipeline_ingress(service, pipeline_id, ctx.org_id, request, None).await
 }
 
 /// Provider-neutral ingress core shared by authenticated direct calls and verified adapter events.
@@ -326,7 +326,6 @@ pub async fn process_pipeline_ingress<
         + IngressStore
         + OrchestrationStore,
 >(
-    _db: Arc<T>,
     service: Arc<PipelineOperations<T>>,
     pipeline_id: Uuid,
     caller_org_id: Option<Uuid>,

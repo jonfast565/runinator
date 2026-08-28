@@ -1,11 +1,19 @@
 -- One durable owner for each provider-neutral ingress correlation key.  `org_scope` normalizes
 -- the nullable organization id so the unique constraint also protects global definitions.
+--
+-- The widths below are bounded by mysql's 3072-byte index limit, not by the identities themselves:
+-- every indexed column is utf8mb4, so a key costs four bytes per declared character.  mariadb's
+-- limit is 3500, so the original 36+255+512 (3212 bytes) built there and failed on mysql 8 with
+-- "Specified key was too long".  Both unique keys below are exact rather than prefixed on purpose:
+-- a prefix on a dedupe constraint would falsely reject two distinct identities sharing a prefix.
+-- `validate_identity` in runinator-models enforces the matching application-side bound, so keep
+-- the two in step.
 CREATE TABLE IF NOT EXISTS ingress_admissions (
     id BINARY(16) PRIMARY KEY,
     org_scope VARCHAR(36) NOT NULL,
     org_id BINARY(16) NULL,
     scope VARCHAR(255) NOT NULL,
-    correlation_key VARCHAR(512) NOT NULL,
+    correlation_key VARCHAR(255) NOT NULL,
     generation BIGINT NOT NULL,
     target_kind VARCHAR(16) NOT NULL,
     target_id BINARY(16) NOT NULL,
@@ -21,8 +29,8 @@ CREATE TABLE IF NOT EXISTS ingress_admissions (
 CREATE TABLE IF NOT EXISTS ingress_events (
     id BINARY(16) PRIMARY KEY, admission_id BINARY(16) NOT NULL,
     sequence BIGINT NOT NULL, generation BIGINT NOT NULL,
-    source VARCHAR(255) NOT NULL, event_id VARCHAR(512) NOT NULL,
-    event_type VARCHAR(255) NOT NULL, correlation_key VARCHAR(512) NOT NULL,
+    source VARCHAR(191) NOT NULL, event_id VARCHAR(512) NOT NULL,
+    event_type VARCHAR(255) NOT NULL, correlation_key VARCHAR(255) NOT NULL,
     payload LONGTEXT NOT NULL, occurred_at BIGINT NULL, received_at BIGINT NOT NULL,
     disposition VARCHAR(32) NOT NULL, queue_state VARCHAR(16) NOT NULL,
     claim_token BINARY(16) NULL, promoted_generation BIGINT NULL,

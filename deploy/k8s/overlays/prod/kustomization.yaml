@@ -30,6 +30,9 @@ images:
   - name: runinator-ctl
     newName: REPLACE_REGISTRY/runinator-ctl
     newTag: latest
+  - name: runinator-adapter-host
+    newName: REPLACE_REGISTRY/runinator-adapter-host
+    newTag: latest
   - name: runinator-bootstrap
     newName: REPLACE_REGISTRY/runinator-bootstrap
     newTag: latest

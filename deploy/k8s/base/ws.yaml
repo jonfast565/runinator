@@ -68,6 +68,8 @@ spec:
             - "--broker-endpoint"
             - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
           env:
+            - name: RUNINATOR_ADAPTER_HOST_URL
+              value: "http://127.0.0.1:8790"
             # gate the HTTP API behind login + api keys. the jwt signing secret is managed in the db
             # (load_jwt_secret) and shared across replicas; only the toggle lives here.
             - name: RUNINATOR_AUTH_ENABLED
@@ -126,6 +128,8 @@ spec:
                 name: runinator-app-secret
             - secretRef:
                 name: runinator-blob-secret
+            - secretRef:
+                name: runinator-adapter-secret
           ports:
             - containerPort: 8080
               name: http
@@ -149,3 +153,36 @@ spec:
             limits:
               cpu: "1000m"
               memory: "512Mi"
+        # the adapter host loads and runs orchestration adapter code, so it binds loopback only and
+        # is reached over the pod's shared network namespace rather than a Service. the main
+        # container calls it for the kind catalog, webhook verification, adapter tests, and the
+        # engine's durable adapter polling.
+        - name: adapter-host
+          image: runinator-adapter-host:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-adapter-host"]
+          env:
+            - name: RUNINATOR_ADAPTER_HOST_PORT
+              value: "8790"
+          envFrom:
+            - secretRef:
+                name: runinator-adapter-secret
+          readinessProbe:
+            httpGet:
+              path: /live
+              port: 8790
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 8790
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

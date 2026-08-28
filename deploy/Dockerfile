@@ -13,6 +13,7 @@
 #   docker build -f deploy/Dockerfile --target bootstrap  -t runinator-bootstrap:dev  .
 #   docker build -f deploy/Dockerfile --target broker     -t runinator-broker:dev     .
 #   docker build -f deploy/Dockerfile --target blob       -t runinator-blob:dev       .
+#   docker build -f deploy/Dockerfile --target adapter-host -t runinator-adapter-host:dev .
 #
 # with BuildKit (the default) the builder stage layer is shared across these target builds, so the
 # expensive compile runs once for the whole set.
@@ -28,7 +29,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.3.497
+ARG RUNINATOR_VERSION=0.3.498
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -72,6 +73,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         -p runinator-bootstrap \
         -p runinator-broker \
         -p runinator-blob \
+        -p runinator-adapter-host \
         --features "$database_features,$broker_features,runinator-ws/kubernetes,runinator-broker/tcp,runinator-blob/server" \
     && mkdir -p /out \
     && cp target/release/runinator-ws \
@@ -83,6 +85,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
           target/release/runinator-bootstrap \
           target/release/runinator-broker \
           target/release/runinator-blob \
+          target/release/runinator-adapter-host \
           /out/
 
 # ---- shared runtime base ----
@@ -152,6 +155,16 @@ EXPOSE 9000
 VOLUME ["/var/lib/runinator/blobs"]
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-blob"]
+
+# ---- adapter-host: orchestration adapter verification and polling ----
+# this runs as a sidecar rather than its own service: it binds loopback only, deliberately, because
+# it is the process that loads adapter code. the static musl link means it has no dynamic loader
+# either, so in a container it serves the compiled-in kinds and ignores RUNINATOR_ADAPTER_PLUGIN_PATHS.
+FROM runtime-base AS adapter-host
+COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /usr/local/bin/runinator-adapter-host
+ENV RUNINATOR_ADAPTER_HOST_PORT=8790
+USER runinator
+ENTRYPOINT ["/usr/local/bin/runinator-adapter-host"]
 
 # ---- ctl: short-lived pack importer ----
 FROM runtime-base AS ctl

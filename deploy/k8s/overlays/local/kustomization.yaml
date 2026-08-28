@@ -98,6 +98,9 @@ images:
   - name: runinator-ctl
     newName: runinator-ctl
     newTag: dev
+  - name: runinator-adapter-host
+    newName: runinator-adapter-host
+    newTag: dev
   - name: runinator-bootstrap
     newName: runinator-bootstrap
     newTag: dev

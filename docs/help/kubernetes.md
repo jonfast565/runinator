@@ -78,7 +78,7 @@ Every rust service is one `--target` of the shared `deploy/Dockerfile`, so the
 whole dependency graph compiles once for the entire set:
 
 ```bash
-for t in ws engine-worker waker worker archiver blob ctl bootstrap broker; do
+for t in ws engine-worker waker worker archiver blob ctl bootstrap broker adapter-host; do
   docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
 done
 ```
@@ -96,6 +96,38 @@ selected values must match the database and broker configured by the selected
 Kustomize manifest. The bundled overlays provision only Postgres and RabbitMQ,
 so other combinations need an overlay that points at the corresponding
 external services.
+
+#### The adapter-host sidecar
+
+`runinator-adapter-host` verifies webhook deliveries and performs orchestration
+adapter polling. It runs as a **sidecar** in the `ws` and `engine-worker` pods
+rather than as its own Service: it binds loopback only, deliberately, because it
+is the process that loads adapter code. Callers reach it over the pod's shared
+network namespace at `http://127.0.0.1:8790`.
+
+Both the sidecar and the container calling it read
+`RUNINATOR_ADAPTER_HOST_TOKEN` from the `runinator-adapter-secret` Secret; it
+authenticates that loopback hop only and is not an API credential. The caller
+additionally reads `RUNINATOR_ADAPTER_HOST_URL`. Without the sidecar running,
+every orchestration adapter surface fails — the kind catalog, webhook delivery,
+adapter tests, and polling.
+
+Because image binaries are statically linked (below), the sidecar serves only the
+adapter kinds compiled into it and ignores `RUNINATOR_ADAPTER_PLUGIN_PATHS`; a
+dynamically loaded adapter needs a host build, the same way plugins do.
+
+It is **not** a `ReplicaKind`, and should not become one. A replica kind is a thing
+the provisioner scales and the node-pools UI lists; a sidecar's count is its parent
+deployment's count by construction, so it has no independent scaling axis and its
+heartbeat would only restate the pod's. Liveness is a container probe instead:
+`GET /live` is unauthenticated and reports nothing but that the process is serving,
+because a probe cannot present the host credential without writing it into the pod
+spec. `GET /health` — the catalog, plugin paths, and limits — stays behind the
+bearer, and is surfaced to operators through the web service's
+`/orchestrations/adapters/health`.
+
+Note that ws readiness deliberately does *not* depend on the sidecar: an adapter
+outage must not take the whole API out of rotation.
 
 Image binaries are **statically linked** (`+crt-static` is the musl default).
 A static binary has no dynamic loader, so containerized workers cannot `dlopen`

@@ -1,0 +1,11 @@
+[package]
+name = "runinator-adapter-client"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+runinator-adapter-contract = { path = "../runinator-adapter-contract" }
+runinator-models = { path = "../runinator-models" }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

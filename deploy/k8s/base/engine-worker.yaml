@@ -51,6 +51,8 @@ spec:
             - "--broker-client-id"
             - "runinator-engine-worker-$(POD_NAME)"
           env:
+            - name: RUNINATOR_ADAPTER_HOST_URL
+              value: "http://127.0.0.1:8790"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -66,6 +68,8 @@ spec:
                 name: runinator-app-secret
             - secretRef:
                 name: runinator-blob-secret
+            - secretRef:
+                name: runinator-adapter-secret
           resources:
             requests:
               cpu: "100m"
@@ -73,3 +77,36 @@ spec:
             limits:
               cpu: "1000m"
               memory: "512Mi"
+        # the adapter host loads and runs orchestration adapter code, so it binds loopback only and
+        # is reached over the pod's shared network namespace rather than a Service. the main
+        # container calls it for the kind catalog, webhook verification, adapter tests, and the
+        # engine's durable adapter polling.
+        - name: adapter-host
+          image: runinator-adapter-host:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-adapter-host"]
+          env:
+            - name: RUNINATOR_ADAPTER_HOST_PORT
+              value: "8790"
+          envFrom:
+            - secretRef:
+                name: runinator-adapter-secret
+          readinessProbe:
+            httpGet:
+              path: /live
+              port: 8790
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 8790
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
