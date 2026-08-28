@@ -20,7 +20,7 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{FileStore, RunStore, ScheduleStore, WorkflowVmStore},
+    roles::{FileStore, OrchestrationStore, RunStore, ScheduleStore, WorkflowVmStore},
 };
 use uuid::Uuid;
 
@@ -55,6 +55,33 @@ impl<T> RunOperations<T> {
         if let Some(signals) = &self.signals {
             signals.nudge_workflow_vm();
         }
+    }
+}
+
+impl<T: RuntimeStore + OrchestrationStore> RunOperations<T> {
+    /// Resolve whether a workflow run is owned by a correlated pipeline execution. Keeping this
+    /// traversal in the run service makes every transport apply the same managed-run guard.
+    pub async fn managed_orchestration_binding(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Option<runinator_models::orchestration::OrchestrationBinding>, SendableError> {
+        let Some(pipeline_run_id) = self
+            .store
+            .fetch_workflow_run(workflow_run_id)
+            .await?
+            .and_then(|run| run.pipeline_run_id)
+        else {
+            return Ok(None);
+        };
+        let Some(binding_id) = self
+            .store
+            .fetch_pipeline_run(pipeline_run_id)
+            .await?
+            .and_then(|run| run.orchestration_binding_id)
+        else {
+            return Ok(None);
+        };
+        self.store.fetch_orchestration_binding(binding_id).await
     }
 }
 

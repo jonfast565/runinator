@@ -234,12 +234,13 @@ pipeline "Correlated work" {
         intent "continue" effect resume priority 50
         intent "revision_observed" effect signal priority 10 revision "/subject_revision" signal "subject_updated" allow_self_originated
         budget "deterministic" attempts 2 exhausted pause
-        budget "transient" attempts 3 exhausted pause
+        budget "transient" attempts 3 exhausted pause via "acme.work.planning"
         phase "acme.work.implementation" {
             subject_revision from "/candidate_revision"
             resources from "/resources"
             evidence from "/evidence"
             failure_class from "/failure_class"
+            correlations from "/correlations"
             workspace scope "source" reuse lease 10m recovery wait labels { "capability": "git" }
         }
     }
@@ -290,6 +291,18 @@ pipeline "Correlated work" {
             .and_then(|value| value.as_str()),
         Some("wait")
     );
+    assert_eq!(
+        policy
+            .pointer("/budgets/transient/handoff")
+            .and_then(|value| value.as_str()),
+        Some("acme.work.planning")
+    );
+    assert_eq!(
+        policy
+            .pointer("/phases/acme.work.implementation/result/correlations")
+            .and_then(|value| value.as_str()),
+        Some("/correlations")
+    );
     let rendered = pipeline_to_rexrapp(&bundle);
     let reparsed = parse_pipeline_str(&rendered).expect("reparse orchestration policy");
     assert_eq!(bundle, reparsed);
@@ -323,6 +336,60 @@ pipeline "P" {
     )
     .unwrap_err();
     assert!(unknown.to_string().contains("does not exist"), "{unknown}");
+}
+
+#[test]
+fn orchestration_and_dispatch_routes_must_form_one_valid_pipeline_policy() {
+    let missing_ingress = parse_pipeline_str(
+        r#"
+pipeline "P" {
+    orchestration { intent "refresh" effect observe priority 10 }
+    workflow "acme.test.member"
+}
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        missing_ingress
+            .to_string()
+            .contains("requires an ingress policy"),
+        "{missing_ingress}"
+    );
+
+    let unmanaged_dispatch = parse_pipeline_str(
+        r#"
+pipeline "P" {
+    ingress scope "items" {
+        on "updated" when active -> dispatch "refresh"
+    }
+    workflow "acme.test.member"
+}
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        unmanaged_dispatch
+            .to_string()
+            .contains("requires an orchestration policy"),
+        "{unmanaged_dispatch}"
+    );
+
+    let unknown_intent = parse_pipeline_str(
+        r#"
+pipeline "P" {
+    ingress scope "items" {
+        on "updated" when active -> dispatch "missing"
+    }
+    orchestration { intent "refresh" effect observe priority 10 }
+    workflow "acme.test.member"
+}
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        unknown_intent.to_string().contains("does not exist"),
+        "{unknown_intent}"
+    );
 }
 
 const MEMBER_FAILURE_MODES: &str = r#"

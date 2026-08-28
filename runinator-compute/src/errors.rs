@@ -96,6 +96,8 @@ pub enum WorkflowValidationError {
         on: String,
         reason: String,
     },
+    #[error("WORKFLOW031 - workflow ingress policy is invalid: {0}")]
+    InvalidIngressPolicy(String),
 }
 
 // numbered error dictionary for the workflow validator.
@@ -247,6 +249,11 @@ pub const INTERRUPT_HANDLER_NOT_ISOLATABLE: ErrorDescriptor = ErrorDescriptor::n
     "workflow.interrupt_handler_not_isolatable",
     "Interrupt handler region is not single-entry/single-exit",
 );
+pub const INVALID_INGRESS_POLICY: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW031",
+    "workflow.invalid_ingress_policy",
+    "Ingress policy is invalid for a workflow",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_NODES,
@@ -279,6 +286,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_NODE_REFERENCE_TYPE,
     MUTEX_RELEASE_BEFORE_ACQUIRE,
     INTERRUPT_HANDLER_NOT_ISOLATABLE,
+    INVALID_INGRESS_POLICY,
 ];
 
 impl EngineErrors for WorkflowValidationError {

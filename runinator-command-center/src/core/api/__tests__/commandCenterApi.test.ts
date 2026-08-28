@@ -2,15 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setCommandRuntime } from "../runtime";
 import { apiBaseUrl, invokeViaHttp, wsBaseUrl } from "../httpRuntime";
 import {
+  addOrchestrationAlias,
   addTeamMember,
   cancelPipelineRun,
   cancelWorkflowRun,
   clearConsoleSession,
   createApiKey,
   createUser,
+  deleteOrchestrationAlias,
   deliverSignal,
   fetchEnumCatalogs,
   fetchNodeKinds,
+  fetchOrchestrationAliases,
   fetchTriggerKinds,
   fetchWorkflowRun,
   importPackArchive,
@@ -632,6 +635,38 @@ describe("run side-channel endpoints in web mode", () => {
         method: "POST",
         body: JSON.stringify({ name: "approved", payload: { by: "ada" } }),
       }),
+    );
+  });
+
+  it("maps the orchestration correlation alias lifecycle", async () => {
+    const orchestrationId = "00000000-0000-0000-0000-000000000090";
+    const aliasId = "00000000-0000-0000-0000-000000000091";
+
+    await fetchOrchestrationAliases(orchestrationId);
+    await addOrchestrationAlias(orchestrationId, "github", "pull-requests", "octo/repo#42");
+    await deleteOrchestrationAlias(orchestrationId, aliasId);
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      `/api/orchestrations/${orchestrationId}/aliases`,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      `/api/orchestrations/${orchestrationId}/aliases`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          source: "github",
+          scope: "pull-requests",
+          correlation_key: "octo/repo#42",
+        }),
+      }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      3,
+      `/api/orchestrations/${orchestrationId}/aliases/${aliasId}`,
+      expect.objectContaining({ method: "DELETE" }),
     );
   });
 });

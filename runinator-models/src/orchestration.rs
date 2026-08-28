@@ -213,6 +213,35 @@ impl IngressPolicy {
         }
         Ok(())
     }
+
+    /// Validate the dispatch portion of an ingress policy against the orchestration policy that
+    /// will consume it. Workflows and unmanaged pipelines pass `None`, because they have no named
+    /// intent reducer; managed pipelines pass their snapshotted policy.
+    pub fn validate_dispatches(
+        &self,
+        orchestration: Option<&OrchestrationPolicy>,
+    ) -> Result<(), String> {
+        self.validate()?;
+        for route in self
+            .routes
+            .iter()
+            .filter(|route| route.action == IngressAction::Dispatch)
+        {
+            let Some(orchestration) = orchestration else {
+                return Err(format!(
+                    "ingress dispatch intent '{}' requires an orchestration policy",
+                    route.intent.as_deref().unwrap_or_default()
+                ));
+            };
+            let intent = route.intent.as_deref().unwrap_or_default();
+            if !orchestration.intents.contains_key(intent) {
+                return Err(format!(
+                    "ingress dispatch intent '{intent}' does not exist in the orchestration policy"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl IngressLifecycle {
@@ -821,6 +850,29 @@ impl NormalizedAdapterEvent {
     }
 }
 
+/// Validate an alternate correlation identity against the narrowest storage contract supported by
+/// every database backend. Alias identities are intentionally smaller than arbitrary normalized
+/// event identities because all three values participate in one unique lookup key.
+pub fn validate_correlation_alias_identity(
+    source: &str,
+    scope: &str,
+    correlation_key: &str,
+) -> Result<(), String> {
+    for (name, value, limit) in [
+        ("source", source, 128usize),
+        ("scope", scope, 255usize),
+        ("correlation_key", correlation_key, 255usize),
+    ] {
+        if value.trim().is_empty() {
+            return Err(format!("correlation alias {name} must not be empty"));
+        }
+        if value.len() > limit || value.chars().any(char::is_control) {
+            return Err(format!("correlation alias {name} is not a valid identity"));
+        }
+    }
+    Ok(())
+}
+
 /// Opaque event accepted by the generic workflow/pipeline ingress surface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngressEvent {
@@ -1023,6 +1075,47 @@ mod ingress_policy_tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn dispatch_routes_require_a_matching_orchestration_intent() {
+        let policy = IngressPolicy {
+            scope: "items".into(),
+            routes: vec![IngressRoute {
+                event_type: "changed".into(),
+                lifecycle: IngressLifecycle::Active,
+                action: IngressAction::Dispatch,
+                predicates: vec![],
+                intent: Some("refresh".into()),
+            }],
+        };
+        assert!(policy.validate_dispatches(None).is_err());
+
+        let mut orchestration = OrchestrationPolicy::default();
+        orchestration.intents.insert(
+            "refresh".into(),
+            IntentPolicy {
+                effect: ControlEffect::Observe,
+                priority: 10,
+                coalesce_seconds: None,
+                stop: EpochStopAction::Cancel,
+                restart: RestartSelector::Entry,
+                subject_revision_pointer: None,
+                allow_self_originated: false,
+                signal_name: None,
+            },
+        );
+        assert!(policy.validate_dispatches(Some(&orchestration)).is_ok());
+
+        orchestration.intents.clear();
+        assert!(policy.validate_dispatches(Some(&orchestration)).is_err());
+    }
+
+    #[test]
+    fn correlation_alias_identity_matches_the_cross_database_key_limits() {
+        assert!(validate_correlation_alias_identity("github", "issues", "owner/repo#42").is_ok());
+        assert!(validate_correlation_alias_identity("github", "issues", "\n").is_err());
+        assert!(validate_correlation_alias_identity("github", "issues", &"x".repeat(256)).is_err());
     }
 }
 

@@ -1,6 +1,8 @@
 export {
+  addOrchestrationAlias,
   applyAdapter,
   deleteAdapter,
+  deleteOrchestrationAlias,
   fetchAdapter,
   fetchAdapterHealth,
   fetchAdapterKinds,
@@ -8,6 +10,7 @@ export {
   fetchAdapters,
   fetchExternalOperations,
   fetchOrchestration,
+  fetchOrchestrationAliases,
   fetchOrchestrationCommands,
   fetchOrchestrationEpochs,
   fetchOrchestrationEvents,

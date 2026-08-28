@@ -1,5 +1,6 @@
 use super::*;
 use runinator_models::artifacts::ArtifactPath;
+use runinator_models::orchestration::{IngressPolicy, OrchestrationPolicy};
 use runinator_models::pipelines::{
     PIPELINE_GRAPH_VERSION, PipelineBundle, PipelineExecutionContext, PipelineGraph, PipelineJoin,
     PipelineLink, PipelineMember, PipelineRun, PipelineRunDetail, PipelineRunEdgeState,
@@ -180,6 +181,50 @@ fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
             )));
         }
         validate_mapping(&join.parameters)?;
+    }
+
+    let ingress = pipeline
+        .metadata
+        .get("ingress")
+        .map(|value| {
+            serde_json::from_value::<IngressPolicy>(value.clone().into()).map_err(|error| {
+                invalid_pipeline(format!("invalid pipeline ingress policy: {error}"))
+            })
+        })
+        .transpose()?;
+    let orchestration = pipeline
+        .metadata
+        .get("orchestration")
+        .map(|value| {
+            serde_json::from_value::<OrchestrationPolicy>(value.clone().into()).map_err(|error| {
+                invalid_pipeline(format!("invalid pipeline orchestration policy: {error}"))
+            })
+        })
+        .transpose()?;
+    if let Some(orchestration) = orchestration.as_ref() {
+        orchestration
+            .validate(
+                pipeline
+                    .graph
+                    .members
+                    .iter()
+                    .map(|member| member.key.as_str()),
+            )
+            .map_err(|message| {
+                invalid_pipeline(format!("invalid pipeline orchestration policy: {message}"))
+            })?;
+        if ingress.is_none() {
+            return Err(invalid_pipeline(
+                "a pipeline orchestration policy requires an ingress policy",
+            ));
+        }
+    }
+    if let Some(ingress) = ingress.as_ref() {
+        ingress
+            .validate_dispatches(orchestration.as_ref())
+            .map_err(|message| {
+                invalid_pipeline(format!("invalid pipeline ingress policy: {message}"))
+            })?;
     }
     Ok(())
 }

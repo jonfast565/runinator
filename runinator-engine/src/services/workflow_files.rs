@@ -27,6 +27,26 @@ impl<T> WorkflowFiles<T> {
     pub fn new(store: Arc<T>, blobs: Arc<dyn BlobStore>) -> Self {
         Self { store, blobs }
     }
+
+    /// Open a VM effect artifact without exposing the run-artifact storage implementation to the
+    /// HTTP layer. Authorization remains the caller's responsibility because the URI is already
+    /// reached through an authorized effect-output record.
+    pub async fn open_artifact_uri(
+        &self,
+        uri: &str,
+    ) -> Result<crate::artifact_storage::ArtifactContent, SendableError> {
+        crate::artifact_storage::open_artifact(&self.blobs, uri, None).await
+    }
+
+    pub async fn put_artifact(
+        &self,
+        run_id: Uuid,
+        name: &str,
+        mime_type: &str,
+        bytes: &[u8],
+    ) -> Result<String, SendableError> {
+        crate::artifact_storage::put_artifact(&self.blobs, run_id, name, mime_type, bytes).await
+    }
 }
 
 impl<T: FileStore> WorkflowFiles<T> {

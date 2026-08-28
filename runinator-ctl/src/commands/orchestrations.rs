@@ -15,15 +15,19 @@ pub(super) async fn orchestrations(
         OrchestrationCommands::List {
             status,
             pipeline_id,
+            adapter_id,
             scope,
             correlation,
+            limit,
         } => {
             let bindings = client
-                .fetch_orchestrations(
+                .fetch_orchestrations_filtered(
                     status.as_deref(),
                     *pipeline_id,
+                    *adapter_id,
                     scope.as_deref(),
                     correlation.as_deref(),
+                    Some(*limit),
                 )
                 .await?;
             if json_output {
@@ -102,6 +106,58 @@ pub(super) async fn orchestrations(
                 "requeued orchestration {} as generation {} ({})",
                 binding.id, binding.generation, key
             );
+            Ok(())
+        }
+        OrchestrationCommands::Aliases { id } => {
+            let aliases = client.fetch_orchestration_aliases(*id).await?;
+            if json_output {
+                return output::json(&aliases);
+            }
+            let rows = aliases
+                .into_iter()
+                .map(|alias| {
+                    vec![
+                        alias.id.to_string(),
+                        alias.source,
+                        alias.scope,
+                        alias.correlation_key,
+                        alias.generation.to_string(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(
+                    &["ID", "SOURCE", "SCOPE", "CORRELATION", "GENERATION"],
+                    &rows,
+                )
+            );
+            Ok(())
+        }
+        OrchestrationCommands::AddAlias {
+            id,
+            source,
+            scope,
+            correlation,
+        } => {
+            let alias = client
+                .add_orchestration_alias(*id, source, scope, correlation)
+                .await?;
+            if json_output {
+                return output::json(&alias);
+            }
+            println!(
+                "added alias {}/{} ({}) to orchestration {}",
+                alias.scope, alias.correlation_key, alias.source, alias.binding_id
+            );
+            Ok(())
+        }
+        OrchestrationCommands::RemoveAlias { id, alias_id } => {
+            let response = client.delete_orchestration_alias(*id, *alias_id).await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("{}", response.message);
             Ok(())
         }
         OrchestrationCommands::Adapters { command } => {

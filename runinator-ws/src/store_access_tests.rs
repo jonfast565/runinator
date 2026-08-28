@@ -59,6 +59,11 @@ const DIRECT_STORE_ACCESS: &[(&str, &str)] = &[
 /// store, but must not reach back into the engine repository facade; that would put persistence,
 /// event publication, and transport side effects back into HTTP glue.
 const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
+    ("runinator-ws-authoring/adapters.rs", "AdapterOperations"),
+    (
+        "runinator-ws-authoring/orchestrations.rs",
+        "OrchestrationOperations",
+    ),
     ("runinator-ws-authoring/functions.rs", "FunctionPackages"),
     ("runinator-ws-authoring/catalog.rs", "CatalogOperations"),
     ("runinator-ws-authoring/console.rs", "ConsoleOperations"),
@@ -73,6 +78,7 @@ const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
         "runinator-ws-runtime/function_invocations.rs",
         "FunctionInvocations",
     ),
+    ("runinator-ws-runtime/artifacts.rs", "WorkflowFiles"),
     (
         "runinator-ws-runtime/notifications.rs",
         "NotificationOperations",

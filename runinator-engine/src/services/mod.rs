@@ -3,6 +3,7 @@
 //! Each service is bound to the smallest store role it needs. HTTP handlers translate requests and
 //! responses around these services; they do not reach through to the repository facade directly.
 
+mod adapter_operations;
 mod automation_operations;
 mod catalog_operations;
 mod console_operations;
@@ -21,6 +22,7 @@ mod workflow_authoring;
 mod workflow_files;
 mod workspace_operations;
 
+pub use adapter_operations::AdapterOperations;
 pub use automation_operations::AutomationOperations;
 pub use catalog_operations::{CatalogOperations, provider_catalog_item};
 pub use console_operations::ConsoleOperations;

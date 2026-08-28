@@ -405,6 +405,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/workspaces`,
   },
+  fetch_orchestration_aliases: {
+    method: "GET",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/aliases`,
+  },
+  add_orchestration_alias: {
+    method: "POST",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/aliases`,
+    body: (args) => ({
+      source: arg(args, "source"),
+      scope: arg(args, "scope"),
+      correlation_key: arg(args, "correlationKey"),
+    }),
+  },
+  delete_orchestration_alias: {
+    method: "DELETE",
+    path: (args) =>
+      `orchestrations/${escape(arg(args, "orchestrationId"))}/aliases/${escape(arg(args, "aliasId"))}`,
+  },
   fetch_external_operations: {
     method: "GET",
     path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/operations`,

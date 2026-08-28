@@ -248,6 +248,28 @@ fn ingress_header_lowers_to_metadata_and_round_trips() {
     );
     assert_round_trips_unordered(source);
 }
+
+#[test]
+fn workflow_ingress_rejects_pipeline_orchestration_dispatch() {
+    let (_, message) = expect_semantic(
+        r#"
+        workflow "Ingress" v1 {
+            key ingress
+            ingress scope "example.lifecycle" {
+                on "changed" when active -> dispatch "refresh"
+            }
+
+            do {
+                let work = console.run(command: "echo work")
+            }
+        }
+    "#,
+    );
+    assert!(
+        message.contains("requires an orchestration policy"),
+        "{message}"
+    );
+}
 #[test]
 fn signal_correlation_key_lowers_and_round_trips() {
     let definition = compile(

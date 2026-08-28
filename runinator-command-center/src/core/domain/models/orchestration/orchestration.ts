@@ -44,8 +44,14 @@ export interface OrchestrationBinding {
 export interface OrchestrationPolicy {
   intents: Record<string, IntentPolicy>;
   phases: Record<string, PhasePolicy>;
-  budgets: Record<string, { attempts: number; exhausted: "fail" | "pause" | "terminate" }>;
+  budgets: Record<string, BudgetPolicy>;
   defaults: JsonValue;
+}
+
+export interface BudgetPolicy {
+  attempts: number;
+  exhausted: "fail" | "pause" | "terminate";
+  handoff?: string | null;
 }
 
 export interface IntentPolicy {
@@ -64,6 +70,19 @@ export interface ResultMapping {
   resources?: string | null;
   evidence?: string | null;
   failure_class?: string | null;
+  correlations?: string | null;
+}
+
+export interface OrchestrationCorrelationAlias {
+  id: string;
+  binding_id: string;
+  generation: number;
+  org_id?: string | null;
+  source: string;
+  scope: string;
+  correlation_key: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface WorkspacePolicy {

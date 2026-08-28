@@ -93,6 +93,19 @@
               </article>
               <p v-if="store.workspaces.length === 0" class="text-sm text-fg-muted">No workspaces allocated for this generation.</p>
             </div>
+            <div v-else-if="activeInstanceTab === 'Aliases'" class="space-y-3">
+              <form class="grid gap-2 rounded border border-border p-3 md:grid-cols-[1fr_1fr_1fr_auto]" @submit.prevent="submitAlias">
+                <label class="grid gap-1 text-xs"><span>Source</span><input v-model="aliasSource" required class="input" placeholder="github" /></label>
+                <label class="grid gap-1 text-xs"><span>Scope</span><input v-model="aliasScope" required class="input" placeholder="pull-requests" /></label>
+                <label class="grid gap-1 text-xs"><span>Correlation key</span><input v-model="aliasCorrelation" required class="input" placeholder="octo/repo#42" /></label>
+                <button class="button self-end" type="submit">Add alias</button>
+              </form>
+              <article v-for="alias in store.aliases" :key="alias.id" class="flex flex-wrap items-start justify-between gap-3 rounded border border-border p-3 text-sm">
+                <div><strong>{{ alias.correlation_key }}</strong><p class="text-xs text-fg-muted">{{ alias.source }} · {{ alias.scope }} · generation {{ alias.generation }}</p></div>
+                <button class="button" @click="store.removeAlias(alias.id)">Remove</button>
+              </article>
+              <p v-if="store.aliases.length === 0" class="text-sm text-fg-muted">No alternate correlation identities route to this generation.</p>
+            </div>
             <pre v-else-if="activeInstanceTab === 'Commands'" class="overflow-auto text-xs">{{ pretty(store.commands) }}</pre>
             <pre v-else class="overflow-auto text-xs">{{ pretty(store.selected) }}</pre>
           </div>
@@ -189,7 +202,7 @@ const modes = ["Instances", "Adapters"] as const;
 type Mode = (typeof modes)[number];
 const mode = ref<Mode>("Instances");
 const statuses = ["pending", "running", "waiting", "suspended", "completed", "failed", "terminated"];
-const instanceTabs = ["Timeline", "Epochs", "Evidence", "Resources", "Budgets", "Operations", "Workspaces", "Commands", "Raw"];
+const instanceTabs = ["Timeline", "Epochs", "Evidence", "Resources", "Budgets", "Operations", "Workspaces", "Aliases", "Commands", "Raw"];
 const adapterTabs = ["Configuration", "Revisions", "Test"];
 const activeInstanceTab = ref("Timeline");
 const activeAdapterTab = ref("Configuration");
@@ -199,6 +212,9 @@ const intentPayload = ref("{}");
 const intentPayloadError = ref<string | null>(null);
 const requeueOpen = ref(false);
 const reason = ref("");
+const aliasSource = ref("");
+const aliasScope = ref("");
+const aliasCorrelation = ref("");
 const resolvingOperation = ref<ExternalOperation | null>(null);
 const resolution = ref<"succeeded" | "failed" | "retry">("succeeded");
 const resolutionReason = ref("");
@@ -418,6 +434,21 @@ async function submitRequeue(): Promise<void> {
 
   await store.requeue(reason.value.trim());
   requeueOpen.value = false;
+}
+
+async function submitAlias(): Promise<void> {
+  const source = aliasSource.value.trim();
+  const scope = aliasScope.value.trim();
+  const correlation = aliasCorrelation.value.trim();
+
+  if (!source || !scope || !correlation) {
+    return;
+  }
+
+  await store.addAlias(source, scope, correlation);
+  aliasSource.value = "";
+  aliasScope.value = "";
+  aliasCorrelation.value = "";
 }
 
 function openResolution(operation: ExternalOperation, next: typeof resolution.value): void {

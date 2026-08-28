@@ -682,6 +682,29 @@ export async function fetchOrchestrationWorkspaces(orchestrationId: string) {
   });
 }
 
+export async function fetchOrchestrationAliases(orchestrationId: string) {
+  return command<import("../domain/models").OrchestrationCorrelationAlias[]>(
+    "fetch_orchestration_aliases",
+    { orchestrationId },
+  );
+}
+
+export async function addOrchestrationAlias(
+  orchestrationId: string,
+  source: string,
+  scope: string,
+  correlationKey: string,
+) {
+  return command<import("../domain/models").OrchestrationCorrelationAlias>(
+    "add_orchestration_alias",
+    { orchestrationId, source, scope, correlationKey },
+  );
+}
+
+export async function deleteOrchestrationAlias(orchestrationId: string, aliasId: string) {
+  return command<TaskResponse>("delete_orchestration_alias", { orchestrationId, aliasId });
+}
+
 export async function fetchExternalOperations(orchestrationId: string) {
   return command<import("../domain/models").ExternalOperation[]>("fetch_external_operations", {
     orchestrationId,

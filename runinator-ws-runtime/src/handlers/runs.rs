@@ -674,6 +674,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     let override_request = body.as_ref().map(|Json(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
         db.clone(),
+        operations.as_ref(),
         &ctx,
         workflow_run_id,
         "cancel",
@@ -715,9 +716,15 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
         return reply;
     }
     let override_request = body.as_ref().map(|Json(request)| request);
-    if let Err(reply) =
-        authorize_workflow_run_control(db.clone(), &ctx, workflow_run_id, "pause", override_request)
-            .await
+    if let Err(reply) = authorize_workflow_run_control(
+        db.clone(),
+        operations.as_ref(),
+        &ctx,
+        workflow_run_id,
+        "pause",
+        override_request,
+    )
+    .await
     {
         return reply;
     }
@@ -755,6 +762,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     let override_request = body.as_ref().map(|Json(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
         db.clone(),
+        operations.as_ref(),
         &ctx,
         workflow_run_id,
         "resume",
@@ -802,6 +810,7 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     };
     if let Err(reply) = authorize_workflow_run_control(
         db.clone(),
+        operations.as_ref(),
         &ctx,
         workflow_run_id,
         "replay",
@@ -826,46 +835,35 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
 
 #[allow(clippy::result_large_err)]
 async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
-    db: &T,
+    operations: &RunOperations<T>,
     workflow_run_id: Uuid,
 ) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    let workflow_run = match db.fetch_workflow_run(workflow_run_id).await {
-        Ok(run) => run,
-        Err(error) => return Err(api_error(error.to_string())),
-    };
-    let Some(pipeline_run_id) = workflow_run.and_then(|run| run.pipeline_run_id) else {
-        return Ok(());
-    };
-    match db.fetch_pipeline_run(pipeline_run_id).await {
-        Ok(Some(run)) if run.orchestration_binding_id.is_some() => Err(bad_request(
+    match operations
+        .managed_orchestration_binding(workflow_run_id)
+        .await
+    {
+        Ok(Some(_)) => Err(bad_request(
             "This workflow run belongs to a correlated orchestration; send a named intent to the orchestration instead",
         )),
-        Ok(_) => Ok(()),
-        Err(error) => Err(api_error(error.to_string())),
+        Ok(None) => Ok(()),
+        Err(error) => return Err(api_error(error.to_string())),
     }
 }
 
 #[allow(clippy::result_large_err)]
 async fn authorize_workflow_run_control<T: RunOperationsStore>(
     db: Arc<T>,
+    operations: &RunOperations<T>,
     ctx: &runinator_models::auth::AuthContext,
     workflow_run_id: Uuid,
     action: &str,
     request: Option<&ManagedRunOverrideRequest>,
 ) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    let workflow_run = db
-        .fetch_workflow_run(workflow_run_id)
-        .await
-        .map_err(|error| api_error(error.to_string()))?;
-    let Some(pipeline_run_id) = workflow_run.and_then(|run| run.pipeline_run_id) else {
-        return Ok(());
-    };
-    let binding_id = db
-        .fetch_pipeline_run(pipeline_run_id)
+    let Some(binding) = operations
+        .managed_orchestration_binding(workflow_run_id)
         .await
         .map_err(|error| api_error(error.to_string()))?
-        .and_then(|run| run.orchestration_binding_id);
-    let Some(binding_id) = binding_id else {
+    else {
         return Ok(());
     };
     if !ctx.is_platform_admin() {
@@ -886,11 +884,6 @@ async fn authorize_workflow_run_control<T: RunOperationsStore>(
         .map(str::trim)
         .filter(|key| !key.is_empty())
         .ok_or_else(|| bad_request("A force override requires an idempotency key"))?;
-    let binding = db
-        .fetch_orchestration_binding(binding_id)
-        .await
-        .map_err(|error| api_error(error.to_string()))?
-        .ok_or_else(|| not_found("managed orchestration binding not found"))?;
     let record = OrchestrationOperations::new(db)
         .record_out_of_band_override(
             &binding,
@@ -1183,7 +1176,7 @@ pub async fn delete_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    if let Err(reply) = require_unmanaged_workflow_run(db.as_ref(), workflow_run_id).await {
+    if let Err(reply) = require_unmanaged_workflow_run(operations.as_ref(), workflow_run_id).await {
         return reply;
     }
     match operations.delete(workflow_run_id).await {

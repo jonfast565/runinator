@@ -12,7 +12,7 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use runinator_blob_core::BlobStore;
+use runinator_engine::services::WorkflowFiles;
 use runinator_models::{
     auth::{AuthContext, Permission},
     value::Value,
@@ -20,7 +20,10 @@ use runinator_models::{
     workflow_vm::WorkflowVmCursor,
     workflow_vm::{WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry},
 };
-use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{FileStore, WorkflowVmStore},
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -201,9 +204,11 @@ pub async fn list_effect_output<T: AuthorizationStore + RuntimeStore + WorkflowV
 
 /// Stream an artifact owned by one durable VM effect-output event. This deliberately addresses the
 /// event rather than a legacy run_artifacts row: the journal output is the authoritative history.
-pub async fn download_effect_artifact<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+pub async fn download_effect_artifact<
+    T: AuthorizationStore + RuntimeStore + WorkflowVmStore + FileStore,
+>(
     Extension(db): Extension<Arc<T>>,
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(files): Extension<Arc<WorkflowFiles<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((effect_id, event_id)): Path<(Uuid, Uuid)>,
 ) -> Response {
@@ -234,13 +239,7 @@ pub async fn download_effect_artifact<T: AuthorizationStore + RuntimeStore + Wor
         Ok(artifact) => artifact,
         Err(_) => return (StatusCode::NOT_FOUND, "artifact metadata is invalid").into_response(),
     };
-    let content = match runinator_engine::artifact_storage::open_artifact(
-        &blobs,
-        &artifact.uri,
-        None,
-    )
-    .await
-    {
+    let content = match files.open_artifact_uri(&artifact.uri).await {
         Ok(content) => content,
         Err(error) => return (StatusCode::NOT_FOUND, error.to_string()).into_response(),
     };
@@ -408,7 +407,7 @@ pub async fn list_cursors<T: AuthorizationStore + RuntimeStore + WorkflowVmStore
     }
 }
 
-pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore + FileStore>(
     pool: Arc<T>,
 ) -> axum::Router {
     use axum::routing::{get, post};

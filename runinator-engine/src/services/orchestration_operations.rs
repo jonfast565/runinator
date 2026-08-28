@@ -6,18 +6,21 @@ use chrono::{Duration, Utc};
 use runinator_models::{
     errors::SendableError,
     orchestration::{
-        ControlEffect, EpochStopAction, IngressAdmission, IngressEvent, IngressEventDisposition,
-        IngressEventRecord, IngressInboxEntry, IngressLifecycle, IngressPolicy,
-        NewOrchestrationBinding, OrchestrationBinding, OrchestrationEventReduction,
-        OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationPolicy,
-        OrchestrationStatus, RestartSelector, WorkspaceRecovery,
+        AdapterDefinition, ControlEffect, EpochStopAction, ExternalOperation, IngressAdmission,
+        IngressEvent, IngressEventDisposition, IngressEventRecord, IngressInboxEntry,
+        IngressLifecycle, IngressPolicy, NewOrchestrationBinding, OrchestrationBinding,
+        OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
+        OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
+        OrchestrationPolicy, OrchestrationStatus, RestartSelector, WorkspaceRecovery,
+        validate_correlation_alias_identity,
     },
     pipelines::Pipeline,
     value::Value,
 };
 use runinator_store::roles::{
-    DefinitionStore, IngressStore, NewOrchestrationCommand, NewOrchestrationEpoch,
-    OrchestrationBindingUpdate, OrchestrationStore,
+    DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCommand,
+    NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingUpdate,
+    OrchestrationStore, WorkflowVmStore, WorkspaceStore,
 };
 use uuid::Uuid;
 
@@ -82,6 +85,218 @@ pub struct OrchestrationOperations<T> {
 impl<T> OrchestrationOperations<T> {
     pub fn new(store: Arc<T>) -> Self {
         Self { store }
+    }
+}
+
+impl<T: OrchestrationStore> OrchestrationOperations<T> {
+    pub async fn list_bindings(
+        &self,
+        org_id: Option<Uuid>,
+        status: Option<OrchestrationStatus>,
+        limit: i64,
+    ) -> Result<Vec<OrchestrationBinding>, SendableError> {
+        self.store
+            .fetch_orchestration_bindings(org_id, status, limit)
+            .await
+    }
+
+    pub async fn fetch_binding(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<OrchestrationBinding>, SendableError> {
+        self.store.fetch_orchestration_binding(id).await
+    }
+
+    pub async fn epochs(&self, id: Uuid) -> Result<Vec<OrchestrationEpoch>, SendableError> {
+        self.store.fetch_orchestration_epochs(id).await
+    }
+
+    pub async fn reductions(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationEventReduction>, SendableError> {
+        self.store.fetch_orchestration_reductions(id).await
+    }
+
+    pub async fn evidence(&self, id: Uuid) -> Result<Vec<OrchestrationEvidence>, SendableError> {
+        self.store.fetch_orchestration_evidence(id).await
+    }
+
+    pub async fn commands(&self, id: Uuid) -> Result<Vec<OrchestrationCommand>, SendableError> {
+        self.store.fetch_orchestration_commands(id).await
+    }
+
+    pub async fn external_operations(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<ExternalOperation>, SendableError> {
+        self.store.fetch_external_operations(id).await
+    }
+
+    pub async fn aliases(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationCorrelationAlias>, SendableError> {
+        self.store.fetch_orchestration_correlation_aliases(id).await
+    }
+
+    pub async fn add_alias(
+        &self,
+        binding: &OrchestrationBinding,
+        source: String,
+        scope: String,
+        correlation_key: String,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<OrchestrationCorrelationAlias, SendableError> {
+        validate_correlation_alias_identity(&source, &scope, &correlation_key).map_err(
+            |message| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    message,
+                )) as SendableError
+            },
+        )?;
+        self.store
+            .upsert_orchestration_correlation_alias(
+                NewOrchestrationCorrelationAlias {
+                    id: Uuid::now_v7(),
+                    binding_id: binding.id,
+                    generation: binding.generation,
+                    org_id: binding.org_id,
+                    source,
+                    scope,
+                    correlation_key,
+                },
+                now,
+            )
+            .await
+    }
+
+    pub async fn remove_alias(&self, id: Uuid, alias_id: Uuid) -> Result<bool, SendableError> {
+        self.store
+            .delete_orchestration_correlation_alias(id, alias_id)
+            .await
+    }
+
+    pub async fn external_operation(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ExternalOperation>, SendableError> {
+        self.store.fetch_external_operation(id).await
+    }
+
+    pub async fn update_external_operation(
+        &self,
+        id: Uuid,
+        update: ExternalOperationUpdate,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<ExternalOperation>, SendableError> {
+        self.store.update_external_operation(id, update, now).await
+    }
+
+    pub async fn append_evidence(
+        &self,
+        evidence: OrchestrationEvidence,
+    ) -> Result<(), SendableError> {
+        self.store.append_orchestration_evidence(evidence).await
+    }
+
+    pub async fn adapter(&self, id: Uuid) -> Result<Option<AdapterDefinition>, SendableError> {
+        self.store.fetch_orchestration_adapter(id).await
+    }
+}
+
+impl<T: WorkspaceStore> OrchestrationOperations<T> {
+    pub async fn workspaces(
+        &self,
+        admission_id: Uuid,
+        generation: i64,
+    ) -> Result<Vec<runinator_models::workspaces::WorkspaceLease>, SendableError> {
+        self.store
+            .fetch_workspaces_for_admission(admission_id, generation)
+            .await
+    }
+}
+
+impl<T: WorkflowVmStore> OrchestrationOperations<T> {
+    pub async fn settle_effect(
+        &self,
+        effect_id: Uuid,
+        attempt: u32,
+        status: runinator_models::workflow_vm::WorkflowEffectStatus,
+        output: Option<Value>,
+        message: Option<String>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        self.store
+            .settle_workflow_effect(effect_id, attempt, status, output, message, now)
+            .await
+    }
+
+    pub async fn retry_effect(
+        &self,
+        effect_id: Uuid,
+        attempt: u32,
+        message: Option<String>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        self.store
+            .retry_workflow_effect(effect_id, attempt, now, message, now)
+            .await
+    }
+}
+
+impl<T: DefinitionStore> OrchestrationOperations<T> {
+    pub async fn pipelines(&self) -> Result<Vec<Pipeline>, SendableError> {
+        self.store.fetch_pipelines().await
+    }
+}
+
+impl<T: IngressStore> OrchestrationOperations<T> {
+    pub async fn admission(
+        &self,
+        org_id: Option<Uuid>,
+        scope: String,
+        correlation_key: String,
+    ) -> Result<Option<IngressAdmission>, SendableError> {
+        self.store
+            .fetch_ingress_admission(org_id, scope, correlation_key)
+            .await
+    }
+
+    pub async fn record_event(
+        &self,
+        admission_id: Uuid,
+        generation: i64,
+        event: IngressEvent,
+        disposition: IngressEventDisposition,
+        queued: bool,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<IngressEventRecord, SendableError> {
+        self.store
+            .record_ingress_event(admission_id, generation, event, disposition, queued, now)
+            .await
+    }
+
+    pub async fn requeue_event(
+        &self,
+        admission_id: Uuid,
+        expected_generation: i64,
+        target: runinator_models::orchestration::IngressTarget,
+        policy: Value,
+        event: IngressEvent,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<IngressEventRecord>, SendableError> {
+        self.store
+            .requeue_ingress_event(
+                admission_id,
+                expected_generation,
+                target,
+                policy,
+                event,
+                now,
+            )
+            .await
     }
 }
 

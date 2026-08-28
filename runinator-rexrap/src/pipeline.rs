@@ -96,8 +96,12 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         .map(lower_member)
         .collect::<Result<Vec<_>, RexRapError>>()?;
     let mut metadata = lower_ingress_metadata(decl.ingress.as_ref())?;
-    if let Some(orchestration) = &decl.orchestration {
-        let policy = lower_orchestration(orchestration, &member_names)?;
+    let orchestration = decl
+        .orchestration
+        .as_ref()
+        .map(|orchestration| lower_orchestration(orchestration, &member_names))
+        .transpose()?;
+    if let Some(policy) = orchestration.as_ref() {
         metadata
             .as_object_mut()
             .expect("pipeline metadata is an object")
@@ -107,6 +111,19 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
                     .expect("orchestration policy serializes")
                     .into(),
             );
+    }
+    if orchestration.is_some() && decl.ingress.is_none() {
+        return Err(RexRapError::syntax(
+            decl.span,
+            "a pipeline orchestration policy requires an ingress policy",
+        ));
+    }
+    if let Some(ingress) = metadata.get("ingress") {
+        let ingress: IngressPolicy = serde_json::from_value(ingress.clone().into())
+            .expect("lowered ingress policy deserializes");
+        ingress
+            .validate_dispatches(orchestration.as_ref())
+            .map_err(|message| RexRapError::syntax(decl.span, message))?;
     }
     Ok(PipelineSpec {
         name: decl.name.clone(),

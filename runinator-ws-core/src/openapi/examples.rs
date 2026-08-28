@@ -97,6 +97,9 @@ pub enum Example {
     FunctionInvocationTarget,
     OrchestrationBinding,
     OrchestrationBindingList,
+    OrchestrationCorrelationAlias,
+    OrchestrationCorrelationAliasList,
+    OrchestrationCorrelationAliasRequest,
     OrchestrationEpochList,
     OrchestrationReductionList,
     OrchestrationEvidenceList,
@@ -308,6 +311,15 @@ pub fn example_value(example: Example) -> Option<Value> {
         }),
         Example::OrchestrationBinding => orchestration_binding_example(),
         Example::OrchestrationBindingList => json!([orchestration_binding_example()]),
+        Example::OrchestrationCorrelationAlias => orchestration_correlation_alias_example(),
+        Example::OrchestrationCorrelationAliasList => {
+            json!([orchestration_correlation_alias_example()])
+        }
+        Example::OrchestrationCorrelationAliasRequest => json!({
+            "source": "github",
+            "scope": "pull-requests",
+            "correlation_key": "octo/repo#42"
+        }),
         Example::OrchestrationEpochList => json!([{
             "id": UUID_EXAMPLE, "binding_id": UUID_EXAMPLE, "epoch": 2,
             "pipeline_run_id": UUID_EXAMPLE, "start_member": "implementation",
@@ -588,6 +600,20 @@ fn orchestration_binding_example() -> Value {
         "last_reduced_sequence": 7, "version": 12, "reducer_lease_owner": null,
         "reducer_leased_until": null, "created_at": TIMESTAMP_EXAMPLE,
         "updated_at": TIMESTAMP_EXAMPLE, "finished_at": null
+    })
+}
+
+fn orchestration_correlation_alias_example() -> Value {
+    json!({
+        "id": UUID_EXAMPLE,
+        "binding_id": UUID_EXAMPLE,
+        "generation": 1,
+        "org_id": UUID_EXAMPLE,
+        "source": "github",
+        "scope": "pull-requests",
+        "correlation_key": "octo/repo#42",
+        "created_at": TIMESTAMP_EXAMPLE,
+        "updated_at": TIMESTAMP_EXAMPLE
     })
 }
 

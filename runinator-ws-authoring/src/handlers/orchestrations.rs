@@ -14,13 +14,14 @@ use runinator_models::{
     orchestration::{
         DeliverySemantics, ExternalOperationStatus, IngressAdmissionStatus, IngressEvent,
         IngressEventDisposition, OrchestrationEvidence, OrchestrationStatus,
+        validate_correlation_alias_identity,
     },
     rbac::Action,
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_store::roles::{
-    DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCorrelationAlias,
-    OrchestrationStore, WorkflowVmStore, WorkspaceStore,
+    DefinitionStore, ExternalOperationUpdate, IngressStore, OrchestrationStore, WorkflowVmStore,
+    WorkspaceStore,
 };
 use runinator_ws_core::{
     models::{
@@ -54,14 +55,15 @@ pub struct CorrelationAliasRequest {
 }
 
 async fn authorized_binding<T: AuthorizationStore + OrchestrationStore>(
+    operations: &OrchestrationOperations<T>,
     db: &T,
     ctx: &AuthContext,
     id: Uuid,
     permission: Permission,
 ) -> Result<runinator_models::orchestration::OrchestrationBinding, (StatusCode, Json<ApiResponse>)>
 {
-    let binding = db
-        .fetch_orchestration_binding(id)
+    let binding = operations
+        .fetch_binding(id)
         .await
         .map_err(|error| api_error(error.to_string()))?
         .ok_or_else(|| not_found("orchestration not found"))?;
@@ -87,8 +89,9 @@ pub async fn list<T: AuthorizationStore + OrchestrationStore>(
         Some("terminated") => Some(OrchestrationStatus::Terminated),
         Some(other) => return bad_request(format!("unknown orchestration status '{other}'")),
     };
-    let bindings = match db
-        .fetch_orchestration_bindings(ctx.org_id, status, query.limit.unwrap_or(200))
+    let operations = OrchestrationOperations::new(db.clone());
+    let bindings = match operations
+        .list_bindings(ctx.org_id, status, query.limit.unwrap_or(200))
         .await
     {
         Ok(bindings) => bindings,
@@ -132,7 +135,8 @@ pub async fn get_one<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await {
         Ok(binding) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationBinding(binding)),
@@ -146,10 +150,13 @@ pub async fn epochs<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    if let Err(reply) =
+        authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await
+    {
         return reply;
     }
-    match db.fetch_orchestration_epochs(id).await {
+    match operations.epochs(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationEpochList(values)),
@@ -163,10 +170,13 @@ pub async fn events<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    if let Err(reply) =
+        authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await
+    {
         return reply;
     }
-    match db.fetch_orchestration_reductions(id).await {
+    match operations.reductions(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationReductionList(values)),
@@ -180,10 +190,13 @@ pub async fn evidence<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    if let Err(reply) =
+        authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await
+    {
         return reply;
     }
-    match db.fetch_orchestration_evidence(id).await {
+    match operations.evidence(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationEvidenceList(values)),
@@ -197,10 +210,13 @@ pub async fn commands<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    if let Err(reply) =
+        authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await
+    {
         return reply;
     }
-    match db.fetch_orchestration_commands(id).await {
+    match operations.commands(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationCommandList(values)),
@@ -214,10 +230,13 @@ pub async fn operations<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    if let Err(reply) =
+        authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await
+    {
         return reply;
     }
-    match db.fetch_external_operations(id).await {
+    match operations.external_operations(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::ExternalOperationList(values)),
@@ -231,12 +250,14 @@ pub async fn workspaces<T: AuthorizationStore + OrchestrationStore + WorkspaceSt
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let binding = match authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
-        Ok(binding) => binding,
-        Err(reply) => return reply,
-    };
-    match db
-        .fetch_workspaces_for_admission(binding.admission_id, binding.generation)
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
+    match operations
+        .workspaces(binding.admission_id, binding.generation)
         .await
     {
         Ok(values) => (StatusCode::OK, Json(ApiResponse::WorkspaceList(values))),
@@ -249,10 +270,13 @@ pub async fn aliases<T: AuthorizationStore + OrchestrationStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+    let operations = OrchestrationOperations::new(db.clone());
+    if let Err(reply) =
+        authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::View).await
+    {
         return reply;
     }
-    match db.fetch_orchestration_correlation_aliases(id).await {
+    match operations.aliases(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationCorrelationAliasList(values)),
@@ -263,64 +287,70 @@ pub async fn aliases<T: AuthorizationStore + OrchestrationStore>(
 
 pub async fn add_alias<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(request): Json<CorrelationAliasRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let binding = match authorized_binding(db.as_ref(), &ctx, id, Permission::Edit).await {
-        Ok(binding) => binding,
-        Err(reply) => return reply,
-    };
-    if request.source.trim().is_empty()
-        || request.scope.trim().is_empty()
-        || request.correlation_key.trim().is_empty()
-    {
-        return bad_request("source, scope, and correlation_key are required");
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::Edit).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
+    if let Err(error) = validate_correlation_alias_identity(
+        &request.source,
+        &request.scope,
+        &request.correlation_key,
+    ) {
+        return bad_request(error);
     }
-    match db
-        .upsert_orchestration_correlation_alias(
-            NewOrchestrationCorrelationAlias {
-                id: Uuid::now_v7(),
-                binding_id: id,
-                generation: binding.generation,
-                org_id: binding.org_id,
-                source: request.source,
-                scope: request.scope,
-                correlation_key: request.correlation_key,
-            },
+    match operations
+        .add_alias(
+            &binding,
+            request.source,
+            request.scope,
+            request.correlation_key,
             Utc::now(),
         )
         .await
     {
-        Ok(value) => (
-            StatusCode::CREATED,
-            Json(ApiResponse::OrchestrationCorrelationAlias(value)),
-        ),
+        Ok(value) => {
+            emit_orchestration(&publisher, binding.id, binding.org_id);
+            (
+                StatusCode::CREATED,
+                Json(ApiResponse::OrchestrationCorrelationAlias(value)),
+            )
+        }
         Err(error) => api_error(error.to_string()),
     }
 }
 
 pub async fn remove_alias<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path((id, alias_id)): Path<(Uuid, Uuid)>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::Edit).await {
-        return reply;
-    }
-    match db
-        .delete_orchestration_correlation_alias(id, alias_id)
-        .await
-    {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(ApiResponse::TaskResponse(
-                runinator_models::web::TaskResponse {
-                    success: true,
-                    message: "correlation alias removed".into(),
-                },
-            )),
-        ),
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::Edit).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
+    match operations.remove_alias(id, alias_id).await {
+        Ok(true) => {
+            emit_orchestration(&publisher, binding.id, binding.org_id);
+            (
+                StatusCode::OK,
+                Json(ApiResponse::TaskResponse(
+                    runinator_models::web::TaskResponse {
+                        success: true,
+                        message: "correlation alias removed".into(),
+                    },
+                )),
+            )
+        }
         Ok(false) => not_found("correlation alias not found"),
         Err(error) => api_error(error.to_string()),
     }
@@ -333,14 +363,16 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
     Path((id, operation_id)): Path<(Uuid, Uuid)>,
     Json(request): Json<ExternalOperationResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let binding = match authorized_binding(db.as_ref(), &ctx, id, Permission::Run).await {
-        Ok(binding) => binding,
-        Err(reply) => return reply,
-    };
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::Run).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
     if request.reason.trim().is_empty() {
         return bad_request("reason is required");
     }
-    let operation = match db.fetch_external_operation(operation_id).await {
+    let operation = match operations.external_operation(operation_id).await {
         Ok(Some(operation)) if operation.binding_id == id => operation,
         Ok(_) => return not_found("external operation not found"),
         Err(error) => return api_error(error.to_string()),
@@ -362,8 +394,8 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
     let status = match request.resolution.as_str() {
         "succeeded" => {
             let output = (!request.receipt.is_null()).then(|| request.receipt.clone());
-            match db
-                .settle_workflow_effect(
+            match operations
+                .settle_effect(
                     effect_id,
                     attempt,
                     WorkflowEffectStatus::Succeeded,
@@ -379,8 +411,8 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
             }
         }
         "failed" => {
-            match db
-                .settle_workflow_effect(
+            match operations
+                .settle_effect(
                     effect_id,
                     attempt,
                     WorkflowEffectStatus::Failed,
@@ -396,8 +428,8 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
             }
         }
         "retry" if operation.semantics != DeliverySemantics::AtLeastOnce => {
-            match db
-                .retry_workflow_effect(effect_id, attempt, now, Some(request.reason.clone()), now)
+            match operations
+                .retry_effect(effect_id, attempt, Some(request.reason.clone()), now)
                 .await
             {
                 Ok(true) => ExternalOperationStatus::Pending,
@@ -417,7 +449,7 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
     } else {
         operation.attempt
     };
-    let updated = match db
+    let updated = match operations
         .update_external_operation(
             operation_id,
             ExternalOperationUpdate {
@@ -435,8 +467,8 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
         Ok(None) => return not_found("external operation not found"),
         Err(error) => return api_error(error.to_string()),
     };
-    if let Err(error) = db
-        .append_orchestration_evidence(OrchestrationEvidence {
+    if let Err(error) = operations
+        .append_evidence(OrchestrationEvidence {
             id: Uuid::now_v7(),
             binding_id: id,
             epoch: None,
@@ -469,10 +501,12 @@ pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
     Path(id): Path<Uuid>,
     Json(request): Json<OrchestrationIntentRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let binding = match authorized_binding(db.as_ref(), &ctx, id, Permission::Run).await {
-        Ok(binding) => binding,
-        Err(reply) => return reply,
-    };
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::Run).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
     if request.reason.trim().is_empty() || request.idempotency_key.trim().is_empty() {
         return bad_request("reason and idempotency_key are required");
     }
@@ -491,8 +525,8 @@ pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
         provenance: Default::default(),
         occurred_at: Some(Utc::now()),
     };
-    match db
-        .record_ingress_event(
+    match operations
+        .record_event(
             binding.admission_id,
             binding.generation,
             event,
@@ -522,18 +556,20 @@ pub async fn requeue<
     Path(id): Path<Uuid>,
     Json(request): Json<OrchestrationRequeueRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let binding = match authorized_binding(db.as_ref(), &ctx, id, Permission::Run).await {
-        Ok(binding) => binding,
-        Err(reply) => return reply,
-    };
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::Run).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
     if !binding.status.is_terminal() {
         return bad_request("only a terminal orchestration can be requeued");
     }
     if request.reason.trim().is_empty() || request.idempotency_key.trim().is_empty() {
         return bad_request("reason and idempotency_key are required");
     }
-    let admission = match db
-        .fetch_ingress_admission(
+    let admission = match operations
+        .admission(
             binding.org_id,
             binding.scope.clone(),
             binding.correlation_key.clone(),
@@ -561,8 +597,8 @@ pub async fn requeue<
         provenance: Default::default(),
         occurred_at: Some(Utc::now()),
     };
-    let record = match db
-        .requeue_ingress_event(
+    let record = match operations
+        .requeue_event(
             admission_id,
             admission.generation,
             admission.target.clone(),
@@ -576,8 +612,8 @@ pub async fn requeue<
         Ok(None) => return bad_request("another event already requeued this admission"),
         Err(error) => return api_error(error.to_string()),
     };
-    let next_admission = match db
-        .fetch_ingress_admission(
+    let next_admission = match operations
+        .admission(
             binding.org_id,
             binding.scope.clone(),
             binding.correlation_key.clone(),
@@ -588,7 +624,7 @@ pub async fn requeue<
         Ok(None) => return api_error("requeued admission disappeared"),
         Err(error) => return api_error(error.to_string()),
     };
-    let pipeline = match db.fetch_pipelines().await {
+    let pipeline = match operations.pipelines().await {
         Ok(pipelines) => pipelines
             .into_iter()
             .find(|pipeline| pipeline.id == Some(binding.pipeline_id)),
@@ -598,14 +634,13 @@ pub async fn requeue<
         return not_found("orchestration pipeline not found");
     };
     let adapter = match binding.adapter_id {
-        Some(adapter_id) => match db.fetch_orchestration_adapter(adapter_id).await {
+        Some(adapter_id) => match operations.adapter(adapter_id).await {
             Ok(Some(adapter)) => Some((adapter.id, adapter.current_revision)),
             Ok(None) => None,
             Err(error) => return api_error(error.to_string()),
         },
         None => None,
     };
-    let operations = OrchestrationOperations::new(db.clone());
     match operations
         .admit_with_adapter(&next_admission, &pipeline, adapter)
         .await
@@ -816,6 +851,48 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "workspace leases",
         Example::WorkspaceList,
+    ),
+    endpoint_with_policy(
+        "get",
+        "/orchestrations/{id}/aliases",
+        "Orchestrations",
+        "List correlation aliases",
+        "Lists every normalized source, scope, and correlation key currently routed to this binding generation.",
+        EndpointPolicy::ResourceAction(ResourceType::Pipeline, Action::View),
+        None,
+        &[],
+        200,
+        "correlation aliases",
+        Example::OrchestrationCorrelationAliasList,
+    ),
+    endpoint_with_policy(
+        "post",
+        "/orchestrations/{id}/aliases",
+        "Orchestrations",
+        "Add a correlation alias",
+        "Adds an alternate normalized identity that routes future adapter ingress to this binding generation.",
+        EndpointPolicy::ResourceAction(ResourceType::Pipeline, Action::Edit),
+        json_body(
+            "Normalized source, scope, and correlation key.",
+            Example::OrchestrationCorrelationAliasRequest,
+        ),
+        &[],
+        201,
+        "created correlation alias",
+        Example::OrchestrationCorrelationAlias,
+    ),
+    endpoint_with_policy(
+        "delete",
+        "/orchestrations/{id}/aliases/{alias_id}",
+        "Orchestrations",
+        "Remove a correlation alias",
+        "Stops the alternate normalized identity from routing future ingress to this binding. The immutable event history is unchanged.",
+        EndpointPolicy::ResourceAction(ResourceType::Pipeline, Action::Edit),
+        None,
+        &[],
+        200,
+        "correlation alias removed",
+        Example::TaskResponse,
     ),
     endpoint_with_policy(
         "post",

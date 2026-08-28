@@ -919,9 +919,13 @@ pub enum OrchestrationCommands {
         #[arg(long)]
         pipeline_id: Option<Uuid>,
         #[arg(long)]
+        adapter_id: Option<Uuid>,
+        #[arg(long)]
         scope: Option<String>,
         #[arg(long)]
         correlation: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
     },
     /// Show one orchestration instance.
     Show { id: Uuid },
@@ -952,6 +956,20 @@ pub enum OrchestrationCommands {
         #[arg(long)]
         idempotency_key: Option<String>,
     },
+    /// List alternate correlation identities routed to an orchestration generation.
+    Aliases { id: Uuid },
+    /// Add an alternate correlation identity to an orchestration generation.
+    AddAlias {
+        id: Uuid,
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        scope: String,
+        #[arg(long)]
+        correlation: String,
+    },
+    /// Remove an alternate correlation identity.
+    RemoveAlias { id: Uuid, alias_id: Uuid },
     /// Configure and diagnose out-of-process event adapters.
     Adapters {
         #[command(subcommand)]

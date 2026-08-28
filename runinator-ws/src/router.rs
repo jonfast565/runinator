@@ -116,7 +116,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(replicas::routes(pool.clone()))
         .merge(agents::routes(pool.clone()))
         .merge(provisioning::routes())
-        .merge(artifacts::routes())
+        .merge(artifacts::routes::<T>())
         .merge(files::routes::<T>())
         .merge(notifications::routes(pool.clone()))
         .merge(schedules::routes(pool.clone()))

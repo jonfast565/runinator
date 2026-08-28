@@ -10,6 +10,7 @@ use runinator_models::{
     orchestration::{
         BudgetExhaustion, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
         IngressPromotion, IngressTargetKind, OrchestrationEvidence, OrchestrationStatus,
+        validate_correlation_alias_identity,
     },
     pipelines::{PipelineExecutionContext, PipelineMemberAttempt, PipelineMemberAttemptStatus},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
@@ -703,9 +704,7 @@ async fn settle_current_orchestration_epoch<
                     else {
                         continue;
                     };
-                    if source.trim().is_empty()
-                        || scope.trim().is_empty()
-                        || correlation_key.trim().is_empty()
+                    if validate_correlation_alias_identity(source, scope, correlation_key).is_err()
                     {
                         continue;
                     }

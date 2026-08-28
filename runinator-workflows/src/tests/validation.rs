@@ -18,6 +18,61 @@ fn validates_state_machine_workflow() {
 }
 
 #[test]
+fn workflow_ingress_rejects_pipeline_only_dispatch_routes() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ],
+        "metadata": {
+            "ingress": {
+                "scope": "items",
+                "routes": [{
+                    "event_type": "updated",
+                    "lifecycle": "active",
+                    "action": "dispatch",
+                    "intent": "refresh"
+                }]
+            }
+        }
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidIngressPolicy(_))
+    ));
+}
+
+#[test]
+fn workflow_ingress_interrupt_requires_an_external_handler() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ],
+        "metadata": {
+            "ingress": {
+                "scope": "items",
+                "routes": [{
+                    "event_type": "canceled",
+                    "lifecycle": "active",
+                    "action": "interrupt"
+                }]
+            }
+        }
+    }));
+
+    let error = validate_workflow(&wf).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkflowValidationError::InvalidIngressPolicy(_)
+    ));
+    assert!(error.to_string().contains("external interrupt handler"));
+}
+
+#[test]
 fn rejects_missing_transition_target() {
     let wf = workflow(runinator_models::json!({
         "start": "start",

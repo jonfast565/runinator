@@ -516,7 +516,7 @@ fn lower_workflow(
             routes,
         };
         policy
-            .validate()
+            .validate_dispatches(None)
             .map_err(|message| RexRapError::semantic(ingress.span, message))?;
         metadata.insert(
             "ingress".into(),

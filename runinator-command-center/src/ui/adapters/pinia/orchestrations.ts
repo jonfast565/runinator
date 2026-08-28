@@ -7,19 +7,23 @@ import type {
   ExternalOperation,
   OrchestrationBinding,
   OrchestrationCommand,
+  OrchestrationCorrelationAlias,
   OrchestrationEpoch,
   OrchestrationEvidence,
   OrchestrationReduction,
   WorkspaceLease,
 } from "../../../core/domain/models";
 import {
+  addOrchestrationAlias,
   applyAdapter,
   deleteAdapter,
+  deleteOrchestrationAlias,
   fetchAdapterKinds,
   fetchAdapterRevisions,
   fetchAdapters,
   fetchExternalOperations,
   fetchOrchestration,
+  fetchOrchestrationAliases,
   fetchOrchestrationCommands,
   fetchOrchestrationEpochs,
   fetchOrchestrationEvents,
@@ -44,6 +48,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   const commands = ref<OrchestrationCommand[]>([]);
   const operations = ref<ExternalOperation[]>([]);
   const workspaces = ref<WorkspaceLease[]>([]);
+  const aliases = ref<OrchestrationCorrelationAlias[]>([]);
   const adapterKinds = shallowRef<AdapterKindMetadata[]>([]);
   const adapters = ref<AdapterDefinition[]>([]);
   const selectedAdapterId = ref<string | null>(null);
@@ -73,7 +78,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
 
   async function select(id: string): Promise<void> {
     selectedId.value = id;
-    [selected.value, epochs.value, events.value, evidence.value, commands.value, operations.value, workspaces.value] = await Promise.all([
+    [selected.value, epochs.value, events.value, evidence.value, commands.value, operations.value, workspaces.value, aliases.value] = await Promise.all([
       fetchOrchestration(id),
       fetchOrchestrationEpochs(id),
       fetchOrchestrationEvents(id),
@@ -81,6 +86,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
       fetchOrchestrationCommands(id),
       fetchExternalOperations(id),
       fetchOrchestrationWorkspaces(id),
+      fetchOrchestrationAliases(id),
     ]);
   }
 
@@ -105,6 +111,24 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     const next = await requeueOrchestration(selectedId.value, reason);
     selectedId.value = next.id;
     await refresh();
+  }
+
+  async function addAlias(source: string, scope: string, correlationKey: string): Promise<void> {
+    if (!selectedId.value) {
+      return;
+    }
+
+    await addOrchestrationAlias(selectedId.value, source, scope, correlationKey);
+    aliases.value = await fetchOrchestrationAliases(selectedId.value);
+  }
+
+  async function removeAlias(aliasId: string): Promise<void> {
+    if (!selectedId.value) {
+      return;
+    }
+
+    await deleteOrchestrationAlias(selectedId.value, aliasId);
+    aliases.value = await fetchOrchestrationAliases(selectedId.value);
   }
 
   async function refreshAdapters(): Promise<void> {
@@ -178,9 +202,9 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   }
 
   return {
-    bindings, selectedId, selected, epochs, events, evidence, commands, operations, workspaces,
+    bindings, selectedId, selected, epochs, events, evidence, commands, operations, workspaces, aliases,
     adapterKinds, adapters, selectedAdapterId, selectedAdapter, adapterRevisions,
-    loading, error, refresh, select, currentBinding, dispatch, requeue, refreshAdapters, selectAdapter, saveAdapter,
+    loading, error, refresh, select, currentBinding, dispatch, requeue, addAlias, removeAlias, refreshAdapters, selectAdapter, saveAdapter,
     toggleAdapter, removeAdapter, runAdapterTest, resolveOperation,
   };
 });

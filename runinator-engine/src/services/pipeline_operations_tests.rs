@@ -139,6 +139,78 @@ async fn save_requires_pipeline_identity_and_canonical_member_keys() {
 }
 
 #[tokio::test]
+async fn save_validates_ingress_and_orchestration_as_one_pipeline_contract() {
+    let (db, path) = test_db().await;
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = PipelineOperations::new(db, broker.clone(), UiEventPublisher::new(broker), None);
+
+    let mut unmanaged_dispatch = pipeline();
+    unmanaged_dispatch.metadata = json!({
+        "ingress": {
+            "scope": "items",
+            "routes": [{
+                "event_type": "updated",
+                "lifecycle": "active",
+                "action": "dispatch",
+                "intent": "refresh"
+            }]
+        }
+    });
+    let error = service.save(&unmanaged_dispatch).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("requires an orchestration policy")
+    );
+
+    let mut missing_ingress = pipeline();
+    missing_ingress.metadata = json!({
+        "orchestration": {
+            "intents": {
+                "refresh": { "effect": "observe", "priority": 10 }
+            }
+        }
+    });
+    let error = service.save(&missing_ingress).await.unwrap_err();
+    assert!(error.to_string().contains("requires an ingress policy"));
+
+    let mut unknown_intent = pipeline();
+    unknown_intent.metadata = json!({
+        "ingress": {
+            "scope": "items",
+            "routes": [{
+                "event_type": "created",
+                "lifecycle": "unbound",
+                "action": "start"
+            }, {
+                "event_type": "updated",
+                "lifecycle": "active",
+                "action": "dispatch",
+                "intent": "missing"
+            }]
+        },
+        "orchestration": {
+            "intents": {
+                "refresh": { "effect": "observe", "priority": 10 }
+            }
+        }
+    });
+    let error = service.save(&unknown_intent).await.unwrap_err();
+    assert!(error.to_string().contains("does not exist"));
+
+    unknown_intent
+        .metadata
+        .pointer_mut("/ingress/routes/1/intent")
+        .map(|intent| *intent = Value::String("refresh".into()));
+    service
+        .save(&unknown_intent)
+        .await
+        .expect("matching ingress and orchestration policies save together");
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn import_uses_canonical_members_and_resolves_same_pack_pipeline_sources() {
     let (db, path) = test_db().await;
     let mut alpha = member_workflow();

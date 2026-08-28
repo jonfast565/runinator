@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
-use runinator_blob_core::BlobStore;
+use runinator_engine::services::WorkflowFiles;
 use runinator_models::auth::AuthContext;
 
 use runinator_ws_core::models::ApiResponse;
@@ -21,8 +21,8 @@ pub struct ArtifactContentQuery {
 
 /// `POST /artifacts/content` stores bytes only. VM effect-result processing persists the metadata,
 /// so this endpoint never creates a second database record.
-pub async fn upload_artifact_content(
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+pub async fn upload_artifact_content<T: Send + Sync + 'static>(
+    Extension(files): Extension<Arc<WorkflowFiles<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<ArtifactContentQuery>,
     body: axum::body::Bytes,
@@ -44,14 +44,9 @@ pub async fn upload_artifact_content(
             .to_string()
     });
 
-    match runinator_engine::artifact_storage::put_artifact(
-        &blobs,
-        query.run_id,
-        &name,
-        &mime_type,
-        &bytes,
-    )
-    .await
+    match files
+        .put_artifact(query.run_id, &name, &mime_type, &bytes)
+        .await
     {
         Ok(uri) => (
             StatusCode::CREATED,
@@ -65,10 +60,10 @@ pub async fn upload_artifact_content(
     }
 }
 
-pub fn routes() -> axum::Router {
+pub fn routes<T: Send + Sync + 'static>() -> axum::Router {
     axum::Router::new().route(
         runinator_models::api_routes::API_ARTIFACTS_CONTENT,
-        axum::routing::post(upload_artifact_content),
+        axum::routing::post(upload_artifact_content::<T>),
     )
 }
 

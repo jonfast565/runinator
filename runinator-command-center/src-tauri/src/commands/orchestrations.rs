@@ -1,7 +1,7 @@
 use runinator_models::orchestration::{
     AdapterDefinition, AdapterKindCatalogEntry, AdapterRevision, ExternalOperation,
-    OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch, OrchestrationEventReduction,
-    OrchestrationEvidence,
+    OrchestrationBinding, OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
+    OrchestrationEventReduction, OrchestrationEvidence,
 };
 use runinator_models::workspaces::WorkspaceLease;
 use serde_json::{json, Value};
@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     client::{delete, get_json, post_json},
-    error::CommandResult,
+    error::{CommandError, CommandResult},
     state::CommandCenterState,
 };
 
@@ -98,6 +98,49 @@ pub async fn fetch_orchestration_workspaces(
     get_json(
         &state,
         &format!("orchestrations/{orchestration_id}/workspaces"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_orchestration_aliases(
+    state: State<'_, CommandCenterState>,
+    orchestration_id: Uuid,
+) -> CommandResult<Vec<OrchestrationCorrelationAlias>> {
+    get_json(
+        &state,
+        &format!("orchestrations/{orchestration_id}/aliases"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn add_orchestration_alias(
+    state: State<'_, CommandCenterState>,
+    orchestration_id: Uuid,
+    source: String,
+    scope: String,
+    correlation_key: String,
+) -> CommandResult<OrchestrationCorrelationAlias> {
+    let value = post_json(
+        &state,
+        &format!("orchestrations/{orchestration_id}/aliases"),
+        &json!({ "source": source, "scope": scope, "correlation_key": correlation_key }),
+    )
+    .await?;
+    serde_json::from_value(value)
+        .map_err(|error| CommandError::Unexpected(format!("invalid alias response: {error}")))
+}
+
+#[tauri::command]
+pub async fn delete_orchestration_alias(
+    state: State<'_, CommandCenterState>,
+    orchestration_id: Uuid,
+    alias_id: Uuid,
+) -> CommandResult<Value> {
+    delete(
+        &state,
+        &format!("orchestrations/{orchestration_id}/aliases/{alias_id}"),
     )
     .await
 }

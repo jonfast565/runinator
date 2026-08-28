@@ -43,8 +43,9 @@ use runinator_models::{
     orchestration::{
         AdapterDefinition, AdapterKindCatalogEntry, AdapterRevision, IdempotencyClaim,
         IdempotencyClaimRequest, IdempotencyCompleteRequest, IdempotencyReleaseRequest,
-        OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
-        OrchestrationEventReduction, OrchestrationEvidence, ACTION_IDEMPOTENCY_SCOPE,
+        OrchestrationBinding, OrchestrationCommand, OrchestrationCorrelationAlias,
+        OrchestrationEpoch, OrchestrationEventReduction, OrchestrationEvidence,
+        ACTION_IDEMPOTENCY_SCOPE,
     },
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
@@ -283,6 +284,19 @@ where
         scope: Option<&str>,
         correlation_key: Option<&str>,
     ) -> Result<Vec<OrchestrationBinding>> {
+        self.fetch_orchestrations_filtered(status, pipeline_id, None, scope, correlation_key, None)
+            .await
+    }
+
+    pub async fn fetch_orchestrations_filtered(
+        &self,
+        status: Option<&str>,
+        pipeline_id: Option<Uuid>,
+        adapter_id: Option<Uuid>,
+        scope: Option<&str>,
+        correlation_key: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<OrchestrationBinding>> {
         let mut url = self.build_url("/orchestrations").await?;
         {
             let mut query = url.query_pairs_mut();
@@ -292,11 +306,17 @@ where
             if let Some(pipeline_id) = pipeline_id {
                 query.append_pair("pipeline_id", &pipeline_id.to_string());
             }
+            if let Some(adapter_id) = adapter_id {
+                query.append_pair("adapter_id", &adapter_id.to_string());
+            }
             if let Some(scope) = scope {
                 query.append_pair("scope", scope);
             }
             if let Some(key) = correlation_key {
                 query.append_pair("correlation_key", key);
+            }
+            if let Some(limit) = limit {
+                query.append_pair("limit", &limit.to_string());
             }
         }
         let response = self.http_get(url.clone()).send().await?;
@@ -340,6 +360,50 @@ where
     pub async fn fetch_orchestration_workspaces(&self, id: Uuid) -> Result<Vec<WorkspaceLease>> {
         self.get_json_path(&format!("/orchestrations/{id}/workspaces"))
             .await
+    }
+
+    pub async fn fetch_orchestration_aliases(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<OrchestrationCorrelationAlias>> {
+        self.get_json_path(&format!("/orchestrations/{id}/aliases"))
+            .await
+    }
+
+    pub async fn add_orchestration_alias(
+        &self,
+        id: Uuid,
+        source: &str,
+        scope: &str,
+        correlation_key: &str,
+    ) -> Result<OrchestrationCorrelationAlias> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/aliases"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({
+                "source": source,
+                "scope": scope,
+                "correlation_key": correlation_key,
+            }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn delete_orchestration_alias(
+        &self,
+        id: Uuid,
+        alias_id: Uuid,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/aliases/{alias_id}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
     }
 
     pub async fn send_orchestration_intent(

@@ -12,19 +12,13 @@ use axum::{
 use chrono::Utc;
 use runinator_adapter_contract::{AdapterRequest, AdapterResponse};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
-use runinator_engine::services::{PipelineOperations, choose_intent};
+use runinator_engine::services::{AdapterOperations, PipelineOperations};
 use runinator_models::{
     auth::AuthContext,
-    orchestration::{
-        AdapterDefinition, AdapterKindMetadata, AdapterRevision, IngressAction,
-        IngressAdmissionStatus, IngressLifecycle, IngressPolicy, IngressTargetKind,
-        NormalizedAdapterEvent, OrchestrationPolicy,
-    },
+    orchestration::{AdapterDefinition, AdapterKindMetadata},
     rbac::Action,
-    settings::SettingKind,
     web::TaskResponse,
 };
-use runinator_secrets::{secret_cipher::SecretCipher, stored_secret::StoredSecret};
 use runinator_store::{
     RuntimeStore,
     roles::{
@@ -120,15 +114,26 @@ fn require_scope(
 }
 
 async fn authorized_adapter<T: OrchestrationStore>(
-    db: &T,
+    operations: &AdapterOperations<T>,
     ctx: &AuthContext,
     adapter_id: Uuid,
     action: Action,
 ) -> Result<AdapterDefinition, (StatusCode, Json<ApiResponse>)> {
     let org_id = require_scope(ctx, action)?;
-    match db.fetch_orchestration_adapter(adapter_id).await {
+    match operations.fetch(adapter_id).await {
         Ok(Some(adapter)) if adapter.org_id == org_id => Ok(adapter),
         Ok(_) => Err(not_found("adapter not found")),
+        Err(error) => Err(api_error(error.to_string())),
+    }
+}
+
+async fn current_revision<T: OrchestrationStore>(
+    operations: &AdapterOperations<T>,
+    adapter: &AdapterDefinition,
+) -> Result<runinator_models::orchestration::AdapterRevision, (StatusCode, Json<ApiResponse>)> {
+    match operations.current_revision(adapter).await {
+        Ok(Some(revision)) => Ok(revision),
+        Ok(None) => Err(api_error("current adapter revision is missing")),
         Err(error) => Err(api_error(error.to_string())),
     }
 }
@@ -205,57 +210,6 @@ fn identity_projection(
     )
 }
 
-async fn current_revision<T: OrchestrationStore>(
-    db: &T,
-    adapter: &AdapterDefinition,
-) -> Result<AdapterRevision, (StatusCode, Json<ApiResponse>)> {
-    match db
-        .fetch_orchestration_adapter_revision(adapter.id, adapter.current_revision)
-        .await
-    {
-        Ok(Some(revision)) => Ok(revision),
-        Ok(None) => Err(api_error("current adapter revision is missing")),
-        Err(error) => Err(api_error(error.to_string())),
-    }
-}
-
-async fn resolve_secrets<T: RuntimeStore>(
-    db: &T,
-    org_id: Uuid,
-    bindings: &BTreeMap<String, Uuid>,
-) -> Result<serde_json::Value, String> {
-    let cipher = SecretCipher::from_env();
-    let mut values = serde_json::Map::new();
-    for (name, id) in bindings {
-        let record = db
-            .fetch_setting_by_id(*id)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("secret binding '{name}' does not exist"))?;
-        if record.kind != SettingKind::Secret {
-            return Err(format!("binding '{name}' does not reference a Secret"));
-        }
-        let expected_scope = format!("org:{org_id}");
-        if record.scope != expected_scope {
-            return Err(format!(
-                "secret binding '{name}' is outside the adapter organization"
-            ));
-        }
-        let opened = cipher
-            .try_decrypt(&record.value)
-            .ok_or_else(|| format!("secret binding '{name}' could not be decrypted"))?;
-        let secret = StoredSecret::decode(&opened)?;
-        if secret
-            .expires_at
-            .is_some_and(|expires| expires <= Utc::now())
-        {
-            return Err(format!("secret binding '{name}' is expired"));
-        }
-        values.insert(name.clone(), serde_json::Value::String(secret.value));
-    }
-    Ok(serde_json::Value::Object(values))
-}
-
 fn webhook_body_limit() -> usize {
     std::env::var("RUNINATOR_ADAPTER_WEBHOOK_BODY_LIMIT")
         .ok()
@@ -288,284 +242,6 @@ fn webhook_header_allowlist() -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-async fn pipeline_for_event<T: DefinitionStore + IngressStore>(
-    db: &T,
-    adapter: &AdapterDefinition,
-    event: &runinator_models::orchestration::NormalizedAdapterEvent,
-) -> Result<Uuid, String> {
-    if let Some(admission) = db
-        .fetch_ingress_admission(
-            Some(adapter.org_id),
-            event.scope.clone(),
-            event.correlation_key.clone(),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        return match admission.target.kind {
-            IngressTargetKind::Pipeline => Ok(admission.target.id),
-            IngressTargetKind::Workflow => {
-                Err("correlation key is owned by a workflow ingress target".into())
-            }
-        };
-    }
-    let mut candidates = Vec::new();
-    for pipeline in db
-        .fetch_pipelines()
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        if pipeline.org_id != Some(adapter.org_id) {
-            continue;
-        }
-        let Some(raw_policy) = pipeline.metadata.get("ingress") else {
-            continue;
-        };
-        let policy: IngressPolicy =
-            serde_json::from_value(raw_policy.clone().into()).map_err(|error| {
-                format!(
-                    "pipeline '{}' has invalid ingress policy: {error}",
-                    pipeline.name
-                )
-            })?;
-        if policy.scope == event.scope
-            && policy.action_for_payload(
-                &event.event_type,
-                IngressLifecycle::Unbound,
-                &event.payload,
-            ) == Some(IngressAction::Start)
-        {
-            if let Some(id) = pipeline.id {
-                candidates.push(id);
-            }
-        }
-    }
-    match candidates.as_slice() {
-        [pipeline_id] => Ok(*pipeline_id),
-        [] => Err(format!(
-            "no pipeline admission route matched scope '{}' and event '{}'",
-            event.scope, event.event_type
-        )),
-        _ => Err(format!(
-            "multiple pipeline admission routes matched scope '{}' and event '{}'; make admission routes unambiguous",
-            event.scope, event.event_type
-        )),
-    }
-}
-
-/// Direct admission identity always wins. Otherwise, an adapter-normalized identity may be an
-/// alias learned from an earlier phase result; route it to that binding generation's canonical
-/// ingress key while retaining the received identity in provenance.
-async fn resolve_correlation_alias<T: IngressStore + OrchestrationStore>(
-    db: &T,
-    org_id: Uuid,
-    event: &mut NormalizedAdapterEvent,
-) -> Result<(), String> {
-    if db
-        .fetch_ingress_admission(
-            Some(org_id),
-            event.scope.clone(),
-            event.correlation_key.clone(),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        .is_some()
-    {
-        return Ok(());
-    }
-    let Some(alias) = db
-        .fetch_orchestration_correlation_alias(
-            Some(org_id),
-            event.source.clone(),
-            event.scope.clone(),
-            event.correlation_key.clone(),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-    else {
-        return Ok(());
-    };
-    let Some(binding) = db
-        .fetch_orchestration_binding(alias.binding_id)
-        .await
-        .map_err(|error| error.to_string())?
-    else {
-        return Err("correlation alias refers to a missing binding".into());
-    };
-    if binding.generation != alias.generation {
-        return Err("correlation alias generation no longer matches its binding".into());
-    }
-    let received = serde_json::json!({
-        "source": event.source,
-        "scope": event.scope,
-        "correlation_key": event.correlation_key,
-        "alias_id": alias.id,
-    });
-    match &mut event.provenance {
-        runinator_models::value::Value::Object(values) => {
-            values.insert("received_correlation".into(), received.into());
-        }
-        prior => {
-            *prior = serde_json::json!({
-                "received_correlation": received,
-                "adapter_provenance": prior.clone(),
-            })
-            .into();
-        }
-    }
-    event.scope = binding.scope;
-    event.correlation_key = binding.correlation_key;
-    Ok(())
-}
-
-async fn preview_adapter_event<
-    T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore,
->(
-    db: &T,
-    adapter: &AdapterDefinition,
-    event: &NormalizedAdapterEvent,
-) -> Result<serde_json::Value, String> {
-    let admission = db
-        .fetch_ingress_admission(
-            Some(adapter.org_id),
-            event.scope.clone(),
-            event.correlation_key.clone(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let lifecycle = admission
-        .as_ref()
-        .map(|admission| match admission.status {
-            IngressAdmissionStatus::Active => IngressLifecycle::Active,
-            IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,
-        })
-        .unwrap_or(IngressLifecycle::Unbound);
-    let mut validation_errors = Vec::new();
-    let mut pipelines = if let Some(admission) = &admission {
-        match admission.target.kind {
-            IngressTargetKind::Pipeline => db
-                .fetch_pipeline(admission.target.id)
-                .await
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .collect::<Vec<_>>(),
-            IngressTargetKind::Workflow => {
-                validation_errors
-                    .push("correlation key is owned by a workflow ingress target".to_string());
-                Vec::new()
-            }
-        }
-    } else {
-        db.fetch_pipelines()
-            .await
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .filter(|pipeline| pipeline.org_id == Some(adapter.org_id))
-            .collect::<Vec<_>>()
-    };
-    pipelines.sort_by(|left, right| left.name.cmp(&right.name));
-
-    let binding = if let Some(admission) = &admission {
-        match admission.id {
-            Some(id) => db
-                .fetch_orchestration_binding_for_admission(id, admission.generation)
-                .await
-                .map_err(|error| error.to_string())?,
-            None => None,
-        }
-    } else {
-        None
-    };
-    let mut matches = Vec::new();
-    let mut start_matches = 0usize;
-    for pipeline in pipelines {
-        let pipeline_id = match pipeline.id {
-            Some(id) => id,
-            None => continue,
-        };
-        let ingress = if admission
-            .as_ref()
-            .is_some_and(|admission| admission.target.id == pipeline_id)
-        {
-            admission
-                .as_ref()
-                .and_then(|admission| serde_json::from_value(admission.policy.clone().into()).ok())
-        } else {
-            pipeline.metadata.get("ingress").and_then(|value| {
-                serde_json::from_value::<IngressPolicy>(value.clone().into()).ok()
-            })
-        };
-        let Some(ingress) = ingress else {
-            continue;
-        };
-        if ingress.scope != event.scope {
-            continue;
-        }
-        let routes = ingress.routes_for_payload(&event.event_type, lifecycle, &event.payload);
-        if routes.is_empty() {
-            continue;
-        }
-        if routes
-            .iter()
-            .any(|route| route.action == IngressAction::Start)
-        {
-            start_matches += 1;
-        }
-        let candidate_intents = routes
-            .iter()
-            .filter(|route| route.action == IngressAction::Dispatch)
-            .filter_map(|route| route.intent.clone())
-            .collect::<Vec<_>>();
-        let orchestration = binding
-            .as_ref()
-            .filter(|binding| binding.pipeline_id == pipeline_id)
-            .map(|binding| binding.policy.clone())
-            .or_else(|| {
-                pipeline.metadata.get("orchestration").and_then(|value| {
-                    serde_json::from_value::<OrchestrationPolicy>(value.clone().into()).ok()
-                })
-            });
-        let decision = orchestration
-            .as_ref()
-            .map(|policy| choose_intent(candidate_intents.iter().map(String::as_str), policy));
-        matches.push(serde_json::json!({
-            "pipeline_id": pipeline_id,
-            "pipeline_name": pipeline.name,
-            "lifecycle": lifecycle.as_str(),
-            "routes": routes,
-            "candidate_intents": candidate_intents,
-            "winner": decision.as_ref().and_then(|decision| decision.winner.clone()),
-            "suppressed_intents": decision.map(|decision| decision.suppressed).unwrap_or_default(),
-            "managed": orchestration.is_some(),
-        }));
-    }
-    if matches.is_empty() {
-        validation_errors.push(format!(
-            "no pipeline route matched scope '{}' and event '{}' for lifecycle '{}'",
-            event.scope,
-            event.event_type,
-            lifecycle.as_str()
-        ));
-    } else if lifecycle == IngressLifecycle::Unbound && start_matches == 0 {
-        validation_errors.push("matching routes do not admit a new pipeline generation".into());
-    } else if lifecycle == IngressLifecycle::Unbound && start_matches > 1 {
-        validation_errors.push(
-            "multiple pipeline admission routes matched; admission would be rejected as ambiguous"
-                .into(),
-        );
-    }
-    Ok(serde_json::json!({
-        "delivery_id": event.delivery_id,
-        "scope": event.scope,
-        "correlation_key": event.correlation_key,
-        "event_type": event.event_type,
-        "lifecycle": lifecycle.as_str(),
-        "existing_admission": admission,
-        "pipeline_matches": matches,
-        "validation_errors": validation_errors,
-    }))
-}
-
 pub async fn kinds<T: RbacStore>(
     Extension(_db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -587,7 +263,8 @@ pub async fn list<T: OrchestrationStore + RbacStore>(
         Ok(value) => value,
         Err(reply) => return reply,
     };
-    match db.fetch_orchestration_adapters(org_id).await {
+    let operations = AdapterOperations::new(db.clone());
+    match operations.list(org_id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationAdapterList(values)),
@@ -601,7 +278,8 @@ pub async fn get_one<T: OrchestrationStore + RbacStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match authorized_adapter(db.as_ref(), &ctx, id, Action::View).await {
+    let operations = AdapterOperations::new(db.clone());
+    match authorized_adapter(&operations, &ctx, id, Action::View).await {
         Ok(value) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationAdapter(value)),
@@ -615,10 +293,11 @@ pub async fn revisions<T: OrchestrationStore + RbacStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authorized_adapter(db.as_ref(), &ctx, id, Action::View).await {
+    let operations = AdapterOperations::new(db.clone());
+    if let Err(reply) = authorized_adapter(&operations, &ctx, id, Action::View).await {
         return reply;
     }
-    match db.fetch_orchestration_adapter_revisions(id).await {
+    match operations.revisions(id).await {
         Ok(values) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationAdapterRevisionList(values)),
@@ -653,8 +332,9 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
     }
     let now = Utc::now();
     let adapter_id = Uuid::now_v7();
-    match db
-        .create_orchestration_adapter(
+    let operations = AdapterOperations::new(db.clone());
+    match operations
+        .create(
             NewAdapterDefinition {
                 id: adapter_id,
                 org_id,
@@ -689,7 +369,8 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     Path(id): Path<Uuid>,
     Json(request): Json<AdapterApplyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let adapter = match authorized_adapter(db.as_ref(), &ctx, id, Action::Edit).await {
+    let operations = AdapterOperations::new(db.clone());
+    let adapter = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
         Ok(value) => value,
         Err(reply) => return reply,
     };
@@ -711,7 +392,7 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
         return bad_request(error);
     }
     if adapter.has_admitted_binding {
-        let current = match current_revision(db.as_ref(), &adapter).await {
+        let current = match current_revision(&operations, &adapter).await {
             Ok(value) => value,
             Err(reply) => return reply,
         };
@@ -726,8 +407,8 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     let expected_revision = request
         .expected_revision
         .unwrap_or(adapter.current_revision);
-    match db
-        .create_orchestration_adapter_revision(
+    match operations
+        .create_revision(
             NewAdapterRevision {
                 id: Uuid::now_v7(),
                 adapter_id: id,
@@ -769,12 +450,13 @@ pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
     Path(id): Path<Uuid>,
     Json(request): Json<AdapterEnableRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let authorized = match authorized_adapter(db.as_ref(), &ctx, id, Action::Edit).await {
+    let operations = AdapterOperations::new(db.clone());
+    let authorized = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
         Ok(adapter) => adapter,
         Err(reply) => return reply,
     };
-    match db
-        .set_orchestration_adapter_enabled(id, request.enabled, Utc::now())
+    match operations
+        .set_enabled(id, request.enabled, Utc::now())
         .await
     {
         Ok(Some(adapter)) => {
@@ -795,11 +477,12 @@ pub async fn remove<T: OrchestrationStore + RbacStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let adapter = match authorized_adapter(db.as_ref(), &ctx, id, Action::Own).await {
+    let operations = AdapterOperations::new(db.clone());
+    let adapter = match authorized_adapter(&operations, &ctx, id, Action::Own).await {
         Ok(adapter) => adapter,
         Err(reply) => return reply,
     };
-    match db.delete_orchestration_adapter(id).await {
+    match operations.delete(id).await {
         Ok(true) => {
             emit_adapter(&publisher, id, Some(adapter.org_id));
             (
@@ -825,16 +508,17 @@ pub async fn test<
     Path(id): Path<Uuid>,
     Json(request): Json<AdapterTestRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let adapter = match authorized_adapter(db.as_ref(), &ctx, id, Action::Edit).await {
+    let operations = AdapterOperations::new(db.clone());
+    let adapter = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
         Ok(value) => value,
         Err(reply) => return reply,
     };
-    let revision = match current_revision(db.as_ref(), &adapter).await {
+    let revision = match current_revision(&operations, &adapter).await {
         Ok(value) => value,
         Err(reply) => return reply,
     };
     let bindings = request.secret_bindings.unwrap_or(revision.secret_bindings);
-    let secrets = match resolve_secrets(db.as_ref(), adapter.org_id, &bindings).await {
+    let secrets = match operations.resolve_secrets(adapter.org_id, &bindings).await {
         Ok(value) => value,
         Err(error) => return bad_request(error),
     };
@@ -869,7 +553,7 @@ pub async fn test<
             let mut previews = Vec::new();
             if normalized.verified {
                 for event in &normalized.events {
-                    match preview_adapter_event(db.as_ref(), &adapter, event).await {
+                    match operations.preview_event(&adapter, event).await {
                         Ok(preview) => previews.push(preview),
                         Err(error) => return api_error(error),
                     }
@@ -960,9 +644,10 @@ pub async fn webhook<
             })),
         );
     }
+    let operations = AdapterOperations::new(db.clone());
     let adapter = match endpoint.parse::<Uuid>() {
-        Ok(id) => db.fetch_orchestration_adapter(id).await,
-        Err(_) => db.fetch_orchestration_adapter_by_endpoint(endpoint).await,
+        Ok(id) => operations.fetch(id).await,
+        Err(_) => operations.fetch_by_endpoint(endpoint).await,
     };
     let adapter = match adapter {
         Ok(Some(adapter)) if adapter.enabled => adapter,
@@ -970,15 +655,17 @@ pub async fn webhook<
         Ok(None) => return not_found("adapter not found"),
         Err(error) => return api_error(error.to_string()),
     };
-    let revision = match current_revision(db.as_ref(), &adapter).await {
+    let revision = match current_revision(&operations, &adapter).await {
         Ok(value) => value,
         Err(reply) => return reply,
     };
-    let secrets =
-        match resolve_secrets(db.as_ref(), adapter.org_id, &revision.secret_bindings).await {
-            Ok(value) => value,
-            Err(error) => return api_error(error),
-        };
+    let secrets = match operations
+        .resolve_secrets(adapter.org_id, &revision.secret_bindings)
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => return api_error(error),
+    };
     use base64::Engine;
     let request = AdapterRequest {
         method: "POST".into(),
@@ -1017,7 +704,9 @@ pub async fn webhook<
         if let Err(error) = event.validate_identity() {
             return bad_request(error);
         }
-        if let Err(error) = resolve_correlation_alias(db.as_ref(), adapter.org_id, &mut event).await
+        if let Err(error) = operations
+            .resolve_correlation_alias(adapter.org_id, &mut event)
+            .await
         {
             return bad_request(error);
         }
@@ -1029,7 +718,7 @@ pub async fn webhook<
                 payload.insert("provenance".into(), event.provenance.clone());
             }
         }
-        let pipeline_id = match pipeline_for_event(db.as_ref(), &adapter, &event).await {
+        let pipeline_id = match operations.pipeline_for_event(&adapter, &event).await {
             Ok(value) => value,
             Err(error) => return bad_request(error),
         };

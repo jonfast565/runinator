@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use runinator_models::{
     interrupt::InterruptDeclaration,
+    orchestration::{IngressAction, IngressPolicy},
     providers::ProviderMetadata,
     types::RuninatorType,
     value::Value,
@@ -125,8 +126,41 @@ pub fn validate_workflow(
     validate_map_concurrency_bodies(&nodes)?;
     validate_mutex_sections(&start, &nodes)?;
     validate_interrupt_handlers(workflow, &start, &nodes)?;
+    validate_ingress_policy(workflow, &nodes)?;
 
     Ok((start, nodes))
+}
+
+fn validate_ingress_policy(
+    workflow: &WorkflowDefinition,
+    nodes: &[WorkflowNode],
+) -> Result<(), WorkflowValidationError> {
+    let Some(value) = workflow.definition.metadata.get("ingress") else {
+        return Ok(());
+    };
+    let policy: IngressPolicy = serde_json::from_value(value.clone().into()).map_err(|error| {
+        WorkflowValidationError::InvalidIngressPolicy(format!("invalid metadata: {error}"))
+    })?;
+    policy
+        .validate_dispatches(None)
+        .map_err(WorkflowValidationError::InvalidIngressPolicy)?;
+    if policy
+        .routes
+        .iter()
+        .any(|route| route.action == IngressAction::Interrupt)
+        && !interrupt_declarations(workflow, nodes)
+            .iter()
+            .any(|handler| {
+                handler.enabled
+                    && handler.source()
+                        == Some(runinator_models::interrupt::InterruptSource::External)
+            })
+    {
+        return Err(WorkflowValidationError::InvalidIngressPolicy(
+            "interrupt routes require an enabled external interrupt handler".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_node_ref(
