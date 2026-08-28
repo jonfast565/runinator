@@ -2,7 +2,7 @@
   "name": "runinator-rexrap",
   "displayName": "Runinator REXRAP",
   "description": "Diagnostics, completion, hover, formatting, and apply-on-save for Runinator REXRAP workflows.",
-  "version": "0.2.367",
+  "version": "0.3.496",
   "publisher": "runinator",
   "engines": {
     "vscode": "^1.75.0"

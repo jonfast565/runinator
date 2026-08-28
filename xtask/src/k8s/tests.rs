@@ -235,13 +235,13 @@ spec:
 #[test]
 fn ctl_image_from_bootstrap_keeps_the_deployed_registry_and_tag() {
     assert_eq!(
-        ctl_image_from_bootstrap("registry.example.com/runinator/runinator-bootstrap:0.2.368")
+        ctl_image_from_bootstrap("registry.example.com/runinator/runinator-bootstrap:0.3.496")
             .unwrap(),
-        "registry.example.com/runinator/runinator-ctl:0.2.368"
+        "registry.example.com/runinator/runinator-ctl:0.3.496"
     );
     assert_eq!(
         ctl_image_from_bootstrap("runinator-bootstrap@sha256:abc").unwrap(),
         "runinator-ctl@sha256:abc"
     );
-    assert!(ctl_image_from_bootstrap("runinator-bootstrap-extra:0.2.368").is_err());
+    assert!(ctl_image_from_bootstrap("runinator-bootstrap-extra:0.3.496").is_err());
 }

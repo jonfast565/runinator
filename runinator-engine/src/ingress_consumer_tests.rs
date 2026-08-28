@@ -77,7 +77,7 @@ async fn a_due_timer_wake_is_relayed_onto_the_effect_result_channel() {
     assert_eq!(delivery.result.event_id, result.event_id);
     assert_eq!(delivery.result.timestamp, result.timestamp);
 
-    shutdown.notify_waiters();
+    shutdown.notify_one();
     consumer.await.unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -114,7 +114,7 @@ async fn an_orchestration_deadline_nudges_the_shared_reducer_signal() {
     tokio::time::timeout(Duration::from_secs(5), nudge.notified())
         .await
         .expect("the ingress consumer should wake the correlated reducer");
-    shutdown.notify_waiters();
+    shutdown.notify_one();
     consumer.await.unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -192,7 +192,7 @@ async fn an_agent_directive_reply_completes_its_durable_record() {
     }
     assert!(completed, "the directive should be recorded as completed");
 
-    shutdown.notify_waiters();
+    shutdown.notify_one();
     consumer.await.unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -238,7 +238,7 @@ async fn a_reply_for_an_unknown_directive_is_acknowledged_rather_than_requeued()
             .unwrap();
     assert_eq!(delivery.result.effect_id, effect_id);
 
-    shutdown.notify_waiters();
+    shutdown.notify_one();
     consumer.await.unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -317,7 +317,7 @@ async fn broker_announced_replica_lifecycle_is_visible_and_retires_cleanly() {
         "clean broker lifecycle shutdown must retire the replica"
     );
 
-    shutdown.notify_waiters();
+    shutdown.notify_one();
     consumer.await.unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -333,14 +333,19 @@ async fn broker_announced_replica_lifecycle_is_visible_and_retires_cleanly() {
 async fn an_armed_timer_settles_through_the_wake_and_ingress_channels() {
     let (db, path) = store().await;
     let broker: Arc<dyn Broker> = Arc::new(InMemoryBroker::new());
-    let shutdown = Arc::new(Notify::new());
+    let host_shutdown = Arc::new(Notify::new());
+    let consumer_shutdown = Arc::new(Notify::new());
 
     let host = tokio::spawn(crate::run_infrastructure_effect_host(
         db.clone(),
         broker.clone(),
-        shutdown.clone(),
+        host_shutdown.clone(),
     ));
-    let consumer = tokio::spawn(run_ingress_consumer(db, broker.clone(), shutdown.clone()));
+    let consumer = tokio::spawn(run_ingress_consumer(
+        db,
+        broker.clone(),
+        consumer_shutdown.clone(),
+    ));
 
     // far enough out that a loaded machine cannot make it already-due before the host reads it,
     // which would settle it inline and arm no wake at all.
@@ -406,7 +411,8 @@ async fn an_armed_timer_settles_through_the_wake_and_ingress_channels() {
         }
     ));
 
-    shutdown.notify_waiters();
+    host_shutdown.notify_one();
+    consumer_shutdown.notify_one();
     host.await.unwrap();
     consumer.await.unwrap();
     let _ = std::fs::remove_file(path);
