@@ -103,7 +103,8 @@ fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, Sco
         | AgentDirectiveKind::TailLogs { .. }
         | AgentDirectiveKind::ListSandbox { .. } => (Action::AuditRead, ScopeRef::PLATFORM),
         AgentDirectiveKind::FetchFile { .. } => (Action::SecretsRead, ctx.selected_scope()),
-        AgentDirectiveKind::SetLabels { .. }
+        AgentDirectiveKind::CleanupWorkspace { .. }
+        | AgentDirectiveKind::SetLabels { .. }
         | AgentDirectiveKind::SetConcurrency { .. }
         | AgentDirectiveKind::SetLogLevel { .. }
         | AgentDirectiveKind::RepublishProviders

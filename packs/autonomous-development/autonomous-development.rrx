@@ -1,0 +1,369 @@
+language rexrap-1
+
+package {
+  {
+    "item_type": "rexrap_pack",
+    "name": "Autonomous Development Orchestration",
+    "version": 1
+  }
+}
+
+namespace runinator.autodev {
+
+workflow "Plan Work Item" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key plan
+
+    do {
+        @timeout(1800s)
+        let plan = ai-command.claude_code(
+            prompt: "Plan ticket ${params.ticket.key}: ${params.ticket.summary}. Read the repository, produce a concrete implementation and verification plan, and do not modify files.",
+            permission_mode: "plan",
+            allowed_tools: "Read,Glob,Grep,Bash"
+        )
+
+        compute {
+            return {
+                plan: plan.response,
+                evidence: { kind: "plan", ticket: params.ticket.key }
+            }
+        }
+    }
+}
+
+workflow "Implement Work Item" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key implement
+
+    do {
+        let workspace = git.attempt_worktree(
+            repo: params.repository.local_path,
+            branch: params.automation.branch,
+            base_ref: params.repository.base_ref
+        )
+
+        @timeout(7200s)
+        let implementation = ai-command.claude_code(
+            prompt: "Implement ticket ${params.ticket.key}: ${params.ticket.summary}. Follow repository instructions, make only in-scope changes, and leave the workspace ready for verification.",
+            permission_mode: "acceptEdits",
+            allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+        )
+
+        let committed = git.commit(
+            message: "${params.ticket.key}: ${params.ticket.summary}"
+        )
+        let revision = git.capture_revision()
+
+        compute {
+            return {
+                candidate_revision: revision.sha,
+                resources: {
+                    branch: params.automation.branch,
+                    workspace: workspace.workspace
+                },
+                evidence: {
+                    implementation: implementation.response,
+                    commit: committed.stdout,
+                    revision: revision.sha
+                }
+            }
+        }
+    }
+}
+
+workflow "Verify and Repair" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key verify
+
+    do {
+        try {
+            @timeout(3600s)
+            console.run(command: params.automation.local_check_command)
+        } catch {
+            @timeout(3600s)
+            ai-command.claude_code(
+                prompt: "The configured local checks failed for ${params.ticket.key}. Diagnose the failure, make the smallest correct repair, and preserve the requested scope.",
+                permission_mode: "acceptEdits",
+                allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+            )
+            git.commit(message: "${params.ticket.key}: repair local verification")
+
+            try {
+                @timeout(3600s)
+                console.run(command: params.automation.local_check_command)
+            } catch {
+                @timeout(3600s)
+                ai-command.claude_code(
+                    prompt: "Local checks still fail for ${params.ticket.key} after one repair. Re-diagnose from current evidence and make the final bounded repair attempt.",
+                    permission_mode: "acceptEdits",
+                    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+                )
+                git.commit(message: "${params.ticket.key}: final verification repair")
+                @timeout(3600s)
+                console.run(command: params.automation.local_check_command)
+            }
+        }
+        let revision = git.capture_revision()
+
+        compute {
+            return {
+                candidate_revision: revision.sha,
+                evidence: {
+                    command: params.automation.local_check_command,
+                    repair_budget: 2,
+                    revision: revision.sha
+                }
+            }
+        }
+    }
+}
+
+workflow "Publish Candidate" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key publish
+    import settings github as github
+
+    do {
+        let revision = git.capture_revision()
+        let promoted = git.promote_revision(
+            repo: params.repository.local_path,
+            candidate_sha: revision.sha,
+            target_ref: params.automation.branch,
+            remote: params.repository.remote,
+            push: true
+        )
+        let request = github.ensure_pr(
+            token: github.secret.token,
+            owner: params.repository.owner,
+            repo: params.repository.name,
+            title: "${params.ticket.key}: ${params.ticket.summary}",
+            head: params.automation.branch,
+            base: params.repository.base_branch,
+            body: "Automated candidate for ${params.ticket.key}. Human review, merge, and deployment remain manual."
+        )
+
+        compute {
+            return {
+                candidate_revision: revision.sha,
+                resources: {
+                    branch: params.automation.branch,
+                    pull_number: request.number,
+                    pull_url: request.html_url
+                },
+                correlations: [{
+                    source: "github",
+                    scope: params.repository.github_scope,
+                    correlation_key: "pr:${request.response.id}"
+                }],
+                evidence: {
+                    promotion: promoted,
+                    pull_url: request.html_url,
+                    revision: revision.sha
+                }
+            }
+        }
+    }
+}
+
+workflow "Verify Exact Revision" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key ci
+    import settings github as github
+
+    do {
+        let revision = git.capture_revision()
+        let checks = github.exact_revision_check_summary(
+            token: github.secret.token,
+            owner: params.repository.owner,
+            repo: params.repository.name,
+            revision: revision.sha
+        )
+        assert {
+            "exact_revision": checks.revision == revision.sha,
+            "checks_complete": checks.status == "completed",
+            "checks_passed": checks.failed == 0
+        }
+
+        compute {
+            return {
+                candidate_revision: revision.sha,
+                evidence: checks
+            }
+        }
+    }
+}
+
+workflow "Review Handoff" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key handoff
+    import settings jira as jira_settings
+
+    do {
+        let notice = jira.ensure_comment(
+            base_url: params.ticket.jira_base_url,
+            token: jira_settings.secret.token,
+            email: params.ticket.jira_email,
+            key: params.ticket.key,
+            body: "Automation completed for ${params.ticket.key}. Branch: ${params.automation.branch}. Exact-revision checks passed; see the linked pull request for evidence."
+        )
+        let transition = jira.ensure_transition(
+            base_url: params.ticket.jira_base_url,
+            token: jira_settings.secret.token,
+            email: params.ticket.jira_email,
+            key: params.ticket.key,
+            transition_id: params.automation.review_transition_id,
+            target_status: params.automation.review_status
+        )
+
+        compute {
+            return {
+                evidence: { comment: notice, transition: transition }
+            }
+        }
+    }
+}
+
+workflow "Exhaustion Handoff" v1 {
+    params {
+        ticket: any
+        repository: any
+        automation: any
+        orchestration: any
+    }
+    key exhaustion
+    import settings jira as jira_settings
+
+    do {
+        let patch = git.archive_patch(name: "${params.ticket.key}-exhausted.patch")
+        let notice = jira.ensure_comment(
+            base_url: params.ticket.jira_base_url,
+            token: jira_settings.secret.token,
+            email: params.ticket.jira_email,
+            key: params.ticket.key,
+            body: "Automation stopped after exhausting its configured budget. The preserved patch and orchestration evidence are available to an operator."
+        )
+
+        compute {
+            return {
+                evidence: {
+                    exhaustion: params.orchestration.exhaustion,
+                    patch: patch,
+                    notification: notice
+                }
+            }
+        }
+    }
+}
+}
+
+pipeline "Ticket-scoped Autonomous Development" {
+    key ticket_autonomous_development
+    namespace runinator.autodev
+    description "Plan, implement, verify, publish, and hand off one correlated ticket generation."
+
+    ingress scope "ticket.lifecycle" {
+        on "ready" when unbound -> start
+        on "cancel" when active -> dispatch "stop"
+        on "auto_removed" when active -> dispatch "stop"
+        on "blocked" when active -> dispatch "block"
+        on "unblocked" when active -> dispatch "unblock"
+        on "scope_changed" when active -> dispatch "rework"
+        on "updated" when active -> record
+        on "requeue" when terminal -> requeue
+    }
+
+    orchestration {
+        intent "stop" effect terminate priority 100
+        intent "rework" effect supersede priority 80 coalesce 5m restart "runinator.autodev.plan"
+        intent "block" effect suspend priority 60 stop cancel restart current
+        intent "unblock" effect resume priority 50 restart current
+        intent "revision" effect signal priority 20 revision "/subject_revision" signal "subject_updated"
+
+        budget "deterministic" attempts 2 exhausted pause via "runinator.autodev.exhaustion"
+        budget "transient" attempts 3 exhausted pause via "runinator.autodev.exhaustion"
+
+        phase "runinator.autodev.plan" {
+            evidence from "/evidence"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.autodev.implement" {
+            subject_revision from "/candidate_revision"
+            resources from "/resources"
+            evidence from "/evidence"
+            failure_class from "/failure_class"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.autodev.verify" {
+            subject_revision from "/candidate_revision"
+            evidence from "/evidence"
+            failure_class from "/failure_class"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.autodev.publish" {
+            subject_revision from "/candidate_revision"
+            resources from "/resources"
+            correlations from "/correlations"
+            evidence from "/evidence"
+            failure_class from "/failure_class"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.autodev.ci" {
+            subject_revision from "/candidate_revision"
+            evidence from "/evidence"
+            failure_class from "/failure_class"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.autodev.handoff" {
+            evidence from "/evidence"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.autodev.exhaustion" {
+            evidence from "/evidence"
+            workspace scope "source" reuse lease 30m recovery wait labels { "capability": "git" }
+        }
+    }
+
+    workflow "runinator.autodev.plan"
+    workflow "runinator.autodev.implement"
+    workflow "runinator.autodev.verify"
+    workflow "runinator.autodev.publish"
+    workflow "runinator.autodev.ci"
+    workflow "runinator.autodev.handoff"
+    workflow "runinator.autodev.exhaustion"
+
+    "runinator.autodev.plan" -> "runinator.autodev.implement" on success
+    "runinator.autodev.implement" -> "runinator.autodev.verify" on success
+    "runinator.autodev.verify" -> "runinator.autodev.publish" on success
+    "runinator.autodev.publish" -> "runinator.autodev.ci" on success
+    "runinator.autodev.ci" -> "runinator.autodev.handoff" on success
+}

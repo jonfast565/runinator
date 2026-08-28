@@ -7693,9 +7693,12 @@ dependencies = [
 name = "runinator-adapter-contract"
 version = "0.2.368"
 dependencies = [
+ "constant_time_eq",
+ "hmac 0.12.1",
  "runinator-models",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

@@ -8,9 +8,9 @@ use runinator_models::{
     errors::SendableError,
     orchestration::{
         AdapterDefinition, AdapterRevision, ExternalOperation, ExternalOperationStatus,
-        NewOrchestrationBinding, OrchestrationBinding, OrchestrationCommand, OrchestrationEpoch,
-        OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
-        OrchestrationStatus,
+        NewOrchestrationBinding, OrchestrationBinding, OrchestrationCommand,
+        OrchestrationCorrelationAlias, OrchestrationEpoch, OrchestrationEventReduction,
+        OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationStatus,
     },
     value::Value,
 };
@@ -40,6 +40,17 @@ pub struct NewOrchestrationEpoch {
     pub start_member: Option<String>,
     pub parameters: Value,
     pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewOrchestrationCorrelationAlias {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub generation: i64,
+    pub org_id: Option<Uuid>,
+    pub source: String,
+    pub scope: String,
+    pub correlation_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +115,31 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         admission_id: Uuid,
         generation: i64,
     ) -> impl Future<Output = Result<Option<OrchestrationBinding>, SendableError>> + Send;
+
+    fn upsert_orchestration_correlation_alias(
+        &self,
+        alias: NewOrchestrationCorrelationAlias,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<OrchestrationCorrelationAlias, SendableError>> + Send;
+
+    fn fetch_orchestration_correlation_alias(
+        &self,
+        org_id: Option<Uuid>,
+        source: String,
+        scope: String,
+        correlation_key: String,
+    ) -> impl Future<Output = Result<Option<OrchestrationCorrelationAlias>, SendableError>> + Send;
+
+    fn fetch_orchestration_correlation_aliases(
+        &self,
+        binding_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<OrchestrationCorrelationAlias>, SendableError>> + Send;
+
+    fn delete_orchestration_correlation_alias(
+        &self,
+        binding_id: Uuid,
+        alias_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Resolve the current managed binding that owns a workflow effect. Historical epochs are
     /// deliberately excluded so a late dispatch or receipt can only be recorded as stale.

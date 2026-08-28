@@ -353,6 +353,71 @@ async fn pipeline_for_event<T: DefinitionStore + IngressStore>(
     }
 }
 
+/// Direct admission identity always wins. Otherwise, an adapter-normalized identity may be an
+/// alias learned from an earlier phase result; route it to that binding generation's canonical
+/// ingress key while retaining the received identity in provenance.
+async fn resolve_correlation_alias<T: IngressStore + OrchestrationStore>(
+    db: &T,
+    org_id: Uuid,
+    event: &mut NormalizedAdapterEvent,
+) -> Result<(), String> {
+    if db
+        .fetch_ingress_admission(
+            Some(org_id),
+            event.scope.clone(),
+            event.correlation_key.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let Some(alias) = db
+        .fetch_orchestration_correlation_alias(
+            Some(org_id),
+            event.source.clone(),
+            event.scope.clone(),
+            event.correlation_key.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(());
+    };
+    let Some(binding) = db
+        .fetch_orchestration_binding(alias.binding_id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Err("correlation alias refers to a missing binding".into());
+    };
+    if binding.generation != alias.generation {
+        return Err("correlation alias generation no longer matches its binding".into());
+    }
+    let received = serde_json::json!({
+        "source": event.source,
+        "scope": event.scope,
+        "correlation_key": event.correlation_key,
+        "alias_id": alias.id,
+    });
+    match &mut event.provenance {
+        runinator_models::value::Value::Object(values) => {
+            values.insert("received_correlation".into(), received.into());
+        }
+        prior => {
+            *prior = serde_json::json!({
+                "received_correlation": received,
+                "adapter_provenance": prior.clone(),
+            })
+            .into();
+        }
+    }
+    event.scope = binding.scope;
+    event.correlation_key = binding.correlation_key;
+    Ok(())
+}
+
 async fn preview_adapter_event<
     T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore,
 >(
@@ -949,6 +1014,13 @@ pub async fn webhook<
     }
     let mut outcomes = Vec::new();
     for mut event in normalized.events {
+        if let Err(error) = event.validate_identity() {
+            return bad_request(error);
+        }
+        if let Err(error) = resolve_correlation_alias(db.as_ref(), adapter.org_id, &mut event).await
+        {
+            return bad_request(error);
+        }
         if let Some(payload) = event.payload.as_object_mut() {
             if let Some(subject_revision) = event.subject_revision.clone() {
                 payload.insert("subject_revision".into(), subject_revision.into());

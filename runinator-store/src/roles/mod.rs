@@ -48,7 +48,8 @@ pub use ingress::IngressStore;
 pub use notifications::NotificationStore;
 pub use orchestrations::{
     ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
-    NewOrchestrationEpoch, OrchestrationBindingUpdate, OrchestrationStore,
+    NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingUpdate,
+    OrchestrationStore,
 };
 pub use orgs::OrgStore;
 pub use rbac::RbacStore;

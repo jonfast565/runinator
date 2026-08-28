@@ -4,7 +4,7 @@ use axum::{
     Extension, Json,
     extract::{Path, Query},
     http::StatusCode,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use chrono::Utc;
 use runinator_broker_core::{UiEventPublisher, emit_external_operation, emit_orchestration};
@@ -19,8 +19,8 @@ use runinator_models::{
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_store::roles::{
-    DefinitionStore, ExternalOperationUpdate, IngressStore, OrchestrationStore, WorkflowVmStore,
-    WorkspaceStore,
+    DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCorrelationAlias,
+    OrchestrationStore, WorkflowVmStore, WorkspaceStore,
 };
 use runinator_ws_core::{
     models::{
@@ -44,6 +44,13 @@ pub struct OrchestrationQuery {
     pub scope: Option<String>,
     pub correlation_key: Option<String>,
     pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CorrelationAliasRequest {
+    pub source: String,
+    pub scope: String,
+    pub correlation_key: String,
 }
 
 async fn authorized_binding<T: AuthorizationStore + OrchestrationStore>(
@@ -233,6 +240,88 @@ pub async fn workspaces<T: AuthorizationStore + OrchestrationStore + WorkspaceSt
         .await
     {
         Ok(values) => (StatusCode::OK, Json(ApiResponse::WorkspaceList(values))),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn aliases<T: AuthorizationStore + OrchestrationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::View).await {
+        return reply;
+    }
+    match db.fetch_orchestration_correlation_aliases(id).await {
+        Ok(values) => (
+            StatusCode::OK,
+            Json(ApiResponse::OrchestrationCorrelationAliasList(values)),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn add_alias<T: AuthorizationStore + OrchestrationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<CorrelationAliasRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let binding = match authorized_binding(db.as_ref(), &ctx, id, Permission::Edit).await {
+        Ok(binding) => binding,
+        Err(reply) => return reply,
+    };
+    if request.source.trim().is_empty()
+        || request.scope.trim().is_empty()
+        || request.correlation_key.trim().is_empty()
+    {
+        return bad_request("source, scope, and correlation_key are required");
+    }
+    match db
+        .upsert_orchestration_correlation_alias(
+            NewOrchestrationCorrelationAlias {
+                id: Uuid::now_v7(),
+                binding_id: id,
+                generation: binding.generation,
+                org_id: binding.org_id,
+                source: request.source,
+                scope: request.scope,
+                correlation_key: request.correlation_key,
+            },
+            Utc::now(),
+        )
+        .await
+    {
+        Ok(value) => (
+            StatusCode::CREATED,
+            Json(ApiResponse::OrchestrationCorrelationAlias(value)),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn remove_alias<T: AuthorizationStore + OrchestrationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((id, alias_id)): Path<(Uuid, Uuid)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = authorized_binding(db.as_ref(), &ctx, id, Permission::Edit).await {
+        return reply;
+    }
+    match db
+        .delete_orchestration_correlation_alias(id, alias_id)
+        .await
+    {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(
+                runinator_models::web::TaskResponse {
+                    success: true,
+                    message: "correlation alias removed".into(),
+                },
+            )),
+        ),
+        Ok(false) => not_found("correlation alias not found"),
         Err(error) => api_error(error.to_string()),
     }
 }
@@ -559,6 +648,14 @@ where
         .route("/orchestrations/{id}/commands", get(commands::<T>))
         .route("/orchestrations/{id}/operations", get(operations::<T>))
         .route("/orchestrations/{id}/workspaces", get(workspaces::<T>))
+        .route(
+            "/orchestrations/{id}/aliases",
+            get(aliases::<T>).post(add_alias::<T>),
+        )
+        .route(
+            "/orchestrations/{id}/aliases/{alias_id}",
+            delete(remove_alias::<T>),
+        )
         .route(
             "/orchestrations/{id}/operations/{operation_id}/resolve",
             post(resolve_operation::<T>),

@@ -123,6 +123,10 @@ pub enum ApiResponse {
     IngressTimeline(Vec<runinator_models::orchestration::IngressInboxEntry>),
     OrchestrationBinding(runinator_models::orchestration::OrchestrationBinding),
     OrchestrationBindingList(Vec<runinator_models::orchestration::OrchestrationBinding>),
+    OrchestrationCorrelationAlias(runinator_models::orchestration::OrchestrationCorrelationAlias),
+    OrchestrationCorrelationAliasList(
+        Vec<runinator_models::orchestration::OrchestrationCorrelationAlias>,
+    ),
     OrchestrationEpochList(Vec<runinator_models::orchestration::OrchestrationEpoch>),
     OrchestrationReductionList(Vec<runinator_models::orchestration::OrchestrationEventReduction>),
     OrchestrationEvidenceList(Vec<runinator_models::orchestration::OrchestrationEvidence>),

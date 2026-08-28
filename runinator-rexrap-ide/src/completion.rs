@@ -363,7 +363,7 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
             "budget",
             "keyword",
             "failure-class attempt budget",
-            "budget \"${failure_class}\" attempts ${attempts} exhausted ${behavior}",
+            "budget \"${failure_class}\" attempts ${attempts} exhausted ${behavior} via \"${member}\"",
             true,
         ),
         (

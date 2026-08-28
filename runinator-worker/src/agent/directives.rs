@@ -149,6 +149,10 @@ async fn handle_delivery(
             AgentDirectiveKind::SetLogLevel { level } => DirectiveResponse::completed(
                 runinator_models::json!({ "level": level, "applies_on_restart": true }),
             ),
+            AgentDirectiveKind::CleanupWorkspace {
+                workspace_id,
+                local_key,
+            } => cleanup_workspace(*workspace_id, local_key).await,
             AgentDirectiveKind::SetLabels { .. }
             | AgentDirectiveKind::SetConcurrency { .. }
             | AgentDirectiveKind::RepublishProviders
@@ -194,12 +198,52 @@ async fn handle_delivery(
     Ok(())
 }
 
+async fn cleanup_workspace(workspace_id: uuid::Uuid, local_key: &str) -> DirectiveResponse {
+    let path = std::path::Path::new(local_key);
+    if local_key.trim().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return DirectiveResponse::failed("workspace key is not a safe relative path");
+    }
+    let Some(root) = std::env::var_os("RUNINATOR_WORKSPACE_ROOT") else {
+        return DirectiveResponse::failed("worker workspace root is not configured");
+    };
+    let root = match tokio::fs::canonicalize(root).await {
+        Ok(root) => root,
+        Err(error) => {
+            return DirectiveResponse::failed(format!("workspace root is unavailable: {error}"));
+        }
+    };
+    let target = root.join(path);
+    if !target.starts_with(&root) {
+        return DirectiveResponse::failed("workspace key escapes the configured root");
+    }
+    match tokio::fs::remove_dir_all(&target).await {
+        Ok(()) => DirectiveResponse::completed(runinator_models::json!({
+            "workspace_id": workspace_id,
+            "removed": true,
+        })),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            DirectiveResponse::completed(runinator_models::json!({
+                "workspace_id": workspace_id,
+                "removed": false,
+                "already_absent": true,
+            }))
+        }
+        Err(error) => DirectiveResponse::failed(format!("workspace cleanup failed: {error}")),
+    }
+}
+
 fn directive_name(kind: &AgentDirectiveKind) -> &'static str {
     match kind {
         AgentDirectiveKind::Diagnostics => "diagnostics",
         AgentDirectiveKind::TailLogs { .. } => "tail_logs",
         AgentDirectiveKind::ListSandbox { .. } => "list_sandbox",
         AgentDirectiveKind::FetchFile { .. } => "fetch_file",
+        AgentDirectiveKind::CleanupWorkspace { .. } => "cleanup_workspace",
         AgentDirectiveKind::SetLabels { .. } => "set_labels",
         AgentDirectiveKind::SetConcurrency { .. } => "set_concurrency",
         AgentDirectiveKind::SetLogLevel { .. } => "set_log_level",

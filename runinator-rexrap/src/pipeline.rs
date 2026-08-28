@@ -198,6 +198,7 @@ fn lower_orchestration(
                 BudgetPolicy {
                     attempts: budget.attempts,
                     exhausted,
+                    handoff: budget.handoff.clone(),
                 },
             )
             .is_some()
@@ -225,6 +226,7 @@ fn lower_orchestration(
                 "resources" => &mut phase_policy.result.resources,
                 "evidence" => &mut phase_policy.result.evidence,
                 "failure_class" => &mut phase_policy.result.failure_class,
+                "correlations" => &mut phase_policy.result.correlations,
                 _ => unreachable!("parser restricts result mapping fields"),
             };
             if slot.replace(pointer.clone()).is_some() {
@@ -878,10 +880,14 @@ fn render_orchestration_policy(out: &mut String, policy: &OrchestrationPolicy) {
             BudgetExhaustion::Terminate => "terminate",
         };
         out.push_str(&format!(
-            "        budget {} attempts {} exhausted {exhausted}\n",
+            "        budget {} attempts {} exhausted {exhausted}",
             quote(name),
             budget.attempts
         ));
+        if let Some(handoff) = &budget.handoff {
+            out.push_str(&format!(" via {}", quote(handoff)));
+        }
+        out.push('\n');
     }
     for (member, phase) in &policy.phases {
         out.push_str(&format!("        phase {} {{\n", quote(member)));
@@ -890,6 +896,7 @@ fn render_orchestration_policy(out: &mut String, policy: &OrchestrationPolicy) {
             ("resources", &phase.result.resources),
             ("evidence", &phase.result.evidence),
             ("failure_class", &phase.result.failure_class),
+            ("correlations", &phase.result.correlations),
         ] {
             if let Some(pointer) = pointer {
                 out.push_str(&format!("            {field} from {}\n", quote(pointer)));

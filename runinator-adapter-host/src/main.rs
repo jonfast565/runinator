@@ -15,7 +15,8 @@ use axum::{
 };
 use runinator_adapter_contract::{
     ADAPTER_ABI_VERSION, AdapterMetadataEnvelope, AdapterRequest, AdapterResponse, FileOperationFn,
-    HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn,
+    HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn, verify_bearer,
+    verify_hmac_sha256,
 };
 use runinator_models::{
     orchestration::{
@@ -239,10 +240,7 @@ fn authorized(state: &HostState, headers: &HeaderMap) -> bool {
     headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|value| {
-            constant_time_eq::constant_time_eq(value.as_bytes(), state.token.as_bytes())
-        })
+        .is_some_and(|value| verify_bearer(&state.token, value))
 }
 
 fn unauthorized() -> (StatusCode, Json<Value>) {
@@ -756,29 +754,6 @@ fn first_occurred_at(payload: &Value, pointers: &[&str]) -> Option<chrono::DateT
         .find_map(|value| parse_occurred_at(value).ok())
 }
 
-fn verify_hmac(secret: &str, bytes: &[u8], supplied: &str) -> bool {
-    use hmac::{Hmac, Mac};
-    let supplied = supplied.strip_prefix("sha256=").unwrap_or(supplied);
-    let Ok(expected) = hex_decode(supplied) else {
-        return false;
-    };
-    let Ok(mut mac) = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()) else {
-        return false;
-    };
-    mac.update(bytes);
-    mac.verify_slice(&expected).is_ok()
-}
-
-fn hex_decode(value: &str) -> Result<Vec<u8>, ()> {
-    if !value.len().is_multiple_of(2) {
-        return Err(());
-    }
-    (0..value.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).map_err(|_| ()))
-        .collect()
-}
-
 fn handle_generic(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
     let Ok((bytes, payload)) = decode_body(&request, body_limit) else {
         return AdapterResponse::rejected("invalid JSON body");
@@ -793,14 +768,11 @@ fn handle_generic(request: AdapterRequest, body_limit: usize) -> AdapterResponse
         "hmac_sha256" => request
             .headers
             .get("x-runinator-signature")
-            .is_some_and(|value| verify_hmac(secret, &bytes, value)),
+            .is_some_and(|value| verify_hmac_sha256(secret, &bytes, value)),
         "bearer" => request
             .headers
             .get("authorization")
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .is_some_and(|value| {
-                constant_time_eq::constant_time_eq(value.as_bytes(), secret.as_bytes())
-            }),
+            .is_some_and(|value| verify_bearer(secret, value)),
         _ => false,
     };
     if !verified {
@@ -869,7 +841,7 @@ fn handle_github(request: AdapterRequest, body_limit: usize) -> AdapterResponse 
     if secret
         .ok()
         .zip(signature)
-        .is_none_or(|(secret, signature)| !verify_hmac(secret, &bytes, signature))
+        .is_none_or(|(secret, signature)| !verify_hmac_sha256(secret, &bytes, signature))
     {
         return AdapterResponse::rejected("GitHub signature verification failed");
     }
@@ -953,10 +925,7 @@ fn handle_jira(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
         request
             .headers
             .get("authorization")
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .is_some_and(|value| {
-                constant_time_eq::constant_time_eq(value.as_bytes(), secret.as_bytes())
-            })
+            .is_some_and(|value| verify_bearer(secret, value))
     });
     if !verified {
         return AdapterResponse::rejected("Jira authentication failed");

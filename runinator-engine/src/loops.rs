@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{sync::Arc, time::Duration};
 
 use runinator_broker_core::{Broker, WakeMessage};
-use runinator_comm::WakeCommand;
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveState, WakeCommand};
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::{
@@ -21,8 +21,9 @@ use runinator_store::{
     RuntimeStore,
     roles::{
         DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCommand,
-        NewOrchestrationEpoch, NotificationStore, OrchestrationBindingUpdate, OrchestrationStore,
-        OrgStore, ReplicaStore, ScheduleStore, WorkflowVmStore, WorkspaceStore,
+        NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, NotificationStore,
+        OrchestrationBindingUpdate, OrchestrationStore, OrgStore, ReplicaStore, ScheduleStore,
+        WorkflowVmStore, WorkspaceStore,
     },
 };
 
@@ -504,9 +505,6 @@ async fn prepare_epoch_workspaces<T: DefinitionStore + WorkspaceStore + ReplicaS
             Value::from(serde_json::to_value(workspace.affinity())?),
         );
     }
-    if workspaces.is_empty() {
-        return Ok(parameters);
-    }
     let parameters_object = parameters.as_object_mut().ok_or_else(|| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -526,6 +524,36 @@ async fn prepare_epoch_workspaces<T: DefinitionStore + WorkspaceStore + ReplicaS
     orchestration.insert("binding_id".into(), Value::String(binding.id.to_string()));
     orchestration.insert("generation".into(), Value::from(binding.generation));
     orchestration.insert("epoch".into(), Value::from(epoch.epoch));
+    orchestration.insert("configuration".into(), binding.policy.defaults.clone());
+    orchestration.insert(
+        "configuration_version".into(),
+        runinator_models::json!({
+            "pipeline_revision": binding.pipeline_revision,
+            "pipeline_digest": binding.pipeline_digest,
+            "adapter_revision": binding.adapter_revision,
+        }),
+    );
+    orchestration.insert(
+        "current_attempt".into(),
+        Value::from(binding.current_attempt),
+    );
+    orchestration.insert(
+        "budget_counters".into(),
+        Value::from(serde_json::to_value(&binding.budgets)?),
+    );
+    orchestration.insert(
+        "budget_limits".into(),
+        Value::from(serde_json::to_value(&binding.policy.budgets)?),
+    );
+    orchestration.insert(
+        "subject_revision".into(),
+        binding
+            .subject_revision
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    orchestration.insert("resources".into(), binding.resources.clone());
     orchestration.insert("workspaces".into(), Value::Object(workspaces));
     parameters_object.insert("orchestration".into(), Value::Object(orchestration));
     Ok(parameters)
@@ -632,7 +660,12 @@ async fn settle_current_orchestration_epoch<
     let mut resources = binding.resources.clone();
     let mut budgets = binding.budgets.clone();
     let mut mapped_evidence = None;
-    let mut retry_epoch = None;
+    let mut mapped_correlations = Vec::new();
+    let mut next_epoch = None;
+    let handoff_outcome = epoch
+        .reason
+        .strip_prefix("budget_exhaustion:")
+        .and_then(parse_budget_exhaustion);
 
     if let Some(attempt) = phase_attempt {
         current_phase = Some(attempt.member_key.clone());
@@ -653,10 +686,42 @@ async fn settle_current_orchestration_epoch<
             {
                 mapped_evidence = Some(mapped.clone());
             }
+            if let Some(pointer) = phase.result.correlations.as_deref()
+                && let Some(items) = attempt.result.pointer(pointer).and_then(Value::as_array)
+            {
+                for item in items {
+                    let Some(item) = item.as_object() else {
+                        continue;
+                    };
+                    let Some(source) = item.get("source").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(scope) = item.get("scope").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(correlation_key) = item.get("correlation_key").and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
+                    if source.trim().is_empty()
+                        || scope.trim().is_empty()
+                        || correlation_key.trim().is_empty()
+                    {
+                        continue;
+                    }
+                    mapped_correlations.push((
+                        source.to_string(),
+                        scope.to_string(),
+                        correlation_key.to_string(),
+                    ));
+                }
+            }
         }
     }
 
-    if run.status != runinator_models::workflows::WorkflowStatus::Succeeded {
+    if handoff_outcome.is_none()
+        && run.status != runinator_models::workflows::WorkflowStatus::Succeeded
+    {
         status = OrchestrationStatus::Failed;
         if let Some(attempt) = phase_attempt
             && let Some(phase) = binding.policy.phases.get(&attempt.member_key)
@@ -670,24 +735,57 @@ async fn settle_current_orchestration_epoch<
                     current_epoch += 1;
                     status = OrchestrationStatus::Running;
                     restart_member = Some(attempt.member_key.clone());
-                    retry_epoch = Some((
+                    next_epoch = Some((
                         current_epoch,
                         attempt.member_key.clone(),
                         epoch.parameters.clone(),
-                        failure_class.to_string(),
+                        format!("failure budget '{failure_class}' retry"),
                     ));
                 }
-                FailureBudgetDecision::Fail => {}
-                FailureBudgetDecision::Pause => {
-                    status = OrchestrationStatus::Suspended;
-                    restart_member = Some(attempt.member_key.clone());
+                FailureBudgetDecision::Exhausted { outcome, handoff } => {
+                    if let Some(handoff) = handoff {
+                        current_epoch += 1;
+                        status = OrchestrationStatus::Running;
+                        restart_member = Some(handoff.clone());
+                        let mut parameters = epoch.parameters.clone();
+                        if let Some(object) = parameters.as_object_mut() {
+                            let orchestration = object
+                                .entry("orchestration")
+                                .or_insert_with(|| Value::Object(Default::default()));
+                            if let Some(orchestration) = orchestration.as_object_mut() {
+                                orchestration.insert(
+                                    "exhaustion".into(),
+                                    runinator_models::json!({
+                                        "budget": failure_class,
+                                        "used": budgets.get(failure_class).copied().unwrap_or_default(),
+                                        "outcome": budget_exhaustion_name(outcome),
+                                        "failed_phase": attempt.member_key,
+                                    }),
+                                );
+                            }
+                        }
+                        next_epoch = Some((
+                            current_epoch,
+                            handoff,
+                            parameters,
+                            format!("budget_exhaustion:{}", budget_exhaustion_name(outcome)),
+                        ));
+                    } else {
+                        status = status_for_budget_exhaustion(outcome);
+                        if status == OrchestrationStatus::Suspended {
+                            restart_member = Some(attempt.member_key.clone());
+                        }
+                    }
                 }
-                FailureBudgetDecision::Terminate => status = OrchestrationStatus::Terminated,
             }
         }
     }
 
-    if let Some((next_epoch, member, parameters, failure_class)) = &retry_epoch {
+    if let Some(outcome) = handoff_outcome {
+        status = status_for_budget_exhaustion(outcome);
+    }
+
+    if let Some((next_epoch, member, parameters, reason)) = &next_epoch {
         db.create_orchestration_epoch(
             NewOrchestrationEpoch {
                 id: uuid::Uuid::now_v7(),
@@ -695,7 +793,7 @@ async fn settle_current_orchestration_epoch<
                 epoch: *next_epoch,
                 start_member: Some(member.clone()),
                 parameters: parameters.clone(),
-                reason: format!("failure budget '{failure_class}' retry"),
+                reason: reason.clone(),
             },
             now,
         )
@@ -710,7 +808,7 @@ async fn settle_current_orchestration_epoch<
                 payload: runinator_models::json!({
                     "parameters": parameters,
                     "start_member": member,
-                    "failure_class": failure_class,
+                    "reason": reason,
                 }),
             },
             now,
@@ -737,6 +835,21 @@ async fn settle_current_orchestration_epoch<
         .update_orchestration_binding(binding.id, owner.to_string(), update, now)
         .await?
     {
+        for (source, scope, correlation_key) in mapped_correlations {
+            db.upsert_orchestration_correlation_alias(
+                NewOrchestrationCorrelationAlias {
+                    id: uuid::Uuid::now_v7(),
+                    binding_id: binding.id,
+                    generation: binding.generation,
+                    org_id: binding.org_id,
+                    source,
+                    scope,
+                    correlation_key,
+                },
+                now,
+            )
+            .await?;
+        }
         settle_epoch_workspaces(db, &updated, binding.current_epoch).await?;
         if let Some(payload) = mapped_evidence {
             db.append_orchestration_evidence(OrchestrationEvidence {
@@ -794,9 +907,9 @@ async fn abandon_canceled_epoch_workspaces<T: WorkspaceStore>(
                 workspace.id,
                 workspace.version,
                 workspace.status,
-                runinator_models::workspaces::WorkspaceStatus::Abandoned,
+                runinator_models::workspaces::WorkspaceStatus::Finalizing,
                 Some(runinator_models::json!({
-                    "reason": "execution epoch canceled",
+                    "reason": "execution epoch canceled; cleanup required",
                     "epoch": canceled_epoch,
                     "binding_status": binding.status.as_str(),
                 })),
@@ -854,25 +967,14 @@ async fn settle_epoch_workspaces<T: WorkspaceStore>(
                     now,
                 )
                 .await?
-            {
-                let _ = db
-                    .transition_workspace_cas(
-                        workspace.id,
-                        workspace.version + 1,
-                        runinator_models::workspaces::WorkspaceStatus::Finalizing,
-                        runinator_models::workspaces::WorkspaceStatus::Released,
-                        Some(evidence),
-                        now,
-                    )
-                    .await?;
-            }
+            {}
         } else {
             let _ = db
                 .transition_workspace_cas(
                     workspace.id,
                     workspace.version,
                     workspace.status,
-                    runinator_models::workspaces::WorkspaceStatus::Abandoned,
+                    runinator_models::workspaces::WorkspaceStatus::Finalizing,
                     Some(evidence),
                     now,
                 )
@@ -929,12 +1031,13 @@ fn select_active_member_workflow_run(
         .and_then(|attempt| attempt.workflow_run_id)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FailureBudgetDecision {
     Retry,
-    Fail,
-    Pause,
-    Terminate,
+    Exhausted {
+        outcome: BudgetExhaustion,
+        handoff: Option<String>,
+    },
 }
 
 fn consume_failure_budget(
@@ -948,11 +1051,35 @@ fn consume_failure_budget(
     if *used < policy.attempts {
         return Some(FailureBudgetDecision::Retry);
     }
-    Some(match policy.exhausted {
-        BudgetExhaustion::Fail => FailureBudgetDecision::Fail,
-        BudgetExhaustion::Pause => FailureBudgetDecision::Pause,
-        BudgetExhaustion::Terminate => FailureBudgetDecision::Terminate,
+    Some(FailureBudgetDecision::Exhausted {
+        outcome: policy.exhausted,
+        handoff: policy.handoff.clone(),
     })
+}
+
+fn budget_exhaustion_name(outcome: BudgetExhaustion) -> &'static str {
+    match outcome {
+        BudgetExhaustion::Fail => "fail",
+        BudgetExhaustion::Pause => "pause",
+        BudgetExhaustion::Terminate => "terminate",
+    }
+}
+
+fn parse_budget_exhaustion(value: &str) -> Option<BudgetExhaustion> {
+    match value {
+        "fail" => Some(BudgetExhaustion::Fail),
+        "pause" => Some(BudgetExhaustion::Pause),
+        "terminate" => Some(BudgetExhaustion::Terminate),
+        _ => None,
+    }
+}
+
+fn status_for_budget_exhaustion(outcome: BudgetExhaustion) -> OrchestrationStatus {
+    match outcome {
+        BudgetExhaustion::Fail => OrchestrationStatus::Failed,
+        BudgetExhaustion::Pause => OrchestrationStatus::Suspended,
+        BudgetExhaustion::Terminate => OrchestrationStatus::Terminated,
+    }
 }
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -1901,6 +2028,15 @@ pub async fn run_workspace_reconciler<
                         warn!(error = %error, "failed to scan abandoned workspaces for reducer delivery");
                     }
                 }
+                if let Err(error) = reconcile_finalizing_workspaces(
+                    db.as_ref(),
+                    policy.orchestration.claim_batch_size as i64,
+                    chrono::Utc::now(),
+                )
+                .await
+                {
+                    warn!(error = %error, "failed to reconcile finalizing workspaces");
+                }
                 true
             }
             Err(error) => {
@@ -1914,6 +2050,90 @@ pub async fn run_workspace_reconciler<
             _ = tokio::time::sleep(Duration::from_secs(policy.orchestration.workspace_reconcile_interval_seconds)) => {}
         }
     }
+}
+
+async fn reconcile_finalizing_workspaces<T: WorkspaceStore + ReplicaStore>(
+    db: &T,
+    limit: i64,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), runinator_models::errors::SendableError> {
+    for workspace in db.fetch_finalizing_workspaces(limit).await? {
+        let Some(replica_id) = workspace.worker_replica_id else {
+            let _ = db
+                .transition_workspace_cas(
+                    workspace.id,
+                    workspace.version,
+                    runinator_models::workspaces::WorkspaceStatus::Finalizing,
+                    runinator_models::workspaces::WorkspaceStatus::Abandoned,
+                    Some(runinator_models::json!({ "reason": "workspace owner was lost during finalization" })),
+                    now,
+                )
+                .await?;
+            continue;
+        };
+        let directives = db.list_agent_directives(replica_id, 200).await?;
+        let existing = directives.into_iter().find(|record| {
+            matches!(
+                &record.kind,
+                AgentDirectiveKind::CleanupWorkspace { workspace_id, .. } if *workspace_id == workspace.id
+            )
+        });
+        match existing {
+            None => {
+                db.enqueue_agent_directive(
+                    replica_id,
+                    AgentDirectiveKind::CleanupWorkspace {
+                        workspace_id: workspace.id,
+                        local_key: workspace.local_key.clone(),
+                    },
+                    now + chrono::Duration::minutes(5),
+                )
+                .await?;
+            }
+            Some(record) if record.state == AgentDirectiveState::Completed => {
+                let _ = db
+                    .transition_workspace_cas(
+                        workspace.id,
+                        workspace.version,
+                        runinator_models::workspaces::WorkspaceStatus::Finalizing,
+                        runinator_models::workspaces::WorkspaceStatus::Released,
+                        Some(runinator_models::json!({
+                            "reason": "worker acknowledged workspace cleanup",
+                            "directive_id": record.directive_id,
+                            "receipt": record.payload,
+                        })),
+                        now,
+                    )
+                    .await?;
+            }
+            Some(record)
+                if matches!(
+                    record.state,
+                    AgentDirectiveState::Failed
+                        | AgentDirectiveState::Unsupported
+                        | AgentDirectiveState::Expired
+                ) =>
+            {
+                let _ = db
+                    .transition_workspace_cas(
+                        workspace.id,
+                        workspace.version,
+                        runinator_models::workspaces::WorkspaceStatus::Finalizing,
+                        runinator_models::workspaces::WorkspaceStatus::Abandoned,
+                        Some(runinator_models::json!({
+                            "reason": "workspace cleanup could not be acknowledged",
+                            "directive_id": record.directive_id,
+                            "directive_state": record.state,
+                            "message": record.message,
+                        })),
+                        now,
+                    )
+                    .await?;
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
 }
 
 async fn record_workspace_abandonment<

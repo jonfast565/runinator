@@ -4,8 +4,9 @@ use super::*;
 use runinator_models::orchestration::{
     AdapterDefinition, AdapterRevision, DeliverySemantics, ExternalOperation,
     ExternalOperationStatus, OrchestrationBinding, OrchestrationCommand,
-    OrchestrationCommandStatus, OrchestrationEpoch, OrchestrationEventReduction,
-    OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationPolicy, OrchestrationStatus,
+    OrchestrationCommandStatus, OrchestrationCorrelationAlias, OrchestrationEpoch,
+    OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
+    OrchestrationPolicy, OrchestrationStatus,
 };
 
 fn timestamp(value: i64) -> DateTime<Utc> {
@@ -63,6 +64,21 @@ fallible_row_mapper!(row_to_orchestration_binding(row) -> OrchestrationBinding {
         created_at: timestamp(row.get("created_at")),
         updated_at: timestamp(row.get("updated_at")),
         finished_at: row.get::<Option<i64>, _>("finished_at").map(timestamp),
+    })
+});
+
+fallible_row_mapper!(row_to_orchestration_correlation_alias(row) -> OrchestrationCorrelationAlias {
+    let org_scope = row.get::<String, _>("org_scope");
+    Ok(OrchestrationCorrelationAlias {
+        id: row.get("id"),
+        binding_id: row.get("binding_id"),
+        generation: row.get("generation"),
+        org_id: if org_scope.is_empty() { None } else { Some(Uuid::parse_str(&org_scope)?) },
+        source: row.get("source"),
+        scope: row.get("scope"),
+        correlation_key: row.get("correlation_key"),
+        created_at: timestamp(row.get("created_at")),
+        updated_at: timestamp(row.get("updated_at")),
     })
 });
 

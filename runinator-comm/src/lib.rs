@@ -390,6 +390,12 @@ pub enum AgentDirectiveKind {
         path: String,
         max_bytes: u64,
     },
+    /// Idempotently remove one opaque workspace key beneath the worker's configured workspace
+    /// root. The control plane never receives or constructs a host filesystem path.
+    CleanupWorkspace {
+        workspace_id: Uuid,
+        local_key: String,
+    },
     SetLabels {
         labels: std::collections::BTreeMap<String, String>,
     },

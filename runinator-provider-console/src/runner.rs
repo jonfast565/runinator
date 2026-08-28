@@ -52,9 +52,17 @@ fn working_dir(raw: Option<&str>) -> Option<PathBuf> {
 // build the shell command for `command_text`, pinning its `current_dir` to the configured working
 // directory when one is set so a relative path in the command resolves predictably. surfaces a clear
 // error if that directory is configured but missing, rather than letting `spawn` fail obscurely.
-fn build_shell_command(command_text: &str) -> Result<Command, SendableError> {
+fn build_shell_command(
+    command_text: &str,
+    request: &ProviderExecutionRequest,
+) -> Result<Command, SendableError> {
     let mut command = runinator_platform::shell::shell_command(command_text);
-    if let Some(dir) = configured_working_dir() {
+    let dir = if request.workspace_path.is_some() {
+        runinator_provider_support::resolve_working_dir(request.workspace_path.as_deref(), None)?
+    } else {
+        configured_working_dir()
+    };
+    if let Some(dir) = dir {
         if !dir.is_dir() {
             return Err(WORKING_DIR_MISSING.error(dir.display().to_string()));
         }
@@ -84,7 +92,7 @@ pub(crate) fn execute_command(
                 "set this action to run on a desktop worker agent (e.g. `.runner(\"creds-sync\")`)",
             ));
         }
-        let mut command = build_shell_command(&command_text)?;
+        let mut command = build_shell_command(&command_text, request)?;
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -94,7 +102,7 @@ pub(crate) fn execute_command(
         return build_result(status, started, command_text);
     }
 
-    let mut command = build_shell_command(&command_text)?;
+    let mut command = build_shell_command(&command_text, request)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(to_runtime_error)?;
     let stdout = child

@@ -191,7 +191,7 @@ where
         limit: i64,
     ) -> Result<Vec<WorkspaceLease>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
-            "SELECT {WORKSPACE_COLUMNS} FROM workspace_leases WHERE status NOT IN ('released', 'abandoned') AND leased_until <= ? ORDER BY leased_until, id LIMIT ?"
+            "SELECT {WORKSPACE_COLUMNS} FROM workspace_leases WHERE status IN ('allocating', 'active') AND leased_until <= ? ORDER BY leased_until, id LIMIT ?"
         )))
         .bind(now.timestamp())
         .bind(limit.max(1))
@@ -206,6 +206,19 @@ where
     ) -> Result<Vec<WorkspaceLease>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
             "SELECT {WORKSPACE_COLUMNS} FROM workspace_leases WHERE status = 'abandoned' AND abandonment_notified_at IS NULL ORDER BY updated_at, id LIMIT ?"
+        )))
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_workspace_lease).collect()
+    }
+
+    async fn fetch_finalizing_workspaces(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<WorkspaceLease>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM workspace_leases WHERE status = 'finalizing' ORDER BY updated_at, id LIMIT ?"
         )))
         .bind(limit.max(1))
         .fetch_all(self.pool())

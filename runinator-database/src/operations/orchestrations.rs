@@ -4,16 +4,18 @@ use super::*;
 use runinator_models::orchestration::{
     AdapterDefinition, AdapterRevision, DeliverySemantics, ExternalOperation,
     ExternalOperationStatus, NewOrchestrationBinding, OrchestrationBinding, OrchestrationCommand,
-    OrchestrationEpoch, OrchestrationEventReduction, OrchestrationEvidence,
-    OrchestrationPendingIntent, OrchestrationStatus,
+    OrchestrationCorrelationAlias, OrchestrationEpoch, OrchestrationEventReduction,
+    OrchestrationEvidence, OrchestrationPendingIntent, OrchestrationStatus,
 };
 use runinator_store::roles::{
     ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
-    NewOrchestrationEpoch, OrchestrationBindingUpdate,
+    NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingUpdate,
 };
 
 const BINDING_COLUMNS: &str = "id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, current_phase, current_attempt, current_epoch, restart_member, resume_existing_epoch, subject_revision, resources, budgets, last_reduced_sequence, version, reducer_lease_owner, reducer_leased_until, created_at, updated_at, finished_at";
 const EPOCH_COLUMNS: &str = "id, binding_id, epoch, pipeline_run_id, start_member, parameters, status, reason, created_at, started_at, finished_at";
+const CORRELATION_ALIAS_COLUMNS: &str =
+    "id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at";
 const REDUCTION_COLUMNS: &str = "id, binding_id, inbox_event_id, sequence, matched_intents, winner, suppressed_intents, binding_version, disposition, detail, created_at";
 const PENDING_COLUMNS: &str = "id, binding_id, intent, priority, source_event_ids, latest_payload, wake_at, created_at, updated_at";
 const COMMAND_COLUMNS: &str = "id, binding_id, epoch, command_type, operation_key, payload, status, attempts, claimed_by, claimed_until, result, created_at, updated_at";
@@ -125,6 +127,88 @@ where
             .bind(admission_id).bind(generation).fetch_optional(self.pool()).await?;
         row.map(|row| mappers::row_to_orchestration_binding(&row))
             .transpose()
+    }
+
+    async fn upsert_orchestration_correlation_alias(
+        &self,
+        alias: NewOrchestrationCorrelationAlias,
+        now: DateTime<Utc>,
+    ) -> Result<OrchestrationCorrelationAlias, SendableError> {
+        let org_scope = alias.org_id.map(|id| id.to_string()).unwrap_or_default();
+        let insert = if self.dialect() == SqlDialect::MySql {
+            "INSERT INTO orchestration_correlation_aliases (id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE binding_id = VALUES(binding_id), generation = VALUES(generation), updated_at = VALUES(updated_at)"
+        } else {
+            "INSERT INTO orchestration_correlation_aliases (id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_scope, source, scope, correlation_key) DO UPDATE SET binding_id = excluded.binding_id, generation = excluded.generation, updated_at = excluded.updated_at"
+        };
+        sqlx::query(&self.render(insert))
+            .bind(alias.id)
+            .bind(alias.binding_id)
+            .bind(alias.generation)
+            .bind(&org_scope)
+            .bind(&alias.source)
+            .bind(&alias.scope)
+            .bind(&alias.correlation_key)
+            .bind(now.timestamp())
+            .bind(now.timestamp())
+            .execute(self.pool())
+            .await?;
+        self.fetch_orchestration_correlation_alias(
+            alias.org_id,
+            alias.source,
+            alias.scope,
+            alias.correlation_key,
+        )
+        .await?
+        .ok_or_else(|| {
+            Box::new(std::io::Error::other(
+                "created correlation alias disappeared",
+            )) as SendableError
+        })
+    }
+
+    async fn fetch_orchestration_correlation_alias(
+        &self,
+        org_id: Option<Uuid>,
+        source: String,
+        scope: String,
+        correlation_key: String,
+    ) -> Result<Option<OrchestrationCorrelationAlias>, SendableError> {
+        let org_scope = org_id.map(|id| id.to_string()).unwrap_or_default();
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {CORRELATION_ALIAS_COLUMNS} FROM orchestration_correlation_aliases WHERE org_scope = ? AND source = ? AND scope = ? AND correlation_key = ?"
+        )))
+        .bind(org_scope).bind(source).bind(scope).bind(correlation_key)
+        .fetch_optional(self.pool()).await?;
+        row.map(|row| mappers::row_to_orchestration_correlation_alias(&row))
+            .transpose()
+    }
+
+    async fn fetch_orchestration_correlation_aliases(
+        &self,
+        binding_id: Uuid,
+    ) -> Result<Vec<OrchestrationCorrelationAlias>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {CORRELATION_ALIAS_COLUMNS} FROM orchestration_correlation_aliases WHERE binding_id = ? ORDER BY created_at, id"
+        )))
+        .bind(binding_id).fetch_all(self.pool()).await?;
+        rows.into_iter()
+            .map(|row| mappers::row_to_orchestration_correlation_alias(&row))
+            .collect()
+    }
+
+    async fn delete_orchestration_correlation_alias(
+        &self,
+        binding_id: Uuid,
+        alias_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "DELETE FROM orchestration_correlation_aliases WHERE id = ? AND binding_id = ?",
+        ))
+        .bind(alias_id)
+        .bind(binding_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
     }
 
     async fn fetch_current_orchestration_binding_for_workflow_run(

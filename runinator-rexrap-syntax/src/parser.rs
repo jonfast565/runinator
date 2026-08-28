@@ -863,9 +863,11 @@ fn parse_orchestration_budget(pair: Pair<Rule>) -> Result<OrchestrationBudgetDec
     let mut name = None;
     let mut attempts = None;
     let mut exhausted = None;
+    let mut handoff = None;
     for part in pair.into_inner() {
         match part.as_rule() {
-            Rule::string => name = Some(plain_string(part)?),
+            Rule::string if name.is_none() => name = Some(plain_string(part)?),
+            Rule::string => handoff = Some(plain_string(part)?),
             Rule::integer => {
                 attempts = Some(part.as_str().parse::<u32>().map_err(|_| {
                     RexRapError::syntax(span, "budget attempts must be a non-negative integer")
@@ -881,6 +883,7 @@ fn parse_orchestration_budget(pair: Pair<Rule>) -> Result<OrchestrationBudgetDec
             .ok_or_else(|| RexRapError::syntax(span, "budget is missing attempts"))?,
         exhausted: exhausted
             .ok_or_else(|| RexRapError::syntax(span, "budget is missing exhaustion behavior"))?,
+        handoff,
         span,
     })
 }

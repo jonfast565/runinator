@@ -35,7 +35,10 @@ pub(crate) fn run_claude_code(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(dir) = params.working_dir.as_deref() {
+    if let Some(dir) = runinator_provider_support::resolve_working_dir(
+        request.workspace_path.as_deref(),
+        params.working_dir.as_deref(),
+    )? {
         command.current_dir(dir);
     }
     for (key, value) in &params.env {

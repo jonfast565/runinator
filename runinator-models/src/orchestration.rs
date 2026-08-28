@@ -339,6 +339,10 @@ pub struct ResultMapping {
     pub evidence: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_class: Option<String>,
+    /// JSON pointer to an array of `{source, scope, correlation_key}` identities that should route
+    /// future ingress to this binding generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlations: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -387,6 +391,8 @@ pub enum BudgetExhaustion {
 pub struct BudgetPolicy {
     pub attempts: u32,
     pub exhausted: BudgetExhaustion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -442,6 +448,7 @@ impl OrchestrationPolicy {
                 &phase.result.resources,
                 &phase.result.evidence,
                 &phase.result.failure_class,
+                &phase.result.correlations,
             ]
             .into_iter()
             .flatten()
@@ -460,9 +467,29 @@ impl OrchestrationPolicy {
             if name.trim().is_empty() || budget.attempts == 0 {
                 return Err("budget names must be non-empty and attempts must be positive".into());
             }
+            if let Some(member) = &budget.handoff
+                && !member_keys.contains(member.as_str())
+            {
+                return Err(format!(
+                    "orchestration budget handoff member '{member}' does not exist"
+                ));
+            }
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationCorrelationAlias {
+    pub id: Uuid,
+    pub binding_id: Uuid,
+    pub generation: i64,
+    pub org_id: Option<Uuid>,
+    pub source: String,
+    pub scope: String,
+    pub correlation_key: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 fn validate_json_pointer(pointer: &str) -> Result<(), String> {
@@ -772,6 +799,26 @@ pub struct NormalizedAdapterEvent {
     pub payload: Value,
     #[serde(default)]
     pub provenance: Value,
+}
+
+impl NormalizedAdapterEvent {
+    pub fn validate_identity(&self) -> Result<(), String> {
+        for (name, value, limit) in [
+            ("source", self.source.as_str(), 128usize),
+            ("delivery_id", self.delivery_id.as_str(), 512usize),
+            ("event_type", self.event_type.as_str(), 256usize),
+            ("scope", self.scope.as_str(), 1024usize),
+            ("correlation_key", self.correlation_key.as_str(), 1024usize),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("normalized adapter {name} must not be empty"));
+            }
+            if value.len() > limit || value.chars().any(char::is_control) {
+                return Err(format!("normalized adapter {name} is not a valid identity"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Opaque event accepted by the generic workflow/pipeline ingress surface.

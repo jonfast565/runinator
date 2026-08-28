@@ -79,6 +79,7 @@ fn named_budget_retries_until_its_exhaustion_behavior() {
         BudgetPolicy {
             attempts: 3,
             exhausted: BudgetExhaustion::Pause,
+            handoff: None,
         },
     )]);
     let mut counters = BTreeMap::new();
@@ -92,7 +93,10 @@ fn named_budget_retries_until_its_exhaustion_behavior() {
     );
     assert_eq!(
         consume_failure_budget(&policies, &mut counters, "transient"),
-        Some(FailureBudgetDecision::Pause)
+        Some(FailureBudgetDecision::Exhausted {
+            outcome: BudgetExhaustion::Pause,
+            handoff: None,
+        })
     );
     assert_eq!(counters["transient"], 3);
     assert_eq!(
