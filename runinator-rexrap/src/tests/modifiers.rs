@@ -380,7 +380,7 @@ fn runner_modifier_lowers_and_round_trips() {
         workflow "Runner" v1 {
 
             do {
-                @runner("creds-sync")
+                @runner("desktop")
                 @timeout(300s)
                 let go = console.run(command: "echo hi")
             }
@@ -396,14 +396,14 @@ fn runner_modifier_lowers_and_round_trips() {
         .expect("action node");
     assert_eq!(
         action.required_labels.get("runner").map(String::as_str),
-        Some("creds-sync"),
+        Some("desktop"),
         "runner modifier should lower to required_labels.runner"
     );
 
-    // the decompiled source must surface `@runner("creds-sync")` and round-trip.
+    // the decompiled source must surface `@runner("desktop")` and round-trip.
     let rexrap = decompile(&definition).expect("decompile");
     assert!(
-        rexrap.contains("@runner(\"creds-sync\")"),
+        rexrap.contains("@runner(\"desktop\")"),
         "decompiled source missing runner attribute:\n{rexrap}"
     );
     assert_round_trips(src);

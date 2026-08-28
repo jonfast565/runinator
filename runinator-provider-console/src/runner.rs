@@ -89,7 +89,7 @@ pub(crate) fn execute_command(
     if params.interactive {
         if !interactive_permitted() {
             return Err(INTERACTIVE_NOT_PERMITTED.error(
-                "set this action to run on a desktop worker agent (e.g. `.runner(\"creds-sync\")`)",
+                "set this action to run on a desktop worker agent (e.g. `.runner(\"desktop\")`)",
             ));
         }
         let mut command = build_shell_command(&command_text, request)?;

@@ -420,13 +420,13 @@ fn describe_worker_event(event: &WorkerEvent) -> String {
     }
 }
 
-/// the routing labels this replica advertises: always `pool=desktop`, plus whatever `k=v,k=v` extras
-/// the operator configured (same syntax as `RUNINATOR_WORKER_LABELS`). an extra label can override
-/// `pool` if the operator sets one explicitly.
+/// the routing labels this replica advertises: always `pool=desktop` and `runner=desktop`, plus
+/// whatever `k=v,k=v` extras the operator configured (same syntax as
+/// `RUNINATOR_WORKER_LABELS`). the two desktop identity labels cannot be overridden.
 fn advertised_labels(config: &AgentConfig) -> BTreeMap<String, String> {
-    let mut labels = BTreeMap::new();
+    let mut labels = parse_labels(Some(&config.extra_labels.join(",")));
     labels.insert("pool".to_string(), POOL_LABEL.to_string());
-    labels.extend(parse_labels(Some(&config.extra_labels.join(","))));
+    labels.insert("runner".to_string(), POOL_LABEL.to_string());
     labels
 }
 

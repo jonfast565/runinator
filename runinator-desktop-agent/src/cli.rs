@@ -52,8 +52,8 @@ pub struct CliArgs {
     #[arg(long = "enroll", env = "RUNINATOR_ENROLLMENT_TOKEN")]
     pub enrollment_token: Option<String>,
 
-    /// comma-separated extra routing labels, e.g. `runner=desktop,zone=onprem`. `pool=desktop`
-    /// is always advertised in addition to these; the saved-config default is `runner=desktop`.
+    /// comma-separated extra routing labels, e.g. `zone=onprem`. `pool=desktop` and
+    /// `runner=desktop` are always advertised in addition to these.
     #[arg(long, env = "RUNINATOR_WORKER_LABELS")]
     pub labels: Option<String>,
 

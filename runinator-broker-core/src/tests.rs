@@ -146,7 +146,7 @@ async fn default_receive_effect_for_requeues_mismatches_and_returns_the_first_ma
     let matching = delivery(
         EffectExecutor::Provider,
         ActionTarget::Labels {
-            selector: [("runner".to_string(), "creds-sync".to_string())].into(),
+            selector: [("runner".to_string(), "desktop".to_string())].into(),
         },
     );
     let matching_id = matching.command.command_id;
@@ -161,7 +161,7 @@ async fn default_receive_effect_for_requeues_mismatches_and_returns_the_first_ma
     ]);
 
     let profile = ConsumerProfile::shared("desktop")
-        .with_labels([("runner".to_string(), "creds-sync".to_string())].into())
+        .with_labels([("runner".to_string(), "desktop".to_string())].into())
         .exclusive();
 
     let result = broker.receive_effect_for(&profile).await.unwrap();

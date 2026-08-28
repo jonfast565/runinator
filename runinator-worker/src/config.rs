@@ -151,7 +151,7 @@ struct CliArgs {
     #[arg(long, default_value = "/tmp/runinator-worker-liveness")]
     liveness_file: String,
 
-    /// comma-separated routing labels this worker advertises, e.g. `runner=creds-sync,zone=onprem`.
+    /// comma-separated routing labels this worker advertises, e.g. `runner=desktop,zone=onprem`.
     /// actions that require a label are pinned to a worker carrying it (general pool when empty).
     #[arg(long, env = "RUNINATOR_WORKER_LABELS")]
     labels: Option<String>,

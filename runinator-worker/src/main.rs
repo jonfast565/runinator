@@ -51,7 +51,7 @@ fn run_process() -> Result<(), SendableError> {
 }
 
 async fn run(config: Config, shutdown: Shutdown) -> Result<(), SendableError> {
-    // log the advertised routing labels: a label-targeted action (e.g. a `.runner("creds-sync")`
+    // log the advertised routing labels: a label-targeted action (e.g. a `.runner("desktop")`
     // node) only lands here when these satisfy its selector, so surfacing them makes "which worker
     // did this go to" answerable from the worker's own log.
     info!(

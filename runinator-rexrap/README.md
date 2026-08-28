@@ -87,7 +87,7 @@ let deploy = github.deploy()
 `end` and `fail` are reserved targets (the generated terminal nodes).
 
 **Attributes are configuration.** `@timeout(60s)`, `@retry(3)`, `@tags("ci", "release")`, `@mcp`,
-`@reentry(max_visits: 5)`, `@runner("creds-sync")`, and `@idempotent(key: input.invoice_id)` are
+`@reentry(max_visits: 5)`, `@runner("desktop")`, and `@idempotent(key: input.invoice_id)` are
 written as lines above the step. `@` is the only attribute surface: there is no fluent
 `.timeout(...)` postfix chain. `@id("x")`, `@skip`, `@lock`, and `@deadline(30s)` describe the graph
 node; the rest describe how the step executes.

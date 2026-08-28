@@ -119,7 +119,8 @@ pub struct AgentConfig {
     /// ephemeral first-start input; explicitly excluded from persisted JSON.
     #[serde(skip)]
     pub enrollment_token: Option<String>,
-    /// extra routing labels this replica advertises, beyond the always-on `pool=desktop` — each
+    /// extra routing labels this replica advertises, beyond the always-on `pool=desktop` and
+    /// `runner=desktop` — each
     /// entry a `key=value` tag (same pairs `RUNINATOR_WORKER_LABELS`/`runinator_worker::parse_labels`
     /// accept, joined with commas before parsing), so any future workflow that needs to pin work to a
     /// desktop instance just needs a matching `.runner("...")`/label requirement, with no new agent

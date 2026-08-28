@@ -58,6 +58,19 @@ fn an_idle_agent_offers_start() {
     assert_eq!(control_state(&Shared::default()), Control::Startable);
 }
 
+#[test]
+fn desktop_identity_labels_cannot_be_overridden() {
+    let config = AgentConfig {
+        extra_labels: vec!["runner=other".to_string(), "pool=other".to_string()],
+        ..AgentConfig::default()
+    };
+
+    let labels = advertised_labels(&config);
+
+    assert_eq!(labels.get("runner").map(String::as_str), Some(POOL_LABEL));
+    assert_eq!(labels.get("pool").map(String::as_str), Some(POOL_LABEL));
+}
+
 // a lifecycle that settled (no live handle) is startable again whatever the `running` flag says,
 // which is the same leftover case `start_is_allowed_when_running_flag_is_set_without_a_live_handle`
 // covers for the start latch.

@@ -305,7 +305,7 @@ async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
     };
     let mut command = effect_command(EffectExecutor::Provider);
     command.target = ActionTarget::Labels {
-        selector: [("runner".to_string(), "creds-sync".to_string())].into(),
+        selector: [("runner".to_string(), "desktop".to_string())].into(),
     };
     let command_id = command.command_id;
     broker
@@ -317,13 +317,13 @@ async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
         .await
         .unwrap();
 
-    // an exclusive consumer whose labels don't include `runner=creds-sync` must never see this
+    // an exclusive consumer whose labels don't include `runner=desktop` must never see this
     // delivery (it would otherwise nack-and-loop on it forever since nothing else is competing).
     let mismatched = ConsumerProfile::shared(format!("test-mismatch-{}", Uuid::new_v4()))
         .with_labels([("runner".to_string(), "other".to_string())].into())
         .exclusive();
     let matching = ConsumerProfile::shared(format!("test-match-{}", Uuid::new_v4()))
-        .with_labels([("runner".to_string(), "creds-sync".to_string())].into())
+        .with_labels([("runner".to_string(), "desktop".to_string())].into())
         .exclusive();
 
     // race both; only `matching` should ever resolve to this command, and it must resolve well
