@@ -9,7 +9,7 @@ use runinator_models::errors::SendableError;
 use serde_json::Value;
 #[cfg(feature = "sqlite")]
 use sqlx::{ConnectOptions, Connection, SqlitePool, sqlite::SqliteConnectOptions};
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 use sqlx::{MySqlPool, mysql::MySqlConnectOptions};
 #[cfg(feature = "postgres")]
 use sqlx::{PgPool, postgres::PgConnectOptions};
@@ -17,9 +17,9 @@ use tokio::runtime::Runtime;
 
 use crate::connector::{DatabaseConnector, OnConflict, ProvisionSpec, SeedSpec};
 use crate::engine::Engine;
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
 use crate::errors::DATABASE_MISSING;
-use crate::errors::{CONNECTION_FAILED, INVALID_STATEMENT, UNSUPPORTED_ENGINE};
+use crate::errors::{CONNECTION_FAILED, UNSUPPORTED_ENGINE};
 use crate::rowset::{ColumnSummary, ExecOutcome, RowSet, StepOutcome, TableInfo};
 use crate::statement::StatementSpec;
 
@@ -31,8 +31,8 @@ use ops::{SqlStep, sql_returns_rows};
 enum SqlPool {
     #[cfg(feature = "postgres")]
     Postgres(PgPool),
-    #[cfg(feature = "mysql")]
-    Mysql(MySqlPool),
+    #[cfg(feature = "mariadb")]
+    MariaDb(MySqlPool),
     #[cfg(feature = "sqlite")]
     Sqlite(SqlitePool),
 }
@@ -42,8 +42,8 @@ impl SqlPool {
         match self {
             #[cfg(feature = "postgres")]
             SqlPool::Postgres(pool) => pool.close().await,
-            #[cfg(feature = "mysql")]
-            SqlPool::Mysql(pool) => pool.close().await,
+            #[cfg(feature = "mariadb")]
+            SqlPool::MariaDb(pool) => pool.close().await,
             #[cfg(feature = "sqlite")]
             SqlPool::Sqlite(pool) => pool.close().await,
         }
@@ -72,6 +72,7 @@ impl SqlConnector {
         })
     }
 
+    #[allow(unreachable_patterns)]
     async fn connect(&self) -> Result<SqlPool, SendableError> {
         match self.engine {
             #[cfg(feature = "postgres")]
@@ -79,10 +80,10 @@ impl SqlConnector {
                 .await
                 .map(SqlPool::Postgres)
                 .map_err(connect_error),
-            #[cfg(feature = "mysql")]
-            Engine::Mysql => MySqlPool::connect(&self.connection)
+            #[cfg(feature = "mariadb")]
+            Engine::Mariadb => MySqlPool::connect(&self.connection)
                 .await
-                .map(SqlPool::Mysql)
+                .map(SqlPool::MariaDb)
                 .map_err(connect_error),
             #[cfg(feature = "sqlite")]
             Engine::Sqlite => {
@@ -103,7 +104,7 @@ impl SqlConnector {
     fn quote(&self, identifier: &str) -> String {
         // reject rather than escape: a seed target with a quote in it is a mistake, not a name.
         match self.engine {
-            Engine::Mysql => format!("`{}`", identifier.replace('`', "")),
+            Engine::Mariadb => format!("`{}`", identifier.replace('`', "")),
             _ => format!("\"{}\"", identifier.replace('"', "")),
         }
     }
@@ -117,17 +118,15 @@ fn connect_error(err: sqlx::Error) -> SendableError {
     CONNECTION_FAILED.error(err.to_string())
 }
 
-/// pull sql text and parameters out of a resolved statement, rejecting document statements.
-fn sql_parts(statement: &StatementSpec) -> Result<(&str, &[Value]), SendableError> {
+/// pull SQL text and parameters out of a resolved statement.
+fn sql_parts(statement: &StatementSpec) -> (&str, &[Value]) {
     match statement {
-        StatementSpec::Sql { text, params, .. } => Ok((text.as_str(), params.as_slice())),
-        StatementSpec::Document { .. } => {
-            Err(INVALID_STATEMENT.error("document statements are not supported by sql engines"))
-        }
+        StatementSpec::Sql { text, params, .. } => (text.as_str(), params.as_slice()),
     }
 }
 
 impl DatabaseConnector for SqlConnector {
+    #[allow(unreachable_patterns)]
     fn ensure_database(
         &self,
         spec: &ProvisionSpec,
@@ -148,9 +147,10 @@ impl DatabaseConnector for SqlConnector {
                     ensure_postgres(&connection, admin.as_deref(), database.as_deref(), timeout)
                         .await
                 }
-                #[cfg(feature = "mysql")]
-                Engine::Mysql => {
-                    ensure_mysql(&connection, admin.as_deref(), database.as_deref(), timeout).await
+                #[cfg(feature = "mariadb")]
+                Engine::Mariadb => {
+                    ensure_mariadb(&connection, admin.as_deref(), database.as_deref(), timeout)
+                        .await
                 }
                 other => Err(UNSUPPORTED_ENGINE
                     .error(format!("{} is not enabled in this build", other.as_str()))),
@@ -159,14 +159,14 @@ impl DatabaseConnector for SqlConnector {
     }
 
     fn query(&self, statement: &StatementSpec, timeout: Duration) -> Result<RowSet, SendableError> {
-        let (text, params) = sql_parts(statement)?;
+        let (text, params) = sql_parts(statement);
         self.runtime.clone().block_on(async move {
             let pool = self.connect().await?;
             let result = match &pool {
                 #[cfg(feature = "postgres")]
                 SqlPool::Postgres(pool) => ops::pg::query(pool, text, params, timeout).await,
-                #[cfg(feature = "mysql")]
-                SqlPool::Mysql(pool) => ops::mysql::query(pool, text, params, timeout).await,
+                #[cfg(feature = "mariadb")]
+                SqlPool::MariaDb(pool) => ops::mysql::query(pool, text, params, timeout).await,
                 #[cfg(feature = "sqlite")]
                 SqlPool::Sqlite(pool) => ops::sqlite::query(pool, text, params, timeout).await,
             };
@@ -180,14 +180,14 @@ impl DatabaseConnector for SqlConnector {
         statement: &StatementSpec,
         timeout: Duration,
     ) -> Result<ExecOutcome, SendableError> {
-        let (text, params) = sql_parts(statement)?;
+        let (text, params) = sql_parts(statement);
         self.runtime.clone().block_on(async move {
             let pool = self.connect().await?;
             let result = match &pool {
                 #[cfg(feature = "postgres")]
                 SqlPool::Postgres(pool) => ops::pg::execute(pool, text, params, timeout).await,
-                #[cfg(feature = "mysql")]
-                SqlPool::Mysql(pool) => ops::mysql::execute(pool, text, params, timeout).await,
+                #[cfg(feature = "mariadb")]
+                SqlPool::MariaDb(pool) => ops::mysql::execute(pool, text, params, timeout).await,
                 #[cfg(feature = "sqlite")]
                 SqlPool::Sqlite(pool) => ops::sqlite::execute(pool, text, params, timeout).await,
             };
@@ -205,14 +205,14 @@ impl DatabaseConnector for SqlConnector {
         let steps = statements
             .iter()
             .map(|statement| {
-                let (text, params) = sql_parts(statement)?;
-                Ok(SqlStep {
+                let (text, params) = sql_parts(statement);
+                SqlStep {
                     text: text.to_string(),
                     params: params.to_vec(),
                     returns_rows: sql_returns_rows(text),
-                })
+                }
             })
-            .collect::<Result<Vec<_>, SendableError>>()?;
+            .collect();
 
         self.run_steps(steps, transactional, timeout)
     }
@@ -238,12 +238,9 @@ impl DatabaseConnector for SqlConnector {
                 let (prefix, suffix) = match (self.engine, seed.on_conflict) {
                     (_, OnConflict::Error) => ("INSERT INTO", ""),
                     (Engine::Sqlite, OnConflict::Ignore) => ("INSERT OR IGNORE INTO", ""),
-                    (Engine::Mysql, OnConflict::Ignore) => ("INSERT IGNORE INTO", ""),
+                    (Engine::Mariadb, OnConflict::Ignore) => ("INSERT IGNORE INTO", ""),
                     (Engine::Postgres, OnConflict::Ignore) => {
                         ("INSERT INTO", " ON CONFLICT DO NOTHING")
-                    }
-                    (Engine::Mongodb, _) => {
-                        return Err(UNSUPPORTED_ENGINE.error("mongodb is not a sql engine"));
                     }
                 };
 
@@ -301,8 +298,8 @@ impl SqlConnector {
                 SqlPool::Postgres(pool) => {
                     ops::pg::script(pool, &steps, transactional, timeout).await
                 }
-                #[cfg(feature = "mysql")]
-                SqlPool::Mysql(pool) => {
+                #[cfg(feature = "mariadb")]
+                SqlPool::MariaDb(pool) => {
                     ops::mysql::script(pool, &steps, transactional, timeout).await
                 }
                 #[cfg(feature = "sqlite")]
@@ -390,8 +387,8 @@ async fn ensure_postgres(
     Ok(true)
 }
 
-#[cfg(feature = "mysql")]
-async fn ensure_mysql(
+#[cfg(feature = "mariadb")]
+async fn ensure_mariadb(
     connection: &str,
     admin: Option<&str>,
     database: Option<&str>,
@@ -461,7 +458,7 @@ fn inspect_sql(engine: Engine) -> &'static str {
         // rather than `table_schema`, and hands the values over as VARBINARY, which decodes to a
         // hex blob instead of text. an explicit alias pins the label and the cast pins the type,
         // so both engines answer in the same shape. mariadb already does this and is unaffected.
-        Engine::Mysql => {
+        Engine::Mariadb => {
             "select cast(table_schema as char) as table_schema, \
              cast(table_name as char) as table_name, \
              cast(column_name as char) as column_name, \
@@ -470,7 +467,6 @@ fn inspect_sql(engine: Engine) -> &'static str {
              from information_schema.columns where table_schema = database() \
              order by table_name, ordinal_position"
         }
-        Engine::Mongodb => "",
     }
 }
 

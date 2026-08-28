@@ -46,9 +46,9 @@ where
 
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
         // row back on the same pinned connection by the (now app-generated) id.
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let columns = "id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
-            let conflict = SqlDialect::MySql.on_conflict_update(
+            let conflict = SqlDialect::MariaDb.on_conflict_update(
                 "id",
                 &[
                     "workflow_id",
@@ -155,8 +155,8 @@ where
         ];
 
         // mysql has no usable RETURNING via sqlx: upsert, then read the row back on the same conn.
-        if self.dialect() == SqlDialect::MySql {
-            let conflict = SqlDialect::MySql.on_conflict_update("id", &update_cols);
+        if self.dialect() == SqlDialect::MariaDb {
+            let conflict = SqlDialect::MariaDb.on_conflict_update("id", &update_cols);
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO pipeline_triggers ({PIPELINE_TRIGGER_COLUMNS})
@@ -342,7 +342,7 @@ where
             let snapshot_json = serde_json::to_string(&pipeline_snapshot)?;
             let parameters = trigger.pipeline_trigger_parameters().to_string();
             let state = trigger.pipeline_trigger_state().to_string();
-            let run_row = if self.dialect() == SqlDialect::MySql {
+            let run_row = if self.dialect() == SqlDialect::MariaDb {
                 sqlx::query(&self.render(
                     "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                 ))

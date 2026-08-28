@@ -66,7 +66,7 @@ where
 {
     let lock = match store.dialect() {
         SqlDialect::Sqlite => "",
-        SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+        SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
     };
     sqlx::query(&store.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
         .bind(workflow_run_id)
@@ -655,7 +655,7 @@ where
         .await?;
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
-            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
         };
         sqlx::query(&self.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
             .bind(effect.workflow_run_id)
@@ -769,7 +769,7 @@ where
         }
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
-            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
         };
         sqlx::query(&self.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
             .bind(parent.workflow_run_id)
@@ -845,7 +845,7 @@ where
         .await?;
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
-            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
         };
         sqlx::query(&self.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
             .bind(continuation.workflow_run_id)
@@ -1490,7 +1490,7 @@ where
         }
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
-            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
         };
         sqlx::query(&self.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
             .bind(effect.workflow_run_id)

@@ -32,7 +32,7 @@ That checked-in supervisor config defaults to SQLite, but the same local loop ca
 target a server database without editing JSON:
 
 ```bash
-RUNINATOR_DATABASE=mysql \
+RUNINATOR_DATABASE=mariadb \
 RUNINATOR_DATABASE_URL='mysql://runinator:runinator@127.0.0.1:3306/runinator' \
 bash scripts/run-local.sh start
 ```
@@ -367,7 +367,7 @@ copied into `~/.runinator/plugins/` where the worker looks for it by default, th
 start it. Stop it with `Ctrl+C`.
 
 To run that same local stack against MariaDB, select the backend and pass a
-MySQL-compatible URL (these become `RUNINATOR_DATABASE`/`RUNINATOR_DATABASE_URL`
+MariaDB's `mysql://` wire-protocol URL (these become `RUNINATOR_DATABASE`/`RUNINATOR_DATABASE_URL`
 environment variables for the web-service process, the same convention `bash
 scripts/run-local.sh` documents above):
 

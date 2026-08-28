@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
 use runinator_plugin::cancel::CancellationToken;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::actions::Shape;
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "mariadb", feature = "sqlite"))]
 use crate::connector::sql::ops::sql_returns_rows;
 use crate::engine::Engine;
 use crate::export::{ExportFormat, ExportSpec, export_rows};
 use crate::helpers::{next_available_stem, normalize_timeout, sanitize_file_stem};
 use crate::rowset::{ColumnInfo, ColumnKind, ExecOutcome, RowSet};
-use crate::statement::{DocumentCommand, StatementFields, StatementInput, StatementSpec};
+use crate::statement::{StatementFields, StatementInput, StatementSpec};
 
 fn fields(value: Value) -> StatementFields {
     serde_json::from_value(value).expect("statement fields should deserialize")
@@ -35,23 +35,22 @@ fn engine_wire_values_round_trip() {
     for (wire, engine) in [
         ("sqlite", Engine::Sqlite),
         ("postgres", Engine::Postgres),
-        ("mysql", Engine::Mysql),
-        ("mongodb", Engine::Mongodb),
+        ("mariadb", Engine::Mariadb),
     ] {
         let parsed: Engine = serde_json::from_value(json!(wire)).unwrap();
         assert_eq!(parsed, engine);
         assert_eq!(engine.as_str(), wire);
     }
 
-    assert!(Engine::Mongodb.is_document_store());
-    assert!(!Engine::Postgres.is_document_store());
+    assert!(serde_json::from_value::<Engine>(json!("mysql")).is_err());
+    assert!(serde_json::from_value::<Engine>(json!("mongodb")).is_err());
     assert_eq!(Engine::Postgres.placeholder(2), "$3");
-    assert_eq!(Engine::Mysql.placeholder(2), "?");
+    assert_eq!(Engine::Mariadb.placeholder(2), "?");
     assert_eq!(Engine::Sqlite.placeholder(0), "?");
 }
 
 #[test]
-fn sql_engines_require_sql_and_reject_document_fields() {
+fn sql_engines_require_sql() {
     let resolved = StatementSpec::resolve(
         fields(json!({"sql": "select 1", "params": [7]})),
         Engine::Sqlite,
@@ -62,7 +61,6 @@ fn sql_engines_require_sql_and_reject_document_fields() {
             assert_eq!(text, "select 1");
             assert_eq!(params, vec![json!(7)]);
         }
-        other => panic!("expected a sql statement, got {other:?}"),
     }
 
     let missing = StatementSpec::resolve(fields(json!({})), Engine::Postgres).unwrap_err();
@@ -71,119 +69,6 @@ fn sql_engines_require_sql_and_reject_document_fields() {
     let empty =
         StatementSpec::resolve(fields(json!({"sql": "   "})), Engine::Postgres).unwrap_err();
     assert!(empty.to_string().contains("must not be empty"), "{empty}");
-
-    let crossed =
-        StatementSpec::resolve(fields(json!({"collection": "users"})), Engine::Mysql).unwrap_err();
-    assert!(
-        crossed.to_string().contains("document-store field"),
-        "{crossed}"
-    );
-}
-
-#[test]
-fn mongo_statements_require_exactly_one_operation() {
-    let find = StatementSpec::resolve(
-        fields(json!({"collection": "users", "find": {"active": true}})),
-        Engine::Mongodb,
-    )
-    .unwrap();
-    match find {
-        StatementSpec::Document {
-            collection,
-            command,
-            ..
-        } => {
-            assert_eq!(collection, "users");
-            assert_eq!(command.label(), "find");
-            assert!(command.returns_documents());
-        }
-        other => panic!("expected a document statement, got {other:?}"),
-    }
-
-    let sql_on_mongo =
-        StatementSpec::resolve(fields(json!({"sql": "select 1"})), Engine::Mongodb).unwrap_err();
-    assert!(
-        sql_on_mongo.to_string().contains("does not accept 'sql'"),
-        "{sql_on_mongo}"
-    );
-
-    let none = StatementSpec::resolve(fields(json!({"collection": "users"})), Engine::Mongodb)
-        .unwrap_err();
-    assert!(none.to_string().contains("requires one of"), "{none}");
-
-    let both = StatementSpec::resolve(
-        fields(json!({"collection": "users", "find": {}, "delete": {}})),
-        Engine::Mongodb,
-    )
-    .unwrap_err();
-    assert!(both.to_string().contains("exactly one"), "{both}");
-
-    // a raw command targets the database, so it is the one operation with no collection.
-    let raw =
-        StatementSpec::resolve(fields(json!({"command": {"ping": 1}})), Engine::Mongodb).unwrap();
-    assert!(matches!(
-        raw,
-        StatementSpec::Document {
-            command: DocumentCommand::Raw { .. },
-            ..
-        }
-    ));
-
-    let missing_collection =
-        StatementSpec::resolve(fields(json!({"find": {}})), Engine::Mongodb).unwrap_err();
-    assert!(
-        missing_collection
-            .to_string()
-            .contains("'collection' is required")
-    );
-}
-
-#[test]
-fn mongo_update_accepts_set_shorthand_and_explicit_operators() {
-    let shorthand = StatementSpec::resolve(
-        fields(json!({
-            "collection": "users",
-            "update": { "filter": {"id": 1}, "set": {"active": false} }
-        })),
-        Engine::Mongodb,
-    )
-    .unwrap();
-    let StatementSpec::Document {
-        command: DocumentCommand::Update { filter, update, .. },
-        ..
-    } = shorthand
-    else {
-        panic!("expected an update command");
-    };
-    assert_eq!(filter, json!({"id": 1}));
-    assert_eq!(update, json!({"$set": {"active": false}}));
-
-    let explicit = StatementSpec::resolve(
-        fields(json!({
-            "collection": "users",
-            "update": { "filter": {}, "update": {"$inc": {"hits": 1}} }
-        })),
-        Engine::Mongodb,
-    )
-    .unwrap();
-    let StatementSpec::Document {
-        command: DocumentCommand::Update { update, .. },
-        ..
-    } = explicit
-    else {
-        panic!("expected an update command");
-    };
-    assert_eq!(update, json!({"$inc": {"hits": 1}}));
-
-    let neither = StatementSpec::resolve(
-        fields(json!({"collection": "users", "update": {"filter": {}}})),
-        Engine::Mongodb,
-    )
-    .unwrap_err();
-    assert!(
-        neither.to_string().contains("requires either a 'set'"),
-        "{neither}"
-    );
 }
 
 #[test]
@@ -232,49 +117,6 @@ fn rows_shape_keeps_json_types_and_table_shape_stringifies() {
 }
 
 #[test]
-fn document_rows_union_their_keys_in_first_seen_order() {
-    let documents = vec![
-        json!({"id": 1, "name": "a"}).as_object().unwrap().clone(),
-        json!({"id": 2, "extra": true}).as_object().unwrap().clone(),
-    ];
-
-    let rows = RowSet::from_objects(documents);
-    let names = rows
-        .columns
-        .iter()
-        .map(|column| column.name.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(names, ["id", "name", "extra"]);
-
-    // a document missing a key reads as null rather than shifting the row.
-    assert_eq!(rows.rows[1], vec![json!(2), Value::Null, json!(true)]);
-    assert_eq!(rows.columns[0].kind, ColumnKind::Integer);
-    assert_eq!(rows.columns[2].kind, ColumnKind::Boolean);
-}
-
-#[test]
-fn empty_and_mixed_columns_fall_back_predictably() {
-    let empty = RowSet::from_objects(vec![Map::new()]);
-    assert!(empty.columns.is_empty());
-
-    let mixed = RowSet::from_objects(vec![
-        json!({"value": 1}).as_object().unwrap().clone(),
-        json!({"value": 1.5}).as_object().unwrap().clone(),
-    ]);
-    // widening an integer column with a float keeps it numeric instead of collapsing to json.
-    assert_eq!(mixed.columns[0].kind, ColumnKind::Number);
-
-    let clashing = RowSet::from_objects(vec![
-        json!({"value": 1}).as_object().unwrap().clone(),
-        json!({"value": "text"}).as_object().unwrap().clone(),
-    ]);
-    assert_eq!(clashing.columns[0].kind, ColumnKind::Json);
-
-    let all_null = RowSet::from_objects(vec![json!({"value": null}).as_object().unwrap().clone()]);
-    assert_eq!(all_null.columns[0].kind, ColumnKind::Null);
-}
-
-#[test]
 fn exec_outcome_reports_a_null_last_insert_id_when_absent() {
     let outcome = ExecOutcome {
         rows_affected: 3,
@@ -286,7 +128,7 @@ fn exec_outcome_reports_a_null_last_insert_id_when_absent() {
     );
 }
 
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "mariadb", feature = "sqlite"))]
 #[test]
 fn row_returning_statements_are_detected_from_their_leading_keyword() {
     for text in [
@@ -622,6 +464,23 @@ fn querying_a_missing_sqlite_file_fails_instead_of_creating_it() {
 }
 
 #[test]
+fn retired_document_fields_are_rejected() {
+    let error = crate::actions::query::run(
+        json!({
+            "engine": "sqlite",
+            "connection": "sqlite::memory:",
+            "sql": "select 1",
+            "collection": "retired"
+        }),
+        30,
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("collection"), "{error}");
+}
+
+#[test]
 fn an_unsupported_action_names_the_call_it_rejected() {
     use runinator_models::runs::ProviderExecutionRequest;
     use runinator_plugin::provider::Provider;
@@ -683,7 +542,7 @@ fn provider_metadata_is_valid_and_covers_every_action() {
 /// DECIMAL/NUMERIC is the one column type with no lossless json representation: a json number is
 /// an f64, and both engines allow precisions well past what that holds. these pin the boundary
 /// where the decoder stops emitting a number and starts preserving digits as text.
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
 mod decimals {
     use crate::connector::sql::decode::decimal_to_json;
     use bigdecimal::BigDecimal;

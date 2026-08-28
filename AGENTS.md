@@ -150,7 +150,7 @@ Keep dependency direction boring and predictable, structured with domains in min
   - `RuntimeStore` is a **use-case** persistence trait, cut to exactly what the graph runtime's store-backed host calls. It deliberately spans several domains — keeping it small makes the in-memory runtime fake practical.
 
   Add a new operation to the role that owns it (or `RuntimeStore` if the runtime host calls it), never to `DatabaseImpl`. Bound as narrowly as the caller allows: `runinator-archiver` bounds on `ArchiveStore`, not `DatabaseImpl`. Because the roles are separate traits, a caller using several must import each — glob `runinator_store::prelude::*` when that list would be long and uninformative.
-- `runinator-database`: the concrete SQLite/Postgres/MySQL implementation of `runinator-store`'s traits, plus row mapping. Database-specific mapping belongs here, not in `runinator-ws`. Method bodies are written **once**, generically over `SqlBackend`, and implemented on the local `SqlStore<B>` wrapper — the traits are foreign now, so the orphan rule forbids a blanket impl on a bare type parameter. `SqliteDb`/`PostgresDb`/`MySqlDb` are aliases for `SqlStore<…Backend>`, so callers name them as before.
+- `runinator-database`: the concrete SQLite/Postgres/MariaDB implementation of `runinator-store`'s traits, plus row mapping. Database-specific mapping belongs here, not in `runinator-ws`. Method bodies are written **once**, generically over `SqlBackend`, and implemented on the local `SqlStore<B>` wrapper — the traits are foreign now, so the orphan rule forbids a blanket impl on a bare type parameter. `SqliteDb`/`PostgresDb`/`MariaDb` are aliases for `SqlStore<…Backend>`, so callers name them as before.
 
   `operations/` mirrors the role split one file per trait, with shared helpers and the SQL-dialect plumbing in `operations/mod.rs`. Each role impl repeats the same thirty-line sqlx `where` block; that is deliberate, not an oversight — a macro would make every type error inside the query bodies point at an expansion instead of a real line. Rust does **not** elaborate trait `where` clauses into implied bounds, so a "bundle the bounds in one trait" shortcut does not compile.
 - `runinator-runtime`: the continuation-driven interpreter of the validated workflow graph. `WorkflowMachine` drives one durable `RunCursor` fiber, uses the compute VM for invocation frames, and delegates persistence bookkeeping through `WorkflowHost`; `StoreWorkflowHost` is backed by `RuntimeStore`. Keep HTTP, concrete broker transports, service hosting, and sqlx out. Prefer its fake-host/store suite over the web service's sqlite-backed suite for graph behavior.
@@ -349,7 +349,7 @@ Providers execute task actions; they are not schedulers, API clients, or persist
 
 The database crate owns persistence behavior. The web service owns HTTP behavior.
 
-- Add a new persistence operation to the `runinator-store` role trait that owns its domain (`roles/<domain>.rs`), then write the body in the matching `runinator-database/src/operations/<domain>.rs`. One generic body covers SQLite, Postgres, and MySQL together. Do not add methods to `DatabaseImpl` itself — it only composes the roles.
+- Add a new persistence operation to the `runinator-store` role trait that owns its domain (`roles/<domain>.rs`), then write the body in the matching `runinator-database/src/operations/<domain>.rs`. One generic body covers SQLite, Postgres, and MariaDB together. Do not add methods to `DatabaseImpl` itself — it only composes the roles.
 - Keep SQLx row mapping centralized in `runinator-database`, especially `mappers.rs`.
 - Keep repository functions in `runinator-engine/src/repository/` focused on persistence orchestration. HTTP response mapping belongs in a handler crate's `src/handlers/`, and SQL belongs in `runinator-database`.
 - Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.
@@ -526,7 +526,7 @@ For command center changes, use the existing Tauri build path and verify UI beha
 `.github/workflows/ci.yml` runs the same checks on push/PR: `cargo fmt --all --check` and
 `cargo test --workspace` on linux with postgres/mariadb service containers (so the dialect-parity
 suites actually execute rather than skipping), `runinator-provider-db`'s live connector suite
-against postgres, mongo, **and both mariadb:11 and mysql:8**, the broker-backend suites against
+against postgres and mariadb:11, the broker-backend suites against
 live kafka and rabbitmq, a compile job over the optional features, a `cargo check --workspace
 --all-targets` compile job on macos and windows, and the command center's `pnpm test`/`lint`/`build`.
 `.github/workflows/release-builds.yml` is separate and only runs on dispatch or a published release.
@@ -556,20 +556,10 @@ RUNINATOR_RABBITMQ_URI=amqp://guest:guest@127.0.0.1:5672/%2f \
 Kafka additionally needs its topics created first (`runinator.actions`, `runinator.control`,
 `runinator.results`); see the `Start Kafka` step in `ci.yml` for the single-node KRaft invocation.
 
-The two-engine mysql matrix is not redundancy. The starkest divergence is in DDL: a column-level
-`REFERENCES parent(id) ON DELETE CASCADE` **creates a real foreign key on MariaDB and is silently
-discarded by MySQL 8**, so one migration file yields cascading deletes on one engine and orphaned
-rows on the other. Declare foreign keys as table-level `CONSTRAINT ... FOREIGN KEY` in mysql
-migrations, and do not *rely* on the cascade in Rust — delete children explicitly inside a
-transaction, deepest dependant first, the way `operations/functions.rs::delete_function_package`
-does. Beyond DDL, mysql and mariadb report the same column types
-under different names, and each hides bugs the other exposes: mariadb implements `json` as
-`longtext` and reports it as BLOB (mysql 8 reports JSON), while mysql 8 serves `information_schema`
-from the data dictionary, uppercasing its column labels and returning them as VARBINARY. Both
-engines also report `boolean` and `tinyint(1)` as the same BOOLEAN, which sqlx's `bool` decode
-flattens. `connector/sql/decode.rs` resolves each of these from the payload rather than the type
-name, and column metadata is reconciled against the decoded value so `kind` never contradicts it.
-Test a connector change against both images.
+MariaDB uses SQLx's MySQL-protocol driver, so `sqlx::MySql*` type names and `mysql://` URLs remain
+implementation details. MariaDB reports `json` as `longtext`/BLOB and reports `boolean` and
+`tinyint(1)` through the same protocol type; `connector/sql/decode.rs` reconciles metadata against
+the decoded value so `kind` never contradicts it. Test connector changes against MariaDB 11.
 
 DECIMAL/NUMERIC decodes through `BigDecimal` (the sqlx `bigdecimal` feature), because a json number
 is an f64 and both engines allow precisions far past what that holds. `decimal_to_json` emits a
@@ -577,17 +567,6 @@ number only when the value round-trips through f64 unchanged, and the exact digi
 otherwise — so a `numeric(40,8)` never silently rounds. Note that postgres's wire format drops
 trailing zero groups, so a value's *scale* does not survive it; do not write assertions that depend
 on trailing zeros.
-
-MongoDB is a first-class store backend and ships by default (`mongo` is a default feature of
-`runinator-provider-db`; `--no-default-features` opts out). Its `bson` dependency hard-enables
-`serde_json/preserve_order`, and cargo unifies that across the workspace — which is fine, because
-the domain and wire type is `runinator_models::value::Value`, whose `Map` is its own `BTreeMap`.
-Every value crossing a workflow, the graph runtime, or the database stays sorted-key by construction, and
-`preserve_order` reaches only raw `serde_json::Value` in provider internals, where insertion order
-is the better answer anyway. Do not reintroduce a "keep bson out of the workspace" workaround. The
-one thing this does change: `serde_json::Value` is no longer a sorted-key reference, so assert our
-wire form against a literal rather than against a serde_json round trip — see
-`runinator-models/src/tests.rs`.
 
 A workspace-wide cargo invocation unifies features across every member, including
 `runinator-command-center/src-tauri`. That is why `runinator-desktop-agent` pins `rfd` to the same
@@ -598,20 +577,19 @@ this whenever a workspace crate and the tauri crate share a transitive dependenc
 ### Verifying a schema or persistence change
 
 A migration or `operations/` change is only half-tested by `cargo test -p runinator-database`: the
-default run has no postgres, mysql, or mariadb, so the live suites skip themselves. Bring the
+default run has no postgres or mariadb, so the live suites skip themselves. Bring the
 engines up and run it again:
 
 ```bash
 docker compose -f runinator-database/tests/docker-compose.yml up -d --wait
 RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55433/runi \
 RUNINATOR_TEST_MARIADB_URL=mysql://root:runi@127.0.0.1:53307/runi \
-RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53308/runi \
-  cargo test -p runinator-database
+  cargo test -p runinator-database --features sqlite,postgres,mariadb
 docker compose -f runinator-database/tests/docker-compose.yml down -v
 ```
 
 The assertions are shared: `src/dialect_parity.rs` holds one lifecycle body that SQLite,
-PostgreSQL, MySQL, and MariaDB all run, so cover a new operation by adding to it rather than to one
+PostgreSQL and MariaDB both run, so cover a new operation by adding to it rather than to one
 engine's file. `sqlite_lifecycle` runs it unconditionally, which is what keeps the body honest when
 nobody has docker up.
 

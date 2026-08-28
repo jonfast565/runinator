@@ -53,8 +53,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     case "$RUNINATOR_K8S_DATABASE_BACKEND" in \
       sqlite) database_features='runinator-ws/sqlite,runinator-engine-worker/sqlite,runinator-worker/db-sqlite,runinator-archiver/sqlite,runinator-bootstrap/sqlite,runinator-ctl/db-sqlite' ;; \
       postgres) database_features='runinator-ws/postgres,runinator-engine-worker/postgres,runinator-worker/db-postgres,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres' ;; \
-      mysql|mariadb) database_features='runinator-ws/mysql,runinator-engine-worker/mysql,runinator-worker/db-mysql,runinator-archiver/mysql,runinator-bootstrap/mysql,runinator-ctl/db-mysql' ;; \
-      *) echo "unsupported RUNINATOR_K8S_DATABASE_BACKEND: $RUNINATOR_K8S_DATABASE_BACKEND (expected sqlite, postgres, mysql, or mariadb)" >&2; exit 2 ;; \
+      mariadb) database_features='runinator-ws/mariadb,runinator-engine-worker/mariadb,runinator-worker/db-mariadb,runinator-archiver/mariadb,runinator-bootstrap/mariadb,runinator-ctl/db-mariadb' ;; \
+      *) echo "unsupported RUNINATOR_K8S_DATABASE_BACKEND: $RUNINATOR_K8S_DATABASE_BACKEND (expected sqlite, postgres, or mariadb)" >&2; exit 2 ;; \
     esac \
     && case "$RUNINATOR_K8S_BROKER_BACKEND" in \
       http) broker_features='runinator-ws/http,runinator-engine-worker/http,runinator-worker/http,runinator-waker/http' ;; \

@@ -15,17 +15,17 @@ use crate::{
     queries::SqlDialect,
 };
 
-static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("./migrations/mysql");
+static MARIADB_MIGRATOR: Migrator = sqlx::migrate!("./migrations/mariadb");
 
-pub struct MySqlBackend {
+pub struct MariaDbBackend {
     pub pool: MySqlPool,
 }
 
 #[cfg(test)]
-#[path = "mysql_tests.rs"]
+#[path = "mariadb_tests.rs"]
 mod tests;
 
-impl MySqlBackend {
+impl MariaDbBackend {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
         let options = MySqlConnectOptions::from_str(connection_str)?
             .log_statements(log::LevelFilter::Debug)
@@ -42,8 +42,8 @@ impl MySqlBackend {
     }
 
     pub async fn bootstrap(&self) -> Result<(), SendableError> {
-        info!("Running embedded MySQL/MariaDB bootstrap");
-        MYSQL_MIGRATOR
+        info!("Running embedded MariaDB bootstrap");
+        MARIADB_MIGRATOR
             .run(&self.pool)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })?;
@@ -76,7 +76,7 @@ impl MySqlBackend {
     }
 }
 
-impl SqlBackend for MySqlBackend {
+impl SqlBackend for MariaDbBackend {
     type Db = sqlx::MySql;
 
     fn pool(&self) -> &MySqlPool {
@@ -88,7 +88,7 @@ impl SqlBackend for MySqlBackend {
     }
 
     fn dialect(&self) -> SqlDialect {
-        SqlDialect::MySql
+        SqlDialect::MariaDb
     }
 
     async fn init(&self, paths: &[String]) -> Result<(), SendableError> {
@@ -105,16 +105,16 @@ impl SqlBackend for MySqlBackend {
     }
 }
 
-/// the mysql-backed store.
+/// the MariaDB-backed store.
 ///
-/// `SqlStore` is what carries the `DatabaseImpl` implementation; this alias keeps `MySqlDb` the name
+/// `SqlStore` is what carries the `DatabaseImpl` implementation; this alias keeps `MariaDb` the name
 /// callers use, so the wrapper is invisible outside this crate.
-pub type MySqlDb = SqlStore<MySqlBackend>;
+pub type MariaDb = SqlStore<MariaDbBackend>;
 
-impl SqlStore<MySqlBackend> {
+impl SqlStore<MariaDbBackend> {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
         Ok(SqlStore::from_backend(
-            MySqlBackend::new(connection_str).await?,
+            MariaDbBackend::new(connection_str).await?,
         ))
     }
 }

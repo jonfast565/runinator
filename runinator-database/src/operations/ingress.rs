@@ -24,7 +24,7 @@ macro_rules! settle_and_promote {
     ($store:expr, $run_column:literal, $run_id:expr, $now:expr) => {{
         let mut tx = $store.pool().begin().await?;
         let lock = match $store.dialect() {
-            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
             SqlDialect::Sqlite => "",
         };
         let admission_sql = format!(
@@ -122,7 +122,7 @@ where
             runinator_models::orchestration::IngressAdmissionStatus::Active => "active",
             runinator_models::orchestration::IngressAdmissionStatus::Terminal => "terminal",
         };
-        let sql = if self.dialect() == SqlDialect::MySql {
+        let sql = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO ingress_admissions (id, org_scope, org_id, scope, correlation_key, generation, target_kind, target_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE id = id"
@@ -450,7 +450,7 @@ where
     ) -> Result<Option<IngressPromotion>, SendableError> {
         let mut tx = self.pool().begin().await?;
         let lock = match self.dialect() {
-            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
             SqlDialect::Sqlite => "",
         };
         let row = sqlx::query(&self.render(&format!(

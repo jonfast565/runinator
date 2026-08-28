@@ -1,6 +1,6 @@
 //! the cross-dialect parity body, run against sqlite.
 //!
-//! The MySQL and PostgreSQL suites skip without a live URL. In a normal workspace this
+//! The MariaDB and PostgreSQL suites skip without a live URL. In a normal workspace this
 //! is the only thing that executes `dialect_parity` at all. without it the shared body would still
 //! compile but never run, and would rot into something that fails the moment someone brings the
 //! engines up — which is precisely when it is least useful.

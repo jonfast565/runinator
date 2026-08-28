@@ -53,7 +53,7 @@ jobs:
 
     env:
       RUNINATOR_TEST_POSTGRES_URL: postgres://runi:runi@127.0.0.1:5432/runi
-      RUNINATOR_TEST_MYSQL_URL: mysql://root:runi@127.0.0.1:3306/runi
+      RUNINATOR_TEST_MARIADB_URL: mysql://root:runi@127.0.0.1:3306/runi
 
     steps:
       - name: Checkout
@@ -93,22 +93,12 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
-  # the two-image job: mysql and mariadb disagree in ways no single image would catch, so anything
-  # that only a live engine can check runs here against both.
-  #
-  # runinator-provider-db's connectors are the original reason — mariadb reports a `json` column as
-  # BLOB, mysql 8 uppercases its `information_schema` labels and serves them as VARBINARY — and
-  # running the suite against both is what keeps `connector/sql/decode.rs` honest. The store's
-  # migrations ride along for the same reason: they are dialect-specific sql that the mariadb-only
-  # main job cannot vet. The job name is kept as-is because required status checks reference it.
+  # Live connector tests are ignored by the workspace job, so run them explicitly against the
+  # retained server-backed engines. Keep the MariaDB check name stable for branch protection.
   db-connectors:
-    name: DB connectors (${{ matrix.mysql_image }})
+    name: DB connectors (mariadb:11)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        mysql_image: [mariadb:11, mysql:8]
 
     services:
       postgres:
@@ -125,47 +115,27 @@ jobs:
           --health-timeout 5s
           --health-retries 30
 
-      mongo:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 })'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
-
     env:
       RUNINATOR_TEST_POSTGRES_URL: postgres://runi:runi@127.0.0.1:5432/runi
-      RUNINATOR_TEST_MYSQL_URL: mysql://root:runi@127.0.0.1:3306/runi
-      RUNINATOR_TEST_MONGO_URL: mongodb://127.0.0.1:27017/runi
+      RUNINATOR_TEST_MARIADB_URL: mysql://root:runi@127.0.0.1:3306/runi
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # started by hand rather than as a service: the two images want different env vars and
-      # health probes, and `services:` cannot vary those off one matrix axis.
-      - name: Start ${{ matrix.mysql_image }}
+      - name: Start MariaDB
         run: |
-          if [ "${{ matrix.mysql_image }}" = "mysql:8" ]; then
-            docker run -d --name ci-mysql -p 3306:3306 \
-              -e MYSQL_ROOT_PASSWORD=runi -e MYSQL_DATABASE=runi \
-              --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pruni" \
-              --health-interval 5s --health-retries 40 mysql:8
-          else
-            docker run -d --name ci-mysql -p 3306:3306 \
-              -e MARIADB_ROOT_PASSWORD=runi -e MARIADB_DATABASE=runi \
-              --health-cmd "healthcheck.sh --connect --innodb_initialized" \
-              --health-interval 5s --health-retries 40 mariadb:11
-          fi
+          docker run -d --name ci-mariadb -p 3306:3306 \
+            -e MARIADB_ROOT_PASSWORD=runi -e MARIADB_DATABASE=runi \
+            --health-cmd "healthcheck.sh --connect --innodb_initialized" \
+            --health-interval 5s --health-retries 40 mariadb:11
           for _ in $(seq 1 60); do
-            status=$(docker inspect -f '{{.State.Health.Status}}' ci-mysql)
+            status=$(docker inspect -f '{{.State.Health.Status}}' ci-mariadb)
             [ "$status" = "healthy" ] && exit 0
             sleep 5
           done
-          echo "::error::${{ matrix.mysql_image }} never became healthy"
-          docker logs ci-mysql
+          echo "::error::MariaDB never became healthy"
+          docker logs ci-mariadb
           exit 1
 
       - name: Install Rust
@@ -177,23 +147,22 @@ jobs:
       - name: Run live connector tests
         run: cargo test -p runinator-provider-db --test live -- --ignored
 
-      # the store's migrations are dialect-specific sql, and only a live engine runs them:
-      # `migration_parity_tests` compares version *sets*, not content. the main test job covers
-      # mariadb alone, so a statement mysql 8 rejects and mariadb accepts — a literal DEFAULT on a
-      # TEXT column — sat broken from june to august with every job green. this is the only job
-      # holding both images, so it is the only place that difference can show up.
-      - name: Run store migrations against ${{ matrix.mysql_image }}
+      - name: Run store migrations against PostgreSQL and MariaDB
         run: |
           # -e is the runner's default, but stated here so the failing `cargo test` aborts the step
           # rather than falling through to the guard below, which would exit 0 on its own.
           set -eo pipefail
-          log="${RUNNER_TEMP:-/tmp}/store-mysql.log"
-          cargo test -p runinator-database mysql -- --nocapture 2>&1 | tee "$log"
+          log="${RUNNER_TEMP:-/tmp}/store-mariadb.log"
+          cargo test -p runinator-database --features postgres,mariadb -- --nocapture 2>&1 | tee "$log"
 
           # the suite self-skips into a green run when the url is unset, so a passing exit code
           # alone does not mean a migration was ever applied.
-          if grep -q "skipping: set RUNINATOR_TEST_MYSQL_URL" "$log"; then
-            echo "::error::store mysql suite skipped itself - the service or env var is wrong, so this job proved nothing"
+          if grep -q "skipping: set RUNINATOR_TEST_MARIADB_URL" "$log"; then
+            echo "::error::store MariaDB suite skipped itself - the service or env var is wrong, so this job proved nothing"
+            exit 1
+          fi
+          if grep -q "skipping: set RUNINATOR_TEST_POSTGRES_URL" "$log"; then
+            echo "::error::store PostgreSQL suite skipped itself - the service or env var is wrong, so this job proved nothing"
             exit 1
           fi
 
@@ -379,8 +348,7 @@ jobs:
       - name: Test ws relay backend
         run: cargo test --locked -p runinator-broker --features ws
 
-      # mongo ships as a default feature, so the opt-out path is the one that goes unbuilt.
-      - name: Check provider-db without mongo
+      - name: Check provider-db with no database drivers
         run: cargo check --locked --all-targets -p runinator-provider-db --no-default-features
 
   # the release workflow only runs on dispatch/publish, so a macos- or windows-only compile break

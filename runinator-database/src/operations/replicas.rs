@@ -97,7 +97,7 @@ where
         limit: i64,
     ) -> Result<Vec<AgentDirectiveRecord>, SendableError> {
         let claimable = "state IN ('pending', 'published', 'accepted') AND expires_at > ? AND (claimed_at IS NULL OR claimed_at <= ?)";
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             sqlx::query(&self.render(&format!(
                 "UPDATE agent_directives SET claimed_at = ?, claimed_by_runtime_id = ?, attempts = attempts + 1
                  WHERE directive_id IN (SELECT directive_id FROM (SELECT directive_id FROM agent_directives
@@ -242,8 +242,8 @@ where
             )
             .await?;
         let replica_id = request.replica_id.unwrap_or_else(Uuid::now_v7);
-        if self.dialect() == SqlDialect::MySql {
-            let conflict = SqlDialect::MySql.on_conflict_update(
+        if self.dialect() == SqlDialect::MariaDb {
+            let conflict = SqlDialect::MariaDb.on_conflict_update(
                 "instance_id, runtime_id",
                 &[
                     "replica_type",
@@ -588,8 +588,8 @@ where
     ) -> Result<ReplicaProviderRegistration, SendableError> {
         let now = Utc::now().timestamp();
         let provider_json = serde_json::to_string(&request.provider)?;
-        if self.dialect() == SqlDialect::MySql {
-            let conflict = SqlDialect::MySql.on_conflict_update(
+        if self.dialect() == SqlDialect::MariaDb {
+            let conflict = SqlDialect::MariaDb.on_conflict_update(
                 "replica_id, provider_name",
                 &["provider_json", "last_registered_at", "last_heartbeat_at"],
             );

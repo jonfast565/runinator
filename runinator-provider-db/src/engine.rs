@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum Engine {
     Sqlite,
     Postgres,
-    Mysql,
-    Mongodb,
+    Mariadb,
 }
 
 impl Engine {
@@ -15,26 +14,19 @@ impl Engine {
         match self {
             Engine::Sqlite => "sqlite",
             Engine::Postgres => "postgres",
-            Engine::Mysql => "mysql",
-            Engine::Mongodb => "mongodb",
+            Engine::Mariadb => "mariadb",
         }
-    }
-
-    /// document engines take a `collection` + command instead of sql text.
-    pub fn is_document_store(&self) -> bool {
-        matches!(self, Engine::Mongodb)
     }
 
     /// the placeholder style used when rendering positional parameters in errors and docs.
     #[cfg_attr(
-        not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+        not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
         allow(dead_code)
     )]
     pub fn placeholder(&self, index: usize) -> String {
         match self {
             Engine::Postgres => format!("${}", index + 1),
-            Engine::Sqlite | Engine::Mysql => "?".to_string(),
-            Engine::Mongodb => String::new(),
+            Engine::Sqlite | Engine::Mariadb => "?".to_string(),
         }
     }
 }

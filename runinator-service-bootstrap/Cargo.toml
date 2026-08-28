@@ -14,7 +14,7 @@ runinator-platform = { path = "../runinator-platform" }
 default = ["sqlite", "http", "tcp"]
 sqlite = ["runinator-db-cli/sqlite"]
 postgres = ["runinator-db-cli/postgres"]
-mysql = ["runinator-db-cli/mysql"]
+mariadb = ["runinator-db-cli/mariadb"]
 http = ["runinator-broker/http"]
 tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]

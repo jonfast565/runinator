@@ -1,5 +1,5 @@
 //! The three migration directories are maintained separately.
-//! A change added to SQLite but not MySQL can pass local tests and fail in production.
+//! A change added to SQLite but not MariaDB can pass local tests and fail in production.
 //! This test compares their version sets without needing a database.
 
 use std::collections::BTreeSet;
@@ -16,7 +16,7 @@ const DIALECT_ONLY: &[(&str, &str, &str)] = &[
     (
         "postgres",
         "20260607000002",
-        "widens replicas.port to BIGINT; sqlite is untyped and mysql already declared it that way",
+        "widens replicas.port to BIGINT; sqlite is untyped and mariadb already declared it that way",
     ),
 ];
 
@@ -54,7 +54,7 @@ fn allowed_only_in(dialect: &str) -> BTreeSet<String> {
 
 #[test]
 fn every_dialect_carries_the_same_migrations() {
-    let dialects = ["sqlite", "postgres", "mysql"];
+    let dialects = ["sqlite", "postgres", "mariadb"];
     let sets: Vec<BTreeSet<String>> = dialects.iter().map(|d| versions(d)).collect();
 
     // the shared set is what every dialect must have: the union minus each dialect's own exemptions.

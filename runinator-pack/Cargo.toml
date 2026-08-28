@@ -16,11 +16,10 @@ uuid = { version = "1", features = ["v5"] }
 zip = { version = "7.2", default-features = false }
 
 [features]
-default = ["db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
+default = ["db-sqlite", "db-postgres", "db-mariadb"]
 db-sqlite = ["runinator-provider-catalog/db-sqlite"]
 db-postgres = ["runinator-provider-catalog/db-postgres"]
-db-mysql = ["runinator-provider-catalog/db-mysql"]
-db-mongo = ["runinator-provider-catalog/db-mongo"]
+db-mariadb = ["runinator-provider-catalog/db-mariadb"]
 
 [dev-dependencies]
 runinator-workflows = { path = "../runinator-workflows" }

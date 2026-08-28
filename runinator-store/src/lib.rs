@@ -12,7 +12,7 @@
 //!   it deliberately spans several domains; keeping it small is what makes an in-memory fake
 //!   practical, and it is why `runinator-runtime` needs no database driver.
 //!
-//! `runinator-database` provides the concrete sqlite/postgres/mysql implementation.
+//! `runinator-database` provides the concrete sqlite/postgres/mariadb implementation.
 
 use std::future::Future;
 

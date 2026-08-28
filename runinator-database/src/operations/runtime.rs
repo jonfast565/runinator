@@ -422,7 +422,7 @@ where
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();
         let columns = "id, record_type, data, created_at, updated_at";
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
                 "INSERT INTO automation_records (id, record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
@@ -498,7 +498,7 @@ where
     ) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let columns = "id, record_type, data, created_at, updated_at";
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             sqlx::query(&self.render(
                 "UPDATE automation_records SET workflow_run_id = ?, external_item_id = ?, node_id = ?, provider = ?, resource_type = ?, external_id = ?, status = ?, title = ?, url = ?, body = ?, path = ?, prompt = ?, approval_type = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ? AND record_type = ?",
             ))
@@ -565,7 +565,7 @@ where
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();
         let columns = "id, data, created_at, updated_at";
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
                 "INSERT INTO gates (id, workflow_run_id, node_id, kind, status, label, reason, resolved_by, resolved_at, metadata, data, created_at, updated_at)
@@ -619,7 +619,7 @@ where
     async fn update_gate(&self, gate_id: Uuid, record: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let columns = "id, data, created_at, updated_at";
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             sqlx::query(&self.render(
                 "UPDATE gates SET node_id = ?, kind = ?, status = ?, label = ?, reason = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ?",
             ))
@@ -741,7 +741,7 @@ where
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
         // Canonical paths use namespace + stable key. Display-name matching remains temporarily for
         // pre-migration callers; persisted dependencies are UUID-backed before storage.
-        let concat = if self.dialect() == SqlDialect::MySql {
+        let concat = if self.dialect() == SqlDialect::MariaDb {
             "CONCAT(namespace, '.', resource_key)"
         } else {
             "namespace || '.' || resource_key"
@@ -797,7 +797,7 @@ where
         let snapshot_json = serde_json::to_string(&pipeline_snapshot)?;
         let source_kind = provenance.source_kind.map(|v| v.as_str().to_string());
         let actor_type = provenance.actor_type.map(|v| v.as_str().to_string());
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
                 "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata, orchestration_binding_id, execution_epoch, start_member) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

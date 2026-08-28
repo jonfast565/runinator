@@ -31,12 +31,7 @@ pub struct ColumnInfo {
 
 impl ColumnInfo {
     #[cfg_attr(
-        not(any(
-            feature = "mongo",
-            feature = "postgres",
-            feature = "mysql",
-            feature = "sqlite"
-        )),
+        not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
         allow(dead_code)
     )]
     pub fn new(name: impl Into<String>, kind: ColumnKind) -> Self {
@@ -48,7 +43,7 @@ impl ColumnInfo {
     }
 
     #[cfg_attr(
-        not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+        not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
         allow(dead_code)
     )]
     pub fn with_native_type(mut self, native_type: impl Into<String>) -> Self {
@@ -67,7 +62,7 @@ pub struct RowSet {
 
 impl RowSet {
     #[cfg_attr(
-        not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+        not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
         allow(dead_code)
     )]
     pub fn new(columns: Vec<ColumnInfo>, rows: Vec<Vec<Value>>) -> Self {
@@ -76,41 +71,6 @@ impl RowSet {
 
     pub fn row_count(&self) -> usize {
         self.rows.len()
-    }
-
-    /// build a row set from documents whose keys are not known up front, unioning the keys in
-    /// first-seen order so document stores and `select *` behave the same way downstream.
-    #[cfg_attr(not(feature = "mongo"), allow(dead_code))]
-    pub fn from_objects(documents: Vec<Map<String, Value>>) -> Self {
-        let mut columns: Vec<String> = Vec::new();
-        for document in &documents {
-            for key in document.keys() {
-                if !columns.iter().any(|existing| existing == key) {
-                    columns.push(key.clone());
-                }
-            }
-        }
-
-        let rows = documents
-            .iter()
-            .map(|document| {
-                columns
-                    .iter()
-                    .map(|column| document.get(column).cloned().unwrap_or(Value::Null))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
-        let columns = columns
-            .into_iter()
-            .enumerate()
-            .map(|(index, name)| {
-                let kind = infer_kind(rows.iter().filter_map(|row| row.get(index)));
-                ColumnInfo::new(name, kind)
-            })
-            .collect::<Vec<_>>();
-
-        Self { columns, rows }
     }
 
     /// the default wire shape: an array of objects with real json types.
@@ -178,12 +138,7 @@ impl ExecOutcome {
 
 /// one entry in a script's result list. a step either returned rows or affected them.
 #[cfg_attr(
-    not(any(
-        feature = "mongo",
-        feature = "postgres",
-        feature = "mysql",
-        feature = "sqlite"
-    )),
+    not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
     allow(dead_code)
 )]
 #[derive(Clone, Debug)]
@@ -218,30 +173,4 @@ fn stringify(value: &Value) -> String {
         Value::Number(number) => number.to_string(),
         other => other.to_string(),
     }
-}
-
-/// pick a column kind from the values actually present, ignoring nulls. mixed types fall back
-/// to `Json` because that is the only shape that can hold all of them.
-#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
-fn infer_kind<'a>(values: impl Iterator<Item = &'a Value>) -> ColumnKind {
-    let mut kind: Option<ColumnKind> = None;
-    for value in values {
-        let observed = match value {
-            Value::Null => continue,
-            Value::Bool(_) => ColumnKind::Boolean,
-            Value::Number(number) if number.is_i64() || number.is_u64() => ColumnKind::Integer,
-            Value::Number(_) => ColumnKind::Number,
-            Value::String(_) => ColumnKind::String,
-            Value::Array(_) | Value::Object(_) => ColumnKind::Json,
-        };
-        kind = match kind {
-            None => Some(observed),
-            Some(existing) if existing == observed => Some(existing),
-            // integer widening to number is the one merge worth keeping precise.
-            Some(ColumnKind::Integer) if observed == ColumnKind::Number => Some(ColumnKind::Number),
-            Some(ColumnKind::Number) if observed == ColumnKind::Integer => Some(ColumnKind::Number),
-            Some(_) => Some(ColumnKind::Json),
-        };
-    }
-    kind.unwrap_or(ColumnKind::Null)
 }

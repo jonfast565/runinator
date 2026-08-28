@@ -79,7 +79,7 @@ where
         limit: i64,
     ) -> Result<Vec<ArchiveMark>, SendableError> {
         let columns = "id, table_name, primary_key, created_at, eligible_before, archive_day";
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             sqlx::query(&self.render(
                 "UPDATE archive_marks
                  SET claimed_by = ?, claimed_until = ?, attempts = attempts + 1

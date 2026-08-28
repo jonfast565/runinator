@@ -1,4 +1,4 @@
-//! a generic database provider: sqlite, postgres, mysql, and mongodb behind one action surface.
+//! a generic SQL database provider: sqlite, postgres, and mariadb behind one action surface.
 //! statements are the primitive — rows come back typed, non-queries come back as counts, and
 //! spreadsheet export is an option on a query rather than the reason to run one.
 
@@ -30,18 +30,14 @@ pub struct DbProvider;
 
 /// the engine selector shared by every action.
 fn engine_parameter() -> ParameterMetadata {
-    // mongodb is only advertised when this build actually carries the driver, so a pack that
-    // names it fails rexrap type-checking rather than at run time.
+    #[allow(unused_mut)]
     let mut engines = Vec::new();
     #[cfg(feature = "sqlite")]
     engines.push(json!("sqlite").into());
     #[cfg(feature = "postgres")]
     engines.push(json!("postgres").into());
-    #[cfg(feature = "mysql")]
-    engines.push(json!("mysql").into());
-    if cfg!(feature = "mongo") {
-        engines.push(json!("mongodb").into());
-    }
+    #[cfg(feature = "mariadb")]
+    engines.push(json!("mariadb").into());
 
     ParameterMetadata::required("engine", RuninatorType::Enum(engines))
         .with_description("Database engine to connect to")
@@ -60,25 +56,9 @@ fn statement_parameters() -> Vec<ParameterMetadata> {
         ParameterMetadata::optional("name", RuninatorType::String)
             .with_description("Label for this statement, used in results and export filenames"),
         ParameterMetadata::optional("sql", RuninatorType::String)
-            .with_description("Statement text for sqlite, postgres, and mysql"),
+            .with_description("Statement text for sqlite, postgres, and mariadb"),
         ParameterMetadata::optional("params", RuninatorType::array(RuninatorType::Any))
             .with_description("Positional bind parameters ($1.. on postgres, ? elsewhere)"),
-        ParameterMetadata::optional("collection", RuninatorType::String)
-            .with_description("Target collection for mongodb"),
-        ParameterMetadata::optional("find", RuninatorType::Any)
-            .with_description("mongodb filter document for a find"),
-        ParameterMetadata::optional("aggregate", RuninatorType::array(RuninatorType::Any))
-            .with_description("mongodb aggregation pipeline"),
-        ParameterMetadata::optional("insert", RuninatorType::array(RuninatorType::Any))
-            .with_description("mongodb documents to insert"),
-        ParameterMetadata::optional("update", RuninatorType::Any)
-            .with_description("mongodb update as { filter, set } or { filter, update }"),
-        ParameterMetadata::optional("delete", RuninatorType::Any)
-            .with_description("mongodb filter document for a delete"),
-        ParameterMetadata::optional("command", RuninatorType::Any)
-            .with_description("Raw mongodb command passed to runCommand"),
-        ParameterMetadata::optional("options", RuninatorType::Any)
-            .with_description("projection, sort, limit, skip, upsert, and multi for mongodb"),
     ]
 }
 
@@ -204,7 +184,7 @@ fn provision_action() -> ActionMetadata {
         connection_parameter(),
         ParameterMetadata::optional("admin_connection", RuninatorType::String)
             .with_description(
-                "Maintenance connection used to CREATE DATABASE on postgres and mysql",
+                "Maintenance connection used to CREATE DATABASE on postgres and mariadb",
             )
             .secret(),
         ParameterMetadata::optional("database", RuninatorType::String)
@@ -212,24 +192,9 @@ fn provision_action() -> ActionMetadata {
         ParameterMetadata::optional("schema", RuninatorType::array(RuninatorType::Any))
             .with_description("DDL statements applied in order once the database exists"),
         ParameterMetadata::optional(
-            "collections",
-            RuninatorType::array(RuninatorType::typed_structure([
-                ("name", RuninatorField::required(RuninatorType::String)),
-                (
-                    "indexes",
-                    RuninatorField::optional(RuninatorType::array(RuninatorType::Any)),
-                ),
-            ])),
-        )
-        .with_description("mongodb collections and indexes to create"),
-        ParameterMetadata::optional(
             "seed",
             RuninatorType::array(RuninatorType::typed_structure([
-                ("table", RuninatorField::optional(RuninatorType::String)),
-                (
-                    "collection",
-                    RuninatorField::optional(RuninatorType::String),
-                ),
+                ("table", RuninatorField::required(RuninatorType::String)),
                 (
                     "rows",
                     RuninatorField::required(RuninatorType::array(RuninatorType::Any)),
@@ -252,7 +217,7 @@ fn provision_action() -> ActionMetadata {
 }
 
 fn inspect_action() -> ActionMetadata {
-    ActionMetadata::new("inspect", "List tables or collections and their columns")
+    ActionMetadata::new("inspect", "List tables and their columns")
         .with_parameters(vec![engine_parameter(), connection_parameter()])
         .with_results(vec![
             ResultMetadata::new("provider", RuninatorType::String),

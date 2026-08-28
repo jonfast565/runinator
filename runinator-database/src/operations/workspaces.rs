@@ -34,7 +34,7 @@ where
         workspace: NewWorkspaceLease,
     ) -> Result<WorkspaceLease, SendableError> {
         let now = Utc::now().timestamp();
-        let sql = if self.dialect() == SqlDialect::MySql {
+        let sql = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO workspace_leases (id, admission_id, generation, scope, attempt, worker_instance_id, worker_replica_id, local_key, requirements, status, version, leased_until, evidence, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'allocating', 1, ?, 'null', ?, ?)
              ON DUPLICATE KEY UPDATE id = id"

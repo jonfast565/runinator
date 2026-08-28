@@ -21,26 +21,16 @@ sqlx = { version = "0.8.6", default-features = false, features = [
 # version is pinned by sqlx 0.8's own `bigdecimal 0.4` dependency; they must agree or the decode
 # impls do not apply.
 bigdecimal = "0.4"
-mongodb = { version = "3", optional = true }
 
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-data-export = { path = "../runinator-data-export" }
 runinator-models = { path = "../runinator-models" }
 
 [features]
-default = ["sqlite", "postgres", "mysql", "mongo"]
+default = ["sqlite", "postgres", "mariadb"]
 sqlite = ["sqlx/sqlite"]
 postgres = ["sqlx/postgres"]
-mysql = ["sqlx/mysql"]
-# mongodb is a first-class store backend, not an add-on, so it ships by default. its `bson`
-# dependency hard-enables `serde_json/preserve_order`, which cargo unifies across the workspace —
-# that is intended, not a hazard to route around. the domain and wire type is
-# `runinator_models::value::Value`, whose `Map` is its own `BTreeMap`, so the ordering of every
-# value that crosses a workflow, the reducer, or the database is unaffected by construction. what
-# `preserve_order` reaches is raw `serde_json::Value` inside provider internals, where insertion
-# order is the better answer anyway: a query result now reports its columns in the order they were
-# selected instead of alphabetically.
-mongo = ["dep:mongodb"]
+mariadb = ["sqlx/mysql"]
 
 [dev-dependencies]
 tempfile = "3"

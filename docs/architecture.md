@@ -47,7 +47,7 @@ flowchart LR
 
     subgraph Data["Durable data and artifacts"]
         STORE["runinator-store\npersistence traits"]
-        DB["runinator-database\nSQLite, Postgres, MySQL"]
+        DB["runinator-database\nSQLite, Postgres, MariaDB"]
         BLOB["BlobStore\nlocal filesystem or S3-compatible"]
     end
 
@@ -121,7 +121,7 @@ The `effect`, `control`, and `agent` paths are target-routed. `events` is the ex
 
 ### Persistence and artifacts
 
-`runinator-models` and `runinator-comm` are the shared domain and wire-contract foundations. `runinator-store` declares persistence roles and the focused `RuntimeStore` use-case trait used by the graph runtime. `runinator-database` provides their SQLite, Postgres, and MySQL implementations and owns SQL mapping. This keeps database behavior out of the HTTP handler and runtime crates.
+`runinator-models` and `runinator-comm` are the shared domain and wire-contract foundations. `runinator-store` declares persistence roles and the focused `RuntimeStore` use-case trait used by the graph runtime. `runinator-database` provides their SQLite, Postgres, and MariaDB implementations and owns SQL mapping. This keeps database behavior out of the HTTP handler and runtime crates.
 
 Workflow and task state, cursors, effect dispatches, triggers, and metadata are durable database records. Artifact bytes are different: `runinator-blob-core` defines `BlobStore`, while `runinator-blob` supplies the S3-compatible client/server transport. The engine's artifact-storage boundary writes bytes to the object store and persists their `blob://` references; workers upload produced bytes through the API before reporting artifact events.
 

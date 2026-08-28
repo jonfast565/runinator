@@ -64,7 +64,7 @@ where
         let statuses = status_list(&statuses);
         // mysql has no UPDATE ... RETURNING and forbids a subquery on the table being updated, so
         // claim with a derived-table subselect, then read the rows back by the lease just written.
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let claim_sql = self.render(&format!(
                 "UPDATE workflow_runs SET scheduler_claimed_by = ?, scheduler_claimed_until = ?
                  WHERE id IN (

@@ -74,7 +74,7 @@ where
         binding: NewOrchestrationBinding,
     ) -> Result<OrchestrationBinding, SendableError> {
         let now = Utc::now().timestamp();
-        let insert = if self.dialect() == SqlDialect::MySql {
+        let insert = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO orchestration_bindings (id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, resources, budgets, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'null', '{}', ?, ?) ON DUPLICATE KEY UPDATE id = id"
         } else {
             "INSERT INTO orchestration_bindings (id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, resources, budgets, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'null', '{}', ?, ?) ON CONFLICT(admission_id, generation) DO NOTHING"
@@ -136,7 +136,7 @@ where
         now: DateTime<Utc>,
     ) -> Result<OrchestrationCorrelationAlias, SendableError> {
         let org_scope = alias.org_id.map(|id| id.to_string()).unwrap_or_default();
-        let insert = if self.dialect() == SqlDialect::MySql {
+        let insert = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO orchestration_correlation_aliases (id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE binding_id = VALUES(binding_id), generation = VALUES(generation), updated_at = VALUES(updated_at)"
         } else {
             "INSERT INTO orchestration_correlation_aliases (id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_scope, source, scope, correlation_key) DO UPDATE SET binding_id = excluded.binding_id, generation = excluded.generation, updated_at = excluded.updated_at"
@@ -360,7 +360,7 @@ where
         epoch: NewOrchestrationEpoch,
         now: DateTime<Utc>,
     ) -> Result<OrchestrationEpoch, SendableError> {
-        let insert = if self.dialect() == SqlDialect::MySql {
+        let insert = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO orchestration_epochs (id, binding_id, epoch, start_member, parameters, status, reason, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?) ON DUPLICATE KEY UPDATE id = id"
         } else {
             "INSERT INTO orchestration_epochs (id, binding_id, epoch, start_member, parameters, status, reason, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT(binding_id, epoch) DO NOTHING"
@@ -435,7 +435,7 @@ where
         &self,
         reduction: OrchestrationEventReduction,
     ) -> Result<OrchestrationEventReduction, SendableError> {
-        let insert = if self.dialect() == SqlDialect::MySql {
+        let insert = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO orchestration_event_reductions (id, binding_id, inbox_event_id, sequence, matched_intents, winner, suppressed_intents, binding_version, disposition, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id"
         } else {
             "INSERT INTO orchestration_event_reductions (id, binding_id, inbox_event_id, sequence, matched_intents, winner, suppressed_intents, binding_version, disposition, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(inbox_event_id) DO NOTHING"
@@ -474,7 +474,7 @@ where
         &self,
         intent: OrchestrationPendingIntent,
     ) -> Result<OrchestrationPendingIntent, SendableError> {
-        let sql = if self.dialect() == SqlDialect::MySql {
+        let sql = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO orchestration_pending_intents (id, binding_id, intent, priority, source_event_ids, latest_payload, wake_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE priority = VALUES(priority), source_event_ids = VALUES(source_event_ids), latest_payload = VALUES(latest_payload), wake_at = VALUES(wake_at), updated_at = VALUES(updated_at)"
         } else {
             "INSERT INTO orchestration_pending_intents (id, binding_id, intent, priority, source_event_ids, latest_payload, wake_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(binding_id, intent) DO UPDATE SET priority = excluded.priority, source_event_ids = excluded.source_event_ids, latest_payload = excluded.latest_payload, wake_at = excluded.wake_at, updated_at = excluded.updated_at"
@@ -554,7 +554,7 @@ where
         command: NewOrchestrationCommand,
         now: DateTime<Utc>,
     ) -> Result<OrchestrationCommand, SendableError> {
-        let insert = if self.dialect() == SqlDialect::MySql {
+        let insert = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO orchestration_commands (id, binding_id, epoch, command_type, operation_key, payload, status, result, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'null', ?, ?) ON DUPLICATE KEY UPDATE id = id"
         } else {
             "INSERT INTO orchestration_commands (id, binding_id, epoch, command_type, operation_key, payload, status, result, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'null', ?, ?) ON CONFLICT(binding_id, operation_key) DO NOTHING"
@@ -653,7 +653,7 @@ where
         evidence: OrchestrationEvidence,
     ) -> Result<(), SendableError> {
         let insert = match self.dialect() {
-            SqlDialect::MySql => {
+            SqlDialect::MariaDb => {
                 "INSERT IGNORE INTO orchestration_evidence (id, binding_id, epoch, kind, subject_revision, payload, source_event_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             }
             _ => {
@@ -915,7 +915,7 @@ where
         &self,
         operation: ExternalOperation,
     ) -> Result<ExternalOperation, SendableError> {
-        let insert = if self.dialect() == SqlDialect::MySql {
+        let insert = if self.dialect() == SqlDialect::MariaDb {
             "INSERT INTO external_operations (id, binding_id, epoch, workflow_run_id, effect_id, operation_key, provider, action, semantics, attempt, status, ambiguous, provenance, receipt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id"
         } else {
             "INSERT INTO external_operations (id, binding_id, epoch, workflow_run_id, effect_id, operation_key, provider, action, semantics, attempt, status, ambiguous, provenance, receipt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(binding_id, operation_key) DO NOTHING"

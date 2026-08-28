@@ -1,10 +1,9 @@
 # engines for the live connector tests in tests/live.rs. ports are offset from the defaults so
-# this never collides with a local postgres/mysql/mongo install.
+# this never collides with a local PostgreSQL or MariaDB install.
 #
 #   docker compose -f runinator-provider-db/tests/docker-compose.yml up -d
 #   RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55432/runi \
-#   RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53306/runi \
-#   RUNINATOR_TEST_MONGO_URL=mongodb://127.0.0.1:57017/runi \
+#   RUNINATOR_TEST_MARIADB_URL=mysql://root:runi@127.0.0.1:53306/runi \
 #     cargo test -p runinator-provider-db --test live -- --ignored
 #   docker compose -f runinator-provider-db/tests/docker-compose.yml down -v
 
@@ -28,7 +27,7 @@ services:
 
   mariadb:
     image: mariadb:11
-    container_name: runi-db-mysql
+    container_name: runi-db-mariadb
     environment:
       MARIADB_ROOT_PASSWORD: runi
       MARIADB_DATABASE: runi
@@ -36,17 +35,6 @@ services:
       - "53306:3306"
     healthcheck:
       test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-
-  mongo:
-    image: mongo:7
-    container_name: runi-db-mongo
-    ports:
-      - "57017:27017"
-    healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ ping: 1 })'"]
       interval: 2s
       timeout: 3s
       retries: 30

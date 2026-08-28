@@ -162,7 +162,7 @@ async fn resolve_database(
         .map_err(|error| ServerBootstrapError::Database(Box::new(error)))?;
     let url = match request.backend {
         DatabaseBackend::Sqlite => String::new(),
-        DatabaseBackend::Postgres | DatabaseBackend::Mysql => {
+        DatabaseBackend::Postgres | DatabaseBackend::Mariadb => {
             required_database_url(request.database_url).map_err(ServerBootstrapError::Database)?
         }
     };

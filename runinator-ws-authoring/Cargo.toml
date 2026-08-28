@@ -34,5 +34,4 @@ runinator-ws-middleware = { path = "../runinator-ws-middleware" }
 [features]
 db-sqlite = ["runinator-provider-catalog/db-sqlite"]
 db-postgres = ["runinator-provider-catalog/db-postgres"]
-db-mysql = ["runinator-provider-catalog/db-mysql"]
-db-mongo = ["runinator-provider-catalog/db-mongo"]
+db-mariadb = ["runinator-provider-catalog/db-mariadb"]

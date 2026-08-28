@@ -77,8 +77,8 @@ where
 
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
         // row back on the same pinned connection by the (now app-generated) id.
-        if self.dialect() == SqlDialect::MySql {
-            let conflict = SqlDialect::MySql.on_conflict_update(
+        if self.dialect() == SqlDialect::MariaDb {
+            let conflict = SqlDialect::MariaDb.on_conflict_update(
                 "id",
                 &[
                     "name",
@@ -151,7 +151,7 @@ where
         let id = Uuid::now_v7();
         let resource_key = format!("{}-{id}", workflow.artifact_key());
 
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
                 "INSERT INTO workflows ({WORKFLOW_COLUMNS})
@@ -430,8 +430,8 @@ where
 
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
         // row back on the same pinned connection by the (now app-generated) id.
-        if self.dialect() == SqlDialect::MySql {
-            let conflict = SqlDialect::MySql.on_conflict_update("id", &update_cols);
+        if self.dialect() == SqlDialect::MariaDb {
+            let conflict = SqlDialect::MariaDb.on_conflict_update("id", &update_cols);
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO pipelines ({PIPELINE_COLUMNS})
@@ -728,8 +728,8 @@ where
             .unwrap_or(Value::Object(Default::default()))
             .to_string();
 
-        if self.dialect() == SqlDialect::MySql {
-            let conflict = SqlDialect::MySql.on_conflict_update(
+        if self.dialect() == SqlDialect::MariaDb {
+            let conflict = SqlDialect::MariaDb.on_conflict_update(
                 "uri",
                 &[
                     "item_type",

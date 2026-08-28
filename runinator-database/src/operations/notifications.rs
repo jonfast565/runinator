@@ -59,7 +59,7 @@ where
         let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
                 "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -137,7 +137,7 @@ where
         let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
 
         // mysql has no UPDATE ... RETURNING, so update then read the row back by id.
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             sqlx::query(
                 &self
                     .render("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ?"),

@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::actions::{check_cancelled, open};
-use crate::connector::{CollectionSpec, ProvisionSpec, SeedSpec};
+use crate::connector::{ProvisionSpec, SeedSpec};
 use crate::engine::Engine;
 use crate::helpers::{build_runtime, normalize_timeout, to_sendable};
 use crate::statement::{StatementInput, StatementSpec};
@@ -14,7 +14,7 @@ use crate::statement::{StatementInput, StatementSpec};
 pub struct ProvisionRequest {
     pub engine: Engine,
     pub connection: String,
-    /// maintenance connection used to issue `CREATE DATABASE` on postgres and mysql.
+    /// maintenance connection used to issue `CREATE DATABASE` on postgres and mariadb.
     #[serde(default)]
     pub admin_connection: Option<String>,
     /// database name to create; derived from `connection` when omitted.
@@ -23,12 +23,11 @@ pub struct ProvisionRequest {
     /// ddl applied after the database exists, in order, inside one transaction where supported.
     #[serde(default)]
     pub schema: Vec<StatementInput>,
-    /// document-store collections and indexes to create.
-    #[serde(default)]
-    pub collections: Vec<CollectionSpec>,
     /// rows inserted after the schema is in place.
     #[serde(default)]
     pub seed: Vec<SeedSpec>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// ensure the database exists, apply schema, then seed. each phase is optional, so this covers
@@ -39,6 +38,11 @@ pub fn run(
     token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let request: ProvisionRequest = serde_json::from_value(parameters).map_err(to_sendable)?;
+    if let Some(name) = request.extra.keys().next() {
+        return Err(
+            crate::errors::INVALID_ARGUMENT.error(format!("unknown provision field '{name}'"))
+        );
+    }
     let timeout = normalize_timeout(timeout_secs);
 
     let schema = request
@@ -54,18 +58,14 @@ pub fn run(
     let spec = ProvisionSpec {
         admin_connection: request.admin_connection,
         database: request.database,
-        collections: request.collections,
     };
     let created = connector.ensure_database(&spec, timeout)?;
     check_cancelled(&token)?;
 
-    // mongo has no transactional ddl outside a replica set, so schema statements run unwrapped
-    // there and inside a transaction everywhere else.
-    let transactional = !request.engine.is_document_store();
     let applied = if schema.is_empty() {
         0
     } else {
-        connector.script(&schema, transactional, timeout)?.len()
+        connector.script(&schema, true, timeout)?.len()
     };
     check_cancelled(&token)?;
 
@@ -97,3 +97,4 @@ pub fn run(
         artifacts: Vec::new(),
     })
 }
+use std::collections::BTreeMap;

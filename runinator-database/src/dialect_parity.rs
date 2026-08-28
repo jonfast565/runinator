@@ -3,8 +3,8 @@
 //! the method bodies in `crate::operations` are generic over `SqlBackend`, but they are not
 //! dialect-free: upserts, claims, and read-backs each branch on `SqlDialect`, and the three
 //! migration sets are hand-maintained siblings. those branches are exactly what a sqlite-only suite
-//! cannot reach — a mysql `ON DUPLICATE KEY` that silently updates the wrong row, or a postgres
-//! `RETURNING` that a mysql path has to emulate with a second SELECT, both pass sqlite untouched.
+//! cannot reach — a mariadb `ON DUPLICATE KEY` that silently updates the wrong row, or a postgres
+//! `RETURNING` that a mariadb path has to emulate with a second SELECT, both pass sqlite untouched.
 //!
 //! so this body is the parity contract: `sqlite_lifecycle` runs it unconditionally, and
 //! `mariadb_full_lifecycle` / `postgres_full_lifecycle` run the identical body against a live
@@ -115,7 +115,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
 
 /// Exercise the orchestration-specific migration and every atomic primitive that differs by SQL
 /// dialect: idempotent inserts, leased claims, binding CAS, pending-intent consumption, and both
-/// command/provider outboxes. Live Postgres/MySQL suites call this exact function too.
+/// command/provider outboxes. Live Postgres/MariaDB suites call this exact function too.
 async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     db: &T,
     workflow_id: Uuid,
@@ -176,8 +176,8 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
     assert_eq!(revision.transport, AdapterTransport::Webhook);
 
     // a polling adapter carries a durable claim/checkpoint schedule beside its revisions. this is
-    // the only place those operations run against postgres and both mysql engines: `rows_affected`
-    // alone differs between them (mysql reports rows *changed*, not matched), which is exactly the
+    // the only place those operations run against postgres and both mariadb engines: `rows_affected`
+    // alone differs between them (mariadb reports rows *changed*, not matched), which is exactly the
     // kind of divergence a sqlite-only suite cannot see.
     let polling_id = Uuid::now_v7();
     let (polling, polling_revision) = db
@@ -648,7 +648,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
         .unwrap();
     assert_eq!(duplicate_command.id, command.id);
 
-    // dedupe must key on the *whole* operation key. mysql indexed this one with a 191-character
+    // dedupe must key on the *whole* operation key. mariadb indexed this one with a 191-character
     // prefix, which made two distinct keys sharing a long prefix collide and silently return the
     // first command instead of enqueuing the second -- while sqlite and postgres constrained the
     // full value. the padding here is deliberately longer than that prefix.
@@ -932,7 +932,7 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
     );
 
     // deleting the run must take its whole vm footprint with it. the delete names every child
-    // explicitly rather than trusting the declared cascades, because mysql 8 discards a
+    // explicitly rather than trusting the declared cascades, because mariadb 8 discards a
     // column-level `REFERENCES` that mariadb honours — so a cascade-only delete orphans rows on one
     // engine and not the other. asserting the read-backs here is what proves the statement list is
     // complete on all three.
@@ -1540,8 +1540,8 @@ async fn assert_normalized_execution_state_lifecycle<T: DatabaseImpl + WorkflowV
 // count and settled on first use by insert-or-ignore.
 //
 // both halves are dialect-shaped: `insert_ignore` renders three different ways, and the affected
-// count for an UPDATE that matches a row but changes nothing is the classic mysql divergence
-// (CLIENT_FOUND_ROWS). If mysql ever reported "matched" rather than "changed" here, a caller inside
+// count for an UPDATE that matches a row but changes nothing is the classic mariadb divergence
+// (CLIENT_FOUND_ROWS). If mariadb ever reported "matched" rather than "changed" here, a caller inside
 // the window would be admitted, which is the gate silently not gating.
 async fn assert_cooldown_claim<T: DatabaseImpl>(db: &T) {
     let now = Utc::now().timestamp();
@@ -1601,10 +1601,10 @@ async fn assert_cooldown_claim<T: DatabaseImpl>(db: &T) {
 // settled both, so a branch silently lost its pending wake and the run stalled with no error.
 //
 // this is dialect-sensitive twice over: `enqueue_ready_node` returns the inserted row through
-// postgres `RETURNING` but through a second SELECT on mysql, and the supersede predicate is
+// postgres `RETURNING` but through a second SELECT on mariadb, and the supersede predicate is
 // string-built per dialect because the three disagree on `? IS NULL`.
 
-// `key` is reserved in mysql, so this exercises identifier quoting as well as first-writer-wins:
+// `key` is reserved in mariadb, so this exercises identifier quoting as well as first-writer-wins:
 // a second write returning the second value would make a retried request non-idempotent.
 async fn assert_idempotency_keys<T: DatabaseImpl>(db: &T) {
     let scope = "scope-x".to_string();
@@ -1716,7 +1716,7 @@ async fn assert_catalog_upsert<T: DatabaseImpl>(db: &T) {
 
     // a mirror row (a packaged function's `functions.<pkg>` provider metadata) has to be removable
     // when the thing it mirrors is deleted, or it outlives its package advertising exports nothing
-    // can run. `affected()` is what reports whether anything was deleted, and mysql and postgres
+    // can run. `affected()` is what reports whether anything was deleted, and mariadb and postgres
     // disagree enough about row counts that this is worth asserting on every engine.
     assert!(
         db.delete_catalog_item("cat://x".into()).await.unwrap(),
@@ -1735,7 +1735,7 @@ async fn assert_catalog_upsert<T: DatabaseImpl>(db: &T) {
 }
 
 // an insert has to read its row back, and an update has to do so even when the write changed
-// nothing: mysql reports zero affected rows for a no-op update, so a caller keying off the row
+// nothing: mariadb reports zero affected rows for a no-op update, so a caller keying off the row
 // count would return nothing for an unchanged record.
 async fn assert_automation_records<T: DatabaseImpl>(db: &T, run_id: Uuid) {
     let automation = runinator_models::json!({

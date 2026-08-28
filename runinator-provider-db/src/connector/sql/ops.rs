@@ -260,7 +260,7 @@ fn bind_pg<'q>(
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn bind_mysql<'q>(
     query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
     param: &'q Value,
@@ -300,7 +300,7 @@ fn pg_last_insert_id(_result: &sqlx::postgres::PgQueryResult) -> Option<Value> {
     None
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn mysql_last_insert_id(result: &sqlx::mysql::MySqlQueryResult) -> Option<Value> {
     let id = result.last_insert_id();
     (id != 0).then(|| Value::Number(id.into()))
@@ -323,7 +323,7 @@ sql_ops!(
     last_insert_id = super::pg_last_insert_id
 );
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 sql_ops!(
     mysql,
     pool = sqlx::MySqlPool,

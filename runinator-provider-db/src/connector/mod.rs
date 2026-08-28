@@ -10,67 +10,34 @@ use crate::engine::Engine;
 use crate::rowset::{ExecOutcome, RowSet, StepOutcome, TableInfo};
 use crate::statement::StatementSpec;
 
-#[cfg(feature = "mongo")]
-pub mod mongo;
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "mariadb", feature = "sqlite"))]
 pub mod sql;
-#[cfg(any(
-    feature = "mongo",
-    feature = "postgres",
-    feature = "mysql",
-    feature = "sqlite"
-))]
+#[cfg(any(feature = "postgres", feature = "mariadb", feature = "sqlite"))]
 pub(crate) mod timeout;
 
 /// what `db.provision` should ensure exists before the workflow touches the database.
-// These shared request types deliberately retain the other backend's fields so a build without
-// that backend can still report a cross-dialect request as invalid instead of silently ignoring
-// it.  The feature-specific connector is the only production consumer of those fields.
-#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 #[cfg_attr(
-    not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+    not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
     allow(dead_code)
 )]
 #[derive(Debug, Default)]
 pub struct ProvisionSpec {
-    /// a maintenance connection used to issue `CREATE DATABASE`. postgres and mysql cannot
+    /// a maintenance connection used to issue `CREATE DATABASE`. postgres and mariadb cannot
     /// create a database over a connection to that same database, so without this a missing
     /// database is reported rather than created.
     pub admin_connection: Option<String>,
     /// the database name to create. derived from the connection string when omitted.
     pub database: Option<String>,
-    /// document-store collections to create up front, with optional indexes.
-    pub collections: Vec<CollectionSpec>,
-}
-
-#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
-#[derive(Clone, Debug, Deserialize)]
-pub struct CollectionSpec {
-    pub name: String,
-    #[serde(default)]
-    pub indexes: Vec<IndexSpec>,
-}
-
-#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
-#[derive(Clone, Debug, Deserialize)]
-pub struct IndexSpec {
-    pub keys: Value,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub unique: bool,
 }
 
 /// what a seed step inserts. `on_conflict` keeps re-running a provision step idempotent.
-#[cfg_attr(not(feature = "mongo"), allow(dead_code))]
 #[cfg_attr(
-    not(any(feature = "postgres", feature = "mysql", feature = "sqlite")),
+    not(any(feature = "postgres", feature = "mariadb", feature = "sqlite")),
     allow(dead_code)
 )]
 #[derive(Clone, Debug, Deserialize)]
 pub struct SeedSpec {
-    /// the sql table or the document collection to insert into.
-    #[serde(alias = "collection")]
+    /// the SQL table to insert into.
     pub table: String,
     pub rows: Vec<Map<String, Value>>,
     #[serde(default)]
@@ -122,40 +89,28 @@ pub trait DatabaseConnector: Send + Sync {
 #[allow(unreachable_patterns)]
 pub fn connector_for(
     engine: Engine,
-    connection: &str,
-    runtime: Arc<Runtime>,
+    _connection: &str,
+    _runtime: Arc<Runtime>,
 ) -> Result<Box<dyn DatabaseConnector>, SendableError> {
     match engine {
         #[cfg(feature = "sqlite")]
         Engine::Sqlite => Ok(Box::new(sql::SqlConnector::new(
             Engine::Sqlite,
-            connection,
-            runtime,
+            _connection,
+            _runtime,
         )?)),
         #[cfg(feature = "postgres")]
         Engine::Postgres => Ok(Box::new(sql::SqlConnector::new(
             Engine::Postgres,
-            connection,
-            runtime,
+            _connection,
+            _runtime,
         )?)),
-        #[cfg(feature = "mysql")]
-        Engine::Mysql => Ok(Box::new(sql::SqlConnector::new(
-            Engine::Mysql,
-            connection,
-            runtime,
+        #[cfg(feature = "mariadb")]
+        Engine::Mariadb => Ok(Box::new(sql::SqlConnector::new(
+            Engine::Mariadb,
+            _connection,
+            _runtime,
         )?)),
-        #[cfg(feature = "mongo")]
-        Engine::Mongodb => Ok(Box::new(mongo::MongoConnector::new(connection, runtime)?)),
-        // `mongo` is a default feature, so this arm is only reachable in a build that opted out
-        // with --no-default-features.
-        #[cfg(not(feature = "mongo"))]
-        Engine::Mongodb => {
-            let _ = (connection, runtime);
-            Err(crate::errors::UNSUPPORTED_ENGINE.error(
-                "this build opted out of mongodb support; drop --no-default-features, or re-add \
-                 --features runinator-provider-db/mongo",
-            ))
-        }
         other => Err(crate::errors::UNSUPPORTED_ENGINE
             .error(format!("{} is not enabled in this build", other.as_str()))),
     }

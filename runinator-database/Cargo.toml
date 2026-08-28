@@ -24,7 +24,7 @@ runinator-secrets = { path = "../runinator-secrets" }
 # Production binaries select only the driver they need.
 sqlite = ["sqlx/sqlite"]
 postgres = ["sqlx/postgres"]
-mysql = ["sqlx/mysql"]
+mariadb = ["sqlx/mysql"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time"] }

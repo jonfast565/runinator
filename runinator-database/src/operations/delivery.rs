@@ -100,7 +100,7 @@ where
         let id = Uuid::now_v7();
 
         // first writer wins: on conflict keep the existing result rather than overwriting it.
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             sqlx::query(&self.render(&format!(
                 "INSERT INTO idempotency_keys (id, scope, {key_col}, result, created_at)
                  VALUES (?, ?, ?, ?, ?)
@@ -179,7 +179,7 @@ where
                ELSE idempotency_keys.owner_node_run_id
              END";
 
-        if self.dialect() == SqlDialect::MySql {
+        if self.dialect() == SqlDialect::MariaDb {
             // mysql has no RETURNING. the read-back is still safe: once this statement leaves the row
             // owned by us no other claimant can move it, and if we lost, the only state the winner can
             // reach meanwhile is `completed` — which is a better answer for us, not a wrong one.

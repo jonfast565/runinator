@@ -17,7 +17,7 @@ runinator-platform = { path = "../runinator-platform" }
 default = ["sqlite"]
 sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite"]
 postgres = ["runinator-database/postgres", "runinator-db-cli/postgres"]
-mysql = ["runinator-database/mysql", "runinator-db-cli/mysql"]
+mariadb = ["runinator-database/mariadb", "runinator-db-cli/mariadb"]
 
 [[bin]]
 name = "runinator-bootstrap"

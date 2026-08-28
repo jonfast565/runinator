@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use clap::ValueEnum;
 
-#[cfg(feature = "mysql")]
-pub use runinator_database::mysql::MySqlDb;
+#[cfg(feature = "mariadb")]
+pub use runinator_database::mariadb::MariaDb;
 #[cfg(feature = "postgres")]
 pub use runinator_database::postgres::PostgresDb;
 #[cfg(feature = "sqlite")]
@@ -16,9 +16,8 @@ pub use runinator_database::sqlite::SqliteDb;
 pub enum DatabaseBackend {
     Sqlite,
     Postgres,
-    /// MySQL or MariaDB.
-    #[value(alias = "mariadb")]
-    Mysql,
+    /// MariaDB, using its MySQL-compatible wire protocol.
+    Mariadb,
 }
 
 impl DatabaseBackend {
@@ -27,7 +26,7 @@ impl DatabaseBackend {
         match self {
             Self::Sqlite => "sqlite",
             Self::Postgres => "postgres",
-            Self::Mysql => "mysql",
+            Self::Mariadb => "mariadb",
         }
     }
 }
@@ -36,9 +35,8 @@ impl DatabaseBackend {
 pub fn required_database_url(
     database_url: Option<String>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    database_url.ok_or_else(|| {
-        "--database-url must be provided when --database=postgres/mysql/mariadb".into()
-    })
+    database_url
+        .ok_or_else(|| "--database-url must be provided when --database=postgres/mariadb".into())
 }
 
 /// Ensure the parent directory of a SQLite path exists and return the connection string.
@@ -71,10 +69,10 @@ macro_rules! dispatch_database {
                 let $db = ::std::sync::Arc::new($crate::PostgresDb::new(&__conn).await?);
                 $body
             }
-            #[cfg(feature = "mysql")]
-            $crate::DatabaseBackend::Mysql => {
+            #[cfg(feature = "mariadb")]
+            $crate::DatabaseBackend::Mariadb => {
                 let __conn: String = $url;
-                let $db = ::std::sync::Arc::new($crate::MySqlDb::new(&__conn).await?);
+                let $db = ::std::sync::Arc::new($crate::MariaDb::new(&__conn).await?);
                 $body
             }
             other => {
@@ -89,13 +87,22 @@ macro_rules! dispatch_database {
 
 #[cfg(test)]
 mod tests {
+    use clap::ValueEnum;
+
     use super::{DatabaseBackend, required_database_url};
 
     #[test]
     fn database_backend_labels_are_stable() {
         assert_eq!(DatabaseBackend::Sqlite.label(), "sqlite");
         assert_eq!(DatabaseBackend::Postgres.label(), "postgres");
-        assert_eq!(DatabaseBackend::Mysql.label(), "mysql");
+        assert_eq!(DatabaseBackend::Mariadb.label(), "mariadb");
+    }
+
+    #[test]
+    fn retired_database_names_are_rejected() {
+        assert!(DatabaseBackend::from_str("mariadb", true).is_ok());
+        assert!(DatabaseBackend::from_str("mysql", true).is_err());
+        assert!(DatabaseBackend::from_str("mongodb", true).is_err());
     }
 
     #[test]

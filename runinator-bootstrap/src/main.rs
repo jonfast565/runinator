@@ -21,7 +21,7 @@ struct Cli {
 
     /// Connection string. For sqlite, a filesystem path (file:/path/to/runinator.db
     /// or just /path/to/runinator.db). For postgres, a postgres:// URL. For
-    /// mysql/mariadb, a mysql:// URL. Also reads RUNINATOR_DATABASE_URL and
+    /// For mariadb, a mysql:// URL. Also reads RUNINATOR_DATABASE_URL and
     /// falls back to DATABASE_URL when not set.
     #[arg(long, env = "RUNINATOR_DATABASE_URL")]
     database_url: Option<String>,

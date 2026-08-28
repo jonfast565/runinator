@@ -20,8 +20,7 @@ runinator-provider-db = { path = "../runinator-provider-db", default-features = 
 runinator-provider-std = { path = "../runinator-provider-std" }
 
 [features]
-default = ["db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
+default = ["db-sqlite", "db-postgres", "db-mariadb"]
 db-sqlite = ["runinator-provider-db/sqlite"]
 db-postgres = ["runinator-provider-db/postgres"]
-db-mysql = ["runinator-provider-db/mysql"]
-db-mongo = ["runinator-provider-db/mongo"]
+db-mariadb = ["runinator-provider-db/mariadb"]

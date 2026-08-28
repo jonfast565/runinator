@@ -1,4 +1,4 @@
-//! live-engine coverage for the postgres, mysql/mariadb, and mongodb connectors. these exercise
+//! live-engine coverage for the postgres and mariadb connectors. these exercise
 //! the real drivers through the public provider entry point, so they cover the decode, bind, and
 //! provisioning paths that the in-crate sqlite tests cannot reach.
 //!
@@ -359,19 +359,19 @@ fn swap_database(connection: &str, database: &str) -> String {
     format!("{prefix}/{database}")
 }
 
-// ------------------------------------------------------------- mysql/maria
+// ------------------------------------------------------------- mariadb
 
 #[test]
-#[ignore = "requires a reachable MySQL or MariaDB server; set RUNINATOR_TEST_MYSQL_URL"]
-fn mysql_round_trips_the_whole_action_surface() {
-    let Some(connection) = url("RUNINATOR_TEST_MYSQL_URL") else {
+#[ignore = "requires a reachable MariaDB server; set RUNINATOR_TEST_MARIADB_URL"]
+fn mariadb_round_trips_the_whole_action_surface() {
+    let Some(connection) = url("RUNINATOR_TEST_MARIADB_URL") else {
         return;
     };
 
     ok(
         "provision",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "schema": [
                 "drop table if exists live_users",
@@ -387,11 +387,11 @@ fn mysql_round_trips_the_whole_action_surface() {
         }),
     );
 
-    // mysql uses ? placeholders rather than $n.
+    // MariaDB uses ? placeholders rather than $n.
     let queried = ok(
         "query",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "select id, email, active, score from live_users where id = ? order by id",
             "params": [1]
@@ -400,14 +400,14 @@ fn mysql_round_trips_the_whole_action_surface() {
     assert_eq!(queried["row_count"], json!(1), "{queried}");
     assert_eq!(queried["rows"][0]["id"], json!(1));
     assert_eq!(queried["rows"][0]["score"], json!(1.5));
-    // mysql has no distinct boolean type — `boolean` is `tinyint(1)` — but both engines report the
+    // MariaDB has no distinct boolean type — `boolean` is `tinyint(1)` — but both declarations report the
     // column as BOOLEAN, and a value of 0/1 is exactly what a real boolean holds, so it narrows.
     assert_eq!(queried["rows"][0]["active"], json!(true));
 
     let nulls = ok(
         "query",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "select id, email from live_users order by id"
         }),
@@ -418,7 +418,7 @@ fn mysql_round_trips_the_whole_action_surface() {
     let inserted = ok(
         "execute",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "insert into live_users (email, active, score) values (?, ?, ?)",
             "params": ["c@example.com", true, 3.5]
@@ -434,7 +434,7 @@ fn mysql_round_trips_the_whole_action_surface() {
     let table = ok(
         "query",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "select id, email from live_users where id <= 2 order by id",
             "shape": "table"
@@ -445,7 +445,7 @@ fn mysql_round_trips_the_whole_action_surface() {
 
     let inspected = ok(
         "inspect",
-        json!({ "engine": "mysql", "connection": connection }),
+        json!({ "engine": "mariadb", "connection": connection }),
     );
     let tables = inspected["tables"].as_array().expect("tables array");
     let users = tables
@@ -457,7 +457,7 @@ fn mysql_round_trips_the_whole_action_surface() {
     ok(
         "execute",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "drop table live_users"
         }),
@@ -465,16 +465,16 @@ fn mysql_round_trips_the_whole_action_surface() {
 }
 
 #[test]
-#[ignore = "requires a reachable MySQL or MariaDB server; set RUNINATOR_TEST_MYSQL_URL"]
-fn mysql_decodes_its_native_types_into_json() {
-    let Some(connection) = url("RUNINATOR_TEST_MYSQL_URL") else {
+#[ignore = "requires a reachable MariaDB server; set RUNINATOR_TEST_MARIADB_URL"]
+fn mariadb_decodes_its_native_types_into_json() {
+    let Some(connection) = url("RUNINATOR_TEST_MARIADB_URL") else {
         return;
     };
 
     ok(
         "script",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "statements": [
                 "drop table if exists live_types",
@@ -493,7 +493,7 @@ fn mysql_decodes_its_native_types_into_json() {
     let queried = ok(
         "query",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "select * from live_types"
         }),
@@ -530,26 +530,25 @@ fn mysql_decodes_its_native_types_into_json() {
     ok(
         "execute",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "drop table live_types"
         }),
     );
 }
 
-/// the cases where the mysql protocol, or mariadb specifically, reports two different things under
-/// one type name. this must pass identically against mysql 8 and mariadb 11 — that is the point.
+/// the cases where the MySQL wire protocol reports two different things under one type name.
 #[test]
-#[ignore = "requires a reachable MySQL or MariaDB server; set RUNINATOR_TEST_MYSQL_URL"]
-fn mysql_resolves_the_type_names_both_engines_overload() {
-    let Some(connection) = url("RUNINATOR_TEST_MYSQL_URL") else {
+#[ignore = "requires a reachable MariaDB server; set RUNINATOR_TEST_MARIADB_URL"]
+fn mariadb_resolves_overloaded_protocol_type_names() {
+    let Some(connection) = url("RUNINATOR_TEST_MARIADB_URL") else {
         return;
     };
 
     ok(
         "script",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "statements": [
                 "drop table if exists live_ambiguous",
@@ -565,7 +564,7 @@ fn mysql_resolves_the_type_names_both_engines_overload() {
     let queried = ok(
         "query",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "select * from live_ambiguous"
         }),
@@ -577,7 +576,7 @@ fn mysql_resolves_the_type_names_both_engines_overload() {
     assert_eq!(row["flag"], json!(true), "{queried}");
     assert_eq!(row["counter"], json!(4), "{queried}");
 
-    // mariadb reports a `json` column as BLOB, mysql 8 as JSON. both land on the document.
+    // MariaDB reports a `json` column as BLOB; it must still decode as a JSON object.
     assert_eq!(row["doc"], json!({"k": [1, 2]}), "{queried}");
 
     // a blob is still a blob, even when its bytes happen to parse as json.
@@ -607,7 +606,7 @@ fn mysql_resolves_the_type_names_both_engines_overload() {
     ok(
         "execute",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "drop table live_ambiguous"
         }),
@@ -615,16 +614,16 @@ fn mysql_resolves_the_type_names_both_engines_overload() {
 }
 
 #[test]
-#[ignore = "requires a reachable MySQL or MariaDB server; set RUNINATOR_TEST_MYSQL_URL"]
-fn mysql_rolls_a_failed_transaction_back() {
-    let Some(connection) = url("RUNINATOR_TEST_MYSQL_URL") else {
+#[ignore = "requires a reachable MariaDB server; set RUNINATOR_TEST_MARIADB_URL"]
+fn mariadb_rolls_a_failed_transaction_back() {
+    let Some(connection) = url("RUNINATOR_TEST_MARIADB_URL") else {
         return;
     };
 
     ok(
         "script",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "statements": [
                 "drop table if exists live_tx",
@@ -637,7 +636,7 @@ fn mysql_rolls_a_failed_transaction_back() {
     let failed = call(
         "script",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "transaction": true,
             "statements": [
@@ -652,7 +651,7 @@ fn mysql_rolls_a_failed_transaction_back() {
     let count = ok(
         "query",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "select count(*) as total from live_tx"
         }),
@@ -662,7 +661,7 @@ fn mysql_rolls_a_failed_transaction_back() {
     ok(
         "execute",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": "drop table live_tx"
         }),
@@ -670,9 +669,9 @@ fn mysql_rolls_a_failed_transaction_back() {
 }
 
 #[test]
-#[ignore = "requires a reachable MySQL or MariaDB server; set RUNINATOR_TEST_MYSQL_URL"]
-fn mysql_creates_a_missing_database_through_the_admin_connection() {
-    let Some(connection) = url("RUNINATOR_TEST_MYSQL_URL") else {
+#[ignore = "requires a reachable MariaDB server; set RUNINATOR_TEST_MARIADB_URL"]
+fn mariadb_creates_a_missing_database_through_the_admin_connection() {
+    let Some(connection) = url("RUNINATOR_TEST_MARIADB_URL") else {
         return;
     };
 
@@ -682,7 +681,7 @@ fn mysql_creates_a_missing_database_through_the_admin_connection() {
     let provisioned = ok(
         "provision",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": created_url,
             "admin_connection": connection,
             "schema": ["create table t (id int primary key)"]
@@ -693,7 +692,7 @@ fn mysql_creates_a_missing_database_through_the_admin_connection() {
     let again = ok(
         "provision",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": created_url,
             "admin_connection": connection,
             "schema": ["create table if not exists t (id int primary key)"]
@@ -704,221 +703,9 @@ fn mysql_creates_a_missing_database_through_the_admin_connection() {
     ok(
         "execute",
         json!({
-            "engine": "mysql",
+            "engine": "mariadb",
             "connection": connection,
             "sql": format!("drop database `{target}`")
         }),
     );
-}
-
-// ----------------------------------------------------------------- mongodb
-
-#[cfg(feature = "mongo")]
-mod mongo {
-    use super::{call, json, ok, url};
-
-    #[test]
-    #[ignore = "requires a reachable MongoDB server; set RUNINATOR_TEST_MONGO_URL"]
-    fn mongo_round_trips_documents_counts_and_collections() {
-        let Some(connection) = url("RUNINATOR_TEST_MONGO_URL") else {
-            return;
-        };
-
-        // start from a clean collection so re-runs are deterministic.
-        ok(
-            "execute",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "delete": {}
-            }),
-        );
-
-        let provisioned = ok(
-            "provision",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collections": [{
-                    "name": "live_users",
-                    "indexes": [{"keys": {"email": 1}, "name": "email_idx", "unique": true}]
-                }],
-                "seed": [{
-                    "collection": "live_users",
-                    "rows": [
-                        {"id": 1, "email": "a@example.com", "active": true, "score": 1.5},
-                        {"id": 2, "email": "b@example.com", "active": false, "score": 2.5}
-                    ]
-                }]
-            }),
-        );
-        assert_eq!(provisioned["seeded"], json!(2), "{provisioned}");
-
-        // a find returns typed documents, with keys unioned across the result set.
-        let found = ok(
-            "query",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "find": {"active": true},
-                "options": {"projection": {"_id": 0, "id": 1, "email": 1, "score": 1}}
-            }),
-        );
-        assert_eq!(found["row_count"], json!(1), "{found}");
-        assert_eq!(found["rows"][0]["id"], json!(1));
-        assert_eq!(found["rows"][0]["email"], json!("a@example.com"));
-        assert_eq!(found["rows"][0]["score"], json!(1.5));
-
-        let sorted = ok(
-            "query",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "find": {},
-                "options": {"projection": {"_id": 0, "id": 1}, "sort": {"id": -1}, "limit": 1}
-            }),
-        );
-        assert_eq!(sorted["rows"][0]["id"], json!(2), "{sorted}");
-
-        let aggregated = ok(
-            "query",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "aggregate": [
-                    {"$group": {"_id": null, "total": {"$sum": "$score"}}},
-                    {"$project": {"_id": 0, "total": 1}}
-                ]
-            }),
-        );
-        assert_eq!(aggregated["rows"][0]["total"], json!(4.0), "{aggregated}");
-
-        let updated = ok(
-            "execute",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "update": {"filter": {"id": 2}, "set": {"active": true}}
-            }),
-        );
-        assert_eq!(updated["rows_affected"], json!(1), "{updated}");
-
-        let inserted = ok(
-            "execute",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "insert": [{"id": 3, "email": "c@example.com", "active": false}]
-            }),
-        );
-        assert_eq!(inserted["rows_affected"], json!(1), "{inserted}");
-        assert!(!inserted["last_insert_id"].is_null());
-
-        let deleted = ok(
-            "execute",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "delete": {"id": 3}
-            }),
-        );
-        assert_eq!(deleted["rows_affected"], json!(1), "{deleted}");
-
-        // a raw command is the document-store equivalent of running a bare statement.
-        let raw = ok(
-            "query",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "command": {"ping": 1}
-            }),
-        );
-        assert_eq!(raw["rows"][0]["ok"], json!(1.0), "{raw}");
-
-        let inspected = ok(
-            "inspect",
-            json!({ "engine": "mongodb", "connection": connection }),
-        );
-        let tables = inspected["tables"].as_array().expect("tables array");
-        assert!(
-            tables
-                .iter()
-                .any(|table| table["name"] == json!("live_users")),
-            "{inspected}"
-        );
-
-        // the unique index from provisioning is real: a duplicate email must be rejected.
-        let duplicate = call(
-            "execute",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "insert": [{"id": 9, "email": "a@example.com"}]
-            }),
-        )
-        .expect_err("the unique index should reject a duplicate email");
-        assert!(duplicate.contains("DB007"), "{duplicate}");
-
-        ok(
-            "execute",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "collection": "live_users",
-                "delete": {}
-            }),
-        );
-    }
-
-    #[test]
-    #[ignore = "requires a reachable MongoDB server; set RUNINATOR_TEST_MONGO_URL"]
-    fn mongo_rejects_sql_and_transactional_scripts() {
-        let Some(connection) = url("RUNINATOR_TEST_MONGO_URL") else {
-            return;
-        };
-
-        let sql = call(
-            "query",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "sql": "select 1"
-            }),
-        )
-        .expect_err("sql must be rejected on a document store");
-        assert!(sql.contains("DB003"), "{sql}");
-
-        let transactional = call(
-            "script",
-            json!({
-                "engine": "mongodb",
-                "connection": connection,
-                "transaction": true,
-                "statements": [{"collection": "live_users", "find": {}}]
-            }),
-        )
-        .expect_err("a transactional mongo script must be refused, not silently run");
-        assert!(transactional.contains("DB011"), "{transactional}");
-
-        // A Mongo URL without a database cannot be scoped, so report that clearly.
-        let no_database = call(
-            "query",
-            json!({
-                "engine": "mongodb",
-                "connection": "mongodb://127.0.0.1:57017",
-                "collection": "t",
-                "find": {}
-            }),
-        )
-        .expect_err("a url with no database must be rejected");
-        assert!(no_database.contains("DB005"), "{no_database}");
-    }
 }

@@ -82,11 +82,9 @@ fn debug_mode_defaults_to_step_all() {
 // the custom value's wire form is sorted-key with serde_json-compatible number formatting, so the
 // http edge, the database text columns, and the frontend all keep seeing one stable spelling.
 //
-// this is asserted against a literal rather than against `serde_json::Value`. it used to compare
-// the two serializations, which worked only while serde_json also sorted: the mongodb connector
-// pulls in `bson`, which hard-enables `serde_json/preserve_order`, so `serde_json::Value` now
-// keeps insertion order and is no longer a sorted-key reference. our `Map` is its own `BTreeMap`
-// and is unaffected — which is the property this test exists to pin.
+// this is asserted against a literal rather than against `serde_json::Value`, whose map ordering
+// is dependency-feature-sensitive. our `Map` is its own `BTreeMap`, which is the property this test
+// exists to pin.
 #[test]
 fn value_serializes_sorted_keys_and_bridges_losslessly() {
     let raw = r#"{"b":2,"a":{"nested":[1,2.5,null,"x"],"flag":true},"z":-7,"big":9007199254740993,"empty":{}}"#;

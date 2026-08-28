@@ -77,7 +77,7 @@ struct LocalUpArgs {
     /// sqlite file path (only used when --database sqlite). defaults to ~/.runinator/runinator.db.
     #[arg(long)]
     database_path: Option<PathBuf>,
-    /// connection URL (required for --database postgres/mysql/mariadb).
+    /// connection URL (required for --database postgres/mariadb).
     #[arg(long)]
     database_url: Option<String>,
 }
@@ -140,7 +140,7 @@ struct K8sDeployArgs {
     image_tag: String,
     /// Database driver compiled into Kubernetes runtime images. The manifest must configure the
     /// same backend (the bundled overlays use postgres).
-    #[arg(long, value_parser = ["sqlite", "postgres", "mysql", "mariadb"], default_value = "postgres")]
+    #[arg(long, value_parser = ["sqlite", "postgres", "mariadb"], default_value = "postgres")]
     database_backend: String,
     /// Broker transport compiled into Kubernetes runtime images. The manifest must configure the
     /// same backend (the bundled overlays use rabbitmq).

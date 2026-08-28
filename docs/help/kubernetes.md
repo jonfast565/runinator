@@ -90,7 +90,7 @@ source edit is an *incremental* cargo build rather than a cold one. That syntax
 requires BuildKit; xtask sets `DOCKER_BUILDKIT=1` on every invocation.
 
 Kubernetes image builds compile only the chosen backend drivers. The defaults
-are Postgres and RabbitMQ; choose `--database-backend sqlite|postgres|mysql|mariadb`
+are Postgres and RabbitMQ; choose `--database-backend sqlite|postgres|mariadb`
 and `--broker-backend http|tcp|kafka|rabbitmq` when building a deployment. The
 selected values must match the database and broker configured by the selected
 Kustomize manifest. The bundled overlays provision only Postgres and RabbitMQ,
@@ -153,7 +153,7 @@ before it runs `workflows apply`, so `runinator-app-secret` must carry
 alongside `RUNINATOR_AUTH_BOOTSTRAP_ADMIN`.
 
 For non-Kubernetes environments, `runinator-bootstrap` also supports
-`--database mysql` / `--database mariadb` with a `mysql://...` connection string,
+`--database mariadb` with a `mysql://...` connection string,
 in addition to the existing SQLite and Postgres modes.
 
 #### Key rotation (two-key overlap)
@@ -191,7 +191,7 @@ without invalidating live tokens or stranding stored secrets:
   `RUNINATOR_REQUEST_TIMEOUT_SECONDS` (default `30`) aborts a stuck handler with
   `408`. Each ws replica protects itself independently. This is the aggregate backstop
   the per-principal rate limiter above does not provide.
-- **Database pool.** The Postgres/MySQL pool is bounded by
+- **Database pool.** The Postgres/MariaDB pool is bounded by
   `RUNINATOR_DB_MAX_CONNECTIONS` (default `20`) so a request flood cannot open
   unbounded server connections, and `RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS`
   (default `30`) fails a checkout fast on a saturated pool rather than parking the
@@ -208,13 +208,13 @@ without invalidating live tokens or stranding stored secrets:
 cargo run -p xtask -- k8s deploy
 ```
 
-For example, an overlay configured for an external MySQL database and Kafka
+For example, an overlay configured for an external MariaDB database and Kafka
 broker can build the matching runtime images with:
 
 ```bash
 cargo run -p xtask -- k8s deploy \
-  --manifest deploy/k8s/overlays/my-mysql-kafka \
-  --database-backend mysql \
+  --manifest deploy/k8s/overlays/my-mariadb-kafka \
+  --database-backend mariadb \
   --broker-backend kafka
 ```
 

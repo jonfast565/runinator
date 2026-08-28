@@ -31,7 +31,7 @@ runinator-store = { path = "../runinator-store" }
 default = ["sqlite", "http", "tcp", "ws"]
 sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite", "runinator-service-bootstrap/sqlite"]
 postgres = ["runinator-database/postgres", "runinator-db-cli/postgres", "runinator-service-bootstrap/postgres"]
-mysql = ["runinator-database/mysql", "runinator-db-cli/mysql", "runinator-service-bootstrap/mysql"]
+mariadb = ["runinator-database/mariadb", "runinator-db-cli/mariadb", "runinator-service-bootstrap/mariadb"]
 http = ["runinator-broker/http", "runinator-service-bootstrap/http", "dep:reqwest"]
 tcp = ["runinator-broker/tcp", "runinator-service-bootstrap/tcp"]
 kafka = ["runinator-broker/kafka", "runinator-service-bootstrap/kafka"]

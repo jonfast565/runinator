@@ -15,7 +15,10 @@ pub mod backend;
 #[cfg(test)]
 mod backend_tests;
 mod common;
-#[cfg(all(test, any(feature = "sqlite", feature = "postgres", feature = "mysql")))]
+#[cfg(all(
+    test,
+    any(feature = "sqlite", feature = "postgres", feature = "mariadb")
+))]
 mod dialect_parity;
 pub mod errors;
 mod mappers;
@@ -23,8 +26,8 @@ mod mappers;
 #[path = "migration_parity_tests.rs"]
 mod migration_parity;
 
-#[cfg(feature = "mysql")]
-pub mod mysql;
+#[cfg(feature = "mariadb")]
+pub mod mariadb;
 mod operations;
 mod pool;
 #[cfg(feature = "postgres")]

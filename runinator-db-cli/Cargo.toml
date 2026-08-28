@@ -12,4 +12,4 @@ runinator-database = { path = "../runinator-database", default-features = false 
 [features]
 sqlite = ["runinator-database/sqlite"]
 postgres = ["runinator-database/postgres"]
-mysql = ["runinator-database/mysql"]
+mariadb = ["runinator-database/mariadb"]

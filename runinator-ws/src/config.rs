@@ -28,7 +28,7 @@ pub(crate) struct CliArgs {
     #[arg(long, env = "RUNINATOR_SQLITE_PATH")]
     pub sqlite_path: Option<PathBuf>,
 
-    /// Connection string for Postgres/MySQL/MariaDB. Also reads RUNINATOR_DATABASE_URL.
+    /// Connection string for Postgres/MariaDB. Also reads RUNINATOR_DATABASE_URL.
     #[arg(long, env = "RUNINATOR_DATABASE_URL")]
     pub database_url: Option<String>,
 

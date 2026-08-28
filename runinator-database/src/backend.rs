@@ -8,7 +8,7 @@ use std::{future::Future, time::Duration};
 
 use log::warn;
 use runinator_models::errors::SendableError;
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 use sqlx::mysql::MySqlQueryResult;
 #[cfg(feature = "postgres")]
 use sqlx::postgres::PgQueryResult;
@@ -99,7 +99,7 @@ impl RowsAffected for PgQueryResult {
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 impl RowsAffected for MySqlQueryResult {
     fn affected(&self) -> u64 {
         self.rows_affected()
@@ -141,7 +141,7 @@ pub trait SqlBackend: Send + Sync + 'static {
 /// generically, rather than once per driver.
 ///
 /// each driver module aliases this (`pub type SqliteDb = SqlStore<SqliteBackend>`) and supplies its
-/// own `new`, so callers keep naming `SqliteDb`/`PostgresDb`/`MySqlDb` exactly as before.
+/// own `new`, so callers keep naming `SqliteDb`/`PostgresDb`/`MariaDb` exactly as before.
 pub struct SqlStore<B: SqlBackend> {
     backend: B,
 }

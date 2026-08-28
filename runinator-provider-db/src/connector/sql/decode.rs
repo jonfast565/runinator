@@ -1,14 +1,14 @@
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
 use std::str::FromStr;
 
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
 use bigdecimal::BigDecimal;
 #[cfg(feature = "postgres")]
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-#[cfg(all(feature = "mysql", not(feature = "postgres")))]
+#[cfg(all(feature = "mariadb", not(feature = "postgres")))]
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use serde_json::{Number, Value};
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 use sqlx::mysql::MySqlRow;
 #[cfg(feature = "postgres")]
 use sqlx::postgres::PgRow;
@@ -67,7 +67,7 @@ fn number_from_f64(value: f64) -> Value {
 /// leaves here, which covers money and ratios but not the 38- and 65-digit precisions both engines
 /// allow, so the value is only emitted as a number when it survives the round trip unchanged.
 /// anything wider keeps every digit as a string rather than losing some without saying so.
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(any(feature = "postgres", feature = "mariadb"))]
 pub(crate) fn decimal_to_json(value: &BigDecimal) -> Value {
     let text = value.to_string();
     if let Ok(float) = text.parse::<f64>()
@@ -106,7 +106,7 @@ pub fn columns_pg(row: &PgRow) -> Vec<ColumnInfo> {
 
 /// mysql-family names the shared table deliberately leaves out, because the same name means
 /// something else on another engine: postgres `BIT` is a bit *string*, not an integer.
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn mysql_kind_for(native: &str) -> Option<ColumnKind> {
     match native.to_ascii_uppercase().as_str() {
         "BIT" | "YEAR" => Some(ColumnKind::Integer),
@@ -114,7 +114,7 @@ fn mysql_kind_for(native: &str) -> Option<ColumnKind> {
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 pub fn columns_mysql(row: &MySqlRow) -> Vec<ColumnInfo> {
     row.columns()
         .iter()
@@ -263,7 +263,7 @@ fn fallback_pg(row: &PgRow, idx: usize, native: &str) -> Value {
 /// parse over every binary blob, and restricting the result to objects and arrays is what makes it
 /// safe to apply to a column that might really be binary: `x'313233'` is a far more plausible blob
 /// than a json column holding a bare `123`, and misreading real binary is the worse failure.
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn json_document(bytes: &[u8]) -> Option<Value> {
     let first = bytes.iter().find(|byte| !byte.is_ascii_whitespace())?;
     if !matches!(first, b'{' | b'[') {
@@ -275,7 +275,7 @@ fn json_document(bytes: &[u8]) -> Option<Value> {
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn mysql_blob_is_json(row: &MySqlRow, idx: usize) -> bool {
     matches!(
         row.try_get::<Option<Vec<u8>>, _>(idx),
@@ -285,7 +285,7 @@ fn mysql_blob_is_json(row: &MySqlRow, idx: usize) -> bool {
 
 /// a real `boolean` only ever holds 0 or 1; anything else came from a `tinyint(1)` being used as
 /// the small integer it actually is.
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn mysql_boolean_is_flag(row: &MySqlRow, idx: usize) -> bool {
     matches!(
         row.try_get::<Option<i64>, _>(idx),
@@ -297,7 +297,7 @@ fn mysql_boolean_is_flag(row: &MySqlRow, idx: usize) -> bool {
 /// both engines, and sqlx's `bool` decode maps every non-zero byte to `true`, so a `tinyint(1)`
 /// holding 4 would arrive as `true`. read the integer and narrow to a json bool only for the 0/1 a
 /// real boolean can hold.
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn decode_mysql_boolean(row: &MySqlRow, idx: usize) -> Value {
     if let Ok(value) = row.try_get::<Option<i64>, _>(idx) {
         return match value {
@@ -314,7 +314,7 @@ fn decode_mysql_boolean(row: &MySqlRow, idx: usize) -> Value {
 /// mysql 8 reports a `json` column as JSON, but mariadb implements json as `longtext` plus a check
 /// constraint and reports BLOB — the same name it gives a real blob, with nothing in the type info
 /// to tell them apart. the payload is the only signal left.
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 fn decode_mysql_blob(row: &MySqlRow, idx: usize) -> Value {
     match row.try_get::<Option<Vec<u8>>, _>(idx) {
         Ok(Some(bytes)) => match json_document(&bytes) {
@@ -326,7 +326,7 @@ fn decode_mysql_blob(row: &MySqlRow, idx: usize) -> Value {
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "mariadb")]
 pub fn value_mysql(row: &MySqlRow, idx: usize, native: &str) -> Value {
     match native.to_ascii_uppercase().as_str() {
         "BOOLEAN" => decode_mysql_boolean(row, idx),

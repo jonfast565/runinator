@@ -14,7 +14,7 @@ pub struct InspectRequest {
     pub connection: String,
 }
 
-/// list the tables (or collections) and their columns, so a workflow can branch on what exists
+/// list the tables and their columns, so a workflow can branch on what exists
 /// without hand-writing an `information_schema` query per engine.
 pub fn run(
     parameters: Value,
