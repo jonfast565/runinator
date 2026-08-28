@@ -39,7 +39,10 @@ impl<T> AdapterOperations<T> {
 }
 
 impl<T: OrchestrationStore> AdapterOperations<T> {
-    pub async fn list(&self, org_id: Uuid) -> Result<Vec<AdapterDefinition>, SendableError> {
+    pub async fn list(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<AdapterDefinition>, SendableError> {
         self.store.fetch_orchestration_adapters(org_id).await
     }
 

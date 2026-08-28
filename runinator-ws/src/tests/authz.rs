@@ -2,9 +2,15 @@
 //! capability set each principal kind resolves to.
 
 use super::*;
+use std::collections::BTreeMap;
+
 use runinator_broker::UiEventPublisher;
 use runinator_engine::services::WorkflowAuthoring;
-use runinator_models::rbac::{Action, ScopeRef};
+use runinator_models::{
+    orchestration::AdapterTransport,
+    rbac::{Action, ScopeRef},
+};
+use runinator_store::roles::NewAdapterDefinition;
 
 async fn register_workflow_ownership(db: &SqliteDb, workflow_id: Uuid, org_id: Option<Uuid>) {
     let now = chrono::Utc::now();
@@ -205,6 +211,64 @@ async fn workflow_listing_is_isolated_by_org() {
     assert!(names.contains(&"shared".to_string()));
     let _ = shared_id;
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn platform_admin_can_view_orchestration_adapters_without_an_org() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let first_org = Uuid::now_v7();
+    let second_org = Uuid::now_v7();
+    let first_id = Uuid::now_v7();
+
+    for (id, org_id, name) in [
+        (first_id, first_org, "first"),
+        (Uuid::now_v7(), second_org, "second"),
+    ] {
+        db.create_orchestration_adapter(
+            NewAdapterDefinition {
+                id,
+                org_id,
+                name: name.into(),
+                kind: "generic_webhook".into(),
+                kind_version: "1".into(),
+                transport: AdapterTransport::Webhook,
+                endpoint_identity: Uuid::now_v7().to_string(),
+                configuration: json!({}),
+                secret_bindings: BTreeMap::new(),
+                identity_configuration: Value::Null,
+                actor_id: None,
+            },
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    }
+
+    let admin = AuthContext::disabled_platform_admin();
+    let (status, Json(body)) = crate::handlers::adapters::list::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::OrchestrationAdapterList(adapters) = body else {
+        panic!("expected an orchestration adapter list");
+    };
+    assert_eq!(adapters.len(), 2);
+    assert!(adapters.iter().any(|adapter| adapter.org_id == first_org));
+    assert!(adapters.iter().any(|adapter| adapter.org_id == second_org));
+
+    let (status, _) = crate::handlers::adapters::get_one::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin),
+        Path(first_id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    drop(db);
     let _ = std::fs::remove_file(path);
 }
 

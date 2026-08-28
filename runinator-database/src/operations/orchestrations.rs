@@ -752,10 +752,19 @@ where
 
     async fn fetch_orchestration_adapters(
         &self,
-        org_id: Uuid,
+        org_id: Option<Uuid>,
     ) -> Result<Vec<AdapterDefinition>, SendableError> {
-        let rows = sqlx::query(&self.render(&format!("SELECT {ADAPTER_COLUMNS} FROM orchestration_adapters WHERE org_id = ? ORDER BY name, id")))
-            .bind(org_id).fetch_all(self.pool()).await?;
+        let mut sql = format!("SELECT {ADAPTER_COLUMNS} FROM orchestration_adapters");
+        if org_id.is_some() {
+            sql.push_str(" WHERE org_id = ?");
+        }
+        sql.push_str(" ORDER BY name, id");
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered);
+        if let Some(org_id) = org_id {
+            query = query.bind(org_id);
+        }
+        let rows = query.fetch_all(self.pool()).await?;
         rows.iter()
             .map(mappers::row_to_orchestration_adapter)
             .collect()

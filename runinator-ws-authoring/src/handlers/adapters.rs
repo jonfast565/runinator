@@ -70,12 +70,36 @@ fn require_scope(
     Ok(org_id)
 }
 
+/// Platform administrators may inspect adapters without selecting an organization. In that
+/// platform-wide view `None` deliberately means every organization; ordinary callers remain
+/// restricted to their selected organization.
+fn adapter_list_scope(
+    ctx: &AuthContext,
+    action: Action,
+) -> Result<Option<Uuid>, (StatusCode, Json<ApiResponse>)> {
+    if ctx.is_platform_admin() {
+        ctx.require_scope_action(action, ctx.selected_scope())?;
+        Ok(ctx.org_id)
+    } else {
+        Ok(Some(require_scope(ctx, action)?))
+    }
+}
+
 async fn authorized_adapter<T: OrchestrationStore>(
     operations: &AdapterOperations<T>,
     ctx: &AuthContext,
     adapter_id: Uuid,
     action: Action,
 ) -> Result<AdapterDefinition, (StatusCode, Json<ApiResponse>)> {
+    if ctx.is_platform_admin() {
+        ctx.require_scope_action(action, ctx.selected_scope())?;
+        return match operations.fetch(adapter_id).await {
+            Ok(Some(adapter)) => Ok(adapter),
+            Ok(None) => Err(not_found("adapter not found")),
+            Err(error) => Err(api_error(error.to_string())),
+        };
+    }
+
     let org_id = require_scope(ctx, action)?;
     match operations.fetch(adapter_id).await {
         Ok(Some(adapter)) if adapter.org_id == org_id => Ok(adapter),
@@ -245,7 +269,7 @@ pub async fn kinds<T: RbacStore>(
     Extension(_db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_scope(&ctx, Action::View) {
+    if let Err(reply) = adapter_list_scope(&ctx, Action::View) {
         return reply;
     }
     match catalog().await {
@@ -258,7 +282,7 @@ pub async fn list<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let org_id = match require_scope(&ctx, Action::View) {
+    let org_id = match adapter_list_scope(&ctx, Action::View) {
         Ok(value) => value,
         Err(reply) => return reply,
     };
@@ -879,7 +903,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/orchestrations/adapters",
         "Orchestration Adapters",
         "List adapter definitions",
-        "Lists adapter instances in the selected organization.",
+        "Lists adapter instances in the selected organization, or every organization for a platform administrator with no organization selected.",
         EndpointPolicy::ScopedAction(Action::View),
         None,
         &[],

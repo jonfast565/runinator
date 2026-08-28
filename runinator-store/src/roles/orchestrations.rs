@@ -326,7 +326,7 @@ pub trait OrchestrationStore: Send + Sync + 'static {
 
     fn fetch_orchestration_adapters(
         &self,
-        org_id: Uuid,
+        org_id: Option<Uuid>,
     ) -> impl Future<Output = Result<Vec<AdapterDefinition>, SendableError>> + Send;
 
     fn fetch_orchestration_adapter_revision(
