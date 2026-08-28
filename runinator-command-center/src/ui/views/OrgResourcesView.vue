@@ -1,164 +1,188 @@
 <template>
-  <section class="pane flex flex-col gap-2.5 overflow-auto">
-    <div v-if="!orgs.activeOrg" class="panel py-3.5" />
-
-    <template v-else>
-      <div class="panel">
+  <section class="pane h-full overflow-hidden">
+    <div class="flex h-full min-h-0 flex-col gap-2.5 overflow-auto">
+      <div class="panel shrink-0">
         <div class="panel-toolbar">
           <h2 class="m-0 text-base font-semibold text-fg">
-            Resources — {{ orgs.activeOrg.name }}
+            Resources &amp; Billing<template v-if="orgs.activeOrg">
+              — {{ orgs.activeOrg.name }}</template
+            >
           </h2>
-          <button class="btn" :disabled="refreshing" @click="refresh">
+          <button class="btn" :disabled="refreshing || !orgs.activeOrg" @click="refresh">
             <LoadingSpinner v-if="refreshing" size="sm" label="Refreshing org resources" />
             <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
         </div>
 
+        <EmptyState
+          v-if="!orgs.activeOrg"
+          icon="shield"
+          title="No organization selected"
+          :loading="refreshing"
+          loading-message="Loading organizations…"
+        />
         <LoadingPanel
-          v-if="refreshing && projectedMonthlyCents === 0 && !groups.length"
+          v-else-if="refreshing && !projectedMonthlyCents && !groups.length"
           compact
           :message="refreshMessage || 'Loading org resources…'"
         />
-        <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div>
-            <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
-              >Projected monthly</label
-            >
-            <div class="text-[22px] font-semibold">{{ fmtCents(projectedMonthlyCents) }}</div>
-          </div>
-          <div>
-            <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
-              >Accrued (30d)</label
-            >
-            <div class="text-[22px] font-semibold">{{ fmtCents(usage?.accrued_cents ?? 0) }}</div>
-          </div>
-          <div>
-            <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
-              >Monthly budget</label
-            >
-            <div class="text-[22px] font-semibold">
-              {{
+        <template v-else>
+          <div class="metrics-row">
+            <MetricCard label="Projected monthly" :value="fmtCents(projectedMonthlyCents)" />
+            <MetricCard label="Accrued (30d)" :value="fmtCents(usage?.accrued_cents ?? 0)" />
+            <MetricCard
+              label="Monthly budget"
+              :value="
                 quota && quota.max_monthly_cents > 0
                   ? fmtCents(quota.max_monthly_cents)
-                  : "unlimited"
-              }}
+                  : 'Unlimited'
+              "
+            />
+          </div>
+
+          <div v-if="budgetPct !== null" class="grid gap-1.5">
+            <div class="flex items-baseline justify-between gap-2 text-xs text-fg-muted">
+              <span>Projected spend against budget</span>
+              <span :class="budgetPct >= 100 ? 'font-semibold text-danger-fg' : ''"
+                >{{ budgetPct }}%</span
+              >
+            </div>
+            <div
+              class="h-2 overflow-hidden rounded-pill bg-surface-sunken"
+              role="progressbar"
+              :aria-valuenow="budgetPct"
+              :aria-valuemin="0"
+              :aria-valuemax="100"
+            >
+              <div
+                class="h-full transition-[width] duration-300 ease-out"
+                :class="budgetPct >= 100 ? 'bg-danger' : 'bg-accent'"
+                :style="{ width: Math.min(budgetPct, 100) + '%' }"
+              />
             </div>
           </div>
-        </div>
-
-        <div
-          v-if="budgetPct !== null"
-          class="mt-3 h-2 overflow-hidden rounded-pill bg-surface-subtle"
-        >
-          <div
-            class="h-full bg-accent"
-            :class="{ 'bg-danger-fg': budgetPct >= 100 }"
-            :style="{ width: Math.min(budgetPct, 100) + '%' }"
-          ></div>
-        </div>
+        </template>
       </div>
 
-      <div class="panel">
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <section
-            class="col-span-full rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3"
-          >
-            <h3 class="m-0 mb-2.5 text-sm font-semibold text-fg">Dedicated allocations</h3>
-            <LoadingPanel
-              v-if="refreshing && !groups.length"
-              compact
-              :message="refreshMessage || 'Loading node pools…'"
-            />
-            <div v-else-if="!groups.length" class="py-3.5 text-fg-muted">No dedicated node pools.</div>
-            <table v-else class="w-full border-collapse">
+      <template v-if="orgs.activeOrg">
+        <div class="panel shrink-0">
+          <div class="panel-toolbar">
+            <h3 class="m-0 text-sm font-semibold text-fg">Dedicated allocations</h3>
+            <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-fg-subtle"
+              >{{ groups.length }} pool(s)</span
+            >
+          </div>
+          <LoadingPanel
+            v-if="refreshing && !groups.length"
+            compact
+            :message="refreshMessage || 'Loading node pools…'"
+          />
+          <EmptyState
+            v-else-if="!groups.length"
+            compact
+            icon="box"
+            title="No dedicated node pools"
+          />
+          <DataTable v-else>
+            <table>
               <thead>
                 <tr>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Backend</th>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Kind</th>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Desired</th>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Rate</th>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Monthly</th>
+                  <th>Backend</th>
+                  <th>Kind</th>
+                  <th class="text-right">Desired</th>
+                  <th class="text-right">Rate</th>
+                  <th class="text-right">Monthly</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="g in groups" :key="g.backend + g.kind">
-                  <td class="border-b border-border px-1.5 py-2 text-left">{{ g.backend }}</td>
-                  <td class="border-b border-border px-1.5 py-2 text-left">{{ g.kind }}</td>
-                  <td class="border-b border-border px-1.5 py-2 text-left">{{ g.desired }}</td>
-                  <td class="border-b border-border px-1.5 py-2 text-left">
-                    {{ fmtCents(rate(g.backend, g.kind)) }}/h
-                  </td>
-                  <td class="border-b border-border px-1.5 py-2 text-left">
+                  <td>{{ g.backend }}</td>
+                  <td>{{ g.kind }}</td>
+                  <td class="text-right tabular-nums">{{ g.desired }}</td>
+                  <td class="text-right tabular-nums">{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
+                  <td class="text-right tabular-nums">
                     {{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}
                   </td>
                 </tr>
               </tbody>
             </table>
-          </section>
+          </DataTable>
+        </div>
 
-          <section class="rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3">
-            <h3 class="m-0 mb-2.5 text-sm font-semibold text-fg">Node-hours (30d)</h3>
-            <LoadingPanel
-              v-if="refreshing && !usageKinds.length"
-              compact
-              message="Loading usage…"
-            />
-            <div v-else-if="!usageKinds.length" class="py-3.5 text-fg-muted">
-              No usage recorded yet.
-            </div>
-            <table v-else class="w-full border-collapse">
+        <div class="panel shrink-0">
+          <div class="panel-toolbar">
+            <h3 class="m-0 text-sm font-semibold text-fg">Node-hours (30d)</h3>
+          </div>
+          <LoadingPanel v-if="refreshing && !usageKinds.length" compact message="Loading usage…" />
+          <EmptyState
+            v-else-if="!usageKinds.length"
+            compact
+            icon="clock"
+            title="No usage recorded yet"
+          />
+          <DataTable v-else>
+            <table>
               <thead>
                 <tr>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Kind</th>
-                  <th class="border-b border-border px-1.5 py-2 text-left">Node-hours</th>
+                  <th>Kind</th>
+                  <th class="text-right">Node-hours</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="[kind, hours] in usageKinds" :key="kind">
-                  <td class="border-b border-border px-1.5 py-2 text-left">{{ kind }}</td>
-                  <td class="border-b border-border px-1.5 py-2 text-left">
-                    {{ hours.toFixed(2) }}
-                  </td>
+                  <td>{{ kind }}</td>
+                  <td class="text-right tabular-nums">{{ hours.toFixed(2) }}</td>
                 </tr>
               </tbody>
             </table>
-          </section>
+          </DataTable>
+        </div>
 
-          <section
-            v-if="can('org:nodes:scale')"
-            class="col-span-full rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3"
-          >
-            <h3 class="m-0 mb-2.5 text-sm font-semibold text-fg">Scale a pool</h3>
-            <form class="flex flex-wrap items-center gap-2" @submit.prevent="scale">
-              <select v-model="scaleBackend">
+        <div v-if="can('org:nodes:scale')" class="panel shrink-0">
+          <div class="panel-toolbar">
+            <h3 class="m-0 text-sm font-semibold text-fg">Scale a pool</h3>
+          </div>
+          <form class="flex flex-wrap items-end gap-2" @submit.prevent="scale">
+            <label class="grid gap-1 text-xs text-fg-muted">
+              <span>Backend</span>
+              <select v-model="scaleBackend" class="w-auto min-w-36">
                 <option value="supervisor">supervisor</option>
                 <option value="kubernetes">kubernetes</option>
               </select>
-              <select v-model="scaleKind">
+            </label>
+            <label class="grid gap-1 text-xs text-fg-muted">
+              <span>Kind</span>
+              <select v-model="scaleKind" class="w-auto min-w-36">
                 <option value="worker">worker</option>
                 <option value="waker">waker</option>
                 <option value="webservice">webservice</option>
               </select>
+            </label>
+            <label class="grid gap-1 text-xs text-fg-muted">
+              <span>Desired nodes</span>
               <input v-model.number="scaleDesired" class="w-[90px]" type="number" min="0" />
-              <button class="btn btn-primary" type="submit" :disabled="scaling">
-                <LoadingSpinner v-if="scaling" size="sm" label="Scaling org nodes" />
-                {{ scaling ? "Scaling…" : "Set desired" }}
-              </button>
-              <span class="text-[13px] text-fg-muted">
-                ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
-              </span>
-            </form>
-          </section>
+            </label>
+            <button class="btn btn-primary" type="submit" :disabled="scaling">
+              <LoadingSpinner v-if="scaling" size="sm" label="Scaling org nodes" />
+              <span>{{ scaling ? "Scaling…" : "Set desired" }}</span>
+            </button>
+            <span class="pb-1.5 text-[13px] text-fg-muted">
+              ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
+            </span>
+          </form>
         </div>
-      </div>
-    </template>
+      </template>
+    </div>
   </section>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import DataTable from "../components/shared/DataTable.vue";
+import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import {
   orgResourcesService,
