@@ -167,16 +167,18 @@ spec:
           envFrom:
             - secretRef:
                 name: runinator-adapter-secret
+          # exec, not httpGet: the host binds loopback only (it is the process that loads adapter
+          # code), and a kubelet httpGet dials the pod IP, which such a listener refuses. an exec
+          # probe runs inside the container's namespace, so it reaches 127.0.0.1 the same way the
+          # sibling container does. `wget` is busybox's, from the shared alpine runtime base.
           readinessProbe:
-            httpGet:
-              path: /live
-              port: 8790
+            exec:
+              command: ["wget", "-q", "-O", "-", "http://127.0.0.1:8790/live"]
             initialDelaySeconds: 3
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /live
-              port: 8790
+            exec:
+              command: ["wget", "-q", "-O", "-", "http://127.0.0.1:8790/live"]
             initialDelaySeconds: 10
             periodSeconds: 20
           resources:
