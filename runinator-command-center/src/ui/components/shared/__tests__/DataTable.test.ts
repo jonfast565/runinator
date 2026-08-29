@@ -68,11 +68,12 @@ describe("DataTable (column mode)", () => {
     expect(html).not.toContain("Nothing here.");
   });
 
-  it("stays a plain scroll wrapper when no columns are given", async () => {
+  it("owns the table element when no columns are given", async () => {
     const html = await renderToString(
-      createSSRApp({ render: () => h(DataTable, {}, { default: () => h("table", "custom") }) }),
+      createSSRApp({ render: () => h(DataTable, {}, { default: () => h("tbody", "custom") }) }),
     );
     expect(html).toContain("table-scroll");
+    expect(html.match(/<table/g)).toHaveLength(1);
     expect(html).toContain("custom");
   });
 

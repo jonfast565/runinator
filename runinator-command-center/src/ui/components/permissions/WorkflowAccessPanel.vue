@@ -22,26 +22,24 @@
         </button>
       </div>
       <DataTable>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Version</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="workflow in filteredWorkflows"
-              :key="String(workflow.id)"
-              class="cursor-pointer"
-              :class="{ selected: permissions.selectedWorkflowId === workflow.id }"
-              @click="permissions.selectWorkflow(String(workflow.id))"
-            >
-              <td>{{ workflow.name }}</td>
-              <td>{{ workflow.version }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Version</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="workflow in filteredWorkflows"
+            :key="String(workflow.id)"
+            class="cursor-pointer"
+            :class="{ selected: permissions.selectedWorkflowId === workflow.id }"
+            @click="permissions.selectWorkflow(String(workflow.id))"
+          >
+            <td>{{ workflow.name }}</td>
+            <td>{{ workflow.version }}</td>
+          </tr>
+        </tbody>
       </DataTable>
     </section>
 
@@ -69,36 +67,34 @@
         :message="loadingMessage || 'Loading workflow access…'"
       />
       <DataTable v-else>
-        <table>
-          <thead>
-            <tr>
-              <th>Principal</th>
-              <th>Type</th>
-              <th>Permission</th>
-              <th>Created</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="grant in permissions.workflowGrants" :key="String(grant.id)">
-              <td>{{ principalLabel(grant.principal_type, grant.principal_id) }}</td>
-              <td>{{ grant.principal_type }}</td>
-              <td>{{ grant.permission }}</td>
-              <td>{{ formatDate(grant.created_at) }}</td>
-              <td>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  type="button"
-                  @click="
-                    revokeGrant(grant.id, principalLabel(grant.principal_type, grant.principal_id))
-                  "
-                >
-                  Revoke
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <thead>
+          <tr>
+            <th>Principal</th>
+            <th>Type</th>
+            <th>Permission</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="grant in permissions.workflowGrants" :key="String(grant.id)">
+            <td>{{ principalLabel(grant.principal_type, grant.principal_id) }}</td>
+            <td>{{ grant.principal_type }}</td>
+            <td>{{ grant.permission }}</td>
+            <td>{{ formatDate(grant.created_at) }}</td>
+            <td>
+              <button
+                class="btn btn-sm btn-ghost"
+                type="button"
+                @click="
+                  revokeGrant(grant.id, principalLabel(grant.principal_type, grant.principal_id))
+                "
+              >
+                Revoke
+              </button>
+            </td>
+          </tr>
+        </tbody>
       </DataTable>
     </section>
 

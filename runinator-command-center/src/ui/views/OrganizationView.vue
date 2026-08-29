@@ -94,52 +94,50 @@
           description="Add an existing user's UUID below and start with the member role unless they need administration access."
         />
         <DataTable v-else>
-          <table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Role</th>
-                <th v-if="can('org:members:manage')" class="w-px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="member in members" :key="member.user_id">
-                <td>
-                  <span
-                    class="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft align-middle text-[11px] font-bold text-accent"
-                    >{{ initials(userLabel(member.user_id)) }}</span
-                  >
-                  <span class="align-middle">{{ userLabel(member.user_id) }}</span>
-                </td>
-                <td>
-                  <select
-                    v-if="can('org:members:manage')"
-                    class="w-auto min-w-32"
-                    :value="member.role"
-                    @change="(e) => changeRole(member.user_id, e)"
-                  >
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                    <option value="owner">owner</option>
-                  </select>
-                  <span
-                    v-else
-                    class="rounded-pill bg-surface px-2 py-0.5 text-xs text-fg-subtle capitalize"
-                    >{{ member.role }}</span
-                  >
-                </td>
-                <td v-if="can('org:members:manage')" class="w-px text-right">
-                  <button
-                    class="btn btn-icon btn-ghost"
-                    title="Remove member"
-                    @click="removeMember(member.user_id)"
-                  >
-                    <Icon name="trash" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th v-if="can('org:members:manage')" class="w-px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="member in members" :key="member.user_id">
+              <td>
+                <span
+                  class="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft align-middle text-[11px] font-bold text-accent"
+                  >{{ initials(userLabel(member.user_id)) }}</span
+                >
+                <span class="align-middle">{{ userLabel(member.user_id) }}</span>
+              </td>
+              <td>
+                <select
+                  v-if="can('org:members:manage')"
+                  class="w-auto min-w-32"
+                  :value="member.role"
+                  @change="(e) => changeRole(member.user_id, e)"
+                >
+                  <option value="member">member</option>
+                  <option value="admin">admin</option>
+                  <option value="owner">owner</option>
+                </select>
+                <span
+                  v-else
+                  class="rounded-pill bg-surface px-2 py-0.5 text-xs text-fg-subtle capitalize"
+                  >{{ member.role }}</span
+                >
+              </td>
+              <td v-if="can('org:members:manage')" class="w-px text-right">
+                <button
+                  class="btn btn-icon btn-ghost"
+                  title="Remove member"
+                  @click="removeMember(member.user_id)"
+                >
+                  <Icon name="trash" />
+                </button>
+              </td>
+            </tr>
+          </tbody>
         </DataTable>
 
         <form

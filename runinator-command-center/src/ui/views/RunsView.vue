@@ -139,7 +139,7 @@
                     }}</span>
                   </div>
                   <div class="table-scroll compact-scroll">
-                    <table>
+                    <DataTable bare>
                       <thead>
                         <tr>
                           <th>Name</th>
@@ -179,7 +179,7 @@
                           </td>
                         </tr>
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                 </section>
                 <section class="grid gap-2 border-t border-border-subtle pt-3">
@@ -192,7 +192,7 @@
                     }}</span>
                   </div>
                   <div class="table-scroll compact-scroll">
-                    <table>
+                    <DataTable bare>
                       <thead>
                         <tr>
                           <th>Name</th>
@@ -226,7 +226,7 @@
                           </td>
                         </tr>
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                 </section>
               </div>

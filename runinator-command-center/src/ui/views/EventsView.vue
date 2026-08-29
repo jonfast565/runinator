@@ -22,56 +22,54 @@
             </button>
           </PanelHeader>
           <DataTable>
-            <table>
-              <thead>
-                <tr>
-                  <th class="col-low">ID</th>
-                  <th>Event Type</th>
-                  <th>Message</th>
-                  <th class="col-low">Provider</th>
-                  <th class="col-low">Workflow Run</th>
-                  <th class="col-low">Node</th>
-                  <th>Created At</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="loadingEvents && !resourcesStore.resourceRecords.length">
-                  <td colspan="7" class="!p-0 hover:!bg-transparent">
-                    <LoadingPanel compact :message="loadingEventsMessage || 'Loading events…'" />
-                  </td>
-                </tr>
-                <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
-                  <td colspan="7" class="!p-0 hover:!bg-transparent">
-                    <EmptyState
-                      compact
-                      :icon="app.searchQuery ? 'search' : 'bell'"
-                      :title="app.searchQuery ? 'No matches' : 'No events yet'"
-                      :description="
-                        app.searchQuery
-                          ? `No events match “${app.searchQuery}”.`
-                          : 'Automation events appear here as providers and workflow runs report them.'
-                      "
-                    />
-                  </td>
-                </tr>
-                <tr
-                  v-for="record in resourcesStore.filteredResourceRecords"
-                  :key="String(record.id ?? JSON.stringify(record))"
-                  :class="{ selected: resourcesStore.selectedResourceRecord === record }"
-                  @click="resourcesStore.selectedResourceRecord = record"
-                >
-                  <td class="col-low">{{ record.id ?? "" }}</td>
-                  <td>{{ eventType(record) }}</td>
-                  <td>{{ eventMessage(record) }}</td>
-                  <td class="col-low">{{ String(record.provider ?? "") }}</td>
-                  <td class="col-low">{{ String(record.workflow_run_id ?? "") }}</td>
-                  <td class="col-low">
-                    {{ String(record.node_id ?? record.workflow_node_run_id ?? "") }}
-                  </td>
-                  <td>{{ String(record.created_at ?? "") }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th class="col-low">ID</th>
+                <th>Event Type</th>
+                <th>Message</th>
+                <th class="col-low">Provider</th>
+                <th class="col-low">Workflow Run</th>
+                <th class="col-low">Node</th>
+                <th>Created At</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loadingEvents && !resourcesStore.resourceRecords.length">
+                <td colspan="7" class="!p-0 hover:!bg-transparent">
+                  <LoadingPanel compact :message="loadingEventsMessage || 'Loading events…'" />
+                </td>
+              </tr>
+              <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
+                <td colspan="7" class="!p-0 hover:!bg-transparent">
+                  <EmptyState
+                    compact
+                    :icon="app.searchQuery ? 'search' : 'bell'"
+                    :title="app.searchQuery ? 'No matches' : 'No events yet'"
+                    :description="
+                      app.searchQuery
+                        ? `No events match “${app.searchQuery}”.`
+                        : 'Automation events appear here as providers and workflow runs report them.'
+                    "
+                  />
+                </td>
+              </tr>
+              <tr
+                v-for="record in resourcesStore.filteredResourceRecords"
+                :key="String(record.id ?? JSON.stringify(record))"
+                :class="{ selected: resourcesStore.selectedResourceRecord === record }"
+                @click="resourcesStore.selectedResourceRecord = record"
+              >
+                <td class="col-low">{{ record.id ?? "" }}</td>
+                <td>{{ eventType(record) }}</td>
+                <td>{{ eventMessage(record) }}</td>
+                <td class="col-low">{{ String(record.provider ?? "") }}</td>
+                <td class="col-low">{{ String(record.workflow_run_id ?? "") }}</td>
+                <td class="col-low">
+                  {{ String(record.node_id ?? record.workflow_node_run_id ?? "") }}
+                </td>
+                <td>{{ String(record.created_at ?? "") }}</td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
       </template>

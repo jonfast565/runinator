@@ -45,55 +45,53 @@
             </div>
           </PanelHeader>
           <DataTable>
-            <table>
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Kind</th>
-                  <th>Label</th>
-                  <th>Node</th>
-                  <th>Run</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="loadingGates && !gates.gates.length">
-                  <td colspan="5" class="px-3.5 py-3.5 text-center text-fg-muted">
-                    <LoadingPanel compact :message="loadingGatesMessage || 'Refreshing gates…'" />
-                  </td>
-                </tr>
-                <tr v-else-if="!gates.filteredGates.length">
-                  <td colspan="5" class="!p-0 hover:!bg-transparent">
-                    <EmptyState
-                      compact
-                      :icon="gates.gates.length ? 'search' : 'lock'"
-                      :title="gates.gates.length ? 'No matches' : 'No gates blocking'"
-                      :description="
-                        gates.gates.length
-                          ? `No gates match “${app.searchQuery}”.`
-                          : 'A gate holds a run until its condition passes or an operator opens it. None are blocking right now.'
-                      "
-                    />
-                  </td>
-                </tr>
-                <tr
-                  v-for="gate in gates.filteredGates"
-                  :key="String(gate.id ?? JSON.stringify(gate))"
-                  class="cursor-pointer"
-                  :class="{
-                    selected: gates.selectedGate === gate,
-                    danger: isBadStatus(gate.status),
-                    success: isGoodStatus(gate.status),
-                  }"
-                  @click="gates.selectedGate = gate"
-                >
-                  <td><StatusBadge :status="gate.status" /></td>
-                  <td>{{ gate.kind ?? "" }}</td>
-                  <td>{{ gate.label ?? "" }}</td>
-                  <td>{{ gate.node_id ?? "" }}</td>
-                  <td class="font-mono text-[11px]">{{ gate.workflow_run_id ?? "" }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Kind</th>
+                <th>Label</th>
+                <th>Node</th>
+                <th>Run</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loadingGates && !gates.gates.length">
+                <td colspan="5" class="px-3.5 py-3.5 text-center text-fg-muted">
+                  <LoadingPanel compact :message="loadingGatesMessage || 'Refreshing gates…'" />
+                </td>
+              </tr>
+              <tr v-else-if="!gates.filteredGates.length">
+                <td colspan="5" class="!p-0 hover:!bg-transparent">
+                  <EmptyState
+                    compact
+                    :icon="gates.gates.length ? 'search' : 'lock'"
+                    :title="gates.gates.length ? 'No matches' : 'No gates blocking'"
+                    :description="
+                      gates.gates.length
+                        ? `No gates match “${app.searchQuery}”.`
+                        : 'A gate holds a run until its condition passes or an operator opens it. None are blocking right now.'
+                    "
+                  />
+                </td>
+              </tr>
+              <tr
+                v-for="gate in gates.filteredGates"
+                :key="String(gate.id ?? JSON.stringify(gate))"
+                class="cursor-pointer"
+                :class="{
+                  selected: gates.selectedGate === gate,
+                  danger: isBadStatus(gate.status),
+                  success: isGoodStatus(gate.status),
+                }"
+                @click="gates.selectedGate = gate"
+              >
+                <td><StatusBadge :status="gate.status" /></td>
+                <td>{{ gate.kind ?? "" }}</td>
+                <td>{{ gate.label ?? "" }}</td>
+                <td>{{ gate.node_id ?? "" }}</td>
+                <td class="font-mono text-[11px]">{{ gate.workflow_run_id ?? "" }}</td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
       </template>

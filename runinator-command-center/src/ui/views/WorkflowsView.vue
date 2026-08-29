@@ -81,48 +81,53 @@
               @clear="selection.clear"
             />
             <DataTable>
-              <table>
-                <thead>
-                  <tr>
-                    <th class="w-9" scope="col">
-                      <SelectCheckbox
-                        :checked="selection.allSelected.value"
-                        :indeterminate="selection.someSelected.value"
-                        :label="selection.allSelected.value ? 'Deselect all' : 'Select all'"
-                        @toggle="selection.toggleAll"
-                      />
-                    </th>
-                    <th>Name</th>
-                    <th>Version</th>
-                    <th>State</th>
+              <thead>
+                <tr>
+                  <th class="w-9" scope="col">
+                    <SelectCheckbox
+                      :checked="selection.allSelected.value"
+                      :indeterminate="selection.someSelected.value"
+                      :label="selection.allSelected.value ? 'Deselect all' : 'Select all'"
+                      @toggle="selection.toggleAll"
+                    />
+                  </th>
+                  <th>Name</th>
+                  <th>Version</th>
+                  <th>State</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="group in workflowNamespaceGroups" :key="group.namespace">
+                  <tr class="bg-surface-muted text-xs font-semibold text-fg-muted">
+                    <td colspan="4">
+                      <button
+                        class="flex w-full items-center gap-2 text-left"
+                        type="button"
+                        @click="toggleNamespace(group.namespace)"
+                      >
+                        <Icon
+                          :name="
+                            collapsedNamespaces.has(group.namespace)
+                              ? 'chevron-right'
+                              : 'arrow-down'
+                          "
+                        />
+                        <span>{{ group.label }}</span>
+                        <span class="font-normal">{{ group.workflows.length }}</span>
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  <template v-for="group in workflowNamespaceGroups" :key="group.namespace">
-                    <tr class="bg-surface-muted text-xs font-semibold text-fg-muted">
-                      <td colspan="4">
-                        <button
-                          class="flex w-full items-center gap-2 text-left"
-                          type="button"
-                          @click="toggleNamespace(group.namespace)"
-                        >
-                          <Icon :name="collapsedNamespaces.has(group.namespace) ? 'chevron-right' : 'arrow-down'" />
-                          <span>{{ group.label }}</span>
-                          <span class="font-normal">{{ group.workflows.length }}</span>
-                        </button>
-                      </td>
-                    </tr>
-                    <tr
-                      v-for="workflow in group.workflows"
-                      v-show="!collapsedNamespaces.has(group.namespace)"
-                      :key="workflow.id ?? workflowPath(workflow)"
-                      class="cursor-pointer"
-                      :class="{
-                        selected: workflows.selectedWorkflowId === workflow.id,
-                        muted: !workflow.enabled,
-                      }"
-                      @click="chooseWorkflow(workflow)"
-                    >
+                  <tr
+                    v-for="workflow in group.workflows"
+                    v-show="!collapsedNamespaces.has(group.namespace)"
+                    :key="workflow.id ?? workflowPath(workflow)"
+                    class="cursor-pointer"
+                    :class="{
+                      selected: workflows.selectedWorkflowId === workflow.id,
+                      muted: !workflow.enabled,
+                    }"
+                    @click="chooseWorkflow(workflow)"
+                  >
                     <td class="w-9">
                       <SelectCheckbox
                         :checked="selection.isSelected(workflow)"
@@ -133,15 +138,14 @@
                     <td>
                       <div>{{ workflow.name }}</div>
                       <div class="text-xs text-fg-muted">
-                        {{ workflowPath(workflow) }} · {{ workflow.id?.slice(0, 8) ?? 'new' }}
+                        {{ workflowPath(workflow) }} · {{ workflow.id?.slice(0, 8) ?? "new" }}
                       </div>
                     </td>
                     <td>{{ workflow.version }}</td>
                     <td><StatusBadge :status="workflow.enabled" /></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
+                  </tr>
+                </template>
+              </tbody>
             </DataTable>
           </template>
         </div>
@@ -216,7 +220,7 @@ const disabledWorkflowCount = computed(
 );
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
 const workflowNamespaceGroups = computed(() => {
-  const groups = new Map<string, (typeof scopedWorkflows.value)>();
+  const groups = new Map<string, typeof scopedWorkflows.value>();
 
   for (const workflow of scopedWorkflows.value) {
     const namespace = workflow.namespace ?? "";

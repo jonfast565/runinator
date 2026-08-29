@@ -1,5 +1,5 @@
 <template>
-  <table :class="{ compact }">
+  <DataTable bare :compact="compact">
     <thead>
       <tr>
         <th v-if="selectable" class="w-9" scope="col">
@@ -57,7 +57,7 @@
         </td>
       </tr>
     </tbody>
-  </table>
+  </DataTable>
 </template>
 
 <script setup lang="ts">

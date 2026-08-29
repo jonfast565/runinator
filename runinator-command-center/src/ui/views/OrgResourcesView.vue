@@ -97,28 +97,26 @@
             title="No dedicated node pools"
           />
           <DataTable v-else>
-            <table>
-              <thead>
-                <tr>
-                  <th>Backend</th>
-                  <th>Kind</th>
-                  <th class="text-right">Desired</th>
-                  <th class="text-right">Rate</th>
-                  <th class="text-right">Monthly</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="g in groups" :key="g.backend + g.kind">
-                  <td>{{ g.backend }}</td>
-                  <td>{{ g.kind }}</td>
-                  <td class="text-right tabular-nums">{{ g.desired }}</td>
-                  <td class="text-right tabular-nums">{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
-                  <td class="text-right tabular-nums">
-                    {{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th>Backend</th>
+                <th>Kind</th>
+                <th class="text-right">Desired</th>
+                <th class="text-right">Rate</th>
+                <th class="text-right">Monthly</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="g in groups" :key="g.backend + g.kind">
+                <td>{{ g.backend }}</td>
+                <td>{{ g.kind }}</td>
+                <td class="text-right tabular-nums">{{ g.desired }}</td>
+                <td class="text-right tabular-nums">{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
+                <td class="text-right tabular-nums">
+                  {{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}
+                </td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
 
@@ -140,20 +138,18 @@
             title="No usage recorded yet"
           />
           <DataTable v-else>
-            <table>
-              <thead>
-                <tr>
-                  <th>Kind</th>
-                  <th class="text-right">Node-hours</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="[kind, hours] in usageKinds" :key="kind">
-                  <td>{{ kind }}</td>
-                  <td class="text-right tabular-nums">{{ hours.toFixed(2) }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th>Kind</th>
+                <th class="text-right">Node-hours</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="[kind, hours] in usageKinds" :key="kind">
+                <td>{{ kind }}</td>
+                <td class="text-right tabular-nums">{{ hours.toFixed(2) }}</td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
 

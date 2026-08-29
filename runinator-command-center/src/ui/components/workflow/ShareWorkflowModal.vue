@@ -7,7 +7,7 @@
   >
     <section class="form-section">
       <h3>Access</h3>
-      <table v-if="grants.length" class="w-full border-collapse text-xs">
+      <DataTable v-if="grants.length" table-class="w-full border-collapse text-xs">
         <thead>
           <tr>
             <th class="border-b border-border-subtle px-2 py-1.5 text-left">Principal</th>
@@ -32,7 +32,7 @@
             </td>
           </tr>
         </tbody>
-      </table>
+      </DataTable>
       <p v-else class="hint">
         No grants yet. The creator owns this workflow; add grants to share it.
       </p>

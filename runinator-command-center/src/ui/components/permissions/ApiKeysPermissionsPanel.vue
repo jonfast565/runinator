@@ -27,37 +27,35 @@
         :message="loadingMessage || 'Loading API keys…'"
       />
       <DataTable v-else>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Owner</th>
-              <th>Prefix</th>
-              <th>Status</th>
-              <th>Last Used</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="apiKey in permissions.visibleApiKeys"
-              :key="String(apiKey.id)"
-              class="cursor-pointer"
-              :class="{
-                selected: permissions.selectedApiKeyId === apiKey.id,
-                muted: apiKey.disabled,
-              }"
-              @click="openEdit(apiKey)"
-            >
-              <td>{{ apiKey.name }}</td>
-              <td>{{ ownerLabel(apiKey) }}</td>
-              <td>
-                <code>{{ apiKey.key_prefix }}</code>
-              </td>
-              <td>{{ apiKey.disabled ? "revoked" : "active" }}</td>
-              <td>{{ apiKey.last_used_at ? formatDate(apiKey.last_used_at) : "-" }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Owner</th>
+            <th>Prefix</th>
+            <th>Status</th>
+            <th>Last Used</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="apiKey in permissions.visibleApiKeys"
+            :key="String(apiKey.id)"
+            class="cursor-pointer"
+            :class="{
+              selected: permissions.selectedApiKeyId === apiKey.id,
+              muted: apiKey.disabled,
+            }"
+            @click="openEdit(apiKey)"
+          >
+            <td>{{ apiKey.name }}</td>
+            <td>{{ ownerLabel(apiKey) }}</td>
+            <td>
+              <code>{{ apiKey.key_prefix }}</code>
+            </td>
+            <td>{{ apiKey.disabled ? "revoked" : "active" }}</td>
+            <td>{{ apiKey.last_used_at ? formatDate(apiKey.last_used_at) : "-" }}</td>
+          </tr>
+        </tbody>
       </DataTable>
     </section>
 

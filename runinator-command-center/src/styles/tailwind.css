@@ -167,6 +167,45 @@
     @apply sticky top-0 z-[1] bg-surface-sunken text-xs font-semibold text-fg-subtle;
   }
 
+  .resizable-table th {
+    position: relative;
+  }
+
+  .table-column-resize-handle {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: -5px;
+    width: 10px;
+    height: 100%;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+
+  .table-column-resize-handle::after {
+    position: absolute;
+    top: 20%;
+    bottom: 20%;
+    left: 4px;
+    width: 2px;
+    border-radius: 999px;
+    background: transparent;
+    content: "";
+    transition: background-color 150ms ease-out;
+  }
+
+  .table-column-resize-handle:hover::after,
+  .table-column-resize-handle:focus-visible::after {
+    background: var(--accent);
+  }
+
+  .table-column-resize-active,
+  .table-column-resize-active * {
+    cursor: col-resize !important;
+    user-select: none;
+  }
+
   .table-scroll td > .flex {
     width: 100%;
   }

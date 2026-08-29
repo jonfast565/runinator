@@ -24,8 +24,8 @@ import { useBreakpoint } from "../../composables/useBreakpoint";
 import type { SelectionKey } from "../../composables/useBulkSelection";
 import { displayValue } from "../../../core/utils/values";
 
-// dual-mode table. with `columns` it renders a sortable/paginated/selectable table; without
-// columns it stays a plain scroll wrapper so existing hand-written <table> slots keep working.
+// Dual-mode table. Column mode renders a sortable/paginated/selectable table; slot mode keeps
+// specialized rows while this component remains the only owner of the table element and shell.
 const props = withDefaults(
   defineProps<{
     columns?: DataTableColumn<Row>[];
@@ -36,6 +36,10 @@ const props = withDefaults(
     // client-side page size; 0 disables pagination.
     pageSize?: number;
     compact?: boolean;
+    // extra class for the table element when a dense domain surface needs a local presentation hook.
+    tableClass?: string;
+    // Use the caller's existing scroll region while still centralizing the table element itself.
+    bare?: boolean;
     // per-row css classes (e.g. danger/success/muted) matching .table-scroll row variants.
     rowClass?: (row: Row) => string | Record<string, boolean>;
     emptyTitle?: string;
@@ -60,6 +64,8 @@ const props = withDefaults(
     rows: () => [],
     pageSize: 0,
     compact: false,
+    tableClass: undefined,
+    bare: false,
     selectedKey: null,
     columns: undefined,
     rowKey: undefined,
@@ -262,9 +268,14 @@ function compareValues(left: unknown, right: unknown): number {
 </script>
 
 <template>
-  <div v-if="!columns" class="table-scroll">
-    <slot />
+  <div v-if="!columns && !bare" class="table-scroll">
+    <table :class="[tableClass, { compact }]">
+      <slot />
+    </table>
   </div>
+  <table v-else-if="!columns" :class="[tableClass, { compact }]">
+    <slot />
+  </table>
   <div v-else class="flex min-h-0 flex-1 flex-col gap-2">
     <TableSkeleton
       v-if="showLoadingPanel"
@@ -317,7 +328,10 @@ function compareValues(left: unknown, right: unknown): number {
           class="flex min-w-0 items-baseline justify-between gap-3"
         >
           <span class="shrink-0 text-xs font-semibold text-fg-muted">{{ column.label }}</span>
-          <span class="min-w-0 text-right [overflow-wrap:anywhere]" :class="alignClass(column.align)">
+          <span
+            class="min-w-0 text-right [overflow-wrap:anywhere]"
+            :class="alignClass(column.align)"
+          >
             <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
               {{ displayCell(cellValue(row, column)) }}
             </slot>
@@ -330,7 +344,7 @@ function compareValues(left: unknown, right: unknown): number {
       class="table-scroll"
       :class="refreshing ? 'opacity-60 transition-opacity duration-[120ms]' : ''"
     >
-      <table :class="{ compact }">
+      <table :class="[tableClass, { compact }]">
         <thead>
           <tr>
             <th v-if="selectable" class="w-9" scope="col">

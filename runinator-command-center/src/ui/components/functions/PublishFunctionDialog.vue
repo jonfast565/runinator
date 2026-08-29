@@ -35,7 +35,7 @@
 
     <section v-if="manifest" class="form-section">
       <h3>Publishing</h3>
-      <table class="w-full border-collapse text-xs">
+      <DataTable table-class="w-full border-collapse text-xs">
         <tbody>
           <tr>
             <td class="border-b border-border-subtle px-2 py-1.5 text-left">Package</td>
@@ -56,7 +56,7 @@
             </td>
           </tr>
         </tbody>
-      </table>
+      </DataTable>
       <label class="grid gap-1 text-xs text-fg-subtle">
         Alias to move onto this version
         <input

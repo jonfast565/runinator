@@ -23,30 +23,28 @@
         :message="loadingMessage || 'Loading users…'"
       />
       <DataTable v-else>
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Status</th>
-              <th>Role</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="user in permissions.filteredUsers"
-              :key="String(user.id)"
-              class="cursor-pointer"
-              :class="{ selected: permissions.selectedUserId === user.id, muted: user.disabled }"
-              @click="openEditUser(user)"
-            >
-              <td>{{ user.username }}</td>
-              <td>{{ user.email || "-" }}</td>
-              <td>{{ user.disabled ? "disabled" : "active" }}</td>
-              <td>{{ user.platform_role }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="user in permissions.filteredUsers"
+            :key="String(user.id)"
+            class="cursor-pointer"
+            :class="{ selected: permissions.selectedUserId === user.id, muted: user.disabled }"
+            @click="openEditUser(user)"
+          >
+            <td>{{ user.username }}</td>
+            <td>{{ user.email || "-" }}</td>
+            <td>{{ user.disabled ? "disabled" : "active" }}</td>
+            <td>{{ user.platform_role }}</td>
+          </tr>
+        </tbody>
       </DataTable>
     </section>
 

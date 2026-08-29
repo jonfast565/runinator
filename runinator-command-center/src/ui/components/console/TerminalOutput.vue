@@ -9,7 +9,7 @@
     class="m-0 whitespace-pre-wrap break-words text-fg-inverse-muted"
     >{{ pretty(output.value) }}</pre>
   <div v-else class="overflow-x-auto">
-    <table class="border-collapse">
+    <DataTable bare table-class="border-collapse">
       <thead>
         <tr>
           <th
@@ -28,7 +28,7 @@
           </td>
         </tr>
       </tbody>
-    </table>
+    </DataTable>
     <p v-if="output.rows.length === 0" class="m-0 px-2 text-fg-inverse-faint">(none)</p>
   </div>
 </template>

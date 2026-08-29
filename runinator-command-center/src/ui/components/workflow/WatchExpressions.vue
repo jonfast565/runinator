@@ -9,7 +9,7 @@
       />
       <button :disabled="!draft.trim()" @click="onAdd">+ Add watch</button>
     </div>
-    <table v-if="expressions.length" class="watch-table">
+    <DataTable v-if="expressions.length" table-class="watch-table">
       <thead>
         <tr>
           <th>Path</th>
@@ -34,7 +34,7 @@
           </td>
         </tr>
       </tbody>
-    </table>
+    </DataTable>
     <div v-else class="watch-empty">
       No expressions yet. Add one to track context values across steps.
     </div>
@@ -84,4 +84,3 @@ function onAdd() {
   draft.value = "";
 }
 </script>
-

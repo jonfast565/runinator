@@ -37,48 +37,46 @@
             </div>
           </PanelHeader>
           <DataTable>
-            <table>
-              <thead>
-                <tr>
-                  <th>Package</th>
-                  <th>Latest</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="loading && !functions.packages.length">
-                  <td colspan="3" class="px-3.5 py-3.5 text-center text-fg-muted">
-                    <LoadingPanel compact :message="loadingMessage || 'Refreshing functions…'" />
-                  </td>
-                </tr>
-                <tr v-else-if="!functions.filteredPackages.length">
-                  <td colspan="3" class="!p-0 hover:!bg-transparent">
-                    <EmptyState
-                      class="functions-empty-state"
-                      compact
-                      :icon="functions.packages.length ? 'search' : 'box'"
-                      :title="functions.packages.length ? 'No matches' : 'No functions published'"
-                      :description="
-                        functions.packages.length
-                          ? `No packages match “${app.searchQuery}”.`
-                          : 'Publish a package directory with `runinatorctl functions publish <path>` to call it from a workflow.'
-                      "
-                    />
-                  </td>
-                </tr>
-                <tr
-                  v-for="pkg in functions.filteredPackages"
-                  :key="pkg.id"
-                  class="cursor-pointer"
-                  :class="{ selected: functions.selectedPackage?.id === pkg.id }"
-                  @click="functions.selectPackage(pkg)"
-                >
-                  <td class="font-mono text-[12px]">{{ qualifiedPackageName(pkg) }}</td>
-                  <td>{{ pkg.latest_version ?? "—" }}</td>
-                  <td>{{ pkg.description ?? "" }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th>Package</th>
+                <th>Latest</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading && !functions.packages.length">
+                <td colspan="3" class="px-3.5 py-3.5 text-center text-fg-muted">
+                  <LoadingPanel compact :message="loadingMessage || 'Refreshing functions…'" />
+                </td>
+              </tr>
+              <tr v-else-if="!functions.filteredPackages.length">
+                <td colspan="3" class="!p-0 hover:!bg-transparent">
+                  <EmptyState
+                    class="functions-empty-state"
+                    compact
+                    :icon="functions.packages.length ? 'search' : 'box'"
+                    :title="functions.packages.length ? 'No matches' : 'No functions published'"
+                    :description="
+                      functions.packages.length
+                        ? `No packages match “${app.searchQuery}”.`
+                        : 'Publish a package directory with `runinatorctl functions publish <path>` to call it from a workflow.'
+                    "
+                  />
+                </td>
+              </tr>
+              <tr
+                v-for="pkg in functions.filteredPackages"
+                :key="pkg.id"
+                class="cursor-pointer"
+                :class="{ selected: functions.selectedPackage?.id === pkg.id }"
+                @click="functions.selectPackage(pkg)"
+              >
+                <td class="font-mono text-[12px]">{{ qualifiedPackageName(pkg) }}</td>
+                <td>{{ pkg.latest_version ?? "—" }}</td>
+                <td>{{ pkg.description ?? "" }}</td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
       </template>
@@ -108,35 +106,33 @@
               />
             </div>
             <DataTable>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Alias</th>
-                    <th>Version</th>
-                    <th class="w-px"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-if="!aliases.length">
-                    <td colspan="3" class="px-3.5 py-2 text-fg-muted">
-                      No aliases. Publishing moves <code>latest</code> unless the manifest opts out.
-                    </td>
-                  </tr>
-                  <tr v-for="alias in aliases" :key="alias.id">
-                    <td class="font-mono text-[12px]">{{ alias.name }}</td>
-                    <td>{{ alias.version }}</td>
-                    <td>
-                      <button
-                        class="btn btn-sm"
-                        :disabled="!canManage"
-                        @click="removeAlias(alias.name)"
-                      >
-                        <Icon name="trash" />
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <thead>
+                <tr>
+                  <th>Alias</th>
+                  <th>Version</th>
+                  <th class="w-px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!aliases.length">
+                  <td colspan="3" class="px-3.5 py-2 text-fg-muted">
+                    No aliases. Publishing moves <code>latest</code> unless the manifest opts out.
+                  </td>
+                </tr>
+                <tr v-for="alias in aliases" :key="alias.id">
+                  <td class="font-mono text-[12px]">{{ alias.name }}</td>
+                  <td>{{ alias.version }}</td>
+                  <td>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="!canManage"
+                      @click="removeAlias(alias.name)"
+                    >
+                      <Icon name="trash" />
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
             </DataTable>
 
             <div class="btn-row items-end">
@@ -174,53 +170,49 @@
               />
             </div>
             <DataTable>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Call</th>
-                    <th>Version</th>
-                    <th>Aliases</th>
-                    <th>Digest</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-if="!functions.selectedExports.length">
-                    <td colspan="4" class="px-3.5 py-2 text-fg-muted">No exports published.</td>
-                  </tr>
-                  <tr v-for="entry in functions.selectedExports" :key="entry.export_id">
-                    <td class="font-mono text-[12px]">{{ functionCallPath(entry) }}</td>
-                    <td>{{ entry.version }}</td>
-                    <td class="font-mono text-[11px]">{{ (entry.aliases ?? []).join(", ") }}</td>
-                    <td class="font-mono text-[11px]" :title="entry.artifact_digest">
-                      {{ shortDigest(entry.artifact_digest) }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <thead>
+                <tr>
+                  <th>Call</th>
+                  <th>Version</th>
+                  <th>Aliases</th>
+                  <th>Digest</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!functions.selectedExports.length">
+                  <td colspan="4" class="px-3.5 py-2 text-fg-muted">No exports published.</td>
+                </tr>
+                <tr v-for="entry in functions.selectedExports" :key="entry.export_id">
+                  <td class="font-mono text-[12px]">{{ functionCallPath(entry) }}</td>
+                  <td>{{ entry.version }}</td>
+                  <td class="font-mono text-[11px]">{{ (entry.aliases ?? []).join(", ") }}</td>
+                  <td class="font-mono text-[11px]" :title="entry.artifact_digest">
+                    {{ shortDigest(entry.artifact_digest) }}
+                  </td>
+                </tr>
+              </tbody>
             </DataTable>
 
             <h3 class="m-0 mt-2 text-sm font-semibold text-fg">Versions</h3>
             <DataTable>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Version</th>
-                    <th>Runtime</th>
-                    <th>Digest</th>
-                    <th>Published</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="version in versions" :key="version.id">
-                    <td>{{ version.version }}</td>
-                    <td class="font-mono text-[12px]">{{ version.runtime?.runtime ?? "" }}</td>
-                    <td class="font-mono text-[11px]" :title="version.artifact_digest">
-                      {{ shortDigest(version.artifact_digest) }}
-                    </td>
-                    <td>{{ version.created_at }}</td>
-                  </tr>
-                </tbody>
-              </table>
+              <thead>
+                <tr>
+                  <th>Version</th>
+                  <th>Runtime</th>
+                  <th>Digest</th>
+                  <th>Published</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="version in versions" :key="version.id">
+                  <td>{{ version.version }}</td>
+                  <td class="font-mono text-[12px]">{{ version.runtime?.runtime ?? "" }}</td>
+                  <td class="font-mono text-[11px]" :title="version.artifact_digest">
+                    {{ shortDigest(version.artifact_digest) }}
+                  </td>
+                  <td>{{ version.created_at }}</td>
+                </tr>
+              </tbody>
             </DataTable>
           </template>
         </div>

@@ -32,7 +32,7 @@
         Uploading {{ uploading }} file{{ uploading === 1 ? "" : "s" }}…
       </p>
       <div class="table-scroll min-h-0 flex-1">
-        <table>
+        <DataTable bare>
           <thead>
             <tr>
               <th>Path</th>
@@ -66,7 +66,7 @@
               </td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </div>
   </section>

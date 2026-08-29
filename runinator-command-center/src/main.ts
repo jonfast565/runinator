@@ -1,10 +1,11 @@
 import "./bootstrap";
 import { createApp } from "vue";
 import App from "./App.vue";
+import DataTable from "./ui/components/shared/DataTable.vue";
 import "@vue-flow/core/dist/style.css";
 import "./styles/base.css";
 import "./styles/tailwind.css";
 import "./styles/layout.css";
 import "./styles/workflow.css";
 import { createPinia } from "pinia";
-createApp(App).use(createPinia()).mount("#app");
+createApp(App).use(createPinia()).component("DataTable", DataTable).mount("#app");

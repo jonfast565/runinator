@@ -20,7 +20,7 @@
     </header>
     <div ref="editorContainer" class="editor-shell-container rexrap-editor-container"></div>
     <div class="rexrap-diagnostics">
-      <table v-if="diagnostics.length">
+      <DataTable v-if="diagnostics.length" bare>
         <thead>
           <tr>
             <th>Type</th>
@@ -48,7 +48,7 @@
             <td>{{ diagnostic.column }}</td>
           </tr>
         </tbody>
-      </table>
+      </DataTable>
       <div v-else class="px-2.5 py-1.5 text-xs text-fg-muted">No REXRAP diagnostics.</div>
     </div>
   </section>
@@ -59,7 +59,11 @@ import { computed, ref, onMounted, watch, onBeforeUnmount } from "vue";
 import { getTextEditorHostFactory } from "../../../core/platform";
 import type { TextEditorDiagnostic } from "../../../core/platform/text-editor";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
-import type { CredentialSummary, ProviderMetadata, RexRapSettingRef } from "../../../core/domain/models";
+import type {
+  CredentialSummary,
+  ProviderMetadata,
+  RexRapSettingRef,
+} from "../../../core/domain/models";
 import type { CodeMirrorHostOptions } from "../../adapters/codemirror/text-editor-host";
 
 const props = defineProps<{

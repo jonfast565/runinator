@@ -103,7 +103,7 @@
         </p>
 
         <div v-else class="trigger-table-wrap">
-          <table class="compact">
+          <DataTable bare compact>
             <thead>
               <tr>
                 <th>Kind</th>
@@ -133,7 +133,7 @@
                 </td>
               </tr>
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <div v-if="workflows.triggerEditorOpen" class="trigger-editor">

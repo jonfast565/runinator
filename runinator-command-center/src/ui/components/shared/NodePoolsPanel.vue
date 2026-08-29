@@ -15,7 +15,7 @@
     </div>
 
     <div v-else class="node-pools-table-wrap">
-      <table class="node-pools-table">
+      <DataTable bare table-class="node-pools-table">
         <thead>
           <tr>
             <th>Backend</th>
@@ -77,7 +77,7 @@
             <td colspan="5" class="empty-state">No node groups reported.</td>
           </tr>
         </tbody>
-      </table>
+      </DataTable>
     </div>
 
     <div v-if="error" class="empty-state">{{ error }}</div>

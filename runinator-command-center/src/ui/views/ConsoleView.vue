@@ -80,11 +80,7 @@
           />
           <!-- clicking anywhere on the surface puts the caret back in the prompt, the way a
                terminal emulator does. -->
-          <div
-            v-else
-            class="terminal-surface flex min-h-0 flex-1 flex-col"
-            @click="focusPrompt"
-          >
+          <div v-else class="terminal-surface flex min-h-0 flex-1 flex-col" @click="focusPrompt">
             <TerminalStatusBar
               :session="notebook.activeSession?.name ?? 'no session'"
               :busy="terminal.busy"
@@ -113,20 +109,18 @@
             description="Run a line to bind its result to a name."
           />
           <DataTable v-else>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="binding in notebook.bindings" :key="binding.id">
-                  <td class="font-mono text-[12px]">{{ binding.name }}</td>
-                  <td class="font-mono text-[11px]">{{ preview(binding.value) }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="binding in notebook.bindings" :key="binding.id">
+                <td class="font-mono text-[12px]">{{ binding.name }}</td>
+                <td class="font-mono text-[11px]">{{ preview(binding.value) }}</td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
       </template>

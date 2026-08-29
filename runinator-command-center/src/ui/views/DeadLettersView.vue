@@ -32,7 +32,7 @@
       />
 
       <div v-else class="table-scroll min-h-0 flex-1">
-        <table class="w-full border-collapse text-[13px]">
+        <DataTable bare table-class="w-full border-collapse text-[13px]">
           <thead>
             <tr>
               <th>Time</th>
@@ -76,7 +76,7 @@
               </tr>
             </template>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </div>
   </section>

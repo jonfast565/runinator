@@ -31,7 +31,7 @@
 
     <template v-else>
       <div class="revision-table-wrap">
-        <table class="compact">
+        <DataTable bare compact>
           <thead>
             <tr>
               <th class="col-pick" :title="compareHint">A</th>
@@ -98,7 +98,7 @@
               </td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
 
       <JsonDiff

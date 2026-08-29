@@ -2,7 +2,7 @@
   <details class="json-diff" :open="open">
     <summary>{{ title }}</summary>
     <div v-if="rows.length === 0" class="py-2 text-fg-faint italic">No differences</div>
-    <table v-else class="json-diff-table">
+    <DataTable v-else table-class="json-diff-table">
       <thead>
         <tr>
           <th>Path</th>
@@ -17,7 +17,7 @@
           <td class="cell-after">{{ formatValue(row.after) }}</td>
         </tr>
       </tbody>
-    </table>
+    </DataTable>
   </details>
 </template>
 

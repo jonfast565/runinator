@@ -59,6 +59,7 @@ import { useDisplayPreferencesStore } from "./ui/adapters/pinia/displayPreferenc
 import { useConsoleStore } from "./ui/adapters/pinia/console";
 import { useFunctionsStore } from "./ui/adapters/pinia/functions";
 import { useGatesStore } from "./ui/adapters/pinia/gates";
+import { useResizableTables } from "./ui/composables/useResizableTables";
 
 const RunsView = defineAsyncComponent(() => import("./ui/views/RunsView.vue"));
 const ProvidersView = defineAsyncComponent(() => import("./ui/views/ProvidersView.vue"));
@@ -109,6 +110,7 @@ useBreakpoint();
 useEventStream();
 // keep the URL hash in sync with the active tab + selected workflow/run (deep links, back/forward).
 useUrlSync();
+useResizableTables();
 
 let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;

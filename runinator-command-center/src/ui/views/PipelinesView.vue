@@ -65,31 +65,29 @@
             "
           />
           <DataTable v-else>
-            <table>
-              <thead>
-                <tr>
-                  <th>Path</th>
-                  <th>Members</th>
-                  <th>Scope</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="item in scopedPipelines"
-                  :key="item.id ?? item.name"
-                  class="cursor-pointer"
-                  :class="{ selected: item.id === pipeline.selectedPipelineId }"
-                  @click="choosePipeline(item)"
-                >
-                  <td>
-                    <div>{{ pipelinePath(item) }}</div>
-                    <div class="text-xs text-fg-muted">{{ item.name }}</div>
-                  </td>
-                  <td>{{ item.graph.members.length }}</td>
-                  <td>{{ item.org_id ? "Org" : "Global" }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Members</th>
+                <th>Scope</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="item in scopedPipelines"
+                :key="item.id ?? item.name"
+                class="cursor-pointer"
+                :class="{ selected: item.id === pipeline.selectedPipelineId }"
+                @click="choosePipeline(item)"
+              >
+                <td>
+                  <div>{{ pipelinePath(item) }}</div>
+                  <div class="text-xs text-fg-muted">{{ item.name }}</div>
+                </td>
+                <td>{{ item.graph.members.length }}</td>
+                <td>{{ item.org_id ? "Org" : "Global" }}</td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
       </template>

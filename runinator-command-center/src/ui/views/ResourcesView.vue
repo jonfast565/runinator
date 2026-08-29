@@ -53,82 +53,77 @@
             </div>
           </PanelHeader>
           <DataTable>
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th class="col-low">Provider</th>
-                  <th class="col-low">Type</th>
-                  <th>Status</th>
-                  <th>Summary</th>
-                  <th v-if="endpoint === 'approvals'" class="col-low">Resolved by</th>
-                  <th class="col-low">External ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="loadingResources && !resourcesStore.resourceRecords.length">
-                  <td
-                    :colspan="endpoint === 'approvals' ? 7 : 6"
-                    class="px-3.5 py-3.5 text-center text-fg-muted"
-                  >
-                    <LoadingPanel
-                      compact
-                      :message="loadingResourcesMessage || `Loading ${title.toLowerCase()}…`"
-                    />
-                  </td>
-                </tr>
-                <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
-                  <td
-                    :colspan="endpoint === 'approvals' ? 7 : 6"
-                    class="!p-0 hover:!bg-transparent"
-                  >
-                    <EmptyState
-                      compact
-                      :icon="resourcesStore.resourceRecords.length ? 'search' : 'box'"
-                      :title="
-                        resourcesStore.resourceRecords.length
-                          ? 'No matches'
-                          : `No ${title.toLowerCase()} yet`
-                      "
-                      :description="
-                        resourcesStore.resourceRecords.length
-                          ? `No records match “${app.searchQuery}”.`
-                          : `${title} raised by providers and workflow runs appear here.`
-                      "
-                    />
-                  </td>
-                </tr>
-                <tr
-                  v-for="record in resourcesStore.filteredResourceRecords"
-                  :key="String(record.id ?? JSON.stringify(record))"
-                  class="cursor-pointer"
-                  :class="{
-                    selected: resourcesStore.selectedResourceRecord === record,
-                    danger: isBadStatus(record.status),
-                    success: isGoodStatus(record.status),
-                    'opacity-55': endpoint === 'approvals' && resourcesStore.isResolved(record),
-                  }"
-                  @click="resourcesStore.selectedResourceRecord = record"
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th class="col-low">Provider</th>
+                <th class="col-low">Type</th>
+                <th>Status</th>
+                <th>Summary</th>
+                <th v-if="endpoint === 'approvals'" class="col-low">Resolved by</th>
+                <th class="col-low">External ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loadingResources && !resourcesStore.resourceRecords.length">
+                <td
+                  :colspan="endpoint === 'approvals' ? 7 : 6"
+                  class="px-3.5 py-3.5 text-center text-fg-muted"
                 >
-                  <td>{{ record.id ?? "" }}</td>
-                  <td class="col-low">{{ record.provider ?? "" }}</td>
-                  <td class="col-low">{{ resourcesStore.recordType(record) }}</td>
-                  <td><StatusBadge :status="record.status as string" /></td>
-                  <td>{{ resourcesStore.recordSummary(record) }}</td>
-                  <td v-if="endpoint === 'approvals'" class="col-low whitespace-nowrap">
-                    <template v-if="resourcesStore.isResolved(record)">
-                      {{ record.resolved_by ?? "—" }}
-                      <span v-if="record.resolved_at" class="block text-[11px] text-fg-muted">{{
-                        formatDate(record.resolved_at as string | null | undefined)
-                      }}</span>
-                    </template>
-                  </td>
-                  <td class="col-low">
-                    {{ record.external_id ?? record.key ?? record.url ?? "" }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                  <LoadingPanel
+                    compact
+                    :message="loadingResourcesMessage || `Loading ${title.toLowerCase()}…`"
+                  />
+                </td>
+              </tr>
+              <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
+                <td :colspan="endpoint === 'approvals' ? 7 : 6" class="!p-0 hover:!bg-transparent">
+                  <EmptyState
+                    compact
+                    :icon="resourcesStore.resourceRecords.length ? 'search' : 'box'"
+                    :title="
+                      resourcesStore.resourceRecords.length
+                        ? 'No matches'
+                        : `No ${title.toLowerCase()} yet`
+                    "
+                    :description="
+                      resourcesStore.resourceRecords.length
+                        ? `No records match “${app.searchQuery}”.`
+                        : `${title} raised by providers and workflow runs appear here.`
+                    "
+                  />
+                </td>
+              </tr>
+              <tr
+                v-for="record in resourcesStore.filteredResourceRecords"
+                :key="String(record.id ?? JSON.stringify(record))"
+                class="cursor-pointer"
+                :class="{
+                  selected: resourcesStore.selectedResourceRecord === record,
+                  danger: isBadStatus(record.status),
+                  success: isGoodStatus(record.status),
+                  'opacity-55': endpoint === 'approvals' && resourcesStore.isResolved(record),
+                }"
+                @click="resourcesStore.selectedResourceRecord = record"
+              >
+                <td>{{ record.id ?? "" }}</td>
+                <td class="col-low">{{ record.provider ?? "" }}</td>
+                <td class="col-low">{{ resourcesStore.recordType(record) }}</td>
+                <td><StatusBadge :status="record.status as string" /></td>
+                <td>{{ resourcesStore.recordSummary(record) }}</td>
+                <td v-if="endpoint === 'approvals'" class="col-low whitespace-nowrap">
+                  <template v-if="resourcesStore.isResolved(record)">
+                    {{ record.resolved_by ?? "—" }}
+                    <span v-if="record.resolved_at" class="block text-[11px] text-fg-muted">{{
+                      formatDate(record.resolved_at as string | null | undefined)
+                    }}</span>
+                  </template>
+                </td>
+                <td class="col-low">
+                  {{ record.external_id ?? record.key ?? record.url ?? "" }}
+                </td>
+              </tr>
+            </tbody>
           </DataTable>
         </div>
       </template>

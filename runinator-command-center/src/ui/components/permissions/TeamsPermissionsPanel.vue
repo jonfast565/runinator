@@ -22,26 +22,24 @@
         :message="loadingMessage || 'Loading teams…'"
       />
       <DataTable v-else>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="team in permissions.filteredTeams"
-              :key="String(team.id)"
-              class="cursor-pointer"
-              :class="{ selected: permissions.selectedTeamId === team.id }"
-              @click="openEdit(team)"
-            >
-              <td>{{ team.name }}</td>
-              <td>{{ formatDate(team.created_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="team in permissions.filteredTeams"
+            :key="String(team.id)"
+            class="cursor-pointer"
+            :class="{ selected: permissions.selectedTeamId === team.id }"
+            @click="openEdit(team)"
+          >
+            <td>{{ team.name }}</td>
+            <td>{{ formatDate(team.created_at) }}</td>
+          </tr>
+        </tbody>
       </DataTable>
     </section>
 
@@ -90,31 +88,29 @@
               </button>
             </div>
           </div>
-          <DataTable>
-            <table class="compact">
-              <thead>
-                <tr>
-                  <th>Username</th>
-                  <th>Email</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="user in permissions.teamMembers" :key="String(user.id)">
-                  <td>{{ user.username }}</td>
-                  <td>{{ user.email || "-" }}</td>
-                  <td>
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      type="button"
-                      @click="permissions.removeSelectedTeamMember(String(user.id))"
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <DataTable compact>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="user in permissions.teamMembers" :key="String(user.id)">
+                <td>{{ user.username }}</td>
+                <td>{{ user.email || "-" }}</td>
+                <td>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    type="button"
+                    @click="permissions.removeSelectedTeamMember(String(user.id))"
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            </tbody>
           </DataTable>
         </section>
         <div class="modal-actions">
