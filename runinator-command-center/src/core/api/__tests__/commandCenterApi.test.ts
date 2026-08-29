@@ -156,6 +156,46 @@ describe("command center catalog metadata API", () => {
     );
   });
 
+  it("keeps the server's materialized steps when VM history is unavailable", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "failed" },
+          nodes: [
+            {
+              id: "node-run-1",
+              workflow_run_id: "run-1",
+              node_id: "mutex_1",
+              status: "timed_out",
+              attempt: 0,
+              parameters: {},
+              created_at: "2026-08-29T03:00:00.000Z",
+              started_at: "2026-08-29T03:00:00.000Z",
+              finished_at: "2026-08-29T03:05:00.000Z",
+              message: "no result within 300s; the executing worker never reported",
+            },
+          ],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: new Error("temporarily unavailable"),
+        fetch_workflow_journal: new Error("temporarily unavailable"),
+        fetch_workflow_vm_cursors: new Error("temporarily unavailable"),
+      };
+      const response = responses[name];
+      return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes).toEqual([
+      expect.objectContaining({
+        id: "node-run-1",
+        node_id: "mutex_1",
+        status: "timed_out",
+      }),
+    ]);
+  });
+
   it("projects an effect to the node entries persisted after its request boundary", async () => {
     vi.mocked(invoke).mockImplementation((name) => {
       const responses: Record<string, unknown> = {

@@ -126,7 +126,7 @@
                   <LogPanel
                     :chunks="logChunks"
                     :last-chunk-at="lastLogChunkAt"
-                    :fallback-text="workflows.workflowRunDetailText"
+                    :context="selectedLogContext"
                   />
                 </section>
                 <section class="grid gap-2 border-t border-border-subtle pt-3">
@@ -263,7 +263,12 @@ import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
-import type { RunArtifact, RunChunk, WorkflowRunArtifact } from "../../core/domain/models";
+import {
+  workflowEffectId,
+  type RunArtifact,
+  type RunChunk,
+  type WorkflowRunArtifact,
+} from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
 import { countActiveRuns, isActiveRunStatus } from "../../core/utils/status";
 
@@ -288,6 +293,45 @@ const activeRunCount = computed(() => countActiveRuns(workflows.recentWorkflowRu
 const selectedRunLabel = computed(() =>
   workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None",
 );
+const selectedLogContext = computed(() => {
+  const detail = workflows.workflowRunDetail;
+
+  if (!detail) {
+    return null;
+  }
+
+  const selectedNodeId = workflows.selectedWorkflowRunNodeId;
+  const selectedEffectId = workflows.selectedWorkflowNodeRunId;
+  const node = [...detail.nodes]
+    .reverse()
+    .find(
+      (candidate) =>
+        workflowEffectId(candidate) === selectedEffectId || candidate.node_id === selectedNodeId,
+    );
+  const effect =
+    detail.effects?.find((candidate) => candidate.id === selectedEffectId) ??
+    detail.effects?.find((candidate) => candidate.node_id === selectedNodeId) ??
+    null;
+  const request =
+    effect?.request && typeof effect.request === "object" && !Array.isArray(effect.request)
+      ? (effect.request as Record<string, unknown>)
+      : null;
+  const provider = typeof request?.provider === "string" ? request.provider : "";
+  const functionName = typeof request?.function === "string" ? request.function : "";
+
+  return {
+    runId: detail.run.id,
+    runStatus: detail.run.status,
+    nodeId: node?.node_id ?? selectedNodeId,
+    nodeStatus: node?.status ?? null,
+    effectId: effect?.id ?? selectedEffectId,
+    effectStatus: effect?.status ?? null,
+    continuationId: effect?.continuation_id ?? node?.cursor_id ?? null,
+    attempt: effect?.attempt ?? node?.attempt ?? null,
+    action: provider && functionName ? `${provider}.${functionName}` : null,
+    message: effect?.message ?? node?.message ?? detail.run.message ?? null,
+  };
+});
 
 async function deleteRun(run: (typeof recentRuns.value)[number]): Promise<void> {
   if (!window.confirm("Permanently delete this workflow run and all execution history?")) {
@@ -365,17 +409,28 @@ async function runBulkAction(key: string) {
 useWorkflowRunStream();
 
 watch(
-  () => workflows.selectedWorkflowNodeRunId,
-  async (id) => {
+  () => [workflows.selectedWorkflowNodeRunId, workflows.workflowRunDetail] as const,
+  async () => {
+    const id = workflows.selectedWorkflowNodeRunId;
     const [nextArtifacts, nextChunks] = id
       ? await Promise.all([
           workflowRunExtrasService.fetchNodeRunArtifacts(id),
           workflowRunExtrasService.fetchNodeRunChunks(id),
         ])
       : [[], []];
+
+    // A rapid step selection can leave an older output request in flight. Do not let its response
+    // replace the logs/artifacts for the step that is currently selected.
+    if (id !== workflows.selectedWorkflowNodeRunId) {
+      return;
+    }
+
     artifacts.value = nextArtifacts;
     logChunks.value = nextChunks;
-    lastLogChunkAt.value = nextChunks.length ? Date.now() : 0;
+    const latestChunkAt = Math.max(
+      ...nextChunks.map((chunk) => Date.parse(chunk.created_at)).filter(Number.isFinite),
+    );
+    lastLogChunkAt.value = Number.isFinite(latestChunkAt) ? latestChunkAt : 0;
   },
   { immediate: true },
 );

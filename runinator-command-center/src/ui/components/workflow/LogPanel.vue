@@ -19,30 +19,68 @@
         {{ isLive ? "live" : "idle" }}
       </span>
       <HelpBubble
-        text="Severity is inferred client-side from stream (stderr means error) and substring matching, so it is best-effort."
+        text="Every line keeps the durable output timestamp, stream, retry attempt, effect, and continuation that emitted it. Severity is inferred client-side from stream and message text, so it is best-effort."
         label="About log severity"
       />
     </div>
+    <div v-if="context" class="log-context" :class="contextTone">
+      <div class="log-context-title">
+        <strong>{{ context.nodeId || "Run diagnostics" }}</strong>
+        <span>{{ context.nodeStatus || context.runStatus }}</span>
+        <span v-if="context.effectStatus">effect {{ context.effectStatus }}</span>
+        <span v-if="context.attempt !== null">attempt {{ context.attempt }}</span>
+      </div>
+      <div class="log-context-meta">
+        <span>run {{ shortId(context.runId) }}</span>
+        <span v-if="context.effectId">effect {{ shortId(context.effectId) }}</span>
+        <span v-if="context.continuationId">thread {{ shortId(context.continuationId) }}</span>
+        <span v-if="context.action">{{ context.action }}</span>
+      </div>
+      <pre v-if="context.message" class="log-context-message">{{ context.message }}</pre>
+    </div>
+    <div v-if="chunks.length === 0" class="log-empty-state">
+      <strong>No streamed output was recorded for this step.</strong>
+      <span>
+        The execution diagnostic above is durable metadata; provider output appears here only when
+        the worker emits stdout or stderr chunks.
+      </span>
+    </div>
     <pre class="log-output">
 <span
-  v-for="(line, idx) in filteredLines"
-  :key="idx"
+  v-for="line in filteredLines"
+  :key="line.id"
   :class="colorize ? lineClass(line) : ''"
->{{ line.text }}
+><span class="log-line-meta">{{ line.timestamp }} · {{ line.stream }} · attempt {{ line.attempt }} · effect {{ shortId(line.effectId) }}</span> {{ line.content }}
 </span>
     </pre>
   </div>
 </template>
 
+<script lang="ts">
+export interface LogContext {
+  runId: string;
+  runStatus: string;
+  nodeId?: string | null;
+  nodeStatus?: string | null;
+  effectId?: string | null;
+  effectStatus?: string | null;
+  continuationId?: string | null;
+  attempt?: number | null;
+  action?: string | null;
+  message?: string | null;
+}
+</script>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RunChunk } from "../../../core/domain/models";
+import { outputChunkLines, outputChunkTimestamp } from "../../../core/workflow/output-chunks";
 import HelpBubble from "../shared/HelpBubble.vue";
 
 const props = defineProps<{
   chunks: RunChunk[];
   lastChunkAt: number;
-  fallbackText?: string;
+  context?: LogContext | null;
 }>();
 
 const filter = ref("");
@@ -73,39 +111,37 @@ const isLive = computed(() => {
 });
 
 interface Line {
-  text: string;
+  id: string;
+  timestamp: string;
   stream: string;
+  attempt: number;
+  effectId: string;
+  continuationId: string;
+  content: string;
 }
 
 const filteredLines = computed<Line[]>(() => {
   const query = filter.value.toLowerCase().trim();
-  const lines: Line[] = [];
-
-  if (props.chunks.length === 0 && props.fallbackText) {
-    for (const text of props.fallbackText.split("\n")) {
-      lines.push({ text, stream: "stdout" });
-    }
-  } else {
-    for (const chunk of props.chunks) {
-      const stream = chunk.stream;
-
-      if (stream === "stdout" && !showStdout.value) {
-        continue;
-      }
-
-      if (stream === "stderr" && !showStderr.value) {
-        continue;
-      }
-
-      lines.push({ text: `[${stream}] ${chunk.content}`, stream });
-    }
-  }
+  const lines = outputChunkLines(props.chunks)
+    .filter((line) => (line.stream === "stdout" ? showStdout.value : true))
+    .filter((line) => (line.stream === "stderr" ? showStderr.value : true))
+    .map((line) => ({ ...line, timestamp: outputChunkTimestamp(line.timestamp) }));
 
   if (!query) {
     return lines;
   }
 
-  return lines.filter((line) => line.text.toLowerCase().includes(query));
+  return lines.filter((line) =>
+    [line.timestamp, line.stream, String(line.attempt), line.effectId, line.continuationId, line.content]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
+});
+
+const contextTone = computed(() => {
+  const status = `${props.context?.nodeStatus ?? ""} ${props.context?.effectStatus ?? ""}`;
+  return /failed|timed_out|canceled|rejected/.test(status) ? "is-error" : "";
 });
 
 function lineClass(line: Line): string {
@@ -113,7 +149,7 @@ function lineClass(line: Line): string {
     return "log-error";
   }
 
-  const upper = line.text.toUpperCase();
+  const upper = line.content.toUpperCase();
 
   if (upper.includes("ERROR") || upper.includes("FATAL")) {
     return "log-error";
@@ -129,4 +165,9 @@ function lineClass(line: Line): string {
 
   return "";
 }
+
+function shortId(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
 </script>

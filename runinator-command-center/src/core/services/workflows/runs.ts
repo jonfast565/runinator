@@ -5,7 +5,6 @@ import {
   continueWorkflowRun,
   createWorkflowRun,
   fetchGates,
-  fetchWorkflowEffectOutput,
   fetchWorkflowRun,
   fetchWorkflowRuns,
   openGate,
@@ -18,7 +17,14 @@ import {
   stepWorkflowRun,
 } from "../../api/commandCenterApi";
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
-import type { GateRecord, JsonRecord, RunSummary, WorkflowRunDetail } from "../../domain/models";
+import {
+  workflowEffectId,
+  type GateRecord,
+  type JsonRecord,
+  type RunSummary,
+  type WorkflowEffect,
+  type WorkflowRunDetail,
+} from "../../domain/models";
 import { asJsonRecord, isJsonRecord, jsonRecordArray } from "../../domain/json";
 
 import { coerceRunCursors, isCursorPaused } from "../../domain/models/workflow-state";
@@ -818,7 +824,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   function selectWorkflowRunNode(nodeId: string) {
     host.state.selectedWorkflowRunNodeId = nodeId;
-    void updateSelectedWorkflowNodeDetail();
+    syncSelectedWorkflowEffect(host.state.workflowRunDetail);
     host.notify();
   }
 
@@ -1008,6 +1014,8 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
         host.state.selectedWorkflowRunNodeId = detail?.nodes[0]?.node_id ?? "";
       }
 
+      syncSelectedWorkflowEffect(detail);
+
       if (detail) {
         void syncWorkflowRunGatesForDetail(detail);
       } else {
@@ -1028,43 +1036,57 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  async function updateSelectedWorkflowNodeDetail() {
-    host.state.selectedWorkflowNodeRunId = null;
+  function updateSelectedWorkflowNodeDetail(): Promise<void> {
     host.state.workflowNodeDetailExtra = "";
-    const nodeId = host.state.selectedWorkflowRunNodeId || host.state.selectedStepId;
-    const detail = host.state.workflowRunDetail;
-    const cursor = detail?.vm_cursors?.find((cursor) => cursor.node_id === nodeId);
-    const continuation = detail?.continuations?.find(
-      (candidate) => candidate.id === cursor?.continuation_id,
-    );
-    const effect = continuation?.awaiting_effect_id
-      ? detail?.effects?.find((candidate) => candidate.id === continuation.awaiting_effect_id)
-      : [...(detail?.effects ?? [])]
-          .reverse()
-          .find((candidate) => candidate.continuation_id === continuation?.id);
+    syncSelectedWorkflowEffect(host.state.workflowRunDetail);
+    host.notify();
+    return Promise.resolve();
+  }
 
-    if (!effect) {
-      return;
+  /**
+   * `selectedWorkflowNodeRunId` predates durable effects, but downstream output/artifact calls
+   * now correctly expect an effect id. Prefer the selected projected row over a live cursor: a
+   * cursor advances after settlement, whereas the effect row retains the step that emitted logs.
+   */
+  function selectedEffectForNode(
+    detail: WorkflowRunDetail | null,
+    nodeId: string,
+  ): WorkflowEffect | null {
+    if (!detail || !nodeId) {
+      return null;
     }
 
-    const output = await host.ctx
-      .runOperation("Loading effect output", () => fetchWorkflowEffectOutput(effect.id))
-      .catch(() => []);
-    const chunks = output.filter((event) => event.output.type === "chunk");
-    const artifacts = output.filter((event) => event.output.type === "artifact");
-    host.state.workflowNodeDetailExtra = [
-      "",
-      `Workflow effect ${effect.id} chunks`,
-      ...chunks.map((event) =>
-        event.output.type === "chunk" ? `[${event.output.stream}] ${event.output.content}` : "",
-      ),
-      "",
-      `Workflow effect ${effect.id} artifacts`,
-      ...artifacts.map((event) =>
-        event.output.type === "artifact" ? JSON.stringify(event.output.artifact) : "",
-      ),
-    ].join("\n");
-    host.notify();
+    const projectedEffectId = [...detail.nodes]
+      .reverse()
+      .filter((node) => node.node_id === nodeId)
+      .map(workflowEffectId)
+      .find((effectId): effectId is string => effectId !== null);
+
+    if (projectedEffectId) {
+      return detail.effects?.find((effect) => effect.id === projectedEffectId) ?? null;
+    }
+
+    const effectProjectedByServer = [...(detail.effects ?? [])]
+      .reverse()
+      .find((effect) => effect.node_id === nodeId);
+
+    if (effectProjectedByServer) {
+      return effectProjectedByServer;
+    }
+
+    const cursor = detail.vm_cursors?.find((candidate) => candidate.node_id === nodeId);
+    const continuation = detail.continuations?.find(
+      (candidate) => candidate.id === cursor?.continuation_id,
+    );
+
+    return continuation?.awaiting_effect_id
+      ? detail.effects?.find((effect) => effect.id === continuation.awaiting_effect_id) ?? null
+      : null;
+  }
+
+  function syncSelectedWorkflowEffect(detail: WorkflowRunDetail | null) {
+    const nodeId = host.state.selectedWorkflowRunNodeId || host.state.selectedStepId;
+    host.state.selectedWorkflowNodeRunId = selectedEffectForNode(detail, nodeId)?.id ?? null;
   }
 
   // cancel many runs. terminal runs are dropped rather than sent — cancelling a finished run is a

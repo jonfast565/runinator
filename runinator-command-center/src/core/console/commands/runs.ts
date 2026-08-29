@@ -119,15 +119,34 @@ export const runCommands: ConsoleCommand[] = [
       }
 
       if (chunks.length === 0) {
-        print(text("no log chunks", "muted"));
+        print(
+          text(
+            "No streamed output was recorded. Provider stdout/stderr appears here only when the worker emits output chunks.",
+            "muted",
+          ),
+        );
         return;
       }
 
       print(
         text(
           chunks
-            .map((event) => (event.output.type === "chunk" ? event.output.content : ""))
-            .join(""),
+            .flatMap((event) => {
+              if (event.output.type !== "chunk") {
+                return [];
+              }
+
+              const timestamp = new Date(event.created_at * 1000);
+              const stamp = Number.isNaN(timestamp.getTime())
+                ? String(event.created_at)
+                : timestamp.toISOString();
+              const prefix = `${stamp} · ${event.output.stream} · attempt ${String(event.attempt)} · effect ${event.effect_id.slice(0, 8)}`;
+              return event.output.content
+                .replaceAll("\r\n", "\n")
+                .split("\n")
+                .map((line) => `${prefix} ${line}`);
+            })
+            .join("\n"),
         ),
       );
     },

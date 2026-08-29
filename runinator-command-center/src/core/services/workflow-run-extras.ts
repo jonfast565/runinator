@@ -38,10 +38,13 @@ export function createWorkflowRunExtrasService(app: AppService) {
           .filter((event) => event.output.type === "chunk")
           .map((event) => ({
             id: event.event_id,
+            effect_id: event.effect_id,
+            continuation_id: event.continuation_id,
             run_id: event.workflow_run_id,
             workflow_node_run_id: null,
             stream: event.output.type === "chunk" ? event.output.stream : "log",
             content: event.output.type === "chunk" ? event.output.content : "",
+            attempt: event.attempt,
             created_at: new Date(event.created_at * 1000).toISOString(),
           })),
       );

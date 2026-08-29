@@ -1442,6 +1442,60 @@
   .log-output .log-debug {
     color: #94a3b8;
   }
+  .log-context {
+    display: grid;
+    gap: 4px;
+    margin: 0 0 6px;
+    padding: 7px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--surface-subtle);
+    font-size: 11px;
+  }
+  .log-context.is-error {
+    border-color: var(--danger-fg);
+    background: var(--danger-bg);
+  }
+  .log-context-title,
+  .log-context-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px 8px;
+  }
+  .log-context-title span {
+    color: var(--text-subtle);
+  }
+  .log-context-meta {
+    color: var(--text-faint);
+    font-family: "SFMono-Regular", Consolas, monospace;
+  }
+  .log-context-message {
+    max-height: 96px;
+    margin: 2px 0 0;
+    overflow: auto;
+    color: var(--danger-fg);
+    font: inherit;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-empty-state {
+    display: grid;
+    gap: 2px;
+    margin: 0 0 6px;
+    padding: 7px 8px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 4px;
+    color: var(--text-subtle);
+    font-size: 11px;
+  }
+  .log-empty-state strong {
+    color: var(--text);
+  }
+  .log-line-meta {
+    color: #94a3b8;
+    font-size: 10px;
+  }
   .log-hint {
     font-size: 10px;
     color: var(--text-faint);

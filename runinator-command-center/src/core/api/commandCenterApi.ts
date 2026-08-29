@@ -992,12 +992,15 @@ function projectedEffectNodeId(
 }
 
 export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowRunDetail> {
-  const [detail, continuations, effects, journal, vmCursors] = await Promise.all([
-    command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId }),
-    fetchWorkflowContinuations(workflowRunId),
-    fetchWorkflowEffects(workflowRunId),
-    fetchWorkflowJournal(workflowRunId),
-    fetchWorkflowVmCursors(workflowRunId),
+  // The detail itself is the operator's source of truth. VM history enriches it when available,
+  // but an older or briefly unavailable side endpoint must never turn a valid run into a blank
+  // inspector (and erase the timeline/Gantt in the process).
+  const detail = await command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
+  const [continuations, effects, journal, vmCursors] = await Promise.all([
+    fetchWorkflowContinuations(workflowRunId).catch(() => []),
+    fetchWorkflowEffects(workflowRunId).catch(() => []),
+    fetchWorkflowJournal(workflowRunId).catch(() => []),
+    fetchWorkflowVmCursors(workflowRunId).catch(() => []),
   ]);
   const cursorByContinuation = new Map(
     vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
@@ -1128,11 +1131,14 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   });
   return {
     ...detail,
-    // Temporary graph-view projection. These are derived entirely from VM records and do not
-    // fetch or mutate the legacy node-run resource.
-    // The immutable retry journal is rendered as history, while the current mutable effect comes
-    // last so a terminal result still takes precedence over its earlier retry markers on the graph.
-    nodes: [...enteredNodes, ...retryNodes, ...effectNodes],
+    // A server-side run detail can already carry fully materialized steps. Preserve those rows:
+    // they have the most precise lifecycle timestamps and remain useful when a VM side endpoint
+    // is temporarily unavailable. VM-only runs have no rows there, so project their durable
+    // journal/effects for the graph, timeline, and Gantt instead.
+    nodes:
+      detail.nodes.length > 0
+        ? detail.nodes
+        : [...enteredNodes, ...retryNodes, ...effectNodes],
     continuations,
     effects,
     journal,
