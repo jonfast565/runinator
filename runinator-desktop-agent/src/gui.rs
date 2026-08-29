@@ -185,6 +185,10 @@ pub struct DesktopAgentApp {
     // in-progress text for the next label tag; separate from `draft` since it is editor-only state,
     // never persisted or sent to the agent until committed as a tag.
     label_input: String,
+    // A one-time replacement credential is deliberately separate from `draft`: enrollment tokens
+    // must only ever be held in memory and are never written to the saved desktop-agent settings.
+    reenrollment_token: String,
+    reenrollment_dialog: bool,
     // `None` when the platform tray failed to initialize; the window is then the only way in, so it
     // remains visible rather than stranding the user with no way to reach it.
     tray: Option<AgentTray>,
@@ -253,6 +257,8 @@ impl DesktopAgentApp {
             shared,
             draft,
             label_input: String::new(),
+            reenrollment_token: String::new(),
+            reenrollment_dialog: false,
             tray,
             last_tray_signature: None,
             log_filter: String::new(),
@@ -395,6 +401,110 @@ impl DesktopAgentApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         } else {
             self.exit_dialog = open;
+        }
+    }
+
+    fn start_enrollment(&mut self) {
+        let token = self.reenrollment_token.trim();
+        if token.is_empty() || validate_config(&self.draft).is_some() {
+            return;
+        }
+
+        let mut next_config = self.draft.clone();
+        next_config.enrollment_token = Some(token.to_string());
+        // Save the ordinary settings, but not the token: `enrollment_token` is skipped by serde
+        // and `next_config` lives only long enough for the worker to redeem it.
+        config::save(&self.draft);
+        agent::start(self.rt.handle(), self.shared.clone(), next_config);
+        self.reenrollment_token.clear();
+        self.reenrollment_dialog = false;
+    }
+
+    fn show_reenrollment_dialog(&mut self, ctx: &egui::Context, reason: Option<&str>) {
+        if !self.reenrollment_dialog {
+            return;
+        }
+
+        let mut open = self.reenrollment_dialog;
+        let mut re_enroll = false;
+        let mut cancel = false;
+        let can_open_ui = !self.draft.command_center_app_path.trim().is_empty()
+            || !self.draft.command_center_url.trim().is_empty();
+        let validation = validate_config(&self.draft);
+        let re_enrolling = reason.is_some();
+        let title = if re_enrolling {
+            "Re-enroll desktop agent"
+        } else {
+            "Enroll desktop agent"
+        };
+        let action_label = if re_enrolling {
+            "Re-enroll and start"
+        } else {
+            "Enroll and start"
+        };
+        egui::Window::new(title)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(if re_enrolling {
+                    "The broker rejected this agent's saved credential. A new one-time enrollment token replaces it."
+                } else {
+                    "A one-time enrollment token securely creates this desktop agent's credential."
+                });
+                if let Some(reason) = reason {
+                    ui.colored_label(DOT_RED, egui::RichText::new(reason).small());
+                }
+                ui.add_space(8.0);
+                ui.label("1. In Command Center, open Replicas and choose Enroll a machine.");
+                ui.label("2. Create and copy a new token, then paste it here.");
+                ui.label(if re_enrolling {
+                    "3. Re-enroll and start. The token is never saved in these settings."
+                } else {
+                    "3. Enroll and start. The token is never saved in these settings."
+                });
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("One-time enrollment token").strong());
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.reenrollment_token)
+                        .password(true)
+                        .desired_rows(3)
+                        .desired_width(520.0)
+                        .hint_text("Paste the token from Command Center"),
+                );
+                if let Some(reason) = validation.as_ref() {
+                    ui.colored_label(DOT_RED, egui::RichText::new(reason).small());
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(can_open_ui, egui::Button::new("Open Command Center"))
+                        .clicked()
+                    {
+                        self.open_command_center();
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    let ready = validation.is_none() && !self.reenrollment_token.trim().is_empty();
+                    if ui
+                        .add_enabled(ready, egui::Button::new(action_label))
+                        .clicked()
+                    {
+                        re_enroll = true;
+                    }
+                });
+            });
+
+        if cancel {
+            self.reenrollment_token.clear();
+            self.reenrollment_dialog = false;
+        } else {
+            self.reenrollment_dialog = open;
+        }
+        if re_enroll {
+            self.start_enrollment();
         }
     }
 
@@ -554,88 +664,98 @@ impl DesktopAgentApp {
         }
     }
 
-    /// The GUI counterpart to the terminal dashboard's component cards. The runtime has a true
-    /// two-column layout: lifecycle/action state stays on the left while telemetry remains visible
-    /// on the right, instead of forcing the operator to read a vertical stack.
+    fn runtime_lifecycle(ui: &mut egui::Ui, dashboard: &RuntimeDashboard<'_>) {
+        ui.heading("Runtime");
+        ui.label(
+            egui::RichText::new(format!(
+                "Running for {}",
+                display_duration(dashboard.uptime)
+            ))
+            .small()
+            .weak(),
+        );
+        ui.add_space(4.0);
+        ui.group(|ui| {
+            ui.strong("Desktop agent");
+            ui.label(format!(
+                "Now: {} · for {}",
+                dashboard.agent_activity,
+                display_duration(dashboard.agent_activity_age)
+            ));
+            egui::Grid::new("runtime-agent-details")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    detail_row(ui, "Service", dashboard.service_url);
+                    detail_row(
+                        ui,
+                        "Broker",
+                        dashboard
+                            .status
+                            .broker_connection
+                            .as_deref()
+                            .unwrap_or("not connected"),
+                    );
+                    let replica = dashboard
+                        .status
+                        .replica_id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "not registered".to_string());
+                    detail_row(ui, "Replica", &replica);
+                    detail_row(
+                        ui,
+                        "Sandbox",
+                        dashboard.status.root.as_deref().unwrap_or("not configured"),
+                    );
+                });
+        });
+        ui.add_space(4.0);
+        ui.group(|ui| {
+            ui.strong("Worker");
+            ui.label(format!(
+                "Now: {} · for {}",
+                dashboard.worker_activity,
+                display_duration(dashboard.worker_activity_age)
+            ));
+            egui::Grid::new("runtime-worker-details")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    detail_row(ui, "Pool", "desktop (exclusive)");
+                    detail_row(ui, "Action capacity", &dashboard.capacity.to_string());
+                    detail_row(
+                        ui,
+                        "Available slots",
+                        &dashboard
+                            .capacity
+                            .saturating_sub(dashboard.metrics.in_flight as usize)
+                            .to_string(),
+                    );
+                });
+            Self::activity_panel(ui, dashboard.metrics);
+        });
+    }
+
+    /// Two columns on an ordinary desktop window; one when the window is narrowed, before either
+    /// card can compete for width. Resource cards are deliberately a single column because their
+    /// values are the least compressible text in the dashboard.
     fn runtime_dashboard(ui: &mut egui::Ui, dashboard: RuntimeDashboard<'_>) {
         ui.add_space(8.0);
-        ui.columns(2, |columns| {
-            let lifecycle = &mut columns[0];
-            lifecycle.heading("Runtime");
-            lifecycle.label(
-                egui::RichText::new(format!(
-                    "Running for {}",
-                    display_duration(dashboard.uptime)
-                ))
-                .small()
-                .weak(),
-            );
-            lifecycle.add_space(4.0);
-            lifecycle.group(|ui| {
-                ui.strong("Desktop agent");
-                ui.label(format!(
-                    "Now: {} · for {}",
-                    dashboard.agent_activity,
-                    display_duration(dashboard.agent_activity_age)
-                ));
-                egui::Grid::new("runtime-agent-details")
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        detail_row(ui, "Service", dashboard.service_url);
-                        detail_row(
-                            ui,
-                            "Broker",
-                            dashboard
-                                .status
-                                .broker_connection
-                                .as_deref()
-                                .unwrap_or("not connected"),
-                        );
-                        let replica = dashboard
-                            .status
-                            .replica_id
-                            .map(|id| id.to_string())
-                            .unwrap_or_else(|| "not registered".to_string());
-                        detail_row(ui, "Replica", &replica);
-                        detail_row(
-                            ui,
-                            "Sandbox",
-                            dashboard.status.root.as_deref().unwrap_or("not configured"),
-                        );
-                    });
+        if ui.available_width() >= 1_000.0 {
+            ui.columns(2, |columns| {
+                Self::runtime_lifecycle(&mut columns[0], &dashboard);
+                let telemetry = &mut columns[1];
+                telemetry.heading("Resources");
+                telemetry.label(egui::RichText::new("Last minute").small().weak());
+                Self::resource_charts(telemetry, dashboard.resources);
             });
-            lifecycle.add_space(4.0);
-            lifecycle.group(|ui| {
-                ui.strong("Worker");
-                ui.label(format!(
-                    "Now: {} · for {}",
-                    dashboard.worker_activity,
-                    display_duration(dashboard.worker_activity_age)
-                ));
-                egui::Grid::new("runtime-worker-details")
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        detail_row(ui, "Pool", "desktop (exclusive)");
-                        detail_row(ui, "Action capacity", &dashboard.capacity.to_string());
-                        detail_row(
-                            ui,
-                            "Available slots",
-                            &dashboard
-                                .capacity
-                                .saturating_sub(dashboard.metrics.in_flight as usize)
-                                .to_string(),
-                        );
-                    });
-                Self::activity_panel(ui, dashboard.metrics);
-            });
-
-            let telemetry = &mut columns[1];
-            telemetry.heading("Resources");
-            telemetry.label(egui::RichText::new("Last minute").small().weak());
-            Self::resource_charts(telemetry, dashboard.resources);
-        });
+        } else {
+            Self::runtime_lifecycle(ui, &dashboard);
+            ui.add_space(8.0);
+            ui.heading("Resources");
+            ui.label(egui::RichText::new("Last minute").small().weak());
+            Self::resource_charts(ui, dashboard.resources);
+        }
     }
 
     fn settings_essentials(&mut self, ui: &mut egui::Ui) {
@@ -843,6 +963,17 @@ impl DesktopAgentApp {
                     self.draft.api_key.clone(),
                 );
             }
+
+            let can_enroll = !busy && validation.is_none();
+            if ui
+                .add_enabled(can_enroll, egui::Button::new("Enroll with token…"))
+                .on_hover_text(
+                    "Create a first-time desktop-agent credential with a one-time enrollment token",
+                )
+                .clicked()
+            {
+                self.reenrollment_dialog = true;
+            }
         });
         if let Some(reason) = validation.filter(|_| !starting) {
             ui.colored_label(
@@ -885,79 +1016,73 @@ impl DesktopAgentApp {
             .map(|sample| sample.disk_io_bytes_per_sec)
             .collect::<Vec<_>>();
 
-        ui.columns(2, |columns| {
-            resource_chart(
-                &mut columns[0],
-                "Host CPU",
-                latest
-                    .map(|sample| format!("{:.0}%", sample.host_cpu_percent))
-                    .unwrap_or_else(|| "collecting…".to_string()),
-                &host_cpu,
-                Some(100.0),
-                DOT_BLUE,
-            );
-            resource_chart(
-                &mut columns[1],
-                "Host RAM",
-                latest
-                    .map(|sample| {
-                        format!(
-                            "{:.0}% · {}/{}",
-                            sample.host_mem_percent,
-                            format_bytes(sample.host_mem_used_bytes as f64),
-                            format_bytes(sample.host_mem_total_bytes as f64)
-                        )
-                    })
-                    .unwrap_or_else(|| "collecting…".to_string()),
-                &host_memory,
-                Some(100.0),
-                DOT_GREEN,
-            );
-        });
-        ui.columns(2, |columns| {
-            resource_chart(
-                &mut columns[0],
-                "Process CPU",
-                latest
-                    .map(|sample| format!("{:.0}%", sample.process_cpu_percent))
-                    .unwrap_or_else(|| "collecting…".to_string()),
-                &process_cpu,
-                None,
-                DOT_AMBER,
-            );
-            resource_chart(
-                &mut columns[1],
-                "Process RAM",
-                latest
-                    .map(|sample| format_bytes(sample.process_mem_used_bytes as f64))
-                    .unwrap_or_else(|| "collecting…".to_string()),
-                &process_memory,
-                None,
-                DOT_GREEN,
-            );
-        });
-        ui.columns(2, |columns| {
-            resource_chart(
-                &mut columns[0],
-                "Network RX",
-                latest
-                    .map(|sample| format!("{}/s", format_bytes(sample.network_rx_bytes_per_sec)))
-                    .unwrap_or_else(|| "collecting…".to_string()),
-                &network_rx,
-                None,
-                DOT_BLUE,
-            );
-            resource_chart(
-                &mut columns[1],
-                "Network TX",
-                latest
-                    .map(|sample| format!("{}/s", format_bytes(sample.network_tx_bytes_per_sec)))
-                    .unwrap_or_else(|| "collecting…".to_string()),
-                &network_tx,
-                None,
-                DOT_BLUE,
-            );
-        });
+        resource_chart(
+            ui,
+            "Host CPU",
+            latest
+                .map(|sample| format!("{:.0}%", sample.host_cpu_percent))
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &host_cpu,
+            Some(100.0),
+            DOT_BLUE,
+        );
+        resource_chart(
+            ui,
+            "Host RAM",
+            latest
+                .map(|sample| {
+                    format!(
+                        "{:.0}% · {}/{}",
+                        sample.host_mem_percent,
+                        format_bytes(sample.host_mem_used_bytes as f64),
+                        format_bytes(sample.host_mem_total_bytes as f64)
+                    )
+                })
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &host_memory,
+            Some(100.0),
+            DOT_GREEN,
+        );
+        resource_chart(
+            ui,
+            "Process CPU",
+            latest
+                .map(|sample| format!("{:.0}%", sample.process_cpu_percent))
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &process_cpu,
+            None,
+            DOT_AMBER,
+        );
+        resource_chart(
+            ui,
+            "Process RAM",
+            latest
+                .map(|sample| format_bytes(sample.process_mem_used_bytes as f64))
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &process_memory,
+            None,
+            DOT_GREEN,
+        );
+        resource_chart(
+            ui,
+            "Network RX",
+            latest
+                .map(|sample| format!("{}/s", format_bytes(sample.network_rx_bytes_per_sec)))
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &network_rx,
+            None,
+            DOT_BLUE,
+        );
+        resource_chart(
+            ui,
+            "Network TX",
+            latest
+                .map(|sample| format!("{}/s", format_bytes(sample.network_tx_bytes_per_sec)))
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &network_tx,
+            None,
+            DOT_BLUE,
+        );
         resource_chart(
             ui,
             "Disk I/O",
@@ -1094,12 +1219,10 @@ fn resource_chart(
     color: egui::Color32,
 ) {
     ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(title).small().strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(value).small().weak());
-            });
-        });
+        // Keep the label and its value on independent lines. Long values (notably total RAM and
+        // broker-derived units) can then wrap naturally instead of colliding in a narrow card.
+        ui.label(egui::RichText::new(title).small().strong());
+        ui.label(egui::RichText::new(value).small().weak());
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
         let values = values
@@ -1201,6 +1324,12 @@ impl eframe::App for DesktopAgentApp {
             resources,
         } = self.snapshot();
 
+        let reenrollment_reason = match &connection {
+            ConnectionState::ReenrollmentRequired { reason } => Some(reason.clone()),
+            _ => None,
+        };
+        self.show_reenrollment_dialog(ctx, reenrollment_reason.as_deref());
+
         let presentation = present_status(&connection, busy);
         self.sync_tray(&presentation);
 
@@ -1274,6 +1403,21 @@ impl eframe::App for DesktopAgentApp {
                         .small(),
                     );
                         }
+                        ConnectionState::ReenrollmentRequired { reason } => {
+                            ui.group(|ui| {
+                                ui.colored_label(
+                                    DOT_RED,
+                                    egui::RichText::new("Broker credential rejected").strong(),
+                                );
+                                ui.label(
+                                    "This agent stopped to avoid retrying an invalid credential. Re-enroll it with a new one-time token.",
+                                );
+                                ui.label(egui::RichText::new(reason).small().weak());
+                                if ui.button("Re-enroll desktop agent…").clicked() {
+                                    self.reenrollment_dialog = true;
+                                }
+                            });
+                        }
                         _ => {}
                     }
                     ui.separator();
@@ -1312,16 +1456,28 @@ impl eframe::App for DesktopAgentApp {
                             self.draft.api_key = None;
                         }
 
-                        ui.columns(2, |columns| {
-                            self.settings_essentials(&mut columns[0]);
-                            self.settings_connection(&mut columns[1]);
-                            columns[0].add_space(8.0);
-                            self.settings_actions(&mut columns[0], starting, busy);
-                            columns[1].add_space(8.0);
-                            self.settings_desktop(&mut columns[1]);
-                            columns[1].add_space(8.0);
-                            self.settings_worker_tuning(&mut columns[1]);
-                        });
+                        if ui.available_width() >= 1_000.0 {
+                            ui.columns(2, |columns| {
+                                self.settings_essentials(&mut columns[0]);
+                                self.settings_connection(&mut columns[1]);
+                                columns[0].add_space(8.0);
+                                self.settings_actions(&mut columns[0], starting, busy);
+                                columns[1].add_space(8.0);
+                                self.settings_desktop(&mut columns[1]);
+                                columns[1].add_space(8.0);
+                                self.settings_worker_tuning(&mut columns[1]);
+                            });
+                        } else {
+                            self.settings_essentials(ui);
+                            ui.add_space(8.0);
+                            self.settings_connection(ui);
+                            ui.add_space(8.0);
+                            self.settings_desktop(ui);
+                            ui.add_space(8.0);
+                            self.settings_worker_tuning(ui);
+                            ui.add_space(8.0);
+                            self.settings_actions(ui, starting, busy);
+                        }
                     }
                 });
         });
