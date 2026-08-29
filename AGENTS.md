@@ -8,7 +8,10 @@ Increment the build number for every new feature. For a substantial, multi-phase
 
 ## Deployment
 
-Redeploy the cluster after every change. The sole exception is a UI-only change: deploy only `runinator-command-center` in that case.
+Redeploy the cluster after every change, with two exceptions:
+
+- For a documentation-only change, do not deploy.
+- For a UI-only change, deploy only `runinator-command-center`.
 
 ## Git Workflow
 
