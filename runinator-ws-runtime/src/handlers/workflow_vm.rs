@@ -146,7 +146,9 @@ async fn project_effect_nodes<T: AuthorizationStore + RuntimeStore + WorkflowVmS
         }
         let candidates = legacy_candidates
             .iter()
-            .filter_map(|(request, node_id)| (*request == &effect.request).then_some(*node_id))
+            .filter_map(|(request, node_id)| {
+                legacy_effect_call_site_matches(request, &effect.request).then_some(*node_id)
+            })
             .collect::<std::collections::BTreeSet<_>>();
         if let Some(node_id) = candidates
             .iter()
@@ -161,6 +163,154 @@ async fn project_effect_nodes<T: AuthorizationStore + RuntimeStore + WorkflowVmS
         effect.node_id = node_by_effect.get(&effect.id).cloned();
     }
     Ok(effects)
+}
+
+/// VM v1 receipts created before `EffectRequested` stored its instruction pointer contain the
+/// evaluated request, while the frozen module still contains expressions. Exact equality therefore
+/// cannot recover an action such as `console.run({ command: { $concat: [...] } })` after the VM has
+/// resolved it to a string. Match the stable call-site identity instead, and let the caller's
+/// single-candidate rule reject genuinely ambiguous workflows.
+fn legacy_effect_call_site_matches(
+    compiled: &runinator_models::workflow_vm::WorkflowEffectRequest,
+    executed: &runinator_models::workflow_vm::WorkflowEffectRequest,
+) -> bool {
+    use runinator_models::workflow_vm::WorkflowEffectRequest;
+
+    if compiled == executed {
+        return true;
+    }
+
+    match (compiled, executed) {
+        (
+            WorkflowEffectRequest::Action {
+                provider: compiled_provider,
+                function: compiled_function,
+                ..
+            },
+            WorkflowEffectRequest::Action {
+                provider: executed_provider,
+                function: executed_function,
+                ..
+            },
+        ) => compiled_provider == executed_provider && compiled_function == executed_function,
+        (WorkflowEffectRequest::Timer { .. }, WorkflowEffectRequest::Timer { .. })
+        | (WorkflowEffectRequest::TimerDelay { .. }, WorkflowEffectRequest::TimerDelay { .. })
+        | (WorkflowEffectRequest::Approval { .. }, WorkflowEffectRequest::Approval { .. })
+        | (WorkflowEffectRequest::Input { .. }, WorkflowEffectRequest::Input { .. }) => true,
+        (
+            WorkflowEffectRequest::Gate {
+                kind: compiled_kind,
+                label: compiled_label,
+                ..
+            },
+            WorkflowEffectRequest::Gate {
+                kind: executed_kind,
+                label: executed_label,
+                ..
+            },
+        ) => compiled_kind == executed_kind && compiled_label == executed_label,
+        (
+            WorkflowEffectRequest::Signal {
+                key: compiled_key, ..
+            },
+            WorkflowEffectRequest::Signal {
+                key: executed_key, ..
+            },
+        ) => compiled_key == executed_key,
+        (
+            WorkflowEffectRequest::EventWait {
+                event_type: compiled_type,
+                ..
+            },
+            WorkflowEffectRequest::EventWait {
+                event_type: executed_type,
+                ..
+            },
+        ) => compiled_type == executed_type,
+        (
+            WorkflowEffectRequest::ChildRun {
+                workflow_id: compiled_id,
+                workflow_name: compiled_name,
+                ..
+            },
+            WorkflowEffectRequest::ChildRun {
+                workflow_id: executed_id,
+                workflow_name: executed_name,
+                ..
+            },
+        ) => compiled_id == executed_id && compiled_name == executed_name,
+        (
+            WorkflowEffectRequest::AwaitRun {
+                workflow: compiled_workflow,
+                ..
+            },
+            WorkflowEffectRequest::AwaitRun {
+                workflow: executed_workflow,
+                ..
+            },
+        ) => compiled_workflow == executed_workflow,
+        (
+            WorkflowEffectRequest::MutexAcquire { key: compiled_key },
+            WorkflowEffectRequest::MutexAcquire { key: executed_key },
+        ) => compiled_key == executed_key,
+        (
+            WorkflowEffectRequest::Coordination {
+                kind: compiled_kind,
+                ..
+            },
+            WorkflowEffectRequest::Coordination {
+                kind: executed_kind,
+                ..
+            },
+        ) => compiled_kind == executed_kind,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use runinator_models::{
+        value::Value, workflow_vm::WorkflowEffectRequest, workflows::WorkflowRetry,
+    };
+
+    use super::legacy_effect_call_site_matches;
+
+    fn action(input: Value) -> WorkflowEffectRequest {
+        WorkflowEffectRequest::Action {
+            provider: "console".into(),
+            function: "run".into(),
+            input,
+            timeout_seconds: Some(300),
+            retry: WorkflowRetry::default(),
+            tags: Vec::new(),
+            required_labels: Default::default(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        }
+    }
+
+    #[test]
+    fn legacy_projection_matches_a_resolved_action_input() {
+        let compiled = action(runinator_models::json!({
+            "command": { "$concat": ["echo ", "hello"] }
+        }));
+        let executed = action(runinator_models::json!({ "command": "echo hello" }));
+
+        assert!(legacy_effect_call_site_matches(&compiled, &executed));
+    }
+
+    #[test]
+    fn legacy_projection_does_not_cross_action_call_sites() {
+        let compiled = action(runinator_models::json!({ "command": "echo hello" }));
+        let mut executed = action(runinator_models::json!({ "command": "echo hello" }));
+        let WorkflowEffectRequest::Action { provider, .. } = &mut executed else {
+            unreachable!();
+        };
+        *provider = "git".into();
+
+        assert!(!legacy_effect_call_site_matches(&compiled, &executed));
+    }
 }
 
 pub async fn get_effect<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
