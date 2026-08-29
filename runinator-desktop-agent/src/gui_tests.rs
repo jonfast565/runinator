@@ -111,6 +111,20 @@ fn dashboard_duration_and_byte_values_stay_compact() {
 }
 
 #[test]
+fn activity_outcomes_have_font_independent_labels() {
+    for (outcome, expected) in [
+        (ActionOutcome::Succeeded, "Succeeded"),
+        (ActionOutcome::Failed, "Failed"),
+        (ActionOutcome::TimedOut, "Timed out"),
+        (ActionOutcome::Canceled, "Canceled"),
+    ] {
+        let (label, _) = outcome_presentation(outcome);
+        assert_eq!(label, expected);
+        assert!(label.is_ascii());
+    }
+}
+
+#[test]
 fn required_identity_labels_are_not_editable_configuration() {
     assert!(config::is_reserved_identity_label("runner=creds-sync"));
     assert!(config::is_reserved_identity_label("pool=remote"));

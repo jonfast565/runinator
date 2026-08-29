@@ -618,49 +618,43 @@ impl DesktopAgentApp {
     // a compact throughput readout for the running agent: in-flight vs. outcome totals, the latest
     // resource sample, and what this machine last executed.
     fn activity_panel(ui: &mut egui::Ui, metrics: &AgentMetrics) {
-        let green = egui::Color32::from_rgb(64, 180, 96);
-        let red = egui::Color32::from_rgb(210, 90, 70);
-        let amber = egui::Color32::from_rgb(210, 170, 60);
-
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new(format!("In flight: {}", metrics.in_flight)).strong());
             ui.separator();
-            ui.colored_label(green, format!("✓ {}", metrics.succeeded));
-            ui.colored_label(red, format!("✗ {}", metrics.failed));
-            ui.colored_label(amber, format!("⧖ {}", metrics.timed_out));
+            outcome_total(ui, ActionOutcome::Succeeded, metrics.succeeded);
+            outcome_total(ui, ActionOutcome::Failed, metrics.failed);
+            outcome_total(ui, ActionOutcome::TimedOut, metrics.timed_out);
             if metrics.canceled > 0 {
-                ui.label(format!("⊘ {}", metrics.canceled));
+                outcome_total(ui, ActionOutcome::Canceled, metrics.canceled);
             }
         });
 
         if metrics.cpu_percent.is_some() || metrics.mem_percent.is_some() {
-            let cpu = metrics
-                .cpu_percent
-                .map(|c| format!("CPU {c:.0}%"))
-                .unwrap_or_default();
-            let mem = metrics
-                .mem_percent
-                .map(|m| format!("RAM {m:.0}%"))
-                .unwrap_or_default();
-            ui.label(egui::RichText::new(format!("{cpu}   {mem}")).small().weak());
+            let resources = [
+                metrics.cpu_percent.map(|c| format!("CPU {c:.0}%")),
+                metrics.mem_percent.map(|m| format!("RAM {m:.0}%")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("   ");
+            ui.label(egui::RichText::new(resources).small().weak());
         }
 
         if let Some(last) = &metrics.last_completed {
-            let (icon, color) = match last.outcome {
-                ActionOutcome::Succeeded => ("✓", green),
-                ActionOutcome::Failed => ("✗", red),
-                ActionOutcome::TimedOut => ("⧖", amber),
-                ActionOutcome::Canceled => ("⊘", egui::Color32::GRAY),
-            };
-            ui.colored_label(
-                color,
-                egui::RichText::new(format!(
-                    "{icon} last: {} ({} ms)",
-                    last.summary, last.duration_ms
-                ))
-                .small(),
-            );
+            let (label, color) = outcome_presentation(last.outcome);
+            ui.horizontal_wrapped(|ui| {
+                outcome_mark(ui, last.outcome).on_hover_text(label);
+                ui.colored_label(
+                    color,
+                    egui::RichText::new(format!(
+                        "Last: {} ({} ms)",
+                        last.summary, last.duration_ms
+                    ))
+                    .small(),
+                );
+            });
         }
     }
 
@@ -1208,6 +1202,88 @@ fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(egui::RichText::new(label).strong());
     ui.label(value);
     ui.end_row();
+}
+
+fn outcome_presentation(outcome: ActionOutcome) -> (&'static str, egui::Color32) {
+    match outcome {
+        ActionOutcome::Succeeded => ("Succeeded", DOT_GREEN),
+        ActionOutcome::Failed => ("Failed", DOT_RED),
+        ActionOutcome::TimedOut => ("Timed out", DOT_AMBER),
+        ActionOutcome::Canceled => ("Canceled", DOT_GRAY),
+    }
+}
+
+fn outcome_total(ui: &mut egui::Ui, outcome: ActionOutcome, total: u64) {
+    let (label, color) = outcome_presentation(outcome);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        outcome_mark(ui, outcome).on_hover_text(label);
+        ui.colored_label(color, format!("{label}: {total}"));
+    });
+}
+
+/// Paint activity marks ourselves: the default egui fonts do not cover the miscellaneous Unicode
+/// check, ballot, and hourglass glyphs consistently, which otherwise turns these metrics into tofu
+/// boxes on some platforms.
+fn outcome_mark(ui: &mut egui::Ui, outcome: ActionOutcome) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+    let (_, color) = outcome_presentation(outcome);
+    let stroke = egui::Stroke::new(1.7_f32, color);
+    let center = rect.center();
+
+    match outcome {
+        ActionOutcome::Succeeded => {
+            ui.painter().line_segment(
+                [
+                    center + egui::vec2(-5.0, 0.0),
+                    center + egui::vec2(-1.5, 3.5),
+                ],
+                stroke,
+            );
+            ui.painter().line_segment(
+                [
+                    center + egui::vec2(-1.5, 3.5),
+                    center + egui::vec2(5.0, -4.0),
+                ],
+                stroke,
+            );
+        }
+        ActionOutcome::Failed => {
+            ui.painter().line_segment(
+                [
+                    center + egui::vec2(-4.0, -4.0),
+                    center + egui::vec2(4.0, 4.0),
+                ],
+                stroke,
+            );
+            ui.painter().line_segment(
+                [
+                    center + egui::vec2(4.0, -4.0),
+                    center + egui::vec2(-4.0, 4.0),
+                ],
+                stroke,
+            );
+        }
+        ActionOutcome::TimedOut => {
+            ui.painter().circle_stroke(center, 5.0, stroke);
+            ui.painter()
+                .line_segment([center, center + egui::vec2(0.0, -3.0)], stroke);
+            ui.painter()
+                .line_segment([center, center + egui::vec2(2.5, 1.5)], stroke);
+        }
+        ActionOutcome::Canceled => {
+            ui.painter().circle_stroke(center, 5.0, stroke);
+            ui.painter().line_segment(
+                [
+                    center + egui::vec2(-3.5, 3.5),
+                    center + egui::vec2(3.5, -3.5),
+                ],
+                stroke,
+            );
+        }
+    }
+
+    response
 }
 
 fn resource_chart(
