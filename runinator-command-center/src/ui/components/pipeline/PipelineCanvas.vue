@@ -1,5 +1,5 @@
 <template>
-  <div class="pipeline-canvas">
+  <div ref="graphContainer" class="pipeline-canvas">
     <VueFlow
       class="pipeline-flow"
       :nodes="displayNodes"
@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   VueFlow,
   useVueFlow,
@@ -37,6 +37,7 @@ import { useAppStore } from "../../adapters/pinia/app";
 import PipelineNode from "./PipelineNode.vue";
 import type { PipelineRunDetail } from "../../../core/domain/models";
 import type { PipelineEdgeModel, PipelineNodeData, PipelineNodeModel } from "../../../core/workflow/pipeline-graph";
+import { useGraphAutoFit } from "../../composables/useGraphAutoFit";
 
 const props = withDefaults(defineProps<{ detail?: PipelineRunDetail | null; readonly?: boolean }>(), {
   detail: null,
@@ -48,6 +49,7 @@ const emit = defineEmits<(event: "open-workflow" | "open-run", id: string) => vo
 const pipeline = usePipelineStore();
 const app = useAppStore();
 const { fitView, onPaneReady } = useVueFlow();
+const graphContainer = ref<HTMLElement | null>(null);
 
 const latestAttempts = computed(() => {
   const latest = new Map<string, PipelineRunDetail["attempts"][number]>();
@@ -151,6 +153,8 @@ async function recenter() {
   await nextTick();
   void fitView();
 }
+
+useGraphAutoFit(graphContainer, recenter);
 
 onPaneReady(() => {
   void recenter();

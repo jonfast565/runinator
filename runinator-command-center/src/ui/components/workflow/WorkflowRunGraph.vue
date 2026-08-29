@@ -1,5 +1,5 @@
 <template>
-  <div class="panel workflow-canvas-panel workflow-run-graph-panel">
+  <div ref="graphContainer" class="panel workflow-canvas-panel workflow-run-graph-panel">
     <div class="workflow-run-graph-header">
       <div>
         <h2>{{ workflows.workflowRunWorkflow?.name ?? "Workflow" }}</h2>
@@ -33,21 +33,25 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, watch } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { VueFlow, useVueFlow, type NodeMouseEvent } from "@vue-flow/core";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import StatusBadge from "../shared/StatusBadge.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";
 import CursorTokens from "./CursorTokens.vue";
+import { useGraphAutoFit } from "../../composables/useGraphAutoFit";
 
 const workflows = useWorkflowsStore();
 const { fitView, onPaneReady } = useVueFlow();
+const graphContainer = ref<HTMLElement | null>(null);
 
 async function recenter() {
   await nextTick();
   void fitView();
 }
+
+useGraphAutoFit(graphContainer, recenter);
 
 function onNodeClick(event: NodeMouseEvent) {
   const nodeId = event.node.id;

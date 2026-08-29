@@ -38,6 +38,7 @@ import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";
 import Icon from "../shared/Icon.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
+import { useGraphAutoFit } from "../../composables/useGraphAutoFit";
 
 // edges in the editable canvas allow manual label repositioning.
 provide("workflowEdgeInteractive", true);
@@ -47,6 +48,7 @@ const app = useAppStore();
 const providersStore = useProvidersStore();
 const catalogMetadata = useCatalogMetadataStore();
 const { fitView, flowToScreenCoordinate, onPaneReady } = useVueFlow();
+const graphContainer = ref<HTMLElement | null>(null);
 const contextMenu = ref<
   | null
   | { kind: "node"; id: string; x: number; y: number; deletable: boolean }
@@ -223,6 +225,8 @@ async function recenter() {
   await nextTick();
   void fitView();
 }
+
+useGraphAutoFit(graphContainer, recenter);
 
 onPaneReady(() => {
   void recenter();
