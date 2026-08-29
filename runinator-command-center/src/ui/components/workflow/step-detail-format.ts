@@ -1,4 +1,8 @@
-import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
+import type {
+  ActionParameterMetadata,
+  JsonRecord,
+  RuninatorType,
+} from "../../../core/domain/models";
 import { nodeRefId } from "../../../core/workflow";
 import { describeRetryPolicy } from "../../../core/workflow/retry";
 import { displayValue } from "../../../core/utils/values";
@@ -139,6 +143,14 @@ export interface MetaEntry {
   mono?: boolean;
 }
 
+export interface ParameterSetting {
+  name: string;
+  type: string;
+  value: string;
+  source: "configured" | "default";
+  secret: boolean;
+}
+
 /**
  * the node's retry policy as a sentence rather than an attempt count. the backoff, cap, jitter, and
  * retry class together decide what actually happens, and four numbers in a grid do not say it.
@@ -154,12 +166,20 @@ export function retrySummary(node: JsonRecord): string {
   });
 }
 
+/** runtime switches that apply to the node itself, independently of its kind-specific payload. */
+export function nodeSettingRows(node: JsonRecord): MetaEntry[] {
+  const timeout = Number(node.timeout_seconds ?? 0);
+  return [
+    { label: "State", value: node.skipped === true ? "Skipped" : "Active" },
+    { label: "Locked", value: node.locked === true ? "Yes" : "No" },
+    { label: "Node Timeout", value: timeout > 0 ? `${String(timeout)}s` : "none" },
+    { label: "Retry", value: retrySummary(node) },
+  ];
+}
+
 /**
- * the action band: provider, function, both deadlines, and the retry reading.
- *
- * the two timeouts are listed separately on purpose — `action.timeout_seconds` is the worker's call
- * deadline and `node.timeout_seconds` is the reducer's node deadline, and collapsing them into one
- * "Timeout" row is what made the editor write an edit to the field nobody was looking at.
+ * the action's executor settings. node-owned timeout and retry settings live in `nodeSettingRows`
+ * so the inspector keeps the two configuration scopes visibly separate.
  */
 export function actionMetaRows(
   node: JsonRecord,
@@ -167,17 +187,57 @@ export function actionMetaRows(
   actionFunction: string,
 ): MetaEntry[] {
   const call = isRecord(node.action) ? node.action.timeout_seconds : undefined;
-  const nodeTimeout = node.timeout_seconds;
   return [
     { label: "Provider", value: provider || "—", mono: true },
     { label: "Function", value: actionFunction || "—", mono: true },
     { label: "Call Timeout", value: call != null ? `${displayValue(call)}s` : "default" },
-    {
-      label: "Node Timeout",
-      value: nodeTimeout != null ? `${displayValue(nodeTimeout)}s` : "none",
-    },
-    { label: "Retry", value: retrySummary(node) },
   ];
+}
+
+/**
+ * Effective action inputs: explicit values plus provider defaults, without turning the inspector
+ * into a copy of the provider's parameter documentation.
+ */
+export function actionParameterSettings(
+  parameters: ActionParameterMetadata[],
+  inputs: JsonRecord,
+): ParameterSetting[] {
+  if (!parameters.length) {
+    return Object.entries(inputs).map(([name, raw]) => ({
+      name,
+      type: "",
+      value: valueLabel(raw),
+      source: "configured",
+      secret: false,
+    }));
+  }
+
+  const settings: ParameterSetting[] = [];
+
+  for (const parameter of parameters) {
+    if (parameter.name in inputs) {
+      settings.push({
+        name: parameter.name,
+        type: renderType(parameter.ty),
+        value: valueLabel(inputs[parameter.name]),
+        source: "configured",
+        secret: parameter.secret,
+      });
+      continue;
+    }
+
+    if (parameter.default_value != null) {
+      settings.push({
+        name: parameter.name,
+        type: renderType(parameter.ty),
+        value: valueLabel(parameter.default_value),
+        source: "default",
+        secret: parameter.secret,
+      });
+    }
+  }
+
+  return settings;
 }
 
 /** the compensating call's band, empty when the node declares none. */

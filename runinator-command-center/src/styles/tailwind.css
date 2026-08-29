@@ -2603,6 +2603,44 @@
     gap: 8px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .settings-list {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: var(--surface-subtle);
+  }
+
+  .setting-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    padding: 8px 10px;
+  }
+
+  .setting-row + .setting-row {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .setting-row > span,
+  .setting-key {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .setting-row > strong,
+  .setting-row > .param-value {
+    min-width: 0;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
   
   .detail-item,
   .detail-row {
@@ -2725,6 +2763,11 @@
     color: var(--info-fg);
     background: var(--info-bg);
   }
+
+  .tag-default {
+    color: var(--text-subtle);
+    background: var(--surface-muted);
+  }
   
   .param-value {
     color: var(--text);
@@ -2737,6 +2780,10 @@
   .param-value.muted {
     color: var(--text-faint);
     font-style: italic;
+  }
+
+  .parameter-setting .param-value {
+    text-align: right;
   }
   
   .param-desc {
@@ -2782,6 +2829,17 @@
   
   .empty-detail p {
     color: var(--text-muted);
+  }
+
+  @media (max-width: 560px) {
+    .setting-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 4px;
+    }
+
+    .parameter-setting .param-value {
+      text-align: left;
+    }
   }
 }
 

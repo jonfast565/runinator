@@ -1,34 +1,108 @@
 import { describe, expect, it } from "vitest";
-import { actionMetaRows, compensationRows, retrySummary } from "../step-detail-format";
+import {
+  actionMetaRows,
+  actionParameterSettings,
+  compensationRows,
+  nodeSettingRows,
+  retrySummary,
+} from "../step-detail-format";
 
 function row(rows: { label: string; value: string }[], label: string): string | undefined {
   return rows.find((entry) => entry.label === label)?.value;
 }
 
 describe("actionMetaRows", () => {
-  // the two deadlines are different fields with different owners — the worker's call deadline and
-  // the reducer's node deadline — and showing one number for both is what let an edit land on the
-  // field nobody was looking at.
-  it("lists the call and node deadlines separately", () => {
+  it("keeps the executor's call deadline separate from node-owned settings", () => {
     const rows = actionMetaRows(
       { kind: "action", action: { timeout_seconds: 60 }, timeout_seconds: 900 },
       "webhook",
       "send",
     );
     expect(row(rows, "Call Timeout")).toBe("60s");
-    expect(row(rows, "Node Timeout")).toBe("900s");
+    expect(row(rows, "Node Timeout")).toBeUndefined();
+    expect(row(rows, "Retry")).toBeUndefined();
   });
 
   it("distinguishes an absent node deadline from a defaulted call deadline", () => {
     const rows = actionMetaRows({ kind: "action", action: {} }, "webhook", "send");
     expect(row(rows, "Call Timeout")).toBe("default");
-    expect(row(rows, "Node Timeout")).toBe("none");
   });
 
   it("falls back to a dash for an unconfigured action", () => {
     const rows = actionMetaRows({ kind: "action" }, "", "");
     expect(row(rows, "Provider")).toBe("—");
     expect(row(rows, "Function")).toBe("—");
+  });
+});
+
+describe("nodeSettingRows", () => {
+  it("shows runtime switches and policy values owned by the node", () => {
+    const rows = nodeSettingRows({
+      skipped: true,
+      locked: true,
+      timeout_seconds: 900,
+      retry: { max_attempts: 1 },
+    });
+    expect(row(rows, "State")).toBe("Skipped");
+    expect(row(rows, "Locked")).toBe("Yes");
+    expect(row(rows, "Node Timeout")).toBe("900s");
+    expect(row(rows, "Retry")).toMatch(/Runs once/);
+  });
+});
+
+describe("actionParameterSettings", () => {
+  const parameters = [
+    {
+      name: "url",
+      ty: { type: "string" as const },
+      required: true,
+      secret: false,
+    },
+    {
+      name: "method",
+      ty: { type: "string" as const },
+      required: false,
+      default_value: "POST",
+      secret: false,
+    },
+    {
+      name: "comment",
+      ty: { type: "string" as const },
+      required: false,
+      secret: false,
+      description: "Documentation that does not belong in the settings view.",
+    },
+  ];
+
+  it("shows configured values and effective defaults, but omits unset schema documentation", () => {
+    expect(actionParameterSettings(parameters, { url: "https://example.test" })).toEqual([
+      {
+        name: "url",
+        type: "string",
+        value: "https://example.test",
+        source: "configured",
+        secret: false,
+      },
+      {
+        name: "method",
+        type: "string",
+        value: "POST",
+        source: "default",
+        secret: false,
+      },
+    ]);
+  });
+
+  it("falls back to raw configured keys when provider metadata is unavailable", () => {
+    expect(actionParameterSettings([], { body: { ok: true } })).toEqual([
+      {
+        name: "body",
+        type: "",
+        value: "ok: true",
+        source: "configured",
+        secret: false,
+      },
+    ]);
   });
 });
 

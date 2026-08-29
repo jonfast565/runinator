@@ -39,13 +39,22 @@
         </div>
       </section>
 
-      <!-- action steps get a dedicated, structured breakdown of provider, parameters, and outputs. -->
+      <section class="detail-section">
+        <h3>Node settings</h3>
+        <div class="settings-list">
+          <div v-for="entry in nodeSettings" :key="entry.label" class="setting-row">
+            <span>{{ entry.label }}</span>
+            <strong :class="{ mono: entry.mono }">{{ entry.value }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- action steps show their effective configuration, not a second copy of provider docs. -->
       <template v-if="node.kind === 'action'">
         <section class="detail-section">
-          <h3>Action</h3>
-          <p v-if="actionDescription" class="section-note">{{ actionDescription }}</p>
-          <div class="detail-grid">
-            <div v-for="entry in actionMeta" :key="entry.label" class="detail-item">
+          <h3>Execution</h3>
+          <div class="settings-list">
+            <div v-for="entry in actionMeta" :key="entry.label" class="setting-row">
               <span>{{ entry.label }}</span>
               <strong :class="{ mono: entry.mono }">{{ entry.value }}</strong>
             </div>
@@ -57,62 +66,38 @@
 
         <section class="detail-section">
           <h3>
-            Parameters <span class="count-pill">{{ paramRows.length }}</span>
+            Effective inputs <span class="count-pill">{{ paramRows.length }}</span>
           </h3>
-          <div v-if="paramRows.length" class="param-list">
-            <div
-              v-for="param in paramRows"
-              :key="param.name"
-              class="param-item"
-              :class="{ unset: !param.configured }"
-            >
-              <div class="param-head">
+          <div v-if="paramRows.length" class="settings-list">
+            <div v-for="param in paramRows" :key="param.name" class="setting-row parameter-setting">
+              <div class="setting-key param-head">
                 <code class="param-name">{{ param.name }}</code>
                 <span v-if="param.type" class="param-type">{{ param.type }}</span>
-                <span v-if="param.required" class="param-tag tag-req">required</span>
                 <span v-if="param.secret" class="param-tag tag-secret">secret</span>
+                <span v-if="param.source === 'default'" class="param-tag tag-default">default</span>
               </div>
-              <div class="param-value" :class="{ muted: !param.configured }">{{ param.value }}</div>
-              <p v-if="param.description" class="param-desc">{{ param.description }}</p>
+              <div class="param-value">{{ param.value }}</div>
             </div>
           </div>
-          <p v-else class="empty-note">No parameters defined for this action.</p>
+          <p v-else class="empty-note">No input values configured.</p>
         </section>
 
         <section v-if="compensation.length" class="detail-section">
           <h3>Compensation</h3>
-          <p class="section-note">
-            Called in reverse order if a later step fails the run, once this step has succeeded.
-          </p>
-          <div class="detail-grid">
-            <div v-for="entry in compensation" :key="entry.label" class="detail-item">
+          <div class="settings-list">
+            <div v-for="entry in compensation" :key="entry.label" class="setting-row">
               <span>{{ entry.label }}</span>
               <strong :class="{ mono: entry.mono }">{{ entry.value }}</strong>
             </div>
           </div>
         </section>
-
-        <section v-if="resultRows.length" class="detail-section">
-          <h3>
-            Outputs <span class="count-pill">{{ resultRows.length }}</span>
-          </h3>
-          <div class="param-list">
-            <div v-for="result in resultRows" :key="result.name" class="param-item">
-              <div class="param-head">
-                <code class="param-name">{{ result.name }}</code>
-                <span v-if="result.type" class="param-type">{{ result.type }}</span>
-              </div>
-              <p v-if="result.description" class="param-desc">{{ result.description }}</p>
-            </div>
-          </div>
-        </section>
       </template>
 
-      <!-- control nodes keep the compact summary grid keyed off their kind. -->
+      <!-- control nodes expose the values stored in their catalog-defined fields. -->
       <section v-for="sect in detailSections" v-else :key="sect.title" class="detail-section">
         <h3>{{ sect.title }}</h3>
-        <div v-if="sect.items.length" class="detail-grid">
-          <div v-for="entry in sect.items" :key="entry.label" class="detail-item">
+        <div v-if="sect.items.length" class="settings-list">
+          <div v-for="entry in sect.items" :key="entry.label" class="setting-row">
             <span>{{ entry.label }}</span>
             <strong>{{ entry.value }}</strong>
           </div>
@@ -130,7 +115,7 @@
       </section>
 
       <section class="detail-section">
-        <h3>Transitions</h3>
+        <h3>Routing</h3>
         <div v-if="transitionRows.length" class="detail-rows">
           <div
             v-for="row in transitionRows"
@@ -187,12 +172,13 @@ import { findNodeKindMetadata } from "../../../core/workflow/catalog-registry";
 import { getAtLocation } from "../../../core/workflow/field-location";
 import { displayValue } from "../../../core/utils/values";
 import {
+  actionParameterSettings,
   actionMetaRows,
   compensationRows,
   conditionLabel,
   isRecord,
+  nodeSettingRows,
   refLabel,
-  renderType,
   valueLabel,
   waitSummary,
   type MetaEntry,
@@ -212,22 +198,6 @@ interface DetailSection {
   items: DetailItem[];
   chips: string[];
   rows: DetailRow[];
-}
-
-interface ParamRow {
-  name: string;
-  type: string;
-  required: boolean;
-  secret: boolean;
-  value: string;
-  description: string;
-  configured: boolean;
-}
-
-interface ResultRow {
-  name: string;
-  type: string;
-  description: string;
 }
 
 const workflows = useWorkflowsStore();
@@ -289,8 +259,6 @@ const flags = computed<{ label: string; tone: string }[]>(() => {
   return out;
 });
 
-const actionDescription = computed(() => action.value?.description ?? "");
-
 const headline = computed(() => {
   const current = node.value;
 
@@ -326,12 +294,12 @@ const actionMeta = computed<MetaEntry[]>(() =>
     : [],
 );
 
-const compensation = computed<MetaEntry[]>(() =>
-  node.value ? compensationRows(node.value) : [],
-);
+const nodeSettings = computed<MetaEntry[]>(() => (node.value ? nodeSettingRows(node.value) : []));
+
+const compensation = computed<MetaEntry[]>(() => (node.value ? compensationRows(node.value) : []));
 
 // one row per provider parameter, merged with the value configured on this node.
-const paramRows = computed<ParamRow[]>(() => {
+const paramRows = computed(() => {
   const current = node.value;
 
   if (current?.kind !== "action") {
@@ -340,47 +308,8 @@ const paramRows = computed<ParamRow[]>(() => {
 
   const inputs = workflowNodeActionInputs(current);
   const inputRecord = isRecord(inputs) ? inputs : {};
-  const schema = action.value?.parameters ?? [];
-
-  if (schema.length) {
-    return schema.map((param) => {
-      const configured = param.name in inputRecord;
-      const value = configured
-        ? valueLabel(inputRecord[param.name])
-        : param.default_value != null
-          ? `${valueLabel(param.default_value)} · default`
-          : "not set";
-      return {
-        name: param.name,
-        type: renderType(param.ty),
-        required: param.required,
-        secret: param.secret,
-        value,
-        description: param.description ?? "",
-        configured,
-      };
-    });
-  }
-
-  // unknown provider: surface whatever inputs are actually set so detail is not lost.
-  return Object.entries(inputRecord).map(([name, raw]) => ({
-    name,
-    type: "",
-    required: false,
-    secret: false,
-    value: valueLabel(raw),
-    description: "",
-    configured: true,
-  }));
+  return actionParameterSettings(action.value?.parameters ?? [], inputRecord);
 });
-
-const resultRows = computed<ResultRow[]>(() =>
-  (action.value?.results ?? []).map((result) => ({
-    name: result.label ?? result.name,
-    type: renderType(result.ty),
-    description: result.description ?? "",
-  })),
-);
 
 const detailSections = computed<DetailSection[]>(() => {
   const current = node.value;
@@ -406,9 +335,7 @@ function kindSection(current: StepEditorNode): DetailSection {
 
   // show a loading placeholder until catalog metadata arrives.
   if (!meta) {
-    return section(displayValue(kind || "Node"), [
-      item("Details", "Loading node metadata…"),
-    ]);
+    return section(displayValue(kind || "Node"), [item("Details", "Loading node metadata…")]);
   }
 
   const items: DetailItem[] = [];
@@ -439,7 +366,7 @@ function kindSection(current: StepEditorNode): DetailSection {
     }
   }
 
-  return section(meta.label, items, chips, rows);
+  return section("Configuration", items, chips, rows);
 }
 
 function transitionsSection(current: StepEditorNode): DetailSection {
@@ -482,7 +409,7 @@ function branchRows(current: StepEditorNode): DetailRow[] {
 }
 
 function item(label: string, raw: unknown): DetailItem {
-  return { label, value: valueLabel(raw) };
+  return { label, value: raw == null || raw === "" ? "not set" : valueLabel(raw) };
 }
 
 function section(
@@ -491,7 +418,6 @@ function section(
   chips: string[] = [],
   rows: DetailRow[] = [],
 ): DetailSection {
-  return { title, items: items.filter((entry) => entry.value !== "-"), chips, rows };
+  return { title, items, chips, rows };
 }
-
 </script>
