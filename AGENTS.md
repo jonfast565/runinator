@@ -12,6 +12,9 @@ Redeploy the cluster after every change, with two exceptions:
 
 - For a documentation-only change, do not deploy.
 - For a UI-only change, deploy only `runinator-command-center`.
+- For changes confined to `runinator-desktop-agent`, do not rebuild or redeploy the cluster. The
+  desktop agent runs locally; deploy the cluster only when its shared runtime dependencies or a
+  cluster-owned artifact changed.
 
 ## Git Workflow
 

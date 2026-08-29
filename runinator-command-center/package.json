@@ -1,7 +1,7 @@
 {
   "name": "runinator-command-center",
   "private": true,
-  "version": "0.4.529",
+  "version": "0.4.532",
   "type": "module",
   "scripts": {
     "dev": "vite",

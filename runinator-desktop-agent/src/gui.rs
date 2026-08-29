@@ -217,24 +217,24 @@ impl DesktopAgentApp {
     /// `shared` is the same state handle the tracing bridge writes log lines into (see `main`), and
     /// `draft` the config already loaded there.
     pub fn new(cc: &eframe::CreationContext<'_>, shared: SharedHandle, draft: AgentConfig) -> Self {
-        // The window now has room for an at-a-glance dashboard, so favor comfortably readable
-        // desktop text over the compact defaults intended for small embedded panels.
+        // Keep the dashboard readable without making controls dominate the window. The responsive
+        // layout carries the extra room, so this can stay close to a conventional desktop scale.
         let mut style = (*cc.egui_ctx.style()).clone();
         style
             .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
+            .insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
         style
             .text_styles
-            .insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
+            .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
         style
             .text_styles
-            .insert(egui::TextStyle::Heading, egui::FontId::proportional(23.0));
+            .insert(egui::TextStyle::Heading, egui::FontId::proportional(21.0));
         style
             .text_styles
-            .insert(egui::TextStyle::Small, egui::FontId::proportional(14.0));
+            .insert(egui::TextStyle::Small, egui::FontId::proportional(13.0));
         style
             .text_styles
-            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(15.0));
+            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
         cc.egui_ctx.set_style(style);
 
         let rt = tokio::runtime::Builder::new_multi_thread()
