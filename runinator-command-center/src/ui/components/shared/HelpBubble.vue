@@ -1,5 +1,5 @@
 <template>
-  <span ref="root" class="help-bubble">
+  <span ref="root" class="help-bubble" @pointerenter="showForHover" @pointerleave="hideAfterHover">
     <button
       type="button"
       class="help-bubble-trigger"
@@ -7,6 +7,8 @@
       :aria-expanded="open"
       :aria-controls="popoverId"
       @click="toggle"
+      @focus="showForFocus"
+      @blur="hideAfterFocus"
       @keydown.esc.stop="close"
     >
       <Icon name="help" :size="size" />
@@ -22,6 +24,7 @@
         @keydown.esc.stop="close"
       >
         <slot>{{ text }}</slot>
+        <p class="help-bubble-hint">Click to keep this open; click again to close.</p>
       </div>
     </Teleport>
   </span>
@@ -49,6 +52,9 @@ withDefaults(
 const root = ref<HTMLElement | null>(null);
 const popover = ref<HTMLElement | null>(null);
 const open = ref(false);
+const hovered = ref(false);
+const focused = ref(false);
+const pinned = ref(false);
 const position = ref<Record<string, string>>({});
 nextHelpBubbleId += 1;
 const popoverId = `help-bubble-${String(nextHelpBubbleId)}`;
@@ -73,16 +79,51 @@ function placePopover() {
   position.value = { left: `${String(left)}px`, top: `${String(top)}px` };
 }
 
-function toggle() {
-  open.value = !open.value;
+function show() {
+  open.value = true;
+  void nextTick(placePopover);
+}
 
-  if (open.value) {
-    void nextTick(placePopover);
+function showForHover() {
+  hovered.value = true;
+  show();
+}
+
+function hideAfterHover() {
+  hovered.value = false;
+
+  if (!pinned.value && !focused.value) {
+    close();
   }
+}
+
+function showForFocus() {
+  focused.value = true;
+  show();
+}
+
+function hideAfterFocus() {
+  focused.value = false;
+
+  if (!pinned.value && !hovered.value) {
+    close();
+  }
+}
+
+function toggle() {
+  if (pinned.value) {
+    pinned.value = false;
+    close();
+    return;
+  }
+
+  pinned.value = true;
+  show();
 }
 
 function close() {
   open.value = false;
+  pinned.value = false;
 }
 
 function onPointerDown(event: PointerEvent) {
@@ -148,17 +189,23 @@ onBeforeUnmount(() => {
 .help-bubble-popover {
   position: fixed;
   z-index: 10000;
-  width: min(20rem, calc(100vw - 1rem));
-  padding: 0.7rem 0.8rem;
+  width: min(24rem, calc(100vw - 1rem));
+  padding: 0.8rem 0.9rem;
   border: 1px solid var(--color-border-strong);
   border-radius: 0.55rem;
   background: var(--color-surface);
   color: var(--color-fg);
   box-shadow: var(--shadow-modal);
-  font-size: 0.78rem;
+  font-size: 1rem;
   font-weight: 400;
   line-height: 1.5;
   text-align: left;
   white-space: normal;
+}
+
+.help-bubble-hint {
+  margin: 0.6rem 0 0;
+  color: var(--color-fg-muted);
+  font-size: 0.875em;
 }
 </style>
