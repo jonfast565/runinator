@@ -6,9 +6,8 @@ use crate::errors::{INVALID_PARAMS, IO};
 #[derive(Deserialize)]
 pub(crate) struct ConsoleParams {
     pub command: String,
-    // run attached to the worker's own stdio so the command can prompt in the operator's
-    // interactive desktop session (browser-based logins, macOS Keychain dialogs, tty prompts).
-    // output is not captured or streamed in this mode. defaults to false: capture and stream.
+    // run in a worker-owned PTY/ConPTY so Command Center can render and drive the live terminal.
+    // defaults to false: capture stdout and stderr independently.
     #[serde(default)]
     pub interactive: bool,
 }

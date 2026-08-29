@@ -45,6 +45,11 @@ pub(crate) const CLAUDE_INVALID_JSON: ErrorDescriptor = ErrorDescriptor::new(
     "ai_command.claude_code.invalid_json",
     "Claude Code output was not valid JSON",
 );
+pub(crate) const CLAUDE_INTERACTIVE_NOT_PERMITTED: ErrorDescriptor = ErrorDescriptor::new(
+    "AI011",
+    "ai_command.claude_code.interactive_not_permitted",
+    "Interactive Claude Code is only available on a desktop worker agent",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -57,6 +62,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CLAUDE_TIMEOUT,
     CLAUDE_EXIT_CODE,
     CLAUDE_INVALID_JSON,
+    CLAUDE_INTERACTIVE_NOT_PERMITTED,
 ];
 
 impl ProviderErrors for AiCommandProvider {

@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{Arc, Mutex as StdMutex, mpsc::Receiver},
     time::Duration,
 };
 
@@ -12,7 +12,7 @@ use runinator_comm::{ConsumerProfile, EffectResult, EffectResultKind};
 use runinator_models::{
     errors::{SendableError, error_code_or_unknown},
     orchestration::{IdempotencyClaim, IdempotentActionResult},
-    runs::{NewRunArtifact, RunStatus},
+    runs::{NewRunArtifact, ProviderTerminalControl, RunStatus},
     value::Value,
     workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
     workflows::{WorkflowAction, WorkflowObject},
@@ -327,6 +327,7 @@ async fn process_provider_effect(
     crate::metrics::effect_received();
     let token = CancellationToken::new();
     let canceled_by_control = Arc::new(AtomicBool::new(false));
+    let (terminal_tx, terminal_rx) = std::sync::mpsc::channel();
     {
         let mut guard = in_flight.lock().await;
         if guard.contains_key(&command.effect_id) {
@@ -342,6 +343,7 @@ async fn process_provider_effect(
                 workflow_run_id: command.workflow_run_id,
                 token: token.clone(),
                 canceled_by_control: canceled_by_control.clone(),
+                terminal: terminal_tx,
             },
         );
     }
@@ -371,6 +373,7 @@ async fn process_provider_effect(
         api_client.clone(),
         result_outbox.clone(),
         events.clone(),
+        terminal_rx,
     ));
     let outcome = executor::execute_task(
         &providers,
@@ -626,6 +629,8 @@ struct EffectOutputSink {
     events: Arc<dyn crate::events::WorkerEventSink>,
     handle: tokio::runtime::Handle,
     pending: StdMutex<Vec<tokio::task::JoinHandle<Result<(), SendableError>>>>,
+    publish_order: Arc<tokio::sync::Mutex<()>>,
+    terminal: StdMutex<Option<Receiver<ProviderTerminalControl>>>,
 }
 
 impl EffectOutputSink {
@@ -635,6 +640,7 @@ impl EffectOutputSink {
         api_client: AsyncApiClient<StaticLocator>,
         outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
         events: Arc<dyn crate::events::WorkerEventSink>,
+        terminal: Receiver<ProviderTerminalControl>,
     ) -> Self {
         Self {
             command,
@@ -644,6 +650,8 @@ impl EffectOutputSink {
             events,
             handle: tokio::runtime::Handle::current(),
             pending: StdMutex::new(Vec::new()),
+            publish_order: Arc::new(tokio::sync::Mutex::new(())),
+            terminal: StdMutex::new(Some(terminal)),
         }
     }
 
@@ -671,6 +679,10 @@ impl EffectOutputSink {
 }
 
 impl ProviderEventSink for EffectOutputSink {
+    fn take_terminal_control(&self) -> Option<Receiver<ProviderTerminalControl>> {
+        self.terminal.lock().ok()?.take()
+    }
+
     fn emit(&self, event: runinator_models::runs::ProviderExecutionEvent) {
         match event {
             runinator_models::runs::ProviderExecutionEvent::Chunk { stream, content } => {
@@ -684,7 +696,12 @@ impl ProviderEventSink for EffectOutputSink {
                 let broker = self.broker.clone();
                 let command = self.command.clone();
                 let outbox = self.outbox.clone();
+                let publish_order = self.publish_order.clone();
                 self.spawn(async move {
+                    // PTY bytes and ordinary stdout/stderr chunks must reach durable storage in
+                    // emission order. Concurrent broker publishes can otherwise scramble ANSI
+                    // cursor sequences or adjacent log lines.
+                    let _ordered = publish_order.lock().await;
                     let mut result = EffectResult {
                         version: command.version,
                         event_id: Uuid::now_v7(),

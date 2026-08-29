@@ -177,6 +177,9 @@ async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
                 ControlKind::Resume => {
                     crate::repository::resume_workflow_run(db.as_ref(), *workflow_run_id).await?;
                 }
+                // Terminal controls are worker-local and are never valid on ingress. Ignore a
+                // malformed or mixed-version message rather than changing workflow state.
+                ControlKind::Terminal => {}
             }
             Ok(())
         }

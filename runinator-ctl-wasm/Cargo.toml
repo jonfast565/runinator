@@ -1,0 +1,18 @@
+[package]
+name = "runinator-ctl-wasm"
+version.workspace = true
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+runinator-ctl-core = { path = "../runinator-ctl-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "=0.2.121"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `runinator-models` enables UUID generation for native consumers. The browser target supplies its
+# randomness through Web Crypto so that shared feature unification remains WASM-compatible.
+uuid = { version = "1.18", features = ["js"] }

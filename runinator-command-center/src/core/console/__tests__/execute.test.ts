@@ -215,13 +215,11 @@ describe("executeCommand", () => {
 
   it("rejects a flag the command does not take", async () => {
     // a mistyped filter used to be ignored, which made `--stauts failed` read as 'every run'.
-    await expect(run("runs list --stauts failed")).rejects.toThrow(/does not take --stauts/);
+    await expect(run("runs list --stauts failed")).rejects.toThrow(/unexpected argument '--stauts'/);
   });
 
   it("rejects a value outside a flag's closed set", async () => {
-    await expect(run("settings list --kind sekret")).rejects.toThrow(
-      /--kind takes secret or config/,
-    );
+    await expect(run("settings list --kind sekret")).rejects.toThrow(/invalid value 'sekret'/);
   });
 
   it("lists the replicas a filter selects", async () => {

@@ -35,10 +35,12 @@ impl Provider for AiCommandProvider {
                     .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
                 ActionMetadata::new(
                     "claude_code",
-                    "Invoke Claude Code non-interactively with a prompt and model",
+                    "Invoke Claude Code with a prompt and model, optionally in an interactive terminal",
                 )
                 .with_parameters(vec![
                     ParameterMetadata::required("prompt", RuninatorType::String),
+                    ParameterMetadata::optional("interactive", RuninatorType::Boolean)
+                        .with_default(json!(false)),
                     ParameterMetadata::optional("model", RuninatorType::String)
                         .with_default(json!(default_model())),
                     ParameterMetadata::optional("binary", RuninatorType::String)

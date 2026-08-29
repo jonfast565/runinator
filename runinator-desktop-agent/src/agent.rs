@@ -476,6 +476,7 @@ fn control_name(kind: &ControlKind) -> &'static str {
         ControlKind::Cancel => "cancel",
         ControlKind::Pause => "pause",
         ControlKind::Resume => "resume",
+        ControlKind::Terminal => "terminal",
     }
 }
 

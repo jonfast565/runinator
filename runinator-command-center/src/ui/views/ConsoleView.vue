@@ -78,16 +78,15 @@
             title="Console unavailable"
             description="Using the console requires the console:use action. A line can start a workflow run, so it is a privilege rather than a view."
           />
-          <!-- clicking anywhere on the surface puts the caret back in the prompt, the way a
-               terminal emulator does. -->
           <div v-else class="terminal-surface flex min-h-0 flex-1 flex-col" @click="focusPrompt">
             <TerminalStatusBar
               :session="notebook.activeSession?.name ?? 'no session'"
               :busy="terminal.busy"
             />
-            <TerminalTranscript :entries="terminal.entries" :cells="notebook.cells" />
-            <TerminalPrompt
+            <ConsoleXterm
               ref="prompt"
+              :entries="terminal.entries"
+              :cells="notebook.cells"
               :busy="terminal.busy"
               :history="terminal.history"
               @submit="submit"
@@ -134,9 +133,8 @@ import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
-import TerminalPrompt from "../components/console/TerminalPrompt.vue";
+import ConsoleXterm from "../components/console/ConsoleXterm.vue";
 import TerminalStatusBar from "../components/console/TerminalStatusBar.vue";
-import TerminalTranscript from "../components/console/TerminalTranscript.vue";
 import { useConsoleStore } from "../adapters/pinia/console";
 import { useConsoleTerminalStore } from "../adapters/pinia/console-terminal";
 import { useOrgsStore } from "../adapters/pinia/orgs";
@@ -153,7 +151,7 @@ const { can } = useCan();
 // simply failing to load.
 const canUse = computed(() => can("console:use"));
 
-const prompt = ref<InstanceType<typeof TerminalPrompt> | null>(null);
+const prompt = ref<InstanceType<typeof ConsoleXterm> | null>(null);
 
 // one line of a bound value, so the scope panel stays scannable.
 function preview(value: JsonValue): string {

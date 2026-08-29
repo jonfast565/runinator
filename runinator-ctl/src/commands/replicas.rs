@@ -8,7 +8,7 @@ use super::*;
 use runinator_models::replicas::{ReplicaKind, ReplicaRecord, ReplicaStatus};
 use runinator_models::telemetry::ReplicaSample;
 
-use crate::cli::ReplicaCommands;
+use runinator_ctl_core::cli::ReplicaCommands;
 
 pub(super) async fn replicas(
     client: &Client,

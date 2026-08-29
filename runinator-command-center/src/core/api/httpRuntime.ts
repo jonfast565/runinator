@@ -559,6 +559,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `workflow_effects/${escape(arg(args, "effectId"))}/output`,
   },
+  control_workflow_effect_terminal: {
+    method: "POST",
+    path: (args) => `workflow_effects/${escape(arg(args, "effectId"))}/terminal`,
+    body: (args) => arg(args, "control"),
+  },
   settle_workflow_effect: {
     method: "POST",
     path: (args) => `workflow_effects/${escape(arg(args, "effectId"))}/settle`,

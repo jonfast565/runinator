@@ -1,62 +1,8 @@
 // pulling flags off a command line, and reading them back.
 
-import { ConsoleParseError } from "./tokenize";
 import type { ConsoleFlags } from "./types";
 
-export interface ParsedArguments {
-  args: string[];
-  flags: ConsoleFlags;
-}
-
-/// split tokens into positionals and flags.
-///
-/// `--name value`, `--name=value`, and a bare `--name` are all accepted. a flag listed in
-/// `booleans` never consumes the next token, which is what stops `--open list` from reading `list`
-/// as the value of `--open`.
-export function parseArguments(tokens: string[], booleans: string[] = []): ParsedArguments {
-  const args: string[] = [];
-  const flags: ConsoleFlags = {};
-  const boolean = new Set([...booleans, "json"]);
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-
-    if (!token.startsWith("--")) {
-      args.push(token);
-      continue;
-    }
-
-    const body = token.slice(2);
-
-    if (!body) {
-      throw new ConsoleParseError("`--` is not a flag");
-    }
-
-    const separator = body.indexOf("=");
-
-    if (separator >= 0) {
-      push(flags, body.slice(0, separator), body.slice(separator + 1));
-      continue;
-    }
-
-    const next = tokens.at(index + 1);
-
-    if (boolean.has(body) || next === undefined || next.startsWith("--")) {
-      flags[body] ??= true;
-      continue;
-    }
-
-    push(flags, body, next);
-    index += 1;
-  }
-
-  return { args, flags };
-}
-
-function push(flags: ConsoleFlags, name: string, value: string) {
-  const existing = flags[name];
-  flags[name] = existing === undefined || existing === true ? [value] : [...existing, value];
-}
+export class ConsoleParseError extends Error {}
 
 /// the single value of a flag, or undefined when it was not given.
 export function flag(flags: ConsoleFlags, name: string): string | undefined {

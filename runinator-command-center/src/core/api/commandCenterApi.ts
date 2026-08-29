@@ -1326,6 +1326,18 @@ export async function cancelWorkflowRun(
   });
 }
 
+export type WorkflowTerminalControl =
+  | { type: "input"; data: string }
+  | { type: "resize"; cols: number; rows: number }
+  | { type: "eof" };
+
+export async function controlWorkflowEffectTerminal(
+  effectId: string,
+  control: WorkflowTerminalControl,
+) {
+  return command<TaskResponse>("control_workflow_effect_terminal", { effectId, control });
+}
+
 export async function pauseWorkflowRun(
   workflowRunId: string,
   override?: ManagedRunOverrideOptions,

@@ -16,16 +16,18 @@ import { freezeCommands, triggerCommands } from "./commands/triggers";
 import { rexrapCommands } from "./commands/rexrap";
 import { workflowCommands } from "./commands/workflows";
 import type { ConsoleCommand } from "./types";
+import { ctlCatalog } from "./wasm-engine";
 
 const helpCommand: ConsoleCommand = {
   path: ["help"],
   usage: "help [command]",
   summary: "list the commands, or show one command's arguments",
   run: ({ args, print }) => {
+    const catalog = ctlCatalog();
     const topic = args.join(" ");
 
     if (topic) {
-      const matches = COMMANDS.filter((command) => command.path.join(" ").startsWith(topic));
+      const matches = catalog.filter((command) => command.path.join(" ").startsWith(topic));
 
       if (matches.length === 0) {
         throw new Error(`no console command '${topic}'`);
@@ -44,7 +46,7 @@ const helpCommand: ConsoleCommand = {
     print(
       table(
         ["command", "what it does"],
-        COMMANDS.map((command) => [`:${command.path.join(" ")}`, command.summary]),
+        catalog.map((command) => [`:${command.path.join(" ")}`, command.summary]),
       ),
     );
   },
@@ -78,73 +80,3 @@ export const COMMANDS: ConsoleCommand[] = [
   ...replicaCommands,
   ...agentCommands,
 ];
-
-/// the command a line selects, and the arguments left over.
-export interface CommandMatch {
-  command: ConsoleCommand;
-  rest: string[];
-}
-
-/// match the longest command path that prefixes the tokens.
-///
-/// longest-first is what lets `runs list` and `run workflow` coexist with a bare `run`: a shorter
-/// path never shadows a longer one that also matches.
-export function matchCommand(tokens: string[]): CommandMatch | null {
-  let best: CommandMatch | null = null;
-
-  for (const command of COMMANDS) {
-    const matches = command.path.every((word, index) => tokens[index] === word);
-
-    if (matches && (!best || command.path.length > best.command.path.length)) {
-      best = { command, rest: tokens.slice(command.path.length) };
-    }
-  }
-
-  return best;
-}
-
-/// the first word closest to `word`, when it is close enough to be a typo rather than a different
-/// word entirely.
-export function nearestCommand(word: string): string | null {
-  const limit = 1 + Math.floor(word.length / 3);
-  const ranked = [...new Set(COMMANDS.map((command) => command.path[0]))]
-    .map((candidate) => ({ candidate, distance: editDistance(word, candidate) }))
-    .filter((entry) => entry.distance <= limit)
-    .sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate));
-
-  return ranked.at(0)?.candidate ?? null;
-}
-
-function editDistance(left: string, right: string): number {
-  let previous = [...Array(right.length + 1).keys()];
-
-  for (let row = 0; row < left.length; row += 1) {
-    const current = [row + 1];
-
-    for (let column = 0; column < right.length; column += 1) {
-      const cost = left[row] === right[column] ? 0 : 1;
-      current.push(Math.min(previous[column] + cost, previous[column + 1] + 1, current[column] + 1));
-    }
-
-    previous = current;
-  }
-
-  return previous[right.length];
-}
-
-/// the words that may follow what has been typed, for tab completion.
-export function completions(tokens: string[], prefix: string): string[] {
-  const offered = new Set<string>();
-
-  for (const command of COMMANDS) {
-    const prefixes = command.path.slice(0, tokens.length);
-    const alignsSoFar = prefixes.every((word, index) => tokens[index] === word);
-    const next = command.path.at(tokens.length);
-
-    if (alignsSoFar && next?.startsWith(prefix)) {
-      offered.add(next);
-    }
-  }
-
-  return [...offered].sort();
-}

@@ -36,6 +36,11 @@ pub(crate) const WORKING_DIR_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "console.working_dir.missing",
     "Configured console working directory does not exist",
 );
+pub(crate) const TERMINAL_UNAVAILABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "CONSOLE010",
+    "console.terminal.unavailable",
+    "Failed to create interactive terminal",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -47,6 +52,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     TIMEOUT,
     INTERACTIVE_NOT_PERMITTED,
     WORKING_DIR_MISSING,
+    TERMINAL_UNAVAILABLE,
 ];
 
 impl ProviderErrors for ConsoleProvider {

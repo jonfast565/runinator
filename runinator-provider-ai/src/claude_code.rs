@@ -12,9 +12,11 @@ use runinator_models::{
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 use runinator_provider_support::process::ProcessOutputPump;
+use runinator_provider_support::terminal::{self, CommandBuilder, TerminalError};
 
 use crate::errors::{
-    CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INVALID_JSON, CLAUDE_SPAWN, CLAUDE_TIMEOUT,
+    CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INTERACTIVE_NOT_PERMITTED, CLAUDE_INVALID_JSON,
+    CLAUDE_SPAWN, CLAUDE_TIMEOUT,
 };
 use crate::params::{ClaudeCodeParams, parse_params};
 
@@ -26,6 +28,9 @@ pub(crate) fn run_claude_code(
     let params: ClaudeCodeParams = parse_params(request)?;
     if token.is_cancelled() {
         return Err(CLAUDE_CANCELED.bare());
+    }
+    if params.interactive {
+        return run_claude_interactive(request, params, sink, token);
     }
     let argv = build_claude_argv(&params);
 
@@ -64,6 +69,54 @@ pub(crate) fn run_claude_code(
     Ok(TaskExecutionResult {
         message: Some("Claude Code completed".into()),
         output_json: Some(parsed),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
+}
+
+fn run_claude_interactive(
+    request: &ProviderExecutionRequest,
+    params: ClaudeCodeParams,
+    sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
+) -> Result<TaskExecutionResult, SendableError> {
+    if !terminal::interactive_permitted() {
+        return Err(CLAUDE_INTERACTIVE_NOT_PERMITTED.error(
+            "route this action to a desktop worker (for example with `.runner(\"desktop\")`)",
+        ));
+    }
+    let mut command = CommandBuilder::new(&params.binary);
+    command.args(build_claude_interactive_argv(&params));
+    if let Some(dir) = runinator_provider_support::resolve_working_dir(
+        request.workspace_path.as_deref(),
+        params.working_dir.as_deref(),
+    )? {
+        command.cwd(dir);
+    }
+    for (key, value) in &params.env {
+        command.env(key, value);
+    }
+    let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
+    let status = match terminal::run(command, sink, token, timeout) {
+        Ok(status) => status,
+        Err(TerminalError::Canceled) => return Err(CLAUDE_CANCELED.bare()),
+        Err(TerminalError::TimedOut(timeout)) => {
+            return Err(CLAUDE_TIMEOUT.error(format!(
+                "Claude Code timed out after {} seconds",
+                timeout.as_secs()
+            )));
+        }
+        Err(error) => return Err(CLAUDE_SPAWN.error(error)),
+    };
+    if !status.success {
+        return Err(CLAUDE_EXIT_CODE.error(format!("claude exited with code {}", status.exit_code)));
+    }
+    Ok(TaskExecutionResult {
+        message: Some("Interactive Claude Code session completed".into()),
+        output_json: Some(json!({
+            "interactive": true,
+            "exit_code": status.exit_code,
+        })),
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
@@ -123,6 +176,21 @@ fn build_claude_argv(params: &ClaudeCodeParams) -> Vec<String> {
         argv.push(arg.clone());
     }
     // prompt is the trailing positional argument.
+    argv.push(params.prompt.clone());
+    argv
+}
+
+fn build_claude_interactive_argv(params: &ClaudeCodeParams) -> Vec<String> {
+    let mut argv = vec!["--model".into(), params.model.clone()];
+    if let Some(tools) = params.allowed_tools.as_deref() {
+        argv.push("--allowedTools".into());
+        argv.push(tools.into());
+    }
+    if let Some(mode) = params.permission_mode.as_deref() {
+        argv.push("--permission-mode".into());
+        argv.push(mode.into());
+    }
+    argv.extend(params.extra_args.iter().cloned());
     argv.push(params.prompt.clone());
     argv
 }

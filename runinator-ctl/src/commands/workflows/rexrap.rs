@@ -134,12 +134,3 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
     }
     Ok(())
 }
-
-impl CliTyping {
-    fn label(self) -> &'static str {
-        match self {
-            CliTyping::Strict => "strict",
-            CliTyping::Permissive => "permissive",
-        }
-    }
-}

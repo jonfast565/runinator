@@ -30,6 +30,8 @@ export interface WorkflowEffect {
   node_id?: string | null;
   request: JsonValue;
   status: string;
+  current_executor_replica_id?: string | null;
+  last_executor_replica_id?: string | null;
   result?: JsonValue | null;
   message?: string | null;
   created_at: number;

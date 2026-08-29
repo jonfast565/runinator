@@ -69,8 +69,13 @@ Primary runtime flow:
    duplicate taken at startup would stop being. The windows half also sets the console output code
    page to UTF-8 and restores it, because the interface draws through a handle that carries bytes
    where rust's own `Stdout` would have converted to utf-16. The command center's Console tab mirrors
-   the same surface over HTTP (`runinator-command-center/src/core/console/`), so a command added to
-   one console should be added to the other or explained in `:help` as `runinatorctl`-only.
+   the same surface over HTTP and renders it with xterm. `runinator-ctl-core` owns the clap tree and
+   portable console language; `runinator-ctl-wasm` compiles its validation, help catalog,
+   completion, and multiline readiness for the browser. Command Center keeps browser-safe execution
+   adapters under `runinator-command-center/src/core/console/commands/`. A command added to clap is
+   visible and validated in both consoles immediately; add a browser adapter when it is meaningful
+   there, or let Command Center report it as native-only. The WASM module is not a PTY and never
+   launches a process.
 
    `runinatorctl mcp` is the third front end onto that surface: a Model Context Protocol server on
    stdin/stdout (`src/commands/mcp/`), launched by an mcp client. It advertises **one tool per
@@ -101,14 +106,15 @@ Primary runtime flow:
    compile check would pass just as happily on a redirect that never took effect.
 
    `:help`, completion, and flag validation are all **derived**, never declared twice.
-   `commands/catalog.rs` walks the clap tree into one flat list of `(path, usage, summary)` and reads
+   `runinator-ctl-core/src/console/catalog.rs` walks the clap tree into one flat list of
+   `(path, usage, summary)` and reads
    an argument's possible values, defaults, and help straight off the `Arg`; only the console-local
    verbs (`META_COMMANDS`) are written down, because they have no clap counterpart. The web console
-   has no clap tree, so it reads the same facts back off each command's `usage` string
-   (`core/console/usage.ts`): which flags exist, which take a value, and which name a closed set.
-   That is what makes a mistyped flag an error there rather than silence — so a `usage` line that
-   omits a flag its `run` reads *breaks that flag*, and `__tests__/usage-parity.test.ts` fails on it.
-   Update the usage line in the same edit.
+   executes the same derivation inside `runinator-ctl-wasm`; do not recreate a TypeScript tokenizer,
+   command registry, usage parser, or completer. Its TypeScript command objects are dispatch adapters
+   only. Native-only functionality (processes, MCP stdio, unrestricted filesystem access) stays in
+   `runinator-ctl`; interactive workflow processes stay on the worker's PTY/ConPTY and stream raw
+   `terminal` chunks to Command Center's xterm surface.
 7. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
 There is also a Tauri `runinator-command-center` client. It discovers and calls the web service, compiles/edits packs, and presents runtime state; it never hosts a worker or executes provider actions. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.

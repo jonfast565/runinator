@@ -8,6 +8,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::Sender,
     },
     time::Duration,
 };
@@ -16,6 +17,7 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, BrokerError, ControlDelivery};
 use runinator_comm::{ConsumerProfile, ControlKind};
 use runinator_models::errors::{SendableError, error_code_or_unknown};
+use runinator_models::runs::ProviderTerminalControl;
 use runinator_plugin::{
     cancel::CancellationToken, load_libraries_from_path, plugin::Plugin, print_libs,
 };
@@ -43,6 +45,7 @@ pub(crate) struct InFlightAction {
     pub(crate) workflow_run_id: Uuid,
     pub(crate) token: CancellationToken,
     pub(crate) canceled_by_control: Arc<AtomicBool>,
+    pub(crate) terminal: Sender<ProviderTerminalControl>,
 }
 
 /// Everything the VM provider-effect loop needs. The standalone worker and desktop agent share
@@ -236,11 +239,14 @@ async fn handle_control_delivery(
         ControlKind::Cancel => "cancel",
         ControlKind::Pause => "pause",
         ControlKind::Resume => "resume",
+        ControlKind::Terminal => "terminal",
     });
-    events.handle(WorkerEvent::ControlReceived {
-        kind: control_kind,
-        workflow_run_id: command.workflow_run_id,
-    });
+    if control_kind != ControlKind::Terminal {
+        events.handle(WorkerEvent::ControlReceived {
+            kind: control_kind,
+            workflow_run_id: command.workflow_run_id,
+        });
+    }
     if control_kind == ControlKind::Cancel {
         let effects: Vec<InFlightAction> = {
             let guard = in_flight.lock().await;
@@ -258,6 +264,17 @@ async fn handle_control_delivery(
             effect.token.cancel();
         }
         info!(run_id = %command.workflow_run_id, effect_id = ?command.effect_id, canceled = effects.len(), "processed provider-effect cancellation");
+    } else if control_kind == ControlKind::Terminal
+        && let (Some(effect_id), Some(terminal)) = (command.effect_id, command.terminal)
+    {
+        let sender = in_flight
+            .lock()
+            .await
+            .get(&effect_id)
+            .map(|effect| effect.terminal.clone());
+        if let Some(sender) = sender {
+            let _ = sender.send(terminal);
+        }
     }
     broker
         .ack_control(consumer_id, delivery.delivery_id)

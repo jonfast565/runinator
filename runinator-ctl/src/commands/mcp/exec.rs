@@ -11,8 +11,8 @@ use runinator_models::value::Value;
 
 use super::capture::OutputCapture;
 use super::protocol;
-use crate::cli::{Commands, FunctionCommands, WorkflowCommands};
 use crate::commands::{Client, repl, run_command};
+use runinator_ctl_core::cli::{Commands, FunctionCommands, WorkflowCommands};
 
 /// a verb the server refuses to run, and what to do instead.
 ///

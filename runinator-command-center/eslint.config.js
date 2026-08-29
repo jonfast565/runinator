@@ -45,6 +45,7 @@ export default tseslint.config(
       "public/**",
       "coverage/**",
       "scripts/**",
+      "src/core/console/wasm/**",
       "*.config.*",
       "*.cjs",
     ],

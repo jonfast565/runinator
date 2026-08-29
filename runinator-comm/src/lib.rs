@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     providers::ProviderMetadata,
     replicas::ReplicaRegistrationRequest,
+    runs::ProviderTerminalControl,
     value::Value,
     workflow_vm::{
         UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
@@ -341,6 +342,8 @@ pub enum ControlKind {
     Cancel,
     Pause,
     Resume,
+    /// Deliver input or geometry to a provider-owned PTY without changing workflow state.
+    Terminal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,6 +365,10 @@ pub struct ControlCommand {
     /// deserialization of older messages) preserves the untargeted competing-consumer behavior.
     #[serde(default)]
     pub target: ActionTarget,
+    /// Present only when `kind` is `terminal`. Kept separate from `kind` so the established
+    /// cancel/pause/resume representation remains backward compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<ProviderTerminalControl>,
 }
 
 /// replica-scoped fleet-management command. unlike [`ControlCommand`], this is never associated
@@ -912,6 +919,7 @@ impl ControlCommand {
             workflow_node_run_id: None,
             effect_id: None,
             target: ActionTarget::Any,
+            terminal: None,
         }
     }
 
@@ -927,6 +935,7 @@ impl ControlCommand {
             workflow_node_run_id: Some(workflow_node_run_id),
             effect_id: None,
             target: ActionTarget::Any,
+            terminal: None,
         }
     }
 
@@ -937,6 +946,22 @@ impl ControlCommand {
             workflow_node_run_id: None,
             effect_id: Some(effect_id),
             target: ActionTarget::Any,
+            terminal: None,
+        }
+    }
+
+    pub fn for_terminal(
+        workflow_run_id: Uuid,
+        effect_id: Uuid,
+        terminal: ProviderTerminalControl,
+    ) -> Self {
+        Self {
+            workflow_run_id,
+            kind: ControlKind::Terminal,
+            workflow_node_run_id: None,
+            effect_id: Some(effect_id),
+            target: ActionTarget::Any,
+            terminal: Some(terminal),
         }
     }
 

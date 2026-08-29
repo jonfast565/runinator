@@ -7,10 +7,10 @@
 
 use clap::{Arg, ArgAction, Command, CommandFactory};
 
-use super::repl::ReplCommand;
+use super::ReplCommand;
 
 /// a console-local verb, declared rather than derived.
-pub(crate) struct MetaCommand {
+pub struct MetaCommand {
     /// the words that select it, e.g. `["run", "workflow"]`.
     pub path: &'static [&'static str],
     /// the full call shape, shown by `:help`.
@@ -42,7 +42,7 @@ const fn meta(
 /// these are the ones that only mean something inside a session — they move between sessions, read
 /// the durable notebook, or act on the cell that just ran — so they have no command-line
 /// counterpart to defer to.
-pub(crate) const META_COMMANDS: &[MetaCommand] = &[
+pub const META_COMMANDS: &[MetaCommand] = &[
     meta(
         &["help"],
         "help [command]",
@@ -117,7 +117,7 @@ pub(crate) const META_COMMANDS: &[MetaCommand] = &[
 
 /// one console verb: the words that select it, how it is called, and what it does.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CommandEntry {
+pub struct CommandEntry {
     pub path: Vec<String>,
     pub usage: String,
     pub summary: String,
@@ -136,7 +136,7 @@ impl CommandEntry {
 ///
 /// built once: walking the clap tree is not free, and completion asks for this on every keystroke
 /// that reaches `Tab`.
-pub(crate) fn catalog() -> &'static [CommandEntry] {
+pub fn catalog() -> &'static [CommandEntry] {
     static CATALOG: std::sync::OnceLock<Vec<CommandEntry>> = std::sync::OnceLock::new();
     CATALOG.get_or_init(|| {
         let mut entries: Vec<CommandEntry> = META_COMMANDS
@@ -157,7 +157,7 @@ pub(crate) fn catalog() -> &'static [CommandEntry] {
 ///
 /// longest-first is what lets `run workflow` and a future bare `run` coexist: a shorter path never
 /// shadows a longer one that also matches.
-pub(crate) fn match_meta(tokens: &[String]) -> Option<&'static MetaCommand> {
+pub fn match_meta(tokens: &[String]) -> Option<&'static MetaCommand> {
     META_COMMANDS
         .iter()
         .filter(|meta| {
@@ -191,7 +191,7 @@ fn collect(command: &Command, path: &mut Vec<String>, into: &mut Vec<CommandEntr
 }
 
 /// the clap command a path selects, for reading its arguments back.
-pub(crate) fn find(path: &[String]) -> Option<Command> {
+pub fn find(path: &[String]) -> Option<Command> {
     let mut current = ReplCommand::command();
     for segment in path {
         let next = current
@@ -204,7 +204,7 @@ pub(crate) fn find(path: &[String]) -> Option<Command> {
 }
 
 /// the arguments one command takes, as `(label, help)` pairs for `:help <command>`.
-pub(crate) fn arguments(path: &[String]) -> Vec<(String, String)> {
+pub fn arguments(path: &[String]) -> Vec<(String, String)> {
     let Some(command) = find(path) else {
         return Vec::new();
     };
@@ -217,7 +217,7 @@ pub(crate) fn arguments(path: &[String]) -> Vec<(String, String)> {
 
 // what an argument is. most carry a doc comment; the ones that do not still have a closed set or a
 // default worth saying, which beats an empty column.
-pub(crate) fn describe(argument: &Arg) -> String {
+pub fn describe(argument: &Arg) -> String {
     if let Some(help) = argument.get_help() {
         return one_line(&help.to_string());
     }
@@ -241,7 +241,7 @@ pub(crate) fn describe(argument: &Arg) -> String {
 }
 
 /// the long flags accepted at a point in the command tree.
-pub(crate) fn flag_names(path: &[String]) -> Vec<String> {
+pub fn flag_names(path: &[String]) -> Vec<String> {
     walk(path)
         .into_iter()
         .flat_map(|command| {
@@ -255,19 +255,19 @@ pub(crate) fn flag_names(path: &[String]) -> Vec<String> {
 }
 
 /// the values a flag accepts, when clap knows them as a closed set.
-pub(crate) fn flag_values(path: &[String], flag: &str) -> Vec<String> {
+pub fn flag_values(path: &[String], flag: &str) -> Vec<String> {
     argument(path, flag)
         .map(|argument| possible_values(&argument))
         .unwrap_or_default()
 }
 
 /// true when a flag consumes the word after it.
-pub(crate) fn flag_takes_value(path: &[String], flag: &str) -> bool {
+pub fn flag_takes_value(path: &[String], flag: &str) -> bool {
     argument(path, flag).is_some_and(|argument| takes_value(&argument))
 }
 
 /// what to type after a flag, as `label` and its help.
-pub(crate) fn flag_hint(path: &[String], flag: &str) -> Option<(String, String)> {
+pub fn flag_hint(path: &[String], flag: &str) -> Option<(String, String)> {
     let argument = argument(path, flag)?;
     Some((
         format!("--{flag} <{}>", value_name(&argument)),
@@ -276,7 +276,7 @@ pub(crate) fn flag_hint(path: &[String], flag: &str) -> Option<(String, String)>
 }
 
 /// what to type at the given positional slot, as `label` and its help.
-pub(crate) fn positional_hint(path: &[String], position: usize) -> Option<(String, String)> {
+pub fn positional_hint(path: &[String], position: usize) -> Option<(String, String)> {
     let command = find(path)?;
     let argument = command
         .get_arguments()
@@ -286,7 +286,7 @@ pub(crate) fn positional_hint(path: &[String], position: usize) -> Option<(Strin
 }
 
 /// the values a positional accepts, when clap knows them as a closed set.
-pub(crate) fn positional_values(path: &[String], position: usize) -> Vec<String> {
+pub fn positional_values(path: &[String], position: usize) -> Vec<String> {
     let Some(command) = find(path) else {
         return Vec::new();
     };
@@ -328,7 +328,7 @@ fn walk(path: &[String]) -> Vec<Command> {
     chain
 }
 
-pub(crate) fn possible_values(argument: &Arg) -> Vec<String> {
+pub fn possible_values(argument: &Arg) -> Vec<String> {
     argument
         .get_possible_values()
         .iter()
@@ -377,7 +377,7 @@ fn value_name(argument: &Arg) -> String {
         .unwrap_or_else(|| argument.get_id().as_str().to_uppercase())
 }
 
-pub(crate) fn takes_value(argument: &Arg) -> bool {
+pub fn takes_value(argument: &Arg) -> bool {
     !matches!(
         argument.get_action(),
         ArgAction::SetTrue | ArgAction::SetFalse | ArgAction::Count | ArgAction::Help
@@ -386,7 +386,7 @@ pub(crate) fn takes_value(argument: &Arg) -> bool {
 
 // `--help` is clap's, and `--json` is global and explained once in the help preamble rather than
 // repeated on all ninety commands.
-pub(crate) fn listed(argument: &Arg) -> bool {
+pub fn listed(argument: &Arg) -> bool {
     !argument.is_hide_set() && !matches!(argument.get_id().as_str(), "help" | "json" | "version")
 }
 

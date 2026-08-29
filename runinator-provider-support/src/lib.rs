@@ -1,6 +1,7 @@
 //! shared helpers for runinator provider crates.
 
 pub mod process;
+pub mod terminal;
 
 pub use runinator_models::errors::SendableError;
 pub use runinator_models::runs::ProviderExecutionRequest;

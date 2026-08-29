@@ -148,6 +148,17 @@ pub enum ProviderExecutionEvent {
     },
 }
 
+/// Input sent by an operator to a provider-owned terminal session. The worker routes these
+/// messages to the exact in-flight effect; providers that do not expose a terminal simply never
+/// take the receiver from their event sink.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderTerminalControl {
+    Input { data: String },
+    Resize { cols: u16, rows: u16 },
+    Eof,
+}
+
 impl From<ProviderExecutionEvent> for Option<NewRunChunk> {
     fn from(event: ProviderExecutionEvent) -> Self {
         match event {

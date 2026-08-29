@@ -10,3 +10,8 @@ declare module "*.vue" {
   const component: DefineComponent<object, object, unknown>;
   export default component;
 }
+
+declare module "./core/console/wasm/runinator_ctl_wasm.js" {
+  export default function init(input?: { module_or_path: string | URL }): Promise<unknown>;
+  export function invoke(request: string): string;
+}

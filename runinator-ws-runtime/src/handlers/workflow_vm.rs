@@ -12,9 +12,12 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use runinator_broker_core::Broker;
+use runinator_comm::ControlCommand;
 use runinator_engine::services::WorkflowFiles;
 use runinator_models::{
     auth::{AuthContext, Permission},
+    runs::ProviderTerminalControl,
     value::Value,
     web::TaskResponse,
     workflow_vm::WorkflowVmCursor,
@@ -352,6 +355,72 @@ pub async fn list_effect_output<T: AuthorizationStore + RuntimeStore + WorkflowV
     }
 }
 
+/// Route operator input to the desktop worker currently holding an interactive provider effect.
+/// The payload is intentionally ephemeral; terminal output remains durable, but replaying input
+/// after a worker reconnect would be unsafe.
+pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(effect_id): Path<Uuid>,
+    Json(control): Json<ProviderTerminalControl>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let effect = match db.fetch_workflow_effect(effect_id).await {
+        Ok(Some(effect)) => effect,
+        Ok(None) => return not_found(format!("workflow effect {effect_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(effect.workflow_run_id, Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    let interactive_action = matches!(
+        &effect.request,
+        runinator_models::workflow_vm::WorkflowEffectRequest::Action {
+            provider,
+            function,
+            input,
+            ..
+        } if ((provider == "console" && function == "run")
+            || (provider == "ai-command" && function == "claude_code"))
+            && input.get("interactive").and_then(Value::as_bool) == Some(true)
+    );
+    if !interactive_action {
+        return runinator_ws_core::responses::bad_request(
+            "terminal control is only available for interactive provider effects",
+        );
+    }
+    if matches!(&control, ProviderTerminalControl::Input { data } if data.len() > 65_536) {
+        return runinator_ws_core::responses::bad_request(
+            "terminal input chunks may not exceed 64 KiB",
+        );
+    }
+    if effect.status != WorkflowEffectStatus::Running {
+        return runinator_ws_core::responses::bad_request(
+            "terminal control requires a running effect",
+        );
+    }
+    let Some(replica_id) = effect.current_executor_replica_id else {
+        return runinator_ws_core::responses::bad_request(
+            "the terminal worker has not claimed this effect yet",
+        );
+    };
+    let command = ControlCommand::for_terminal(effect.workflow_run_id, effect.id, control)
+        .targeting_replica(replica_id);
+    match broker.publish_control(command).await {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: true,
+                message: format!("Terminal control sent to effect {effect_id}"),
+            })),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
 /// Stream an artifact owned by one durable VM effect-output event. This deliberately addresses the
 /// event rather than a legacy run_artifacts row: the journal output is the authoritative history.
 pub async fn download_effect_artifact<
@@ -591,6 +660,10 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore + FileStore
             get(list_effect_output::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_effects/{id}/terminal",
+            post(control_effect_terminal::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_effects/{id}/output/{event_id}/artifact",
             get(download_effect_artifact::<T>).layer(Extension(pool.clone())),
         )
@@ -613,6 +686,19 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "continuations",
         Example::WorkflowRun,
+    ),
+    endpoint(
+        "post",
+        "/workflow_effects/{id}/terminal",
+        "Workflow VM",
+        "Control an interactive effect terminal",
+        "Routes terminal input, resize, or EOF to the worker currently executing an interactive console effect.",
+        false,
+        None,
+        &[],
+        202,
+        "terminal control accepted",
+        Example::TaskResponse,
     ),
     endpoint(
         "get",

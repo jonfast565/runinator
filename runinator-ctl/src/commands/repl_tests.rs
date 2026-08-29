@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::cli::{RunCommands, WorkflowCommands};
+use runinator_ctl_core::cli::{Commands, RunCommands, WorkflowCommands};
 
 fn tokens(line: &str) -> Vec<String> {
     tokenize(line).expect("line tokenizes")

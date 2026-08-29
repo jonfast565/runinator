@@ -42,6 +42,7 @@ export default defineConfig({
     __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   build: {
+    target: "es2022",
     rollupOptions: {
       output: {
         manualChunks(id) {

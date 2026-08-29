@@ -14,6 +14,7 @@ ratatui = "0.30"
 reedline = "0.50.0"
 runinator-api = { path = "../runinator-api" }
 runinator-comm = { path = "../runinator-comm" }
+runinator-ctl-core = { path = "../runinator-ctl-core" }
 runinator-models = { path = "../runinator-models" }
 runinator-pack = { path = "../runinator-pack", default-features = false }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }

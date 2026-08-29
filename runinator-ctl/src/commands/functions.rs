@@ -3,7 +3,7 @@ use super::*;
 use runinator_models::functions::{FunctionCatalogEntry, FunctionPackage, FunctionPackageDetail};
 use runinator_pack::functions::FunctionSource;
 
-use crate::cli::FunctionCommands;
+use runinator_ctl_core::cli::FunctionCommands;
 
 pub(super) async fn functions(
     client: &Client,

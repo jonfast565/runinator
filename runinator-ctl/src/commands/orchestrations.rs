@@ -2,7 +2,7 @@ use super::*;
 
 use runinator_models::orchestration::{OrchestrationBinding, OrchestrationEventReduction};
 
-use crate::cli::{OrchestrationAdapterCommands, OrchestrationCommands};
+use runinator_ctl_core::cli::{OrchestrationAdapterCommands, OrchestrationCommands};
 
 const WATCH_INTERVAL_MINIMUM: u64 = 1;
 

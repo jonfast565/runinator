@@ -17,6 +17,8 @@ pub(crate) struct ClaudeCodeParams {
     pub model: String,
     pub prompt: String,
     #[serde(default)]
+    pub interactive: bool,
+    #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
     pub allowed_tools: Option<String>,

@@ -2,7 +2,7 @@ use super::*;
 
 use runinator_models::pipelines::{Pipeline, PipelineRun};
 
-use crate::cli::PipelineCommands;
+use runinator_ctl_core::cli::PipelineCommands;
 
 /// how often a followed pipeline run is re-read.
 const FOLLOW_INTERVAL: Duration = Duration::from_secs(2);

@@ -1,6 +1,5 @@
 mod auth;
 mod banner;
-mod cli;
 mod commands;
 mod output;
 mod params;
@@ -9,7 +8,7 @@ mod tui;
 
 use clap::Parser;
 
-use crate::cli::{Cli, Commands, FunctionCommands, WorkflowCommands};
+use runinator_ctl_core::cli::{Cli, Commands, FunctionCommands, WorkflowCommands};
 use service::CtlService;
 
 #[tokio::main]

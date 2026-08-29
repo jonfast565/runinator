@@ -6,7 +6,7 @@
 // the session's history, which is why a command never appears in `:history`.
 
 import { executeCommand } from "../console/execute";
-import { ConsoleParseError } from "../console/tokenize";
+import { ConsoleParseError } from "../console/options";
 import type { ConsoleOutput, ConsoleSessionPort } from "../console/types";
 import { createStore } from "./event-bus";
 import type { ConsoleService } from "./console";

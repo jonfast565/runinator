@@ -18,7 +18,7 @@ use runinator_models::value::Value;
 
 use super::exec;
 use super::protocol::object_schema;
-use crate::commands::catalog::{self, CommandEntry};
+use runinator_ctl_core::console::catalog::{self, CommandEntry};
 
 /// the prefix every generated tool name carries, so runinator's tools are one visible group in a
 /// client that has several servers connected.

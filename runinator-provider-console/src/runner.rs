@@ -14,10 +14,11 @@ use runinator_models::{
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 use runinator_provider_support::process::ProcessOutputPump;
+use runinator_provider_support::terminal::{self, CommandBuilder, TerminalError};
 
 use crate::errors::{
     CANCELED, INTERACTIVE_NOT_PERMITTED, NONZERO_EXIT, STDERR_UNAVAILABLE, STDOUT_UNAVAILABLE,
-    TIMEOUT, WORKING_DIR_MISSING,
+    TERMINAL_UNAVAILABLE, TIMEOUT, WORKING_DIR_MISSING,
 };
 use crate::params::{ConsoleResult, parse_params, to_runtime_error};
 
@@ -54,6 +55,15 @@ fn build_shell_command(
     request: &ProviderExecutionRequest,
 ) -> Result<Command, SendableError> {
     let mut command = runinator_platform::shell::shell_command(command_text);
+    if let Some(dir) = resolved_working_dir(request)? {
+        command.current_dir(&dir);
+    }
+    Ok(command)
+}
+
+fn resolved_working_dir(
+    request: &ProviderExecutionRequest,
+) -> Result<Option<PathBuf>, SendableError> {
     let dir = if request.workspace_path.is_some() {
         runinator_provider_support::resolve_working_dir(request.workspace_path.as_deref(), None)?
     } else {
@@ -63,9 +73,9 @@ fn build_shell_command(
         if !dir.is_dir() {
             return Err(WORKING_DIR_MISSING.error(dir.display().to_string()));
         }
-        command.current_dir(&dir);
+        return Ok(Some(dir));
     }
-    Ok(command)
+    Ok(None)
 }
 
 pub(crate) fn execute_command(
@@ -78,25 +88,16 @@ pub(crate) fn execute_command(
     let started = Instant::now();
     let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
 
-    // interactive mode inherits the worker's stdio so the command runs in the operator's desktop
-    // session and can present its own prompts, such as browser-based `aws SSO login` or Keychain access
-    // dialog). there is no piped output to stream, so this path skips the reader threads. gated to
-    // workers that advertise an interactive desktop session: a headless cloud worker has no terminal
-    // to attach, so it rejects the request instead of hanging or failing obscurely.
+    // Interactive commands run in a real platform pseudo-terminal (PTY on Unix, ConPTY on Windows).
+    // The child retains normal terminal semantics while its merged terminal stream and input are
+    // owned by the worker and relayed to Command Center.
     if params.interactive {
         if !interactive_permitted() {
             return Err(INTERACTIVE_NOT_PERMITTED.error(
                 "set this action to run on a desktop worker agent (e.g. `.runner(\"desktop\")`)",
             ));
         }
-        let mut command = build_shell_command(&command_text, request)?;
-        command
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        let mut child = command.spawn().map_err(to_runtime_error)?;
-        let status = wait_for_child(&mut child, timeout, started, token)?;
-        return build_result(status, started, command_text);
+        return execute_interactive(request, sink, token, command_text, timeout, started);
     }
 
     let mut command = build_shell_command(&command_text, request)?;
@@ -118,6 +119,44 @@ pub(crate) fn execute_command(
     build_result(status, started, command_text)
 }
 
+fn execute_interactive(
+    request: &ProviderExecutionRequest,
+    sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
+    command_text: String,
+    timeout: Duration,
+    started: Instant,
+) -> Result<TaskExecutionResult, SendableError> {
+    let mut command = terminal_shell_command(&command_text);
+    if let Some(dir) = resolved_working_dir(request)? {
+        command.cwd(dir);
+    }
+    match terminal::run(command, sink, token, timeout) {
+        Ok(status) => build_result_parts(status.success, status.exit_code, started, command_text),
+        Err(TerminalError::Canceled) => Err(CANCELED.bare()),
+        Err(TerminalError::TimedOut(timeout)) => Err(TIMEOUT.error(format!(
+            "Console command timed out after {} seconds",
+            timeout.as_secs()
+        ))),
+        Err(error) => Err(TERMINAL_UNAVAILABLE.error(error)),
+    }
+}
+
+fn terminal_shell_command(command_text: &str) -> CommandBuilder {
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = CommandBuilder::new("cmd");
+        command.args(["/C", command_text]);
+        command
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut command = CommandBuilder::new("sh");
+        command.args(["-c", command_text]);
+        command
+    }
+}
+
 // build the task result from an exited child: success carries the console outcome, a non-zero exit
 // surfaces the shared error code. shared by the piped and interactive execution paths.
 fn build_result(
@@ -126,9 +165,18 @@ fn build_result(
     command_text: String,
 ) -> Result<TaskExecutionResult, SendableError> {
     let exit_code = status.code().unwrap_or(-1);
+    build_result_parts(status.success(), exit_code, started, command_text)
+}
+
+fn build_result_parts(
+    success: bool,
+    exit_code: i32,
+    started: Instant,
+    command_text: String,
+) -> Result<TaskExecutionResult, SendableError> {
     let duration_ms = started.elapsed().as_millis() as i64;
     let result = ConsoleResult {
-        success: status.success(),
+        success,
         exit_code,
         duration_ms,
         command: command_text,

@@ -14,8 +14,8 @@ use runinator_models::value::Value;
 
 use super::protocol::{object_schema, optional_str, structured_result, text_result};
 use super::schema;
-use crate::commands::catalog::{self, CommandEntry};
 use crate::output;
+use runinator_ctl_core::console::catalog::{self, CommandEntry};
 
 /// what the server tells a client it is, returned from `initialize`.
 pub(crate) const INSTRUCTIONS: &str = "Runinator schedules and runs workflows across a distributed \

@@ -152,6 +152,29 @@ fn control_command_round_trips_its_target_and_defaults_older_messages_to_any() {
 }
 
 #[test]
+fn terminal_control_round_trips_with_effect_and_replica_routing() {
+    use runinator_models::runs::ProviderTerminalControl;
+
+    let workflow_run_id = Uuid::now_v7();
+    let effect_id = Uuid::now_v7();
+    let replica_id = Uuid::now_v7();
+    let command = ControlCommand::for_terminal(
+        workflow_run_id,
+        effect_id,
+        ProviderTerminalControl::Input {
+            data: "hello\r".into(),
+        },
+    )
+    .targeting_replica(replica_id);
+    let decoded = ControlCommand::from_wire(&command.to_wire().unwrap()).unwrap();
+
+    assert_eq!(decoded.kind, ControlKind::Terminal);
+    assert_eq!(decoded.effect_id, Some(effect_id));
+    assert_eq!(decoded.target, ActionTarget::Replica { replica_id });
+    assert_eq!(decoded.terminal, command.terminal);
+}
+
+#[test]
 fn effect_results_round_trip_with_json() {
     let command = EffectCommand {
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,

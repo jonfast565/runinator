@@ -11,10 +11,10 @@ use runinator_platform::app_data::{app_data_dir, app_data_path};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cli::Cli,
     commands::{self, Result},
     output,
 };
+use runinator_ctl_core::cli::Cli;
 
 const SESSION_FILE: &str = "ctl-session.json";
 

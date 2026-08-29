@@ -4,7 +4,7 @@ use runinator_models::artifacts::ArtifactKind;
 use runinator_models::settings::SettingKind;
 use serde::{Deserialize, Serialize};
 
-use crate::cli::NamespaceCommands;
+use runinator_ctl_core::cli::NamespaceCommands;
 
 const PLAN_VERSION: u32 = 1;
 

@@ -123,7 +123,14 @@
                     <h2 class="m-0 text-base font-semibold text-fg">Step Output</h2>
                     <span class="text-xs text-fg-muted">Selected step diagnostics and logs</span>
                   </div>
+                  <WorkflowTerminalPanel
+                    v-if="isInteractiveEffect && selectedWorkflowEffect"
+                    :effect-id="selectedWorkflowEffect.id"
+                    :chunks="logChunks"
+                    :active="terminalActive"
+                  />
                   <LogPanel
+                    v-else
                     :chunks="logChunks"
                     :last-chunk-at="lastLogChunkAt"
                     :context="selectedLogContext"
@@ -256,6 +263,7 @@ import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import LogPanel from "../components/workflow/LogPanel.vue";
+import WorkflowTerminalPanel from "../components/workflow/WorkflowTerminalPanel.vue";
 import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
 import { useBulkSelection } from "../composables/useBulkSelection";
@@ -283,6 +291,35 @@ const lastLogChunkAt = ref(0);
 const runDetailScroller = ref<HTMLElement | null>(null);
 
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
+const selectedWorkflowEffect = computed(() =>
+  workflows.workflowRunDetail?.effects?.find(
+    (effect) => effect.id === workflows.selectedWorkflowNodeRunId,
+  ),
+);
+const isInteractiveEffect = computed(() => {
+  const request = selectedWorkflowEffect.value?.request;
+
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    return false;
+  }
+
+  const action = request as Record<string, unknown>;
+  const input =
+    action.input && typeof action.input === "object" && !Array.isArray(action.input)
+      ? (action.input as Record<string, unknown>)
+      : null;
+  return (
+    action.type === "action" &&
+    ((action.provider === "console" && action.function === "run") ||
+      (action.provider === "ai-command" && action.function === "claude_code")) &&
+    input?.interactive === true
+  );
+});
+const terminalActive = computed(
+  () =>
+    selectedWorkflowEffect.value?.status === "running" &&
+    Boolean(selectedWorkflowEffect.value.current_executor_replica_id),
+);
 const workflowNames = computed(() =>
   Object.fromEntries(
     workflows.workflows.flatMap((workflow) =>

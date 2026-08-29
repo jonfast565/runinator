@@ -62,6 +62,15 @@ impl From<CliTyping> for TypePolicy {
     }
 }
 
+impl CliTyping {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Permissive => "permissive",
+        }
+    }
+}
+
 /// CLI-facing provisioning backend, mapped to the shared `ProvisionBackend`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliProvisionBackend {
