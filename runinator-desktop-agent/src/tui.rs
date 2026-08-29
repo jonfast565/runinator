@@ -58,6 +58,7 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
         ],
     );
     tui::activity("desktop agent", "preparing credentials", None);
+    tui::register("enrollment", initial_enrollment_details(&runtime_config));
     tui::register(
         "worker",
         [
@@ -129,6 +130,7 @@ struct DashboardObserver;
 impl AgentObserver for DashboardObserver {
     fn on_status(&self, status: &AgentStatus) {
         tui::activity("desktop agent", status_summary(status), None);
+        tui::register("enrollment", enrollment_details(&status.connection));
         tui::gauge(
             "desktop agent",
             "actions in flight",
@@ -161,9 +163,55 @@ fn status_summary(status: &AgentStatus) -> String {
             format!("disconnected after {attempts} attempts: {reason}")
         }
         AgentConnection::ReenrollmentRequired { reason } => {
-            format!("re-enrollment required: {reason}")
+            format!("re-enrollment required: {reason}; restart with --enroll <token>")
         }
         connection => connection.as_str().to_string(),
+    }
+}
+
+/// The TUI cannot safely collect a secret in raw-mode/alternate-screen input, so it provides the
+/// equivalent recovery process directly in its enrollment card. `--enroll` works on a first start
+/// and intentionally supersedes the cached credential after the broker rejects it.
+fn initial_enrollment_details(
+    runtime_config: &runinator_worker::agent::AgentRuntimeConfig,
+) -> Vec<String> {
+    if runtime_config.enrollment_token.is_some() {
+        vec![
+            "Redeeming the supplied one-time enrollment token".to_string(),
+            "The token is not saved after enrollment".to_string(),
+        ]
+    } else if runtime_config.api_key.is_some() {
+        vec!["Using the configured API key".to_string()]
+    } else if runtime_config.credential_file.is_file() {
+        vec!["Using the saved desktop-agent credential".to_string()]
+    } else {
+        vec![
+            "First-time enrollment required".to_string(),
+            "Create a token in Command Center: Replicas → Enroll a machine".to_string(),
+            "Restart with: runinator-desktop-agent --tui --enroll <token>".to_string(),
+        ]
+    }
+}
+
+fn enrollment_details(connection: &AgentConnection) -> Vec<String> {
+    match connection {
+        AgentConnection::ReenrollmentRequired { reason } => vec![
+            "Saved broker credential was rejected".to_string(),
+            format!("Reason: {reason}"),
+            "Create a token in Command Center: Replicas → Enroll a machine".to_string(),
+            "Quit, then restart: runinator-desktop-agent --tui --enroll <token>".to_string(),
+        ],
+        AgentConnection::Connected => {
+            vec!["Credential accepted; broker access is active".to_string()]
+        }
+        AgentConnection::Registering => vec!["Preparing the agent credential".to_string()],
+        AgentConnection::Connecting | AgentConnection::Reconnecting { .. } => {
+            vec!["Credential prepared; connecting to the broker".to_string()]
+        }
+        AgentConnection::Disconnected { .. } => {
+            vec!["Credential retained; broker connection is stopped".to_string()]
+        }
+        AgentConnection::Stopped => vec!["Agent is stopped".to_string()],
     }
 }
 
