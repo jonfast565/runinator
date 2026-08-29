@@ -61,17 +61,11 @@
     </div>
     <div v-if="managedWorkspaces.length" class="summary-row">
       <span class="summary-label">Workspace affinity</span>
-      <span
-        >{{ managedWorkspaces.map((workspace) => `${workspace.scope}:${workspace.status}`).join(",
-        ") }}</span
-      >
+      <span>{{ managedWorkspaces.map((workspace) => `${workspace.scope}:${workspace.status}`).join(', ') }}</span>
     </div>
     <div v-if="managedOperations.length" class="summary-row">
       <span class="summary-label">External operations</span>
-      <span
-        >{{ managedOperations.map((operation) =>
-        `${operation.provider}.${operation.action}:${operation.status}`).join(", ") }}</span
-      >
+      <span>{{ managedOperations.map((operation) => `${operation.provider}.${operation.action}:${operation.status}`).join(', ') }}</span>
     </div>
     <div class="summary-row">
       <span class="text-xs text-fg-muted"
