@@ -9,10 +9,20 @@ const stepTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
   second: "2-digit",
+  fractionalSecondDigits: 3,
 });
 
 function stepTime(node: WorkflowNodeRun): string | null {
-  return node.started_at ?? node.created_at ?? null;
+  const timestamps = [node.started_at, node.created_at];
+  return (
+    timestamps.find((value) => typeof value === "string" && Number.isFinite(Date.parse(value))) ??
+    null
+  );
+}
+
+function timelineSequence(node: WorkflowNodeRun): number | null {
+  const value = node.state?.timeline_sequence;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** The time at which this step began, or was queued when it has not started yet. */
@@ -40,6 +50,17 @@ export function compareStepsAscending(left: WorkflowNodeRun, right: WorkflowNode
     return Number.isFinite(leftTime) ? -1 : 1;
   }
 
+  const leftSequence = timelineSequence(left);
+  const rightSequence = timelineSequence(right);
+
+  if (leftSequence !== null && rightSequence !== null && leftSequence !== rightSequence) {
+    return leftSequence - rightSequence;
+  }
+
+  if (leftSequence !== null || rightSequence !== null) {
+    return leftSequence !== null ? -1 : 1;
+  }
+
   // UUIDv7 IDs preserve the finer ordering when two events share a timestamp.
   return left.id.localeCompare(right.id);
 }
@@ -49,8 +70,7 @@ export function isFailedNode(node: WorkflowNodeRun): boolean {
 }
 
 export function timelineDotClass(status: string): string {
-  const base =
-    "relative z-[1] mt-[7px] size-[11px] rounded-full shadow-[0_0_0_2px_var(--surface)]";
+  const base = "relative z-[1] mt-[7px] size-[11px] rounded-full shadow-[0_0_0_2px_var(--surface)]";
 
   if (status === "succeeded") {
     return `${base} bg-success-fg`;

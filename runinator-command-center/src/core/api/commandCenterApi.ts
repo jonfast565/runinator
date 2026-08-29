@@ -993,6 +993,43 @@ function workflowEffectRequest(effect: WorkflowEffect): JsonRecord {
     : {};
 }
 
+/** Earliest durable journal boundary for each effect, used to order same-second executions. */
+function journalEffectSequences(journal: WorkflowJournalRecord[]): Map<string, number> {
+  const sequences = new Map<string, number>();
+
+  for (const record of journal) {
+    const entry = asJsonRecord(record.entry);
+    const effectId =
+      record.effect_id ?? (typeof entry.effect_id === "string" ? entry.effect_id : null);
+
+    if (effectId && !sequences.has(effectId)) {
+      sequences.set(effectId, record.sequence);
+    }
+  }
+
+  return sequences;
+}
+
+function usableTimestamp(value: string | null | undefined): boolean {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+/** Prefer a real timestamp over a legacy empty string or malformed value. */
+function mergeTimestamp(
+  materialized: string | null | undefined,
+  projected: string | null | undefined,
+): string | null | undefined {
+  if (usableTimestamp(materialized)) {
+    return materialized;
+  }
+
+  if (usableTimestamp(projected)) {
+    return projected;
+  }
+
+  return materialized ?? projected;
+}
+
 function projectedEffectNodeId(
   effect: WorkflowEffect,
   cursorByContinuation: Map<string, WorkflowVmCursor>,
@@ -1031,6 +1068,17 @@ function mergeWorkflowRunNodes(
         : [];
     }),
   );
+  const untimedIndexByNodeId = new Map<string, number[]>();
+
+  for (const [index, node] of merged.entries()) {
+    if (usableTimestamp(node.created_at) || usableTimestamp(node.started_at)) {
+      continue;
+    }
+
+    const indexes = untimedIndexByNodeId.get(node.node_id) ?? [];
+    indexes.push(index);
+    untimedIndexByNodeId.set(node.node_id, indexes);
+  }
 
   for (const node of projected) {
     const state = node.state;
@@ -1040,8 +1088,13 @@ function mergeWorkflowRunNodes(
       state.journal_entry_id === undefined
         ? state.effect_id
         : null;
+    const matchingUntimedRows = untimedIndexByNodeId.get(node.node_id) ?? [];
+    const matchingUntimedIndex =
+      matchingUntimedRows.length === 1 ? matchingUntimedRows[0] : undefined;
     const existingIndex =
-      indexById.get(node.id) ?? (effectId ? indexByEffectId.get(effectId) : undefined);
+      indexById.get(node.id) ??
+      (effectId ? indexByEffectId.get(effectId) : undefined) ??
+      matchingUntimedIndex;
 
     if (existingIndex === undefined) {
       const index = merged.length;
@@ -1056,6 +1109,7 @@ function mergeWorkflowRunNodes(
     }
 
     const existing = merged[existingIndex];
+    untimedIndexByNodeId.delete(existing.node_id);
     merged[existingIndex] = {
       ...node,
       ...existing,
@@ -1063,9 +1117,9 @@ function mergeWorkflowRunNodes(
       parameters:
         Object.keys(existing.parameters).length > 0 ? existing.parameters : node.parameters,
       output_json: existing.output_json ?? node.output_json,
-      created_at: existing.created_at ?? node.created_at,
-      started_at: existing.started_at ?? node.started_at,
-      finished_at: existing.finished_at ?? node.finished_at,
+      created_at: mergeTimestamp(existing.created_at, node.created_at) ?? undefined,
+      started_at: mergeTimestamp(existing.started_at, node.started_at),
+      finished_at: mergeTimestamp(existing.finished_at, node.finished_at),
       message: existing.message ?? node.message,
     };
   }
@@ -1097,6 +1151,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
   );
   const journalNodesByEffect = journalEffectNodeIds(journal);
+  const journalSequencesByEffect = journalEffectSequences(journal);
   const failedNodeIds = new Set(
     journal.flatMap((record) => {
       const entry = asJsonRecord(record.entry);
@@ -1119,7 +1174,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
         attempt: 0,
         parameters: {},
-        state: { journal_entry_id: record.id },
+        state: { journal_entry_id: record.id, timeline_sequence: record.sequence },
         cursor_id: record.continuation_id ?? null,
         created_at: timestamp,
         started_at: timestamp,
@@ -1169,6 +1224,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         state: {
           effect_id: effect.id,
           journal_entry_id: record.id,
+          timeline_sequence: record.sequence,
           retry_available_at: entry.available_at ?? null,
         },
         cursor_id: effect.continuation_id,
@@ -1211,7 +1267,11 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         attempt: effect.attempt,
         parameters: request,
         output_json: effect.result ?? null,
-        state: { effect_id: effect.id, ...request },
+        state: {
+          effect_id: effect.id,
+          timeline_sequence: journalSequencesByEffect.get(effect.id) ?? effect.sequence,
+          ...request,
+        },
         cursor_id: effect.continuation_id,
         created_at: new Date(effect.created_at * 1000).toISOString(),
         started_at: new Date(effect.created_at * 1000).toISOString(),

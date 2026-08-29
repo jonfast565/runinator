@@ -69,6 +69,11 @@ function nodeStart(node: WorkflowNodeRun): number | null {
   return parseMs(node.started_at) ?? parseMs(node.created_at);
 }
 
+function timelineSequence(node: WorkflowNodeRun): number | null {
+  const value = node.state?.timeline_sequence;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 /** node end = finished_at, or `now` while still in flight, or its start for an instant node. */
 function nodeEnd(node: WorkflowNodeRun, now: number): number {
   const finished = parseMs(node.finished_at);
@@ -105,10 +110,7 @@ export function formatDuration(ms: number): string {
 /** build a proportional Gantt layout from a run's persisted node timing. Pure: `now` is injected so
  * the caller controls the live clock. Rows are ordered by start time; the longest active segment is
  * flagged as the critical-path bottleneck. */
-export function buildGanttLayout(
-  detail: WorkflowRunDetail | null,
-  now: number,
-): GanttLayout {
+export function buildGanttLayout(detail: WorkflowRunDetail | null, now: number): GanttLayout {
   const empty: GanttLayout = {
     rows: [],
     totalMs: 0,
@@ -162,6 +164,17 @@ export function buildGanttLayout(
 
     if (leftStart !== rightStart) {
       return leftStart - rightStart;
+    }
+
+    const leftSequence = timelineSequence(left);
+    const rightSequence = timelineSequence(right);
+
+    if (leftSequence !== null && rightSequence !== null && leftSequence !== rightSequence) {
+      return leftSequence - rightSequence;
+    }
+
+    if (leftSequence !== null || rightSequence !== null) {
+      return leftSequence !== null ? -1 : 1;
     }
 
     return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;

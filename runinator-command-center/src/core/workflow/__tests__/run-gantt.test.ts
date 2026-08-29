@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { buildGanttLayout, formatDuration } from "../run-gantt";
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../../domain/models";
 
-function node(partial: Partial<WorkflowNodeRun> & { id: string; node_id: string }): WorkflowNodeRun {
+function node(
+  partial: Partial<WorkflowNodeRun> & { id: string; node_id: string },
+): WorkflowNodeRun {
   return {
     workflow_run_id: "run-1",
     status: "succeeded",
@@ -14,7 +16,10 @@ function node(partial: Partial<WorkflowNodeRun> & { id: string; node_id: string 
   };
 }
 
-function detail(nodes: WorkflowNodeRun[], run?: Partial<WorkflowRunDetail["run"]>): WorkflowRunDetail {
+function detail(
+  nodes: WorkflowNodeRun[],
+  run?: Partial<WorkflowRunDetail["run"]>,
+): WorkflowRunDetail {
   return {
     run: {
       id: "run-1",
@@ -67,6 +72,28 @@ describe("buildGanttLayout", () => {
     expect(second.barLeftPct).toBeCloseTo(50, 5);
     expect(second.barWidthPct).toBeCloseTo(50, 5);
     expect(second.waitMs).toBe(3000);
+  });
+
+  it("uses journal order when two steps share the same timestamp", () => {
+    const layout = buildGanttLayout(
+      detail([
+        node({
+          id: "end",
+          node_id: "end",
+          created_at: "2026-07-16T00:00:00Z",
+          state: { timeline_sequence: 3 },
+        }),
+        node({
+          id: "greeting",
+          node_id: "greeting",
+          created_at: "2026-07-16T00:00:00Z",
+          state: { timeline_sequence: 1 },
+        }),
+      ]),
+      Date.parse("2026-07-16T00:00:10Z"),
+    );
+
+    expect(layout.rows.map((row) => row.nodeId)).toEqual(["greeting", "end"]);
   });
 
   it("flags the longest active segment as the critical-path bottleneck", () => {

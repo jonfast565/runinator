@@ -40,8 +40,21 @@ describe("run timeline formatting", () => {
     ]);
   });
 
-  it("formats valid timestamps locally and preserves invalid source values", () => {
+  it("uses the durable journal sequence when executions share the same second", () => {
+    const greeting = node("greeting", {
+      created_at: "2026-08-29T03:05:31Z",
+    });
+    greeting.state = { timeline_sequence: 1 };
+    const end = node("end", {
+      created_at: "2026-08-29T03:05:31Z",
+    });
+    end.state = { timeline_sequence: 3 };
+
+    expect([end, greeting].sort(compareStepsAscending)).toEqual([greeting, end]);
+  });
+
+  it("formats valid timestamps locally and ignores malformed source values", () => {
     expect(stepTimestamp(node("valid", { created_at: "2026-08-29T03:05:31Z" }))).not.toBe("");
-    expect(stepTimestamp(node("invalid", { created_at: "not-a-date" }))).toBe("not-a-date");
+    expect(stepTimestamp(node("invalid", { created_at: "not-a-date" }))).toBe("");
   });
 });

@@ -203,16 +203,18 @@ describe("command center catalog metadata API", () => {
           run: { id: "run-1", workflow_id: "workflow-1", status: "succeeded" },
           nodes: [
             {
-              id: "effect-mutex",
+              id: "legacy-mutex-row",
               workflow_run_id: "run-1",
               node_id: "mutex_1",
               status: "succeeded",
               attempt: 0,
               parameters: {},
               output_json: { acquired: true },
-              created_at: "2026-08-29T03:43:12.000Z",
-              started_at: "2026-08-29T03:43:12.000Z",
-              finished_at: "2026-08-29T03:43:12.000Z",
+              // Legacy rows commonly use empty strings for timestamps. The VM effect is the
+              // durable source and must replace those sentinels.
+              created_at: "",
+              started_at: "",
+              finished_at: "",
               message: null,
             },
           ],
@@ -259,9 +261,14 @@ describe("command center catalog metadata API", () => {
     const detail = await fetchWorkflowRun("run-1");
 
     expect(detail.nodes).toHaveLength(2);
+    expect(detail.nodes.find((node) => node.node_id === "mutex_1")).toMatchObject({
+      created_at: "2026-08-29T03:43:12.000Z",
+      started_at: "2026-08-29T03:43:12.000Z",
+      finished_at: "2026-08-29T03:43:12.000Z",
+    });
     expect(detail.nodes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "effect-mutex", node_id: "mutex_1" }),
+        expect.objectContaining({ id: "legacy-mutex-row", node_id: "mutex_1" }),
         expect.objectContaining({
           id: "effect-sync",
           node_id: "sync_claude",
