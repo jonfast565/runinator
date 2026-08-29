@@ -118,3 +118,15 @@ fn activity_age_only_resets_when_the_work_changes() {
     assert_eq!(activity.label, "executing std.echo");
     assert!(activity.since >= since);
 }
+
+#[test]
+fn desktop_console_describes_worker_output_chunks() {
+    let line = describe_worker_event(&WorkerEvent::EffectOutputChunk {
+        workflow_run_id: Uuid::nil(),
+        effect_id: Uuid::nil(),
+        stream: "stderr".into(),
+        content: "warning".into(),
+    });
+
+    assert_eq!(line, "[stderr · run 00000000] warning");
+}

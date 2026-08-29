@@ -1,11 +1,7 @@
 use std::{
-    io::{BufRead, BufReader},
     path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -13,10 +9,11 @@ use std::{
 use log::warn;
 use runinator_models::{
     errors::SendableError,
-    runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
+    runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
+use runinator_provider_support::process::ProcessOutputPump;
 
 use crate::errors::{
     CANCELED, INTERACTIVE_NOT_PERMITTED, NONZERO_EXIT, STDERR_UNAVAILABLE, STDOUT_UNAVAILABLE,
@@ -105,23 +102,18 @@ pub(crate) fn execute_command(
     let mut command = build_shell_command(&command_text, request)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(to_runtime_error)?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| STDOUT_UNAVAILABLE.bare())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| STDERR_UNAVAILABLE.bare())?;
-
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let stdout_thread = spawn_output_thread(stdout, Arc::clone(&stop_flag), "stdout", sink.clone());
-    let stderr_thread = spawn_output_thread(stderr, Arc::clone(&stop_flag), "stderr", sink);
-    let status = wait_for_child(&mut child, timeout, started, token)?;
-
-    stop_flag.store(true, Ordering::Relaxed);
-    let _ = stdout_thread.join();
-    let _ = stderr_thread.join();
+    let output = ProcessOutputPump::start_discarding(&mut child, sink).map_err(|error| {
+        if error.to_string().contains("stderr") {
+            STDERR_UNAVAILABLE.error(error)
+        } else {
+            STDOUT_UNAVAILABLE.error(error)
+        }
+    })?;
+    let status = wait_for_child(&mut child, timeout, started, token);
+    // always drain to EOF, including after a timeout or cancel killed the child, so tail output is
+    // emitted before the worker publishes the terminal result.
+    let _ = output.finish();
+    let status = status?;
 
     build_result(status, started, command_text)
 }
@@ -154,41 +146,6 @@ fn build_result(
     }
 }
 
-fn spawn_output_thread<R: std::io::Read + Send + 'static>(
-    reader: R,
-    stop_flag: Arc<AtomicBool>,
-    stream: &'static str,
-    sink: Option<Arc<dyn ProviderEventSink>>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let buf_reader = BufReader::new(reader);
-        for line in buf_reader.lines() {
-            if stop_flag.load(Ordering::Relaxed) {
-                break;
-            }
-            match line {
-                Ok(content) => {
-                    if let Some(sink) = &sink {
-                        sink.emit(ProviderExecutionEvent::Chunk {
-                            stream: stream.to_string(),
-                            content,
-                        });
-                    }
-                }
-                Err(err) => {
-                    if let Some(sink) = &sink {
-                        sink.emit(ProviderExecutionEvent::Chunk {
-                            stream: "stderr".into(),
-                            content: format!("Error reading {stream}: {err}"),
-                        });
-                    }
-                    break;
-                }
-            }
-        }
-    })
-}
-
 #[cfg(test)]
 #[path = "runner_tests.rs"]
 mod runner_tests;
@@ -219,7 +176,11 @@ fn wait_for_child(
                     )));
                 }
             }
-            Err(err) => return Err(to_runtime_error(err)),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(to_runtime_error(err));
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }

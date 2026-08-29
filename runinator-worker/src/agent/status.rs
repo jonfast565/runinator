@@ -257,7 +257,7 @@ impl AgentMetrics {
                     duration_ms: *duration_ms,
                 });
             }
-            WorkerEvent::ControlReceived { .. } => {}
+            WorkerEvent::EffectOutputChunk { .. } | WorkerEvent::ControlReceived { .. } => {}
         }
     }
 }

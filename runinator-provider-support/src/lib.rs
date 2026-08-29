@@ -1,5 +1,7 @@
 //! shared helpers for runinator provider crates.
 
+pub mod process;
+
 pub use runinator_models::errors::SendableError;
 pub use runinator_models::runs::ProviderExecutionRequest;
 pub use serde::de::DeserializeOwned;

@@ -71,6 +71,10 @@ impl StatusReporter {
     }
 
     pub fn worker_event(&self, event: &WorkerEvent) {
+        if matches!(event, WorkerEvent::EffectOutputChunk { .. }) {
+            self.observer.on_worker_event(event);
+            return;
+        }
         self.update(|status| status.metrics.apply(event));
         self.observer.on_worker_event(event);
     }

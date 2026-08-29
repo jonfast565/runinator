@@ -1,11 +1,14 @@
 use std::{
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
 
 use runinator_models::errors::SendableError;
 use runinator_plugin::cancel::CancellationToken;
+use runinator_plugin::provider::ProviderEventSink;
+use runinator_provider_support::process::ProcessOutputPump;
 
 use crate::errors::{CANCELED, NONZERO_EXIT, TIMEOUT};
 
@@ -20,8 +23,9 @@ pub(crate) fn run_command(
     args: &[&str],
     timeout_secs: i64,
     token: &CancellationToken,
+    sink: Option<&Arc<dyn ProviderEventSink>>,
 ) -> Result<String, SendableError> {
-    let output = run_command_output(program, args, timeout_secs, token)?;
+    let output = run_command_output(program, args, timeout_secs, token, sink)?;
     if !output.success {
         return Err(NONZERO_EXIT.error(output.stderr));
     }
@@ -33,6 +37,7 @@ pub(crate) fn run_command_output(
     args: &[&str],
     timeout_secs: i64,
     token: &CancellationToken,
+    sink: Option<&Arc<dyn ProviderEventSink>>,
 ) -> Result<CommandOutput, SendableError> {
     let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
     let started = Instant::now();
@@ -41,6 +46,25 @@ pub(crate) fn run_command_output(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let output = ProcessOutputPump::start(&mut child, sink.cloned())?;
+    let status = wait_for_child(&mut child, program, timeout, started, token);
+    let output = output.finish();
+    let status = status?;
+
+    Ok(CommandOutput {
+        success: status.success(),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+fn wait_for_child(
+    child: &mut Child,
+    program: &str,
+    timeout: Duration,
+    started: Instant,
+    token: &CancellationToken,
+) -> Result<ExitStatus, SendableError> {
     loop {
         if token.is_cancelled() {
             let _ = child.kill();
@@ -55,16 +79,15 @@ pub(crate) fn run_command_output(
                 timeout.as_secs()
             )));
         }
-        if child.try_wait()?.is_some() {
-            break;
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Box::new(error));
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }
-
-    let output = child.wait_with_output()?;
-    Ok(CommandOutput {
-        success: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    })
 }

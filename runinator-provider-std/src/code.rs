@@ -13,7 +13,8 @@ use runinator_models::{
 };
 use runinator_plugin::{cancel::CancellationToken, provider::ProviderEventSink};
 use runinator_sandbox::{
-    ContainerRunner, ContainerSpec, DockerRunner, Mount, SandboxError, SandboxLimits,
+    ContainerRunner, ContainerSpec, DockerRunner, LineSink, Mount, SandboxError, SandboxLimits,
+    Stream,
 };
 use uuid::Uuid;
 
@@ -44,6 +45,15 @@ struct CodeRuntime {
     setup_script: String,
 }
 
+struct DockerRun<'a> {
+    image: &'a str,
+    language: &'a str,
+    command: &'a [String],
+    work_dir: &'a Path,
+    context: &'a Value,
+    timeout_secs: i64,
+}
+
 pub(crate) fn execute_code(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
@@ -52,18 +62,19 @@ pub(crate) fn execute_code(
     let code = parse_request(request)?;
     let language = adapter_for(&code.language)?;
     let work_dir = prepare_work_dir(request, language, &code.source, &code.runtime)?;
+    let command = run_command(language.execute());
     let output = run_docker(
-        &code.runtime.image,
-        language.canonical(),
-        &run_command(language.execute()),
-        &work_dir,
-        &code.context,
-        request.timeout_secs,
+        DockerRun {
+            image: &code.runtime.image,
+            language: language.canonical(),
+            command: &command,
+            work_dir: &work_dir,
+            context: &code.context,
+            timeout_secs: request.timeout_secs,
+        },
+        sink,
         token,
     )?;
-
-    emit_output(&sink, "stdout", &output.result.stdout);
-    emit_output(&sink, "stderr", &output.result.stderr);
 
     if !output.result.succeeded() {
         return Err(CODE_FAILED.error(format!(
@@ -222,40 +233,37 @@ struct DockerOutput {
 // port does change is that output is now bounded and drained concurrently — previously a snippet
 // writing more than a pipe buffer deadlocked and died on its timeout.
 fn run_docker(
-    image: &str,
-    language: &str,
-    command: &[String],
-    work_dir: &Path,
-    context: &Value,
-    timeout_secs: i64,
+    run: DockerRun<'_>,
+    sink: Option<Arc<dyn ProviderEventSink>>,
     token: CancellationToken,
 ) -> Result<DockerOutput, SendableError> {
-    let runtime_dir = work_dir.join("runtime");
+    let runtime_dir = run.work_dir.join("runtime");
     fs::create_dir_all(&runtime_dir)
         .map_err(|err| INVALID_CODE.error(format!("failed to create code runtime dir: {err}")))?;
     let context_path = runtime_dir.join(CONTEXT_FILE);
     let output_path = runtime_dir.join(OUTPUT_FILE);
-    let input = serde_json::to_string(context)
+    let input = serde_json::to_string(run.context)
         .map_err(|err| INVALID_CODE.error(format!("failed to encode code context: {err}")))?;
     fs::write(&context_path, &input)
         .map_err(|err| INVALID_CODE.error(format!("failed to write code context: {err}")))?;
 
-    let spec = ContainerSpec::new(image, "runinator-code")
-        .with_command(command.to_vec())
+    let spec = ContainerSpec::new(run.image, "runinator-code")
+        .with_command(run.command.to_vec())
         .with_working_dir(WORK_DIR)
-        .with_mount(Mount::read_only(work_dir, WORK_DIR))
+        .with_mount(Mount::read_only(run.work_dir, WORK_DIR))
         .with_mount(Mount::writable(&runtime_dir, RUNTIME_DIR))
         .with_env("RUNINATOR_CONTEXT", format!("{RUNTIME_DIR}/{CONTEXT_FILE}"))
         .with_env("RUNINATOR_OUTPUT", format!("{RUNTIME_DIR}/{OUTPUT_FILE}"))
-        .with_env("RUNINATOR_LANGUAGE", language)
+        .with_env("RUNINATOR_LANGUAGE", run.language)
         .with_stdin(input.into_bytes())
         .with_limits(SandboxLimits::compatible(Duration::from_secs(
-            timeout_secs.max(1) as u64,
+            run.timeout_secs.max(1) as u64,
         )));
 
     let cancel = move || token.is_cancelled();
+    let logs = sink.map(|sink| Arc::new(EventLineSink(sink)) as Arc<dyn LineSink>);
     let result = DockerRunner::new()
-        .run(&spec, None, &cancel)
+        .run(&spec, logs, &cancel)
         .map_err(|err| match err {
             SandboxError::Cancelled => CODE_FAILED.error("code execution canceled"),
             SandboxError::TimedOut(seconds) => {
@@ -270,14 +278,13 @@ fn run_docker(
     })
 }
 
-fn emit_output(sink: &Option<Arc<dyn ProviderEventSink>>, stream: &str, text: &str) {
-    let Some(sink) = sink else {
-        return;
-    };
-    for line in text.lines() {
-        sink.emit(ProviderExecutionEvent::Chunk {
-            stream: stream.to_string(),
-            content: line.to_string(),
+struct EventLineSink(Arc<dyn ProviderEventSink>);
+
+impl LineSink for EventLineSink {
+    fn line(&self, stream: Stream, text: &str) {
+        self.0.emit(ProviderExecutionEvent::Chunk {
+            stream: stream.as_str().to_string(),
+            content: text.to_string(),
         });
     }
 }

@@ -429,6 +429,10 @@ impl AgentObserver for DesktopObserver {
     }
 
     fn on_worker_event(&self, event: &WorkerEvent) {
+        if matches!(event, WorkerEvent::EffectOutputChunk { .. }) {
+            log_line(&self.shared, describe_worker_event(event));
+            return;
+        }
         let activity = match event {
             WorkerEvent::EffectStarted {
                 provider, function, ..
@@ -438,6 +442,7 @@ impl AgentObserver for DesktopObserver {
             WorkerEvent::ControlReceived { kind, .. } => {
                 format!("handling {} control", control_name(kind))
             }
+            WorkerEvent::EffectOutputChunk { .. } => unreachable!(),
         };
         if let Ok(mut guard) = self.shared.lock() {
             set_activity(&mut guard.worker_activity, activity);
@@ -534,6 +539,12 @@ fn describe_worker_event(event: &WorkerEvent) -> String {
                 ),
             }
         }
+        WorkerEvent::EffectOutputChunk {
+            workflow_run_id,
+            stream,
+            content,
+            ..
+        } => format!("[{stream} · run {}] {content}", short_id(workflow_run_id)),
         WorkerEvent::ControlReceived {
             kind,
             workflow_run_id,

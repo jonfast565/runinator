@@ -370,6 +370,7 @@ async fn process_provider_effect(
         broker.clone(),
         api_client.clone(),
         result_outbox.clone(),
+        events.clone(),
     ));
     let outcome = executor::execute_task(
         &providers,
@@ -393,6 +394,17 @@ async fn process_provider_effect(
         return Ok(());
     }
 
+    // Providers can report output live through the event sink or return collected chunks in their
+    // terminal result (notably older plugins). Normalize both forms onto the same effect-output
+    // channel so the host does not silently lose logs based on which provider ABI path was used.
+    if let Some(result) = &outcome.execution_result {
+        for chunk in &result.chunks {
+            output_sink.emit(runinator_models::runs::ProviderExecutionEvent::Chunk {
+                stream: chunk.stream.clone(),
+                content: chunk.content.clone(),
+            });
+        }
+    }
     output_sink.flush().await?;
 
     if let Some(result) = &outcome.execution_result {
@@ -611,6 +623,7 @@ struct EffectOutputSink {
     broker: Arc<dyn Broker>,
     uploader: Arc<crate::artifact_upload::ArtifactUploader>,
     outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
+    events: Arc<dyn crate::events::WorkerEventSink>,
     handle: tokio::runtime::Handle,
     pending: StdMutex<Vec<tokio::task::JoinHandle<Result<(), SendableError>>>>,
 }
@@ -621,12 +634,14 @@ impl EffectOutputSink {
         broker: Arc<dyn Broker>,
         api_client: AsyncApiClient<StaticLocator>,
         outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
+        events: Arc<dyn crate::events::WorkerEventSink>,
     ) -> Self {
         Self {
             command,
             broker,
             uploader: crate::artifact_upload::ArtifactUploader::new(api_client),
             outbox,
+            events,
             handle: tokio::runtime::Handle::current(),
             pending: StdMutex::new(Vec::new()),
         }
@@ -659,6 +674,13 @@ impl ProviderEventSink for EffectOutputSink {
     fn emit(&self, event: runinator_models::runs::ProviderExecutionEvent) {
         match event {
             runinator_models::runs::ProviderExecutionEvent::Chunk { stream, content } => {
+                self.events
+                    .handle(crate::events::WorkerEvent::EffectOutputChunk {
+                        workflow_run_id: self.command.workflow_run_id,
+                        effect_id: self.command.effect_id,
+                        stream: stream.clone(),
+                        content: content.clone(),
+                    });
                 let broker = self.broker.clone();
                 let command = self.command.clone();
                 let outbox = self.outbox.clone();

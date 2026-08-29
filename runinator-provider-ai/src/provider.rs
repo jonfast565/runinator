@@ -72,7 +72,7 @@ impl Provider for AiCommandProvider {
         match request.action_function.as_str() {
             "claude_code" => run_claude_code(&request, sink, token),
             // legacy default: shell-command execution.
-            _ => run_shell_command(&request, token),
+            _ => run_shell_command(&request, sink, token),
         }
     }
 }

@@ -1,5 +1,6 @@
 use std::io::Write;
-use std::process::{Child, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -10,12 +11,15 @@ use runinator_models::{
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
+use runinator_plugin::provider::ProviderEventSink;
+use runinator_provider_support::process::ProcessOutputPump;
 
 use crate::errors::{CANCELED, INVALID_JSON, NONZERO_EXIT, TIMEOUT};
 use crate::params::{AiCommandParams, parse_params};
 
 pub(crate) fn run_shell_command(
     request: &ProviderExecutionRequest,
+    sink: Option<Arc<dyn ProviderEventSink>>,
     token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: AiCommandParams = parse_params(request)?;
@@ -34,19 +38,17 @@ pub(crate) fn run_shell_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let output = ProcessOutputPump::start(&mut child, sink)?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(serde_json::to_string(&input)?.as_bytes())?;
     }
-    if token.is_cancelled() {
-        let _ = child.kill();
-        return Err(CANCELED.bare());
+    let status = wait_with_timeout(&mut child, request.timeout_secs, token);
+    let output = output.finish();
+    let status = status?;
+    if !status.success() {
+        return Err(NONZERO_EXIT.error(&output.stderr));
     }
-    let output = wait_with_timeout(child, request.timeout_secs, token)?;
-    if !output.status.success() {
-        return Err(NONZERO_EXIT.error(String::from_utf8_lossy(&output.stderr)));
-    }
-    let stdout = String::from_utf8(output.stdout)?;
-    let parsed: Value = serde_json::from_str(&stdout)
+    let parsed: Value = serde_json::from_str(&output.stdout)
         .map_err(|err| INVALID_JSON.error(format!("AI command stdout must be JSON: {err}")))?;
     Ok(TaskExecutionResult {
         message: Some("AI command completed".into()),
@@ -57,10 +59,10 @@ pub(crate) fn run_shell_command(
 }
 
 fn wait_with_timeout(
-    mut child: Child,
+    child: &mut Child,
     timeout_secs: i64,
     token: CancellationToken,
-) -> Result<std::process::Output, SendableError> {
+) -> Result<ExitStatus, SendableError> {
     let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
     let started = Instant::now();
     loop {
@@ -77,10 +79,14 @@ fn wait_with_timeout(
                 timeout.as_secs()
             )));
         }
-        if child.try_wait()?.is_some() {
-            return child
-                .wait_with_output()
-                .map_err(|err| -> SendableError { Box::new(err) });
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Box::new(error));
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }

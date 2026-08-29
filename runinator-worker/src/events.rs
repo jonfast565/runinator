@@ -50,6 +50,13 @@ pub enum WorkerEvent {
         duration_ms: i64,
         message: Option<String>,
     },
+    /// one provider stdout/stderr chunk, already correlated to its durable effect.
+    EffectOutputChunk {
+        workflow_run_id: Uuid,
+        effect_id: Uuid,
+        stream: String,
+        content: String,
+    },
     /// a control command (cancel/pause/resume) was received for a run.
     ControlReceived {
         kind: ControlKind,

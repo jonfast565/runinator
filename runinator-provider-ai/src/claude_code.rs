@@ -1,17 +1,17 @@
-use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
-    runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
+    runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
+use runinator_provider_support::process::ProcessOutputPump;
 
 use crate::errors::{
     CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INVALID_JSON, CLAUDE_SPAWN, CLAUDE_TIMEOUT,
@@ -49,25 +49,18 @@ pub(crate) fn run_claude_code(
         .spawn()
         .map_err(|err| CLAUDE_SPAWN.error(format!("failed to spawn {}: {err}", params.binary)))?;
 
-    let stdout_handle = drain_stdout(&mut child, sink.as_ref());
-    let stderr_handle = drain_stderr(&mut child);
-    if token.is_cancelled() {
-        let _ = child.kill();
-        return Err(CLAUDE_CANCELED.bare());
-    }
-    let status = wait_for_child(&mut child, request.timeout_secs, token)?;
-    let stdout = stdout_handle
-        .map(|handle| handle.join().unwrap_or_default())
-        .unwrap_or_default();
-    let stderr = stderr_handle
-        .map(|handle| handle.join().unwrap_or_default())
-        .unwrap_or_default();
+    let output = ProcessOutputPump::start(&mut child, sink)?;
+    let status = wait_for_child(&mut child, request.timeout_secs, token);
+    let output = output.finish();
+    let status = status?;
 
     if !status.success() {
-        return Err(CLAUDE_EXIT_CODE.error(format!("claude exited with {status}: {stderr}")));
+        return Err(
+            CLAUDE_EXIT_CODE.error(format!("claude exited with {status}: {}", output.stderr))
+        );
     }
 
-    let parsed = parse_claude_output(&params.output_format, &stdout)?;
+    let parsed = parse_claude_output(&params.output_format, &output.stdout)?;
     Ok(TaskExecutionResult {
         message: Some("Claude Code completed".into()),
         output_json: Some(parsed),
@@ -97,8 +90,14 @@ fn wait_for_child(
                 timeout.as_secs()
             )));
         }
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Box::new(error));
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -126,44 +125,6 @@ fn build_claude_argv(params: &ClaudeCodeParams) -> Vec<String> {
     // prompt is the trailing positional argument.
     argv.push(params.prompt.clone());
     argv
-}
-
-fn drain_stdout(
-    child: &mut Child,
-    sink: Option<&Arc<dyn ProviderEventSink>>,
-) -> Option<JoinHandle<String>> {
-    let stdout: ChildStdout = child.stdout.take()?;
-    let sink = sink.cloned();
-    let handle = thread::spawn(move || {
-        let mut accumulator = String::new();
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            if let Some(sink) = sink.as_ref() {
-                sink.emit(ProviderExecutionEvent::Chunk {
-                    stream: "stdout".into(),
-                    content: format!("{line}\n"),
-                });
-            }
-            accumulator.push_str(&line);
-            accumulator.push('\n');
-        }
-        accumulator
-    });
-    Some(handle)
-}
-
-fn drain_stderr(child: &mut Child) -> Option<JoinHandle<String>> {
-    let stderr: ChildStderr = child.stderr.take()?;
-    let handle = thread::spawn(move || {
-        let mut accumulator = String::new();
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            accumulator.push_str(&line);
-            accumulator.push('\n');
-        }
-        accumulator
-    });
-    Some(handle)
 }
 
 fn parse_claude_output(format: &str, stdout: &str) -> Result<Value, SendableError> {
