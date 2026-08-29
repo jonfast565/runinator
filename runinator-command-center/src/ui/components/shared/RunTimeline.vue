@@ -103,6 +103,12 @@
               class="rounded-pill bg-accent-soft px-[7px] text-[11px] font-semibold text-accent-text"
               >active</span
             >
+            <span
+              v-if="stepTimestamp(node)"
+              class="max-w-[210px] overflow-hidden text-[11px] font-tabular text-ellipsis whitespace-nowrap text-fg-faint"
+              :title="node.started_at ? 'Started ' + stepTimestamp(node) : 'Queued ' + stepTimestamp(node)"
+              >{{ stepTimestamp(node) }}</span
+            >
             <span class="flex-1"></span>
             <span
               v-if="nodeTiming(node)"
@@ -183,6 +189,8 @@ import {
   isFailedNode,
   outputText,
   previewOf,
+  compareStepsAscending,
+  stepTimestamp,
   timelineDotClass,
 } from "./run-timeline-format";
 
@@ -222,22 +230,7 @@ const runInFlight = computed(() => {
 
 const orderedNodes = computed(() => {
   const nodes = props.detail?.nodes ?? [];
-  return [...nodes].sort((left, right) => {
-    const leftCreated = Date.parse(left.created_at ?? "");
-    const rightCreated = Date.parse(right.created_at ?? "");
-
-    if (
-      Number.isFinite(leftCreated) &&
-      Number.isFinite(rightCreated) &&
-      leftCreated !== rightCreated
-    ) {
-      return leftCreated - rightCreated;
-    }
-
-    // created_at has second precision, so same-second steps tie; the uuidv7 run id is
-    // time-ordered at finer precision and string-sorts chronologically.
-    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-  });
+  return [...nodes].sort(compareStepsAscending);
 });
 
 const executionOrdinals = computed(() => {

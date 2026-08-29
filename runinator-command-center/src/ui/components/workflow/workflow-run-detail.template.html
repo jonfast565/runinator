@@ -234,6 +234,7 @@
           <th>Step ID</th>
           <th>Node</th>
           <th>Status</th>
+          <th>Timestamp</th>
           <th>Prev step</th>
         </tr>
       </thead>
@@ -248,6 +249,7 @@
           <td class="mono" :title="node.id">{{ shortId(node.id) }}</td>
           <td>{{ node.node_id }}</td>
           <td><StatusBadge :status="node.status" /></td>
+          <td :title="node.started_at ? 'Started' : 'Queued'">{{ stepTimestamp(node) || "—" }}</td>
           <td class="mono">
             <button
               v-if="node.prev_node_run_id"

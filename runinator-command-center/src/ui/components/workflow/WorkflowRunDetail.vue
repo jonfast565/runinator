@@ -36,6 +36,7 @@ import {
 } from "../../../core/workflow";
 import { formatResultValue, formatRunDuration, shortId } from "./run-detail-format";
 import { useWorkflowTransitionStats } from "./useWorkflowTransitionStats";
+import { compareStepsAscending, stepTimestamp } from "../shared/run-timeline-format";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -349,16 +350,7 @@ const hasExtraFields = computed(() => {
 // the nested `steps.<node>` output tree.
 const flatSteps = computed<WorkflowNodeRun[]>(() => {
   const nodes = [...(workflows.workflowRunDetail?.nodes ?? [])];
-  return nodes.sort((a, b) => {
-    const at = a.created_at ? Date.parse(a.created_at) : 0;
-    const bt = b.created_at ? Date.parse(b.created_at) : 0;
-
-    if (at !== bt) {
-      return at - bt;
-    }
-
-    return a.id.localeCompare(b.id);
-  });
+  return nodes.sort(compareStepsAscending);
 });
 
 function selectByRunId(runId: string) {
