@@ -23,7 +23,7 @@ OTLP exporters for **traces, metrics, and logs** over OTLP HTTP/protobuf;
 `OTEL_RESOURCE_ATTRIBUTES`.
 
 Trace context propagates across hops using W3C `traceparent`: inbound HTTP requests
-to the web service continue the caller's trace, and the graph runtime stamps the active
+to the web service continue the caller's trace, and the VM effect host stamps the active
 context onto each `EffectCommand` so a worker's execution span links back to the
 dispatching trace. Prometheus `/metrics` remains available alongside OTLP metrics.
 

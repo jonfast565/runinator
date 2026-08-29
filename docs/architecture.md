@@ -1,6 +1,6 @@
 # Runinator Architecture
 
-Runinator is a Rust workspace for authoring, scheduling, and executing workflows across a small local or distributed runtime. Workflows are durable state machines: the graph interpreter records its progress, dispatches side effects through a broker, and resumes only when a result or scheduled wake returns.
+Runinator is a Rust workspace for authoring, scheduling, and executing workflows across a small local or distributed runtime. Workflows compile to immutable VM modules: durable continuations record instruction state, yield effects through a broker, and resume only when a result or scheduled wake settles the effect.
 
 The design keeps three concerns separate:
 
@@ -35,8 +35,8 @@ flowchart LR
 
     subgraph Orchestration["Durable orchestration"]
         ENGINE["runinator-engine\nrepository and background loops"]
-        RUNTIME["runinator-runtime\ncontinuation-driven WorkflowMachine"]
-        GRAPH["runinator-workflows\nvalidated workflow graph"]
+        RUNTIME["runinator-runtime\nhost-free workflow VM + durable host"]
+        GRAPH["runinator-workflows\ngraph validation + VM compiler"]
         COMPUTE["runinator-compute\nexpressions and compute VM"]
     end
 
@@ -68,8 +68,8 @@ flowchart LR
     ENGINE <--> |"durable polling"| ADAPTER
     ADAPTER <--> EXTERNAL
 
+    GRAPH -->|"WorkflowModule"| RUNTIME
     ENGINE --> RUNTIME
-    RUNTIME --> GRAPH
     RUNTIME --> COMPUTE
     ENGINE --> STORE --> DB
     ENGINE --> BLOB
@@ -105,15 +105,27 @@ The Tauri command center presents the web service; it does not host a worker or 
 
 REXRAP is the authored workflow language. The language family is split by compile stage: `runinator-rexrap-syntax` parses and formats, `runinator-rexrap-sema` resolves and type-checks, and `runinator-rexrap-codegen` lowers to or decompiles from the workflow model. `runinator-rexrap` is the public facade and unified `.rrx` container front end; `runinator-rexrap-ide` adds editor completion and hover without affecting compilation.
 
-`runinator-workflows` validates graphs, node parameters, types, and graph invariants. It builds on `runinator-compute`, which evaluates references, templates, conditions, compute programs, and intrinsic functions without knowing about workflow graphs. `runinator-runtime` runs only validated workflow graphs.
+`runinator-workflows` validates graphs, node parameters, types, and graph invariants, then compiles a
+frozen definition to versioned `WorkflowModule` bytecode when a run starts. It builds on
+`runinator-compute`, which evaluates references, templates, conditions, compute programs, and
+intrinsic functions without knowing about workflow graphs. `runinator-runtime` executes only those
+compiled modules.
 
 Pack compilation is client-side. `runinator-pack` compiles `.rrx` sources into a workflow bundle, `runinator-pack-wire` defines the compiled ZIP wire format, and the web service imports the compiled JSON without recompiling source.
 
 ### Durable orchestration
 
-`runinator-runtime` contains the continuation-driven `WorkflowMachine`. A run can have multiple durable cursors—one for each live thread of control—so parallel and race branches are independent fibers rather than a single mutable position. The runtime asks a `WorkflowHost` to record state and perform external effects; it has no HTTP server, concrete broker, or SQL implementation.
+`runinator-runtime` contains the host-free continuation interpreter and `WorkflowVmHost`. A run can
+have multiple durable continuations—one for each live thread of control—so parallel, race, and map
+branches are independent fibers rather than one mutable node position. The interpreter returns a
+durable boundary (`Yield`, `Fork`, `Joined`, terminal, or interrupt); the host commits it through
+`WorkflowVmStore`. The crate has no HTTP server, concrete broker, or SQL implementation.
 
-`runinator-engine` is that runtime's durable orchestrator. Its loops drive cursors, fire triggers, drain durable effect dispatches, consume effect results and ingress commands, handle effect retry/deadline policy, publish wakes and agent directives, and run repository maintenance. Its repository layer coordinates persistence through trait contracts rather than placing persistence logic in the web handlers.
+`runinator-engine` is that runtime's durable orchestrator. Its loops lease and drive runnable
+continuations, fire triggers, drain durable effect dispatches, consume effect results and ingress
+commands, handle effect retry/deadline policy, publish wakes and agent directives, and run
+repository maintenance. Its repository layer coordinates persistence through trait contracts
+rather than placing persistence logic in the web handlers.
 
 ### Inbound adapters and correlated orchestration
 
@@ -135,22 +147,37 @@ The `effect`, `control`, and `agent` paths are target-routed. `events` is the ex
 
 ### Persistence and artifacts
 
-`runinator-models` and `runinator-comm` are the shared domain and wire-contract foundations. `runinator-store` declares persistence roles and the focused `RuntimeStore` use-case trait used by the graph runtime. `runinator-database` provides their SQLite, Postgres, and MariaDB implementations and owns SQL mapping. This keeps database behavior out of the HTTP handler and runtime crates.
+`runinator-models` and `runinator-comm` are the shared domain and wire-contract foundations.
+`runinator-store` declares persistence roles, including `WorkflowVmStore` for modules,
+continuations, effects, and journal entries, plus the focused `RuntimeStore` used by engine-level
+run orchestration. `runinator-database` provides their SQLite, Postgres, and MariaDB implementations
+and owns SQL mapping. This keeps database behavior out of the HTTP handler and runtime crates.
 
-Workflow and task state, cursors, effect dispatches, triggers, and metadata are durable database records. Artifact bytes are different: `runinator-blob-core` defines `BlobStore`, while `runinator-blob` supplies the S3-compatible client/server transport. The engine's artifact-storage boundary writes bytes to the object store and persists their `blob://` references; workers upload produced bytes through the API before reporting artifact events.
+Workflow modules, continuations, effect receipts and dispatches, journal entries, triggers, and
+metadata are durable database records. A graph cursor shown to an operator is a source-map
+projection of a continuation's instruction pointer, not separate execution state. Artifact bytes
+are different: `runinator-blob-core` defines `BlobStore`, while `runinator-blob` supplies the
+S3-compatible client/server transport. The engine's artifact-storage boundary writes bytes to the
+object store and persists their `blob://` references; workers upload produced bytes through the API
+before reporting artifact events.
 
 ## Runtime lifecycle
 
-1. An operator imports a compiled pack or starts a run through the command center or `runinatorctl`.
+1. An operator imports a client-compiled pack or starts a run through the command center or `runinatorctl`.
 2. The web service authenticates and authorizes the request, then delegates its durable work to the engine.
-3. The engine loads the definition and run state, then drives `WorkflowMachine` until it reaches a terminal state or parks a cursor on an effect, external signal, child run, or join.
-4. Provider work is persisted as a dispatch and published to `effect`. A worker executes it and returns an `effect_result`; the engine applies the result, records run events and artifacts, and drives the waiting cursor again.
+3. Run creation snapshots the definition and resolved configuration, compiles the definition to a
+   versioned `WorkflowModule`, and atomically stores the module, root continuation, and first journal
+   entry with the public run.
+4. The engine leases runnable continuations and drives each module until the interpreter yields a
+   durable boundary. A provider request atomically parks the continuation and creates an effect
+   receipt plus dispatch. A worker executes it and returns an `effect_result`; settlement makes the
+   continuation runnable for another drive.
 5. Timed infrastructure effects do not occupy an engine task. The engine publishes a due-time `wake`; the stateless waker relays the already-built settlement back through `ingress` at that time.
 6. Each non-web-service runtime also announces startup, heartbeat, and clean shutdown through
    `ingress`; the engine persists those observations in the fleet registry.
 7. An inbound adapter can verify a webhook or claim a due poll; the normalized event enters the
    same durable admission path as any other ingress event.
-8. When the last real cursor retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
+8. When the last real continuation retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
 
 ## Extension guide
 

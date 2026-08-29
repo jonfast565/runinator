@@ -24,7 +24,7 @@ plain-English meaning.
 - **control plane** — the API and operator-facing services that configure, observe, and direct the runtime rather than execute provider work.
 - **correlation key** — a caller-supplied value that groups related ingress events so one admission can track their lifecycle.
 - **CRUD** — create, read, update, and delete.
-- **cursor** — the graph-facing position of a live workflow thread. Current VM APIs project a continuation as a cursor; older graph-runtime code also uses cursor for its durable thread record.
+- **cursor** — the graph-facing projection of a live continuation. The VM derives its node and edge from the frozen module's source map; the continuation remains the execution identity.
 - **debounce** — delay completion until a quiet period has passed; each new relevant event resets that delay.
 - **deduplicate / dedupe** — recognize repeated delivery of the same logical event or request and apply it only once.
 - **DNS** — Domain Name System; turns host names into network addresses.
@@ -40,7 +40,7 @@ plain-English meaning.
 - **ETag** — a value used to identify a particular version of stored data.
 - **fan-out** — sending one message to every subscriber.
 - **fork / join** — a fork splits workflow control into independent fibers; a join waits for its required fibers and combines control back into one continuation.
-- **fiber** — an independently schedulable thread of workflow control, represented durably by a continuation or cursor. Parallel and race branches create separate fibers.
+- **fiber** — an independently schedulable thread of workflow control, represented durably by a continuation. Parallel, race, and concurrent map branches create separate fibers.
 - **freeze window** — a time range during which matching schedules do not fire; catch-up policy decides what happens to the missed slots afterward.
 - **gRPC** — Google’s remote procedure call framework.
 - **HMAC** — hash-based message authentication code; a way to prove a message was not changed.

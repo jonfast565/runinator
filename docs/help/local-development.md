@@ -236,9 +236,10 @@ routing, such as an operator-managed primary/replica cluster fronted by
 PgBouncer. The checked-in `runinator-postgres` manifest is a single-primary
 development StatefulSet and should not be scaled out as-is.
 
-The continuation-driven graph interpreter lives in `runinator-runtime`; its
-`WorkflowMachine` treats each durable cursor as a schedulable fiber and delegates
-bookkeeping to a `WorkflowHost`. `runinator-engine` drives it over the broker.
+The continuation-driven interpreter lives in `runinator-runtime`. Its host-free VM advances each
+durable `WorkflowContinuation` through a frozen `WorkflowModule` until a yield, fork, join,
+terminal, or interrupt boundary; `WorkflowVmHost` commits that boundary through `WorkflowVmStore`.
+`runinator-engine` leases runnable continuations and drives that host.
 The engine publishes scheduled work on the `wake` channel, and the
 `runinator-waker` (a small, broker-only timer/relay) sleeps until each wake is
 due and then publishes the settle it carries on the `ingress` channel for the

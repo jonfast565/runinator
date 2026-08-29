@@ -1,6 +1,6 @@
 # Workflow authoring and import
 
-Use this guide to compile, import, test, simulate, and edit REXRAP workflow packs. It also covers runtime control-flow, pipelines, correlated orchestration, ingress adapters, notifications, schedules, and settings references.
+Use this guide to compile, import, test, simulate, and edit REXRAP workflow packs. It also covers runtime control-flow, pipelines, correlated orchestration, ingress adapters, notifications, schedules, and settings references. For the execution model behind these features, see the [REXRAP runtime model](../../runinator-rexrap/docs/runtime.md).
 
 ## Workflow Import
 
@@ -44,16 +44,16 @@ run detail until the run reaches a terminal state.
 
 `runinatorctl workflows test <path>` dry-runs a pack against `tests { ... }`
 blocks in `.rrx` sources
-entirely client-side — no server or broker. It compiles the pack, then walks each
-workflow's state machine with the graph runtime's own condition/switch/toggle/percentage
-evaluators, stubbing task nodes with mocked outputs, and asserts on the branch
+entirely client-side — no server or broker. It compiles the pack, then simulates each
+workflow's deterministic condition/switch/toggle/percentage routing, stubbing task nodes
+with mocked outputs, and asserts on the branch
 taken and final outputs. Test cases live in an RRX `tests` block and provide a name,
 input, config, mocked task outputs, and assertions on status, reached nodes, branches,
 and final output. Every `.rrx` source in the pack is considered automatically, or pass
 additional sources with `--tests`. The command
 exits non-zero when any case fails, so it drops straight into CI.
 
-The same walker also backs a server-side dry-run: `POST /workflows/simulate`
+The same simulator also backs a server-side dry-run: `POST /workflows/simulate`
 (`WorkflowSimulateRequest`: `{ workflow, inputs?, replay_run? }`) walks a workflow
 against live config — publishing no actions — and returns the routed path, per-node
 status, branch targets, and final output. Pass `replay_run` to replay a prior run's
@@ -99,11 +99,13 @@ Workflow syntax now includes richer declarative control-flow nodes:
 An action node carries two failure-handling policies, both editable in the step editor and both
 previewed there so the effect is visible before saving:
 
-- **Retry** (`@retry(attempts, backoff: 2s, max: 60s, jitter: true, on: failure)`) re-runs the node
-  itself. The delay before attempt *n+1* is `clamp(backoff * 2^(n-1), backoff, max)`, optionally
+- **Retry** (`@retry(attempts, backoff: 2s, max: 60s, jitter: true, on: failure)`) re-arms the
+  action's durable effect while its continuation remains parked. The delay before attempt *n+1* is
+  `clamp(backoff * 2^(n-1), backoff, max)`, optionally
   jittered into the lower half to spread a retry storm. `on` narrows which terminals are eligible
   (`any`, `failure`, `timeout`) so a long expensive action is not blindly re-run on a timeout. The
   editor renders the resulting schedule, since exponential backoff under a cap is hard to eyeball.
+  The VM receives only the eventual settlement, so retries do not re-enter graph control flow.
 - **Compensation** (`compensate provider.fn(args)`) is a saga rollback. Once the node has succeeded,
   a run that later reaches `fail` calls the compensating action; compensations unwind in reverse
   order and are best-effort, so one that fails does not stop the unwind. The clause is the same call
@@ -130,7 +132,7 @@ trigger cron "0 * * * *"
 trigger on_success workflow "Downstream Report"
 ```
 
-Chaining is event-driven from the graph runtime's terminal settle (not the best-effort
+Chaining is event-driven from the VM run's terminal settlement (not the best-effort
 `events` channel), fired exactly once per (trigger, source-run) via a durable
 dedupe table, and cycle-bounded by a `chain_depth` cap. Only top-level runs fan out
 chains — subflow/map children do not. Chaining does **not** replace `subflow`: a
@@ -279,7 +281,7 @@ Policies can equally be managed from the command center's **Notifications** tab
 import reconciles them. Emission happens in `runinator-engine` at the terminal
 transition, plus a periodic scanner for the duration events. The engine never speaks a
 vendor protocol: an in-app policy writes the notifications row, and every other channel
-is enqueued on the normal action outbox so a worker delivers it through the
+is enqueued as a provider-effect command on the notification delivery outbox so a worker delivers it through the
 `runinator-provider-slack` / `-email` provider like any other action. Delivery attempts
 are tracked per notification and readable at `GET /notifications/{id}/deliveries`.
 
@@ -389,9 +391,15 @@ The import file is a `{ "secrets": [...] }` document; each entry carries
 `schema`. Existing entries are only overwritten when an incoming `updated_at` is
 strictly newer.
 
-The control-flow runtime uses persisted cursors: linear runs retain one primary cursor, while
-`parallel` and `race` fork one cursor per branch. The engine claims and drives runnable
-continuations with bounded concurrency (default 16 per instance), so independent branches and
-concurrent map children can reach workers without waiting for a serial interpreter loop.
-`active_node_id` remains a compatibility mirror of the primary cursor for run detail and older consumers. Branch/body/item
-nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
+Live execution uses a frozen VM module and persisted continuations. A linear run starts with one
+continuation; `parallel`, `race`, and concurrent `map` work create independently schedulable child
+continuations. The engine leases runnable continuations with bounded concurrency (default 16 per
+instance), and the module source map projects each instruction pointer back to the node shown in run
+details. Provider calls, timers, approvals, signals, child runs, and other asynchronous boundaries
+are durable effects. Settling an effect makes its waiting continuation runnable again; retrying an
+effect leaves that continuation parked. Branch/body/item blocks return through their compiled
+`join`, `try`, `map`, or `race` instructions rather than a reducer rediscovering graph ancestry.
+
+Dry runs are intentionally different: the simulator publishes no effects and does not exercise
+continuation leases, broker delivery, retries, timer wakes, or transactional settlement. Use a real
+run to validate those behaviors.

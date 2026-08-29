@@ -15,7 +15,7 @@ POST /console/cells/{id}/run           # run it
 A cell is a fragment of the same REXRAP a workflow is written in, and it is answered one of two ways.
 A **pure** cell — an expression or a `compute` block — is evaluated in process and has already
 settled when the request returns. **Anything else** becomes a hidden scratch workflow and goes
-through the ordinary graph-runtime path. Classification is conservative and the workflow fallback is
+through the ordinary workflow VM path. Classification is conservative and the workflow fallback is
 unconditional: a cell wrongly treated as pure would run a provider action inside an HTTP handler,
 with no run to record it and no retry, timeout, or cancellation.
 
@@ -125,9 +125,10 @@ verb without pulling ninety schemas into the conversation. `runinator_exec` runs
 which is the escape hatch for a longer timeout, for output as a table rather than json, or for
 anything a schema does not express.
 
-Runs, their logs, and their artifacts are also readable as **resources** (`runinator://runs/{id}`,
-`runinator://node_runs/{id}/chunks`, …), so a client can attach what a run left behind to the
-conversation without spending a tool call on it. `--workflow-tools` additionally exposes every
+Runs, effect output, and artifacts are also readable as **resources** (`runinator://runs/{id}`,
+`runinator://effects/{id}/output`, …), so a client can attach what a run left behind to the
+conversation without spending a tool call on it. A run resource includes its VM continuations,
+effects, and journal. `--workflow-tools` additionally exposes every
 enabled workflow as a tool that starts a run of it, typed by the workflow's own declared input; it
 is off by default, because a fleet of workflows would bury the commands that author them.
 
