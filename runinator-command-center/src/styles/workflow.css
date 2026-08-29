@@ -581,6 +581,24 @@
   overflow: auto;
 }
 
+/* RunsView composes WorkflowRunDetail with ingress, output, and artifact sections in one fixed
+   desktop split. The generic inspector styles above otherwise make the first section flex and
+   independently scrollable, allowing it to collapse to zero while the later sections remain.
+   Keep one obvious scroll owner for the complete run detail instead. */
+.run-detail-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.run-detail-scroll > .inspector-section,
+.run-detail-scroll > section {
+  flex: 0 0 auto;
+}
+
+.run-detail-scroll > .inspector-section {
+  overflow: visible;
+}
+
 .step-editor label {
   display: grid;
   color: var(--text-subtle);

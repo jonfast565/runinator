@@ -103,7 +103,7 @@
               <WorkflowRunGraph />
             </template>
             <template #second>
-              <div ref="runDetailScroller" class="panel details min-h-0 overflow-auto">
+              <div ref="runDetailScroller" class="panel details run-detail-scroll min-h-0">
                 <WorkflowRunDetail />
                 <IngressTimeline />
                 <section class="grid gap-2 border-t border-border-subtle pt-3">
