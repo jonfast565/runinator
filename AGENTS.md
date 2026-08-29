@@ -10,6 +10,10 @@ Increment the build number for every new feature. For a substantial, multi-phase
 
 Redeploy the cluster after every change. The sole exception is a UI-only change: deploy only `runinator-command-center` in that case.
 
+## Git Workflow
+
+Commit every change and push it directly to `main`.
+
 ## Development Cycle Verification
 
 Run compilations, Clippy, and tests only at the end of a development cycle, rather than after individual edits.
