@@ -1,10 +1,12 @@
 <template>
   <section class="detail-section header-section">
-    <h3>Correlation key</h3>
-    <p class="section-note">
-      The value this workflow's runs are awaitable by. Resolved as the run progresses and stamped
-      write-once, so another workflow's <code>await workflow … key</code> can match it.
-    </p>
+    <div class="flex items-center gap-1">
+      <h3>Correlation key</h3>
+      <HelpBubble label="About correlation keys">
+        The value this workflow's runs are awaitable by. It is resolved as the run progresses and
+        stamped write-once, so another workflow's <code>await workflow … key</code> can match it.
+      </HelpBubble>
+    </div>
 
     <p v-if="workflows.headerDraft.correlation === null" class="hint">
       No correlation key: runs of this workflow cannot be awaited by key.
@@ -40,6 +42,7 @@ import { workflowInputType } from "../../../core/domain/models";
 import { buildSampleContext } from "../../../core/utils/workflow-references";
 import type { JsonRecord, JsonValue } from "../../../core/domain/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();

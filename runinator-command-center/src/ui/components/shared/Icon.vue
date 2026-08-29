@@ -89,6 +89,11 @@
       <line x1="12" y1="11" x2="12" y2="16" />
       <line x1="12" y1="7" x2="12" y2="8" />
     </template>
+    <template v-else-if="name === 'help'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.7 9a2.4 2.4 0 1 1 3.7 2c-.9.55-1.4 1.05-1.4 2" />
+      <line x1="12" y1="17" x2="12" y2="17.01" />
+    </template>
     <template v-else-if="name === 'search'">
       <circle cx="11" cy="11" r="7" />
       <line x1="16.5" y1="16.5" x2="21" y2="21" />

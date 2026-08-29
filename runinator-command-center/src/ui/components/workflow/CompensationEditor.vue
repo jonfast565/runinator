@@ -1,20 +1,28 @@
 <template>
   <div class="compensation-editor">
-    <label class="checkbox">
-      <input :checked="enabled" type="checkbox" @change="toggle(($event.target as HTMLInputElement).checked)" />
-      Undo this step when a later step fails the run
-    </label>
-    <p class="hint">
-      A saga rollback: once this step has succeeded, a run that later reaches <code>fail</code> calls
-      the action below. Compensations run in reverse order and are best-effort — one that fails does
-      not stop the unwind.
-    </p>
+    <div class="flex items-center gap-1">
+      <label class="checkbox">
+        <input
+          :checked="enabled"
+          type="checkbox"
+          @change="toggle(($event.target as HTMLInputElement).checked)"
+        />
+        Undo this step when a later step fails the run
+      </label>
+      <HelpBubble label="About compensation actions">
+        Once this step succeeds, a run that later reaches <code>fail</code> calls the action below.
+        Compensations run in reverse order and are best-effort.
+      </HelpBubble>
+    </div>
 
     <template v-if="enabled">
       <div class="form-grid">
         <label>
           Provider
-          <select :value="providerName" @change="setProvider(($event.target as HTMLSelectElement).value)">
+          <select
+            :value="providerName"
+            @change="setProvider(($event.target as HTMLSelectElement).value)"
+          >
             <option value="" disabled>Select provider</option>
             <option v-if="providerMissing" :value="providerName">
               {{ providerName }} (unavailable)
@@ -37,7 +45,11 @@
             <option v-if="functionMissing" :value="functionName">
               {{ functionName }} (unavailable)
             </option>
-            <option v-for="entry in provider?.actions ?? []" :key="entry.function_name" :value="entry.function_name">
+            <option
+              v-for="entry in provider?.actions ?? []"
+              :key="entry.function_name"
+              :value="entry.function_name"
+            >
               {{ entry.function_name }}
             </option>
           </select>
@@ -83,6 +95,7 @@ import type { JsonRecord } from "../../../core/domain/models";
 import { useProvidersStore } from "../../adapters/pinia/providers";
 import type { WorkflowExpressionEditorContext } from "../../adapters/codemirror/workflow-expression-completion";
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 
 // lowering writes 60 when the author declares no `.timeout()`, so a new compensation starts there
@@ -122,8 +135,7 @@ const provider = computed(
   () => providersStore.providers.find((entry) => entry.name === providerName.value) ?? null,
 );
 const action = computed(
-  () =>
-    provider.value?.actions.find((entry) => entry.function_name === functionName.value) ?? null,
+  () => provider.value?.actions.find((entry) => entry.function_name === functionName.value) ?? null,
 );
 const providerMissing = computed(() => Boolean(providerName.value) && !provider.value);
 const functionMissing = computed(
@@ -161,7 +173,9 @@ function setFunction(name: string) {
 
 function setTimeout(event: Event) {
   const raw = Number((event.target as HTMLInputElement).value);
-  patch({ timeout_seconds: Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_TIMEOUT_SECONDS });
+  patch({
+    timeout_seconds: Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_TIMEOUT_SECONDS,
+  });
 }
 
 function setConfiguration(value: JsonRecord) {

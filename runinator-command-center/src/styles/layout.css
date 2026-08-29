@@ -375,7 +375,14 @@
   white-space: nowrap;
 }
 
-.view-title span,
+.view-title-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.view-title > span,
 .service-url,
 .last-refresh {
   color: var(--text-muted);
@@ -384,7 +391,7 @@
   letter-spacing: 0.01em;
 }
 
-.view-title span {
+.view-title > span {
   display: block;
   overflow: hidden;
   line-height: 1.2;
@@ -392,7 +399,7 @@
   white-space: nowrap;
 }
 
-.view-title span.view-status.loading {
+.view-title > span.view-status.loading {
   display: inline-flex;
   align-items: center;
   gap: 6px;

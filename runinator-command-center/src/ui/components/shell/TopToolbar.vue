@@ -16,12 +16,15 @@
       </span>
     </button>
     <div class="view-title">
-      <h1>{{ headingFor(app.activeTab) }}</h1>
+      <div class="view-title-heading">
+        <h1>{{ headingFor(app.activeTab) }}</h1>
+        <HelpBubble :text="activeHelp" :label="`About ${headingFor(app.activeTab)}`" />
+      </div>
       <span v-if="app.loading && app.opLabel" class="view-status loading">
         <LoadingSpinner size="sm" :label="app.opLabel" />
         {{ app.opLabel }}…
       </span>
-      <span v-else>{{ activeSubtitle }}</span>
+      <span v-else-if="activeSubtitle">{{ activeSubtitle }}</span>
     </div>
     <div v-if="searchPlaceholder" class="toolbar-search">
       <input
@@ -78,6 +81,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
 import UserMenu from "./UserMenu.vue";
@@ -112,27 +116,20 @@ function headingFor(tab: AppTab): string {
 
 // only show the global search box on tabs whose list actually consumes app.searchQuery.
 const searchPlaceholder = computed(() => navItemForTab(app.activeTab)?.searchPlaceholder ?? "");
+const activeHelp = computed(() => navItemForTab(app.activeTab)?.description ?? "");
 
 const activeSubtitle = computed(() => {
-  const guidance = navItemForTab(app.activeTab)?.description ?? "";
-
   switch (app.activeTab) {
     case "Runs":
-      return workflows.selectedWorkflowRunId
-        ? `Run ${workflows.selectedWorkflowRunId} · ${guidance}`
-        : guidance;
+      return workflows.selectedWorkflowRunId ? `Run ${workflows.selectedWorkflowRunId}` : "";
     case "Workflows":
-      return workflows.selectedWorkflow?.name
-        ? `${workflows.selectedWorkflow.name} · ${guidance}`
-        : guidance;
+      return workflows.selectedWorkflow?.name ?? "";
     case "Replicas":
-      return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy · ${guidance}`;
+      return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy`;
     case "Secrets":
-      return `${String(secrets.secrets.length)} secrets · ${guidance}`;
-    case "Notifications":
-      return guidance;
+      return `${String(secrets.secrets.length)} secrets`;
     default:
-      return guidance;
+      return "";
   }
 });
 </script>

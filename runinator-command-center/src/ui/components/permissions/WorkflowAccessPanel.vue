@@ -3,7 +3,13 @@
     <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
       <div class="panel-toolbar">
         <div>
-          <h3 class="m-0 text-sm font-semibold text-fg">Workflows</h3>
+          <div class="flex items-center gap-1">
+            <h3 class="m-0 text-sm font-semibold text-fg">Workflows</h3>
+            <HelpBubble
+              text="Select a workflow to inspect or change its user and team grants."
+              label="About workflow access"
+            />
+          </div>
           <p class="m-0 text-xs text-fg-muted">{{ filteredWorkflows.length }} shown</p>
         </div>
         <button
@@ -41,7 +47,13 @@
 
     <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
       <div class="panel-toolbar">
-        <h3 class="m-0 text-sm font-semibold text-fg">Access</h3>
+        <div class="flex items-center gap-1">
+          <h3 class="m-0 text-sm font-semibold text-fg">Access</h3>
+          <HelpBubble
+            text="View and revoke the grants applied to the selected workflow."
+            label="About access grants"
+          />
+        </div>
         <button
           class="btn"
           type="button"
@@ -93,7 +105,13 @@
     <div v-if="modalOpen" class="modal-backdrop" @click.self="modalOpen = false">
       <form class="modal w-full max-w-[860px]" @submit.prevent="save">
         <header class="modal-header">
-          <h2>Add Workflow Access</h2>
+          <div class="flex items-center gap-1">
+            <h2>Add Workflow Access</h2>
+            <HelpBubble
+              text="Grant one user or team permission to view, edit, or run the selected workflow."
+              label="About adding workflow access"
+            />
+          </div>
           <button class="btn btn-ghost" type="button" @click="modalOpen = false">
             <Icon name="x" />
           </button>
@@ -160,6 +178,7 @@ import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import DataTable from "../shared/DataTable.vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingPanel from "../shared/LoadingPanel.vue";
 
 const app = useAppStore();

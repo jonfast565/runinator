@@ -1,12 +1,14 @@
 <template>
   <div class="reference-chips">
-    <p class="reference-chips-hint">
-      {{
+    <HelpBubble
+      class="self-end"
+      :text="
         insertTarget
-          ? "Click to insert into the focused field"
-          : "Click to copy — focus an expression field to insert directly"
-      }}
-    </p>
+          ? 'Click a reference to insert it into the focused field.'
+          : 'Click a reference to copy it; focus an expression field to insert directly.'
+      "
+      label="How to use references"
+    />
     <div v-for="group in groups" :key="group.title" class="reference-chip-group">
       <span class="reference-chip-group-title">{{ group.title }}</span>
       <div class="reference-chip-row">
@@ -34,6 +36,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import HelpBubble from "./HelpBubble.vue";
 import type { ReferenceGroup, WorkflowReference } from "../../../core/utils/workflow-references";
 import { useExpressionInsertTarget } from "../../../ui/adapters/codemirror/expression-insert-target";
 
@@ -73,4 +76,3 @@ function flash(insert: string, label: string) {
   }, 900);
 }
 </script>
-

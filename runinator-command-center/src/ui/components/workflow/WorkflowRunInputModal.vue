@@ -7,11 +7,16 @@
   >
     <form class="modal w-[min(680px,100%)]" @submit.prevent="onSubmit">
       <header class="modal-header">
-        <div>
+        <div class="flex items-center gap-1">
           <h2>Run {{ workflows.selectedWorkflow?.name }}</h2>
-          <span class="text-xs text-fg-muted">{{
-            workflows.runInputDebug ? "Debug run — provide inputs" : "Provide inputs for this run"
-          }}</span>
+          <HelpBubble
+            :text="
+              workflows.runInputDebug
+                ? 'Provide inputs and start this workflow as a debug run.'
+                : 'Provide the input values used to start this workflow run.'
+            "
+            label="About running this workflow"
+          />
         </div>
         <div class="flex gap-2">
           <button type="submit" class="btn btn-primary" :disabled="startingRun">
@@ -49,6 +54,7 @@ import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import RunInputForm from "../shared/RunInputForm.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();

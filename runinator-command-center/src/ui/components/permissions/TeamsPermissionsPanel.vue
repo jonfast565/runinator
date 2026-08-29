@@ -3,7 +3,13 @@
     <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
       <div class="panel-toolbar">
         <div>
-          <h3 class="m-0 text-sm font-semibold text-fg">Teams</h3>
+          <div class="flex items-center gap-1">
+            <h3 class="m-0 text-sm font-semibold text-fg">Teams</h3>
+            <HelpBubble
+              text="Group users so workflow access can be granted to a reusable team."
+              label="About teams"
+            />
+          </div>
           <p class="m-0 text-xs text-fg-muted">{{ permissions.filteredTeams.length }} shown</p>
         </div>
         <button class="btn btn-primary" type="button" @click="openNew">
@@ -42,7 +48,13 @@
     <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
       <form class="modal w-full max-w-[860px]" @submit.prevent="save">
         <header class="modal-header">
-          <h2>{{ permissions.selectedTeam ? "Edit Team" : "Create Team" }}</h2>
+          <div class="flex items-center gap-1">
+            <h2>{{ permissions.selectedTeam ? "Edit Team" : "Create Team" }}</h2>
+            <HelpBubble
+              text="Name the team and, after it exists, add or remove platform users."
+              label="About editing teams"
+            />
+          </div>
           <button class="btn btn-ghost" type="button" @click="closeModal"><Icon name="x" /></button>
         </header>
         <div class="form-grid !grid-cols-1">
@@ -133,6 +145,7 @@ import { usePermissionsStore } from "../../adapters/pinia/permissions";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import DataTable from "../shared/DataTable.vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingPanel from "../shared/LoadingPanel.vue";
 
 const app = useAppStore();

@@ -1,5 +1,10 @@
 <template>
-  <Modal title="Share workflow" width="min(560px, calc(100vw - 32px))" @close="emit('close')">
+  <Modal
+    title="Share workflow"
+    description="Grant a user or team permission to view, edit, or run this workflow."
+    width="min(560px, calc(100vw - 32px))"
+    @close="emit('close')"
+  >
     <section class="form-section">
       <h3>Access</h3>
       <table v-if="grants.length" class="w-full border-collapse text-xs">

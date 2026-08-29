@@ -1,14 +1,14 @@
 <template>
   <section class="detail-section interrupt-manager">
     <div class="interrupt-manager-heading">
-      <div>
+      <div class="flex items-center gap-1">
         <h3>
           Handler routes <span class="count-pill">{{ declarations.length }}</span>
         </h3>
-        <p class="section-note">
+        <HelpBubble label="About interrupt handler routes">
           Each route suspends a thread, handles the interrupt on the canvas, then returns at
           <code>resume</code>. Add steps directly on its highlighted connections.
-        </p>
+        </HelpBubble>
       </div>
       <div class="interrupt-add-control">
         <label>
@@ -35,8 +35,13 @@
     <div v-if="declarations.length === 0" class="interrupt-empty-state">
       <Icon name="bolt" :size="19" />
       <div>
-        <strong>No handler routes yet</strong>
-        <span>Choose a source to create an empty route, then insert its first canvas step.</span>
+        <span class="flex items-center gap-1">
+          <strong>No handler routes yet</strong>
+          <HelpBubble
+            text="Choose a source to create an empty route, then insert its first canvas step."
+            label="How to add an interrupt handler"
+          />
+        </span>
       </div>
     </div>
 
@@ -145,6 +150,7 @@ import type { WorkflowValidationIssue } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useCatalogMetadataStore } from "../../adapters/pinia/catalogMetadata";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const workflows = useWorkflowsStore();
 const catalogMetadata = useCatalogMetadataStore();

@@ -5,6 +5,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { devPackService } from "../../core/services";
 import Icon from "../components/shared/Icon.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
@@ -19,7 +20,12 @@ import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import { displayValue } from "../../core/utils/values";
-import type { DevPackInspectResult, RuninatorType, WorkflowNodeRun, WorkflowRunDetail } from "../../core/domain/models";
+import type {
+  DevPackInspectResult,
+  RuninatorType,
+  WorkflowNodeRun,
+  WorkflowRunDetail,
+} from "../../core/domain/models";
 import { workflowInputType } from "../../core/domain/models";
 import {
   DEV_OPTIONS_STORAGE_KEY,
@@ -88,11 +94,10 @@ const runWorkflowInputType = computed((): RuninatorType => {
 });
 const runWorkflowKey = computed(() => runWorkflowRef.value || "none");
 const canSaveSource = computed(
-  () => (selectedIsRexRap.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,
+  () =>
+    (selectedIsRexRap.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,
 );
-const canRun = computed(
-  () => Boolean(runWorkflowRef.value) && !busy.value && !startingRun.value,
-);
+const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value && !startingRun.value);
 const runInFlight = computed(() => {
   const status = latestRunDetail.value?.run.status;
   return Boolean(status) && !TERMINAL_STATUSES.has(status ?? "");
@@ -368,7 +373,10 @@ async function runSelectedWorkflow() {
   }
 
   const parameters = runInputValue.value ?? {};
-  const created = await devPackService.createRun(workflow.id, { debug: debugRun.value, parameters });
+  const created = await devPackService.createRun(workflow.id, {
+    debug: debugRun.value,
+    parameters,
+  });
   runInputFormRef.value?.persistLast();
   latestRunId.value = created.id;
   rememberRun(created.id);

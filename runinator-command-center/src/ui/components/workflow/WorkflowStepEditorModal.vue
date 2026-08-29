@@ -11,7 +11,13 @@
     >
       <header class="modal-header">
         <div>
-          <h2>{{ workflows.stepEditorCreating ? "Add Workflow Step" : "Edit Workflow Step" }}</h2>
+          <div class="flex items-center gap-1">
+            <h2>{{ workflows.stepEditorCreating ? "Add Workflow Step" : "Edit Workflow Step" }}</h2>
+            <HelpBubble
+              text="Configure the step's identity, runtime behavior, parameters, and outgoing control flow."
+              label="About the workflow step editor"
+            />
+          </div>
           <span class="text-xs text-fg-muted">{{ workflows.selectedStepId || "New step" }}</span>
         </div>
         <button
@@ -153,8 +159,14 @@
           :key="edgeSlot.key"
           class="form-section"
         >
-          <h3>{{ edgeSlot.label }}</h3>
-          <p v-if="edgeSlot.description" class="hint">{{ edgeSlot.description }}</p>
+          <div class="flex items-center gap-1">
+            <h3>{{ edgeSlot.label }}</h3>
+            <HelpBubble
+              v-if="edgeSlot.description"
+              :text="edgeSlot.description"
+              :label="`About ${edgeSlot.label}`"
+            />
+          </div>
           <CatalogEdgeSlotEditor
             :edge-slot="edgeSlot"
             :model-value="slotValue(edgeSlot)"
@@ -228,6 +240,7 @@ import { jsonRecordArray as recordArray } from "../../../core/domain/json";
 import { displayValue } from "../../../core/utils/values";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import CatalogEdgeSlotEditor from "./CatalogEdgeSlotEditor.vue";

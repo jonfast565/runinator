@@ -58,7 +58,7 @@
         :aria-label="`${kindLabel} node: ${kindDescription}`"
         @click.stop
       >
-        <Icon name="info" :size="12" />
+        <Icon name="help" :size="12" />
         <span class="node-info-pop" role="tooltip">
           <strong>{{ kindLabel }}</strong>
           {{ kindDescription }}

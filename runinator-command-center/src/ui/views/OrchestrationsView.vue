@@ -1,13 +1,10 @@
 <template>
   <section class="pane flex h-full min-h-0 flex-col gap-2.5 overflow-hidden">
     <div class="panel shrink-0">
-      <div class="panel-toolbar">
-        <div>
-          <h2 class="m-0 text-base font-semibold text-fg">Orchestrations</h2>
-          <p class="mt-1 mb-0 text-sm text-fg-muted">
-            Generic correlations, immutable execution epochs, adapters, and provider effects.
-          </p>
-        </div>
+      <PanelHeader
+        title="Orchestrations"
+        description="Generic correlations, immutable execution epochs, adapters, and provider effects."
+      >
         <div class="btn-row">
           <button
             v-for="item in modes"
@@ -20,7 +17,7 @@
             {{ item }}
           </button>
         </div>
-      </div>
+      </PanelHeader>
 
       <p
         v-if="store.error"
@@ -75,11 +72,12 @@
       </div>
 
       <div v-else class="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div class="flex items-center gap-1">
           <p class="m-0 text-sm font-medium text-fg">Provider adapters</p>
-          <p class="mt-1 mb-0 text-xs text-fg-muted">
-            Receive provider events, normalize them, and route them into orchestrations.
-          </p>
+          <HelpBubble
+            text="Receive provider events, normalize them, and route them into orchestrations."
+            label="About provider adapters"
+          />
         </div>
         <div class="btn-row flex-wrap">
           <button class="btn btn-primary" @click="openAdapterForm()">
@@ -995,6 +993,7 @@
     <Modal
       v-if="intentName"
       :title="`Dispatch ${intentName}`"
+      description="Dispatch this intent to the selected orchestration with an auditable reason and optional JSON payload."
       width="min(520px, 100%)"
       @close="intentName = null"
     >
@@ -1015,12 +1014,10 @@
     <Modal
       v-if="requeueOpen"
       title="Requeue next generation"
+      description="The next generation snapshots the current immutable pipeline and adapter revisions."
       width="min(520px, 100%)"
       @close="requeueOpen = false"
     >
-      <p class="m-0 text-xs text-fg-muted">
-        The next generation snapshots the current immutable pipeline and adapter revisions.
-      </p>
       <form id="orchestration-requeue-form" class="grid gap-3" @submit.prevent="submitRequeue">
         <label>Reason<textarea v-model="reason" required class="min-h-24" /></label>
       </form>
@@ -1034,10 +1031,10 @@
     <Modal
       v-if="resolvingOperation"
       :title="`Resolve ${resolvingOperation.provider}.${resolvingOperation.action}`"
+      :description="`${resolution} · ${resolvingOperation.semantics}`"
       width="min(620px, 100%)"
       @close="resolvingOperation = null"
     >
-      <p class="m-0 text-xs text-fg-muted">{{ resolution }} · {{ resolvingOperation.semantics }}</p>
       <form
         id="orchestration-resolution-form"
         class="grid gap-3"
@@ -1058,6 +1055,7 @@
     <Modal
       v-if="adapterFormOpen"
       :title="editingAdapterId ? 'Edit adapter' : 'New adapter'"
+      description="Connect a provider, normalize its events, and route them into correlated orchestrations."
       width="min(820px, 100%)"
       @close="adapterFormOpen = false"
     >
@@ -1217,11 +1215,13 @@ import { useSecretsStore } from "../adapters/pinia/secrets";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import Modal from "../components/shared/Modal.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import TypedValueEditor from "../components/shared/TypedValueEditor.vue";

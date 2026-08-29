@@ -3,7 +3,13 @@
     <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
       <div class="panel-toolbar">
         <div>
-          <h3 class="m-0 text-sm font-semibold text-fg">Users</h3>
+          <div class="flex items-center gap-1">
+            <h3 class="m-0 text-sm font-semibold text-fg">Users</h3>
+            <HelpBubble
+              text="Create platform users, assign roles and teams, or disable access."
+              label="About users"
+            />
+          </div>
           <p class="m-0 text-xs text-fg-muted">{{ permissions.filteredUsers.length }} shown</p>
         </div>
         <button class="btn btn-primary" type="button" @click="openNewUser">
@@ -47,7 +53,13 @@
     <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
       <form class="modal w-full max-w-[860px]" @submit.prevent="save">
         <header class="modal-header">
-          <h2>{{ permissions.selectedUser ? "Edit User" : "Create User" }}</h2>
+          <div class="flex items-center gap-1">
+            <h2>{{ permissions.selectedUser ? "Edit User" : "Create User" }}</h2>
+            <HelpBubble
+              text="Set the user's identity and platform role, then manage team membership after the user exists."
+              label="About user accounts"
+            />
+          </div>
           <button class="btn btn-ghost" type="button" @click="closeModal"><Icon name="x" /></button>
         </header>
         <div class="form-grid">
@@ -162,6 +174,7 @@ import { usePermissionsStore } from "../../adapters/pinia/permissions";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import DataTable from "../shared/DataTable.vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingPanel from "../shared/LoadingPanel.vue";
 
 const app = useAppStore();

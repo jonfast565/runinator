@@ -4,11 +4,13 @@
       class="grid w-[min(360px,calc(100vw-32px))] gap-3 rounded-lg border border-border bg-surface p-7 shadow-modal"
       @submit.prevent="submit"
     >
-      <h1 class="m-0 text-xl text-fg">Runinator</h1>
-      <p class="m-0 text-xs leading-relaxed text-fg-muted">
-        Sign in with your Runinator account. Your available pages and actions are limited by the
-        roles assigned to that account.
-      </p>
+      <div class="flex items-center gap-1">
+        <h1 class="m-0 text-xl text-fg">Runinator</h1>
+        <HelpBubble
+          text="Sign in with your Runinator account. Your available pages and actions are limited by the roles assigned to that account."
+          label="About signing in"
+        />
+      </div>
       <label class="grid gap-1 text-xs font-semibold text-fg-subtle">
         Username
         <input
@@ -45,6 +47,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 

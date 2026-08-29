@@ -7,10 +7,12 @@
   >
     <div class="modal simulate-modal">
       <header class="modal-header">
-        <div>
+        <div class="flex items-center gap-1">
           <h2>Dry run · {{ workflow.name }}</h2>
-          <span>Walks the workflow with the reducer's evaluators against live config — no actions
-            are published.</span>
+          <HelpBubble
+            text="Walks the workflow with the reducer's evaluators against live config. No actions are published."
+            label="About dry runs"
+          />
         </div>
         <div class="modal-header-actions">
           <button type="button" :disabled="running" @click="runSimulation">
@@ -62,6 +64,7 @@ import { asJsonValue } from "../../../core/domain/models";
 import { buildSimPreview, type SimPreview } from "../../../core/workflow/run-simulation";
 import { simulateWorkflow } from "../../../core/api/commandCenterApi";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const props = defineProps<{ workflow: WorkflowDefinition; inputs?: unknown }>();
 const emit = defineEmits<{ close: [] }>();
@@ -94,4 +97,3 @@ onMounted(() => {
   void runSimulation();
 });
 </script>
-

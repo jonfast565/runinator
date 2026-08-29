@@ -3,7 +3,16 @@
     <div class="modal" :style="widthStyle" role="dialog" aria-modal="true">
       <div class="modal-header">
         <slot name="header">
-          <h2>{{ title }}</h2>
+          <div class="flex items-center gap-1">
+            <h2>{{ title }}</h2>
+            <HelpBubble
+              v-if="description || $slots.help"
+              :text="description"
+              label="About this window"
+            >
+              <slot name="help">{{ description }}</slot>
+            </HelpBubble>
+          </div>
         </slot>
         <button class="btn-close" aria-label="Close" @click="emit('close')">
           <Icon name="close" :size="16" />
@@ -22,18 +31,26 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted } from "vue";
 import Icon from "./Icon.vue";
+import HelpBubble from "./HelpBubble.vue";
 
 // shared modal shell (styles live in tailwind.css @layer components). standardizes header +
 // close button, footer actions, and escape/backdrop dismissal so every modal behaves the same.
 const props = withDefaults(
   defineProps<{
     title?: string;
+    description?: string;
     // css width for the dialog, e.g. "560px" or "min(820px, 100%)".
     width?: string;
     closeOnBackdrop?: boolean;
     closeOnEsc?: boolean;
   }>(),
-  { closeOnBackdrop: true, closeOnEsc: true, title: undefined, width: undefined },
+  {
+    closeOnBackdrop: true,
+    closeOnEsc: true,
+    title: undefined,
+    description: undefined,
+    width: undefined,
+  },
 );
 
 const emit = defineEmits<{ close: [] }>();

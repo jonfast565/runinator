@@ -192,10 +192,12 @@
 
     <details v-if="flatSteps.length" class="flat-steps-group">
       <summary>Flat step log (debug) · {{ flatSteps.length }} step(s)</summary>
-      <p class="flat-steps-hint">
-        Each executed step as a flat row in creation order, with its own id and a link to the step
-        that ran before it — easier to trace than the nested output tree.
-      </p>
+      <div class="my-1 flex justify-end">
+        <HelpBubble
+          text="Shows each executed step as a flat row in creation order, with its own ID and a link to the step that ran before it. This can be easier to trace than the nested output tree."
+          label="About the flat step log"
+        />
+      </div>
       <table class="flat-steps-table">
         <thead>
           <tr>
@@ -236,10 +238,12 @@
 
     <details v-if="runTransitions.length" class="transitions-group">
       <summary>Transition path · {{ runTransitions.length }} edge(s)</summary>
-      <p class="transitions-hint">
-        The edges this run actually walked, in order, reconstructed from each step's recorded
-        origin. Untaken branches never appear here.
-      </p>
+      <div class="my-1 flex justify-end">
+        <HelpBubble
+          text="Shows the edges this run actually walked, in order, reconstructed from each step's recorded origin. Untaken branches never appear here."
+          label="About the transition path"
+        />
+      </div>
       <ol class="transition-path">
         <li
           v-for="transition in runTransitions"

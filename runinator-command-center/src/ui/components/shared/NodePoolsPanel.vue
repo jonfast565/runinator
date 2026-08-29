@@ -1,18 +1,14 @@
 <template>
   <div v-if="canScale" class="panel node-pools-panel">
-    <div class="panel-toolbar">
-      <h2>Node Pools</h2>
+    <PanelHeader
+      title="Node Pools"
+      description="Spin up or scale down runtime nodes across configured provisioning backends. Desired and Ready come from the orchestrator and can differ from registered, heartbeating replicas."
+    >
       <button class="btn" :disabled="loading" @click="refresh">
         <Icon name="refresh" />
         <span>Refresh</span>
       </button>
-    </div>
-
-    <p class="node-pools-hint">
-      Spin up or scale down runtime nodes on demand across the configured provisioning backends.
-      Desired/Ready are what the orchestrator reports for the workload; they can differ from the
-      Replicas list above, which only counts nodes that have registered and are heartbeating.
-    </p>
+    </PanelHeader>
 
     <div v-if="!backends.length" class="empty-state">
       No provisioning backends are configured on the web service.
@@ -91,6 +87,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
+import PanelHeader from "./PanelHeader.vue";
 import {
   nodePoolsService,
   type NodeBackendInfo,

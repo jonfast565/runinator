@@ -2,7 +2,13 @@
   <div class="modal-backdrop">
     <form class="modal w-[min(1040px,100%)]" @submit.prevent="saveAndClose">
       <header class="modal-header">
-        <h2>Workflow Settings</h2>
+        <div class="flex items-center gap-1">
+          <h2>Workflow Settings</h2>
+          <HelpBubble
+            text="Manage workflow identity, ownership, and triggers. Changes are saved with the workflow."
+            label="About workflow settings"
+          />
+        </div>
         <button type="button" @click="workflows.closeWorkflowSettings">Close</button>
       </header>
 
@@ -34,7 +40,13 @@
 
       <section class="form-section ownership-section">
         <div class="section-toolbar">
-          <h3>Ownership</h3>
+          <div class="flex items-center gap-1">
+            <h3>Ownership</h3>
+            <HelpBubble
+              text="Scoping a workflow to an organization limits its runs and visibility to that organization's members. Share with individuals or teams from the Share dialog. Only organization admins can change ownership."
+              label="About workflow ownership"
+            />
+          </div>
         </div>
         <p v-if="!workflows.workflowDraft.id" class="hint">
           Save the workflow before assigning an owner.
@@ -51,11 +63,6 @@
               </select>
             </label>
           </div>
-          <p class="hint">
-            Scoping a workflow to an org limits its runs and visibility to that org's members. Share
-            with individual users or teams from the Share dialog. Only org admins can move a
-            workflow into an org.
-          </p>
         </template>
       </section>
 
@@ -186,7 +193,10 @@
                   />
                 </div>
               </template>
-              <p v-else-if="catalogMetadata.loading || !catalogMetadata.loaded" class="hint catalog-loading-hint">
+              <p
+                v-else-if="catalogMetadata.loading || !catalogMetadata.loaded"
+                class="hint catalog-loading-hint"
+              >
                 <LoadingSpinner size="sm" label="Loading trigger metadata" />
                 Loading trigger metadata…
               </p>
@@ -247,6 +257,7 @@ import { workflowSharingService } from "../../../core/services";
 import type { NodeFieldMetadata, UiField } from "../../../core/domain/models";
 import type { WorkflowDefinition } from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import WorkflowRevisionsPanel from "./WorkflowRevisionsPanel.vue";

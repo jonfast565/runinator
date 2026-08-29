@@ -17,6 +17,10 @@
         <div class="panel-toolbar">
           <div class="flex min-w-0 items-baseline gap-2">
             <h2 class="m-0 text-base font-semibold text-fg">Providers</h2>
+            <HelpBubble
+              text="Browse registered providers and inspect each action's parameters, results, credential scopes, and contract."
+              label="About providers"
+            />
             <span class="text-xs text-fg-muted">{{ providers.providers.length }}</span>
           </div>
           <button class="btn" :disabled="providers.loading" @click="providers.fetchProviders()">
@@ -225,6 +229,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";

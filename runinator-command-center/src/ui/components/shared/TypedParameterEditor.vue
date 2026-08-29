@@ -1,5 +1,10 @@
 <template>
   <div class="typed-parameter-editor">
+    <HelpBubble class="justify-self-end" label="About workflow parameter values">
+      Workflow parameters can reference prior results with tagged refs such as
+      <code>{ "$ref": { "prev": ["ticket_id"] } }</code> or named steps. Secret parameters use
+      <code>secret://scope/name</code> references.
+    </HelpBubble>
     <p v-if="parameters.length === 0" class="hint">
       This action does not publish typed parameters yet.
     </p>
@@ -59,12 +64,6 @@
       </ul>
       <p v-if="errors[parameter.name]" class="error">{{ errors[parameter.name] }}</p>
     </div>
-    <p class="hint">
-      Workflow parameters can reference prior results with tagged refs like
-      <code>{ "$ref": { "prev": ["ticket_id"] } }</code> or named steps like
-      <code>{ "$ref": { "node": "create_ticket", "output": ["ticket_id"] } }</code>. Secret
-      parameters use <code>secret://scope/name</code> references.
-    </p>
   </div>
 </template>
 
@@ -84,6 +83,7 @@ import { asJsonValue } from "../../../core/domain/json";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import TypedValueEditor from "./TypedValueEditor.vue";
 import CodeEditor from "./CodeEditor.vue";
+import HelpBubble from "./HelpBubble.vue";
 
 const props = defineProps<{
   modelValue: JsonRecord;

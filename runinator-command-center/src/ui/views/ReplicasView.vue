@@ -28,7 +28,13 @@
           <template #first>
             <aside class="panel flex min-h-0 flex-col">
               <div class="panel-toolbar">
-                <h2 class="m-0 text-base font-semibold text-fg">Replicas</h2>
+                <div class="flex items-center gap-1">
+                  <h2 class="m-0 text-base font-semibold text-fg">Replicas</h2>
+                  <HelpBubble
+                    text="Inspect registered runtime replicas, health, telemetry, directives, and attached desktop agents."
+                    label="About replicas"
+                  />
+                </div>
                 <div class="flex gap-1.5">
                   <button v-if="canEnrollAgents" class="btn" @click="openEnrollment">
                     <Icon name="plus" />
@@ -429,7 +435,13 @@
         <NodePoolsPanel />
       </template>
     </SplitPane>
-    <Modal v-if="enrollmentOpen" title="Enroll a machine" width="620px" @close="closeEnrollment">
+    <Modal
+      v-if="enrollmentOpen"
+      title="Enroll a machine"
+      description="Create a short-lived token that lets a desktop agent securely enroll with this Runinator service."
+      width="620px"
+      @close="closeEnrollment"
+    >
       <form class="flex flex-col gap-3" @submit.prevent="createEnrollmentToken">
         <template v-if="!createdEnrollmentToken">
           <label class="flex flex-col gap-1 text-sm">
@@ -500,6 +512,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";

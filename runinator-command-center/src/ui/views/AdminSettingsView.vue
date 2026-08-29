@@ -126,11 +126,12 @@
 
           <!-- display preferences panel -->
           <template v-if="activeSection === 'display'">
-            <header>
+            <header class="flex items-center gap-1">
               <h2 class="m-0 text-base font-semibold text-fg">Display</h2>
-              <p class="mt-1 mb-0 text-sm text-fg-muted">
-                These preferences are stored in this browser and apply to you alone.
-              </p>
+              <HelpBubble
+                text="These preferences are stored in this browser and apply to you alone."
+                label="About display settings"
+              />
             </header>
 
             <div class="flex flex-col rounded-lg border border-border">
@@ -184,14 +185,14 @@
           </template>
 
           <template v-else-if="activeSection === 'server'">
-            <header>
+            <header class="flex items-center gap-1">
               <h2 class="m-0 text-base font-semibold text-fg">
                 {{ activeServerSection || "Server" }}
               </h2>
-              <p class="mt-1 mb-0 text-sm text-fg-muted">
-                Platform-wide values are validated by the server and picked up by engine replicas
-                without a restart.
-              </p>
+              <HelpBubble
+                text="Platform-wide values are validated by the server and picked up by engine replicas without a restart."
+                label="About server settings"
+              />
             </header>
 
             <EmptyState
@@ -264,14 +265,14 @@
 
           <!-- language runtime panel -->
           <template v-else-if="activeSection === 'languages'">
-            <header>
+            <header class="flex items-center gap-1">
               <h2 class="m-0 text-base font-semibold text-fg">
                 {{ activeLanguage ? activeLanguage.label : "Foreign Languages" }}
               </h2>
-              <p class="mt-1 mb-0 text-sm text-fg-muted">
-                The container image and setup script <code>std.code</code> uses to run this
-                language.
-              </p>
+              <HelpBubble label="About foreign language runtimes">
+                Configure the container image and setup script <code>std.code</code> uses to run
+                this language.
+              </HelpBubble>
             </header>
 
             <EmptyState
@@ -343,6 +344,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";

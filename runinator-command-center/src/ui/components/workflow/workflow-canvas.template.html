@@ -153,10 +153,13 @@
       @click.stop
       @contextmenu.prevent
     >
-      <strong>Insert step</strong>
-      <p class="hint">
-        {{ edgeInsertion.interrupt ? "Only handler-safe, single-path steps are shown." : "Single-path steps keep this connection intact." }}
-      </p>
+      <div class="flex items-center gap-1">
+        <strong>Insert step</strong>
+        <HelpBubble
+          :text="edgeInsertion.interrupt ? 'Only handler-safe, single-path steps are shown.' : 'Single-path steps keep this connection intact.'"
+          label="About inserting a step"
+        />
+      </div>
       <button
         v-for="kind in edgeInsertion.kinds"
         :key="kind"

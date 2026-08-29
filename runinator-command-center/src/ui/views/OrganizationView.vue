@@ -2,19 +2,16 @@
   <section class="pane h-full overflow-hidden">
     <div class="flex h-full min-h-0 flex-col gap-2.5 overflow-auto">
       <div class="panel shrink-0">
-        <div class="panel-toolbar">
-          <div class="grid gap-1">
-            <h2 class="m-0 text-base font-semibold text-fg">Organizations</h2>
-            <p class="m-0 text-xs text-fg-muted">
-              Select the organization you intend to change before managing members or teams.
-            </p>
-          </div>
+        <PanelHeader
+          title="Organizations"
+          description="Select the organization you intend to change before managing members or teams."
+        >
           <button class="btn" :disabled="loadingOrgData" @click="refresh">
             <LoadingSpinner v-if="loadingOrgData" size="sm" label="Refreshing organizations" />
             <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
-        </div>
+        </PanelHeader>
 
         <div class="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
           <div
@@ -63,16 +60,18 @@
       </div>
 
       <div class="panel shrink-0">
-        <div class="panel-toolbar">
-          <h2 class="m-0 text-base font-semibold text-fg">
+        <PanelHeader
+          description="Add existing users to the active organization and assign the least-privileged role they need."
+        >
+          <template #title>
             Members<template v-if="orgs.activeOrg"> — {{ orgs.activeOrg.name }}</template>
-          </h2>
+          </template>
           <span
             v-if="orgs.activeOrg"
             class="rounded-pill bg-surface px-2 py-0.5 text-xs text-fg-subtle"
             >{{ members.length }} member(s)</span
           >
-        </div>
+        </PanelHeader>
 
         <EmptyState
           v-if="!orgs.activeOrg"
@@ -166,12 +165,14 @@
       </div>
 
       <div v-if="can('teams:manage')" class="panel shrink-0">
-        <div class="panel-toolbar">
-          <h2 class="m-0 text-base font-semibold text-fg">Teams</h2>
+        <PanelHeader
+          title="Teams"
+          description="Group organization members into teams for reusable workflow access grants."
+        >
           <span class="rounded-pill bg-surface px-2 py-0.5 text-xs text-fg-subtle"
             >{{ teams.length }} team(s)</span
           >
-        </div>
+        </PanelHeader>
 
         <div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,260px)_minmax(0,1fr)]">
           <div class="flex flex-col gap-1.5">
@@ -280,6 +281,7 @@ import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import {
   orgAdminService,
   type OrgMembership,

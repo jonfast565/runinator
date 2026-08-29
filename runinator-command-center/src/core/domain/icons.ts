@@ -18,6 +18,7 @@ export type IconName =
   | "check"
   | "alert"
   | "info"
+  | "help"
   | "search"
   | "file"
   | "folder"

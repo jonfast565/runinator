@@ -1,9 +1,15 @@
 <template>
   <section class="pane h-full overflow-hidden">
-    <div class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto">
+    <div
+      class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto"
+    >
       <header class="flex items-center justify-between gap-3">
-        <div>
+        <div class="flex items-center gap-1">
           <h2 class="m-0 text-base font-semibold text-fg">Permissions</h2>
+          <HelpBubble
+            text="Manage platform users, teams, workflow grants, and scoped API keys."
+            label="About permissions"
+          />
         </div>
         <button class="btn" :disabled="loading" @click="refresh">
           <LoadingSpinner v-if="loading" size="sm" label="Refreshing permissions" />
@@ -12,7 +18,10 @@
         </button>
       </header>
 
-      <nav class="inline-flex w-fit overflow-hidden rounded-md border border-border max-[920px]:max-w-full max-[920px]:overflow-x-auto" aria-label="Permissions sections">
+      <nav
+        class="inline-flex w-fit overflow-hidden rounded-md border border-border max-[920px]:max-w-full max-[920px]:overflow-x-auto"
+        aria-label="Permissions sections"
+      >
         <button
           v-for="tab in tabs"
           :key="tab.id"
@@ -42,6 +51,7 @@ import TeamsPermissionsPanel from "../components/permissions/TeamsPermissionsPan
 import UsersPermissionsPanel from "../components/permissions/UsersPermissionsPanel.vue";
 import WorkflowAccessPanel from "../components/permissions/WorkflowAccessPanel.vue";
 import Icon from "../components/shared/Icon.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import { useOperationLoading } from "../composables/useOperationLoading";
 

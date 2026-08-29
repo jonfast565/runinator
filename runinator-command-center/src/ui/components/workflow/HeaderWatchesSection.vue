@@ -1,11 +1,12 @@
 <template>
   <section class="detail-section header-section">
-    <h3>Watch guards</h3>
-    <p class="section-note">
-      Re-evaluated on every drive, including while the run is parked, so a guard catches state
-      changes a fixed checkpoint would miss. The first matching guard wins and fires at most once
-      per run.
-    </p>
+    <div class="flex items-center gap-1">
+      <h3>Watch guards</h3>
+      <HelpBubble
+        text="Watch guards are re-evaluated on every drive, including while the run is parked. The first matching guard wins and fires at most once per run."
+        label="About watch guards"
+      />
+    </div>
 
     <p v-if="watches.length === 0" class="hint">No watch guards declared.</p>
 
@@ -50,6 +51,7 @@ import { buildSampleContext } from "../../../core/utils/workflow-references";
 import { displayValue } from "../../../core/utils/values";
 import type { JsonRecord, JsonValue } from "../../../core/domain/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();

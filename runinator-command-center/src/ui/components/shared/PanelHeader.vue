@@ -1,6 +1,6 @@
 <template>
   <div class="panel-toolbar">
-    <div class="grid min-w-0 gap-1">
+    <div class="flex min-w-0 items-center gap-1">
       <component
         :is="heading"
         class="m-0 font-semibold text-fg"
@@ -8,9 +8,9 @@
       >
         <slot name="title">{{ title }}</slot>
       </component>
-      <p v-if="description" class="m-0 max-w-3xl text-xs leading-relaxed text-fg-muted">
-        {{ description }}
-      </p>
+      <HelpBubble v-if="description || $slots.help" :text="description" :label="helpLabel">
+        <slot name="help">{{ description }}</slot>
+      </HelpBubble>
     </div>
     <div v-if="$slots.default" class="btn-row items-center self-center">
       <slot />
@@ -19,17 +19,20 @@
 </template>
 
 <script setup lang="ts">
-// Shared panel title row. Descriptions are intentionally rendered: they give every pane a concise
-// purpose/next-step without forcing each view to invent a second header layout.
+import HelpBubble from "./HelpBubble.vue";
+
+// Shared panel title row. Explanatory copy stays available without permanently occupying the pane.
 withDefaults(
   defineProps<{
     title?: string;
     description?: string;
+    helpLabel?: string;
     heading?: "h2" | "h3";
   }>(),
   {
     title: undefined,
     description: undefined,
+    helpLabel: "About this pane",
     heading: "h2",
   },
 );

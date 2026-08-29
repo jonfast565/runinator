@@ -160,7 +160,13 @@
             <template #second>
               <div class="panel gap-3 overflow-y-auto p-4">
                 <template v-if="selectedEdge">
-                  <h3 class="m-0 text-sm font-semibold text-fg">Chain</h3>
+                  <div class="flex items-center gap-1">
+                    <h3 class="m-0 text-sm font-semibold text-fg">Chain</h3>
+                    <HelpBubble
+                      text="Configure when this chain fires and how upstream output maps into the downstream workflow input."
+                      label="About pipeline chains"
+                    />
+                  </div>
                   <p class="m-0 text-sm text-fg">
                     <strong>{{ pipeline.nameById(selectedEdge.source) }}</strong>
                     →
@@ -219,11 +225,10 @@
                       <option value="inquire">Inquire</option>
                     </select>
                   </label>
-                  <p class="hint m-0">
-                    What happens to this pipeline run if
-                    <strong>{{ selectedNode.data.name }}</strong> fails. Mirrors PowerShell's
-                    $ErrorActionPreference.
-                  </p>
+                  <HelpBubble
+                    text="Controls what happens to this pipeline run if the selected workflow fails. It mirrors PowerShell's ErrorActionPreference."
+                    label="About member failure handling"
+                  />
                   <div
                     v-if="selectedNodeJoin"
                     class="grid gap-2 border-t border-border-subtle pt-3"
@@ -251,9 +256,16 @@
                 <div v-else />
 
                 <div>
-                  <h4 class="m-0 text-sm font-semibold text-fg">Workflows in this pipeline</h4>
+                  <div class="flex items-center gap-1">
+                    <h4 class="m-0 text-sm font-semibold text-fg">Workflows in this pipeline</h4>
+                    <HelpBubble
+                      v-if="!pipeline.memberWorkflows.length"
+                      text="Use Add workflow above to add the first member."
+                      label="How to add a workflow"
+                    />
+                  </div>
                   <p v-if="!pipeline.memberWorkflows.length" class="hint mt-1.5">
-                    No workflows yet. Use “Add workflow” above to add one.
+                    No workflows yet.
                   </p>
                   <ul v-else class="mt-1.5 flex list-none flex-col gap-1 p-0 text-sm">
                     <li
@@ -274,10 +286,13 @@
                 </div>
 
                 <div v-if="pipeline.unresolved.length">
-                  <h4 class="m-0 text-sm font-semibold text-fg">Unresolved chains</h4>
-                  <p class="hint mt-1.5">
-                    These chaining triggers point at a workflow name that no longer exists.
-                  </p>
+                  <div class="flex items-center gap-1">
+                    <h4 class="m-0 text-sm font-semibold text-fg">Unresolved chains</h4>
+                    <HelpBubble
+                      text="These chaining triggers point at a workflow name that no longer exists."
+                      label="About unresolved chains"
+                    />
+                  </div>
                   <ul class="mt-1.5 list-disc pl-4 text-xs text-fg">
                     <li v-for="(item, index) in pipeline.unresolved" :key="index">
                       <strong>{{ item.sourceName }}</strong> → “{{ item.targetName }}” (on
@@ -292,7 +307,13 @@
       </template>
     </SplitPane>
 
-    <Modal v-if="nameModal.open" :title="nameModal.title" width="480px" @close="closeNameModal">
+    <Modal
+      v-if="nameModal.open"
+      :title="nameModal.title"
+      description="Name and scope identify the pipeline; its stable key is used for durable references."
+      width="480px"
+      @close="closeNameModal"
+    >
       <form
         id="pipeline-identity-form"
         class="flex flex-col gap-3"
@@ -350,7 +371,12 @@
         class="mt-3 flex flex-col gap-2 border-t border-border pt-3"
       >
         <label class="flex flex-col gap-1 text-sm">
-          <span>Owning organization</span>
+          <span class="flex items-center gap-1"
+            >Owning organization
+            <HelpBubble
+              text="Scoping a pipeline to an organization limits visibility to its members. Only organization admins can move a pipeline into an organization."
+              label="About pipeline ownership"
+          /></span>
           <select v-model="ownerOrgId" :disabled="ownerSaving" @change="saveOwner">
             <option value="">Platform-global (none)</option>
             <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">
@@ -358,10 +384,6 @@
             </option>
           </select>
         </label>
-        <p class="hint m-0">
-          Scoping a pipeline to an org limits its visibility to that org's members. Only org admins
-          can move a pipeline into an org.
-        </p>
       </div>
 
       <template #actions>
@@ -380,6 +402,7 @@
     <Modal
       v-if="defaultsModalOpen && selectedPipeline"
       title="Pipeline defaults"
+      description="Set the pipeline-wide failure and concurrency behavior inherited by its members."
       width="560px"
       @close="defaultsModalOpen = false"
     >
@@ -394,6 +417,7 @@
     <Modal
       v-if="orchestrationModalOpen && selectedPipeline"
       title="Pipeline orchestration"
+      description="Configure how correlated external events observe, pause, restart, or signal pipeline runs."
       width="min(1100px, 96vw)"
       @close="orchestrationModalOpen = false"
     >
@@ -430,6 +454,7 @@ import SplitPane from "../components/shared/SplitPane.vue";
 import Icon from "../components/shared/Icon.vue";
 import Modal from "../components/shared/Modal.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import DataTable from "../components/shared/DataTable.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";

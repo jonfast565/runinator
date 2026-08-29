@@ -3,12 +3,14 @@
     <header class="step-detail-header">
       <div class="step-detail-titles">
         <span class="node-kind">workflow header</span>
-        <h2>{{ workflows.workflowDraft.name || "Untitled workflow" }}</h2>
+        <div class="flex items-center gap-1">
+          <h2>{{ workflows.workflowDraft.name || "Untitled workflow" }}</h2>
+          <HelpBubble
+            text="Declarations that belong to the workflow rather than any one node. They compile into the REXRAP header and survive a save. Interrupt handlers have their own panel."
+            label="About the workflow header"
+          />
+        </div>
       </div>
-      <p class="step-headline">
-        Declarations that belong to the workflow rather than to any one node. These compile into the
-        REXRAP header, so they survive a save. Interrupt handlers have their own panel.
-      </p>
     </header>
 
     <section v-if="issues.length" class="detail-section validation-section">
@@ -45,6 +47,7 @@ import HeaderConcurrencySection from "./HeaderConcurrencySection.vue";
 import HeaderCorrelationSection from "./HeaderCorrelationSection.vue";
 import HeaderWatchesSection from "./HeaderWatchesSection.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const workflows = useWorkflowsStore();
 const catalogMetadata = useCatalogMetadataStore();

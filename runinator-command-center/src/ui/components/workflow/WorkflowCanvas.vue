@@ -37,6 +37,7 @@ import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 // edges in the editable canvas allow manual label repositioning.
 provide("workflowEdgeInteractive", true);

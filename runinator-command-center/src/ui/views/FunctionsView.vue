@@ -12,8 +12,10 @@
     >
       <template #first>
         <div class="panel">
-          <div class="panel-toolbar">
-            <h2 class="m-0 text-base font-semibold text-fg">Functions</h2>
+          <PanelHeader
+            title="Functions"
+            description="A packaged function is immutable code published to the platform and called like any other action. Publish uploads a built archive and its manifest; runinatorctl functions publish &lt;path&gt; builds that archive from a working tree. Versions never change, and only aliases move."
+          >
             <div class="btn-row">
               <button class="btn" :disabled="loading" @click="functions.refreshPackages">
                 <LoadingSpinner v-if="loading" size="sm" label="Refreshing functions" />
@@ -33,13 +35,7 @@
                 <span>Delete</span>
               </button>
             </div>
-          </div>
-          <p class="hint m-0">
-            A packaged function is immutable code published to the platform and called like any
-            other action. <strong>Publish</strong> uploads a built archive and its manifest;
-            <code>runinatorctl functions publish &lt;path&gt;</code> builds that archive from a
-            working tree. Versions never change, and only the <strong>aliases</strong> move.
-          </p>
+          </PanelHeader>
           <DataTable>
             <table>
               <thead>
@@ -104,12 +100,13 @@
               {{ functions.selectedPackage.description }}
             </p>
 
-            <h3 class="m-0 mt-2 text-sm font-semibold text-fg">Aliases</h3>
-            <p class="hint m-0">
-              An alias is the only mutable part of a published package. Moving one changes what
-              <em>new</em> calls resolve to — a workflow that already compiled recorded the exact
-              version it was built against and keeps calling it.
-            </p>
+            <div class="mt-2 flex items-center gap-1">
+              <h3 class="m-0 text-sm font-semibold text-fg">Aliases</h3>
+              <HelpBubble
+                text="An alias is the only mutable part of a published package. Moving one changes what new calls resolve to; an already-compiled workflow keeps calling the exact version it recorded."
+                label="About function aliases"
+              />
+            </div>
             <DataTable>
               <table>
                 <thead>
@@ -169,11 +166,13 @@
             </div>
             <p v-if="aliasError" class="error m-0 text-xs" role="alert">{{ aliasError }}</p>
 
-            <h3 class="m-0 mt-2 text-sm font-semibold text-fg">Exports</h3>
-            <p class="hint m-0">
-              Call one from a workflow with the dotted path below. An unversioned call pins the
-              newest version at compile time.
-            </p>
+            <div class="mt-2 flex items-center gap-1">
+              <h3 class="m-0 text-sm font-semibold text-fg">Exports</h3>
+              <HelpBubble
+                text="Call an export from a workflow with the dotted path below. An unversioned call pins the newest version at compile time."
+                label="About function exports"
+              />
+            </div>
             <DataTable>
               <table>
                 <thead>
@@ -235,9 +234,11 @@
 import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import PublishFunctionDialog from "../components/functions/PublishFunctionDialog.vue";

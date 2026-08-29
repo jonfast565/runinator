@@ -4,12 +4,12 @@
     width="min(680px, calc(100vw - 32px))"
     @close="emit('close')"
   >
-    <p class="hint m-0">
+    <template #help>
       Publishing takes a built package archive and the manifest that describes it. The archive is
-      stored under the SHA-256 of its bytes, so the version you publish is pinned to exactly these
-      bytes. To build one from a working tree instead, run
+      stored under the SHA-256 of its bytes, so the version is pinned to exactly these bytes. To
+      build one from a working tree, run
       <code>runinatorctl functions publish &lt;path&gt;</code>.
-    </p>
+    </template>
 
     <section class="form-section">
       <h3>Archive</h3>

@@ -3,7 +3,13 @@
     <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
       <div class="panel-toolbar">
         <div>
-          <h3 class="m-0 text-sm font-semibold text-fg">API Keys</h3>
+          <div class="flex items-center gap-1">
+            <h3 class="m-0 text-sm font-semibold text-fg">API Keys</h3>
+            <HelpBubble
+              text="Create, rotate, disable, or revoke keys for users and service accounts within the active scope."
+              label="About API keys"
+            />
+          </div>
           <p class="m-0 text-xs text-fg-muted">{{ scopeLabel }}</p>
         </div>
         <div class="btn-row">
@@ -58,7 +64,13 @@
     <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
       <form class="modal w-full max-w-[860px]" @submit.prevent="save">
         <header class="modal-header">
-          <h2>{{ permissions.selectedApiKey ? "Edit API Key" : "Create API Key" }}</h2>
+          <div class="flex items-center gap-1">
+            <h2>{{ permissions.selectedApiKey ? "Edit API Key" : "Create API Key" }}</h2>
+            <HelpBubble
+              text="Choose the principal, scope, and expiry. Newly created or rotated secrets are shown only once."
+              label="About API key settings"
+            />
+          </div>
           <button class="btn btn-ghost" type="button" @click="closeModal"><Icon name="x" /></button>
         </header>
         <div
@@ -165,6 +177,7 @@ import { usePermissionsStore } from "../../adapters/pinia/permissions";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import DataTable from "../shared/DataTable.vue";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingPanel from "../shared/LoadingPanel.vue";
 
 const app = useAppStore();

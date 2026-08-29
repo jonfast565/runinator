@@ -1,26 +1,32 @@
 <template>
   <Modal title="Request interrupt" width="min(560px, 100%)" @close="emit('close')">
-    <p class="section-note">
+    <template #help>
       The web service only records the request. The reducer decides on the run's next drive whether
       it can be serviced — and a refusal is silent, so nothing here guarantees the handler runs.
-    </p>
+    </template>
 
-    <label
-      >Source
-      <select v-model="source">
-        <option v-for="value in declaredSources" :key="value" :value="value">
-          {{ labelFor(value) }}
-        </option>
-      </select>
-    </label>
-    <p v-if="sourceDescription" class="hint">{{ sourceDescription }}</p>
+    <div class="flex items-end gap-1">
+      <label
+        >Source
+        <select v-model="source">
+          <option v-for="value in declaredSources" :key="value" :value="value">
+            {{ labelFor(value) }}
+          </option>
+        </select>
+      </label>
+      <HelpBubble
+        v-if="sourceDescription"
+        :text="sourceDescription"
+        label="About the selected interrupt source"
+      />
+    </div>
 
     <details class="advanced-sources">
       <summary>Other sources (advanced)</summary>
-      <p class="hint">
-        A source this workflow declares no handler for is recorded and then dropped. Drive-matched
-        sources additionally require their condition to hold on the arriving drive.
-      </p>
+      <HelpBubble
+        text="A source this workflow declares no handler for is recorded and then dropped. Drive-matched sources also require their condition to hold on the arriving drive."
+        label="About advanced interrupt sources"
+      />
       <select v-model="source">
         <option v-for="option in allSources" :key="option.value" :value="option.value">
           {{ option.label }}
@@ -39,8 +45,13 @@
     </label>
 
     <div>
-      <JsonEditor v-model="payloadJson" title="Payload" />
-      <p class="hint">The handler region reads this as <code>interrupt.payload</code>.</p>
+      <div class="flex items-center gap-1">
+        <span>Payload</span>
+        <HelpBubble label="About the interrupt payload"
+          >The handler region reads this as <code>interrupt.payload</code>.</HelpBubble
+        >
+      </div>
+      <JsonEditor v-model="payloadJson" title="" />
       <p v-if="payloadError" class="hint error">{{ payloadError }}</p>
     </div>
 
@@ -60,6 +71,7 @@ import { useCatalogMetadataStore } from "../../adapters/pinia/catalogMetadata";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import { parseRequiredJson } from "../../../core/utils/json";
 import JsonEditor from "../shared/JsonEditor.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import Modal from "../shared/Modal.vue";
 
 const emit = defineEmits<{ close: [] }>();
@@ -73,7 +85,9 @@ const allSources = computed(() => catalogMetadata.enumOptions("interrupt_source"
 // is always entitled to ask for.
 const declaredSources = computed(() => workflows.requestableInterruptSources);
 
-const source = ref(declaredSources.value.includes("external") ? "external" : (declaredSources.value.at(0) ?? ""));
+const source = ref(
+  declaredSources.value.includes("external") ? "external" : (declaredSources.value.at(0) ?? ""),
+);
 const continuationId = ref("");
 const payloadJson = ref("{}");
 const payloadError = ref("");

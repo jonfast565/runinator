@@ -15,9 +15,9 @@
           class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto"
         >
           <header class="flex items-center justify-between gap-3">
-            <div>
+            <div class="flex items-center gap-1">
               <h2 class="m-0 text-base font-semibold text-fg">{{ pageTitle }}</h2>
-              <p class="m-0 text-xs text-fg-muted">{{ pageDescription }}</p>
+              <HelpBubble :text="pageDescription" :label="`About ${pageTitle.toLowerCase()}`" />
             </div>
             <div class="btn-row">
               <button class="btn" :disabled="loadingSecrets" @click="refreshPage">
@@ -73,9 +73,19 @@
         <div class="panel flex min-h-0 flex-col gap-3">
           <MobileBackBar @back="secrets.selectedSecretKey = ''" />
           <div class="flex items-center justify-between gap-3">
-            <h2 class="m-0 text-base font-semibold text-fg">
-              {{ isConfig ? "Config" : "Secret" }} Overview
-            </h2>
+            <div class="flex items-center gap-1">
+              <h2 class="m-0 text-base font-semibold text-fg">
+                {{ isConfig ? "Config" : "Secret" }} Overview
+              </h2>
+              <HelpBubble
+                :text="
+                  isConfig
+                    ? 'Preview the selected config value and its scoped reference.'
+                    : 'Review the selected secret metadata and replace its write-only value when needed.'
+                "
+                :label="`About ${isConfig ? 'config' : 'secret'} details`"
+              />
+            </div>
             <div v-if="selected" class="btn-row">
               <button class="btn btn-sm" @click="openEditSetting(selected)">
                 <Icon name="edit" :size="14" />
@@ -145,9 +155,9 @@
         @submit.prevent="saveEditor"
       >
         <header class="modal-header">
-          <div>
+          <div class="flex items-center gap-1">
             <h2 class="m-0">{{ formTitle }}</h2>
-            <p class="m-0 text-xs text-fg-muted">{{ hint }}</p>
+            <HelpBubble :text="hint" :label="`About ${formTitle.toLowerCase()}`" />
           </div>
           <button class="btn btn-ghost" type="button" @click="closeEditor">
             <Icon name="x" />
@@ -221,6 +231,7 @@
 </template>
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";

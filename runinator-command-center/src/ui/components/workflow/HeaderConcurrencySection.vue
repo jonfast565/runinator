@@ -1,10 +1,12 @@
 <template>
   <section class="detail-section header-section">
-    <h3>Concurrency</h3>
-    <p class="section-note">
-      Checked inside the trigger-firing transaction. A manually started run is
-      <strong>not</strong> gated by this.
-    </p>
+    <div class="flex items-center gap-1">
+      <h3>Concurrency</h3>
+      <HelpBubble label="About workflow concurrency">
+        Checked inside the trigger-firing transaction. A manually started run is
+        <strong>not</strong> gated by this.
+      </HelpBubble>
+    </div>
 
     <p v-if="!concurrency" class="hint">
       Unlimited: overlapping runs are allowed and no firing is ever declined.
@@ -21,14 +23,22 @@
           @change="setMax"
         />
       </label>
-      <label
-        >On conflict
-        <select :value="concurrency?.onConflict ?? 'skip'" @change="setPolicy">
-          <option v-for="option in policyOptions" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
-      </label>
+      <div class="flex items-end gap-1">
+        <label
+          >On conflict
+          <select :value="concurrency?.onConflict ?? 'skip'" @change="setPolicy">
+            <option v-for="option in policyOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <HelpBubble
+          v-if="policyDescription"
+          :text="policyDescription"
+          label="About the selected conflict policy"
+          :size="14"
+        />
+      </div>
       <button
         v-if="concurrency"
         type="button"
@@ -39,8 +49,6 @@
         Clear
       </button>
     </div>
-
-    <p v-if="policyDescription" class="hint">{{ policyDescription }}</p>
   </section>
 </template>
 
@@ -48,6 +56,7 @@
 import { computed } from "vue";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useCatalogMetadataStore } from "../../adapters/pinia/catalogMetadata";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const workflows = useWorkflowsStore();
 const catalogMetadata = useCatalogMetadataStore();

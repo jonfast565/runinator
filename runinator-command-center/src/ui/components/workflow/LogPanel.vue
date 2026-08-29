@@ -18,6 +18,10 @@
         <span class="dot" />
         {{ isLive ? "live" : "idle" }}
       </span>
+      <HelpBubble
+        text="Severity is inferred client-side from stream (stderr means error) and substring matching, so it is best-effort."
+        label="About log severity"
+      />
     </div>
     <pre class="log-output">
 <span
@@ -27,16 +31,13 @@
 >{{ line.text }}
 </span>
     </pre>
-    <p class="log-hint">
-      Severity is inferred client-side from stream (stderr → error) and substring match —
-      best-effort.
-    </p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RunChunk } from "../../../core/domain/models";
+import HelpBubble from "../shared/HelpBubble.vue";
 
 const props = defineProps<{
   chunks: RunChunk[];
@@ -129,4 +130,3 @@ function lineClass(line: Line): string {
   return "";
 }
 </script>
-

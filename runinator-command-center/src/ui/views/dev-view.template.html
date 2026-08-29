@@ -2,9 +2,14 @@
     <div class="dev-layout">
       <section class="panel dev-panel">
         <div class="panel-toolbar">
-          <div class="dev-toolbar-copy">
+        <div class="dev-toolbar-copy">
+          <div class="flex items-center gap-1">
             <h2>Dev Pack</h2>
-            <p>Inspect, edit, apply, and run a local pack without leaving the desktop client.</p>
+            <HelpBubble
+              text="Inspect, edit, apply, and run a local pack without leaving the desktop client."
+              label="About Dev Pack"
+            />
+          </div>
           </div>
           <div class="actions">
             <button
@@ -156,15 +161,14 @@
 
       <section class="panel dev-editor-panel">
         <div class="panel-toolbar">
-          <div class="dev-toolbar-copy">
+        <div class="dev-toolbar-copy">
+          <div class="flex items-center gap-1">
             <h2>{{ selectedFilePath ? relativePath(selectedFilePath) : "Source" }}</h2>
-            <p>
-              {{
-                selectedFilePath
-                  ? "Live source editing for the selected pack file."
-                  : "Select a watched file to inspect its source."
-              }}
-            </p>
+            <HelpBubble
+              :text="selectedFilePath ? 'Live source editing for the selected pack file.' : 'Select a watched file to inspect its source.'"
+              label="About the source editor"
+            />
+          </div>
           </div>
           <div class="actions">
             <button class="btn" :disabled="!canSaveSource || saving" @click="saveSelectedSource">
@@ -206,15 +210,14 @@
 
       <section class="panel dev-run-panel">
         <div class="panel-toolbar">
-          <div class="dev-toolbar-copy">
+        <div class="dev-toolbar-copy">
+          <div class="flex items-center gap-1">
             <h2>Latest Run</h2>
-            <p>
-              {{
-                latestRunId
-                  ? "Track the active or most recent run created from this panel."
-                  : "Run a selected workflow and inspect its latest execution here."
-              }}
-            </p>
+            <HelpBubble
+              :text="latestRunId ? 'Track the active or most recent run created from this panel.' : 'Run a selected workflow and inspect its latest execution here.'"
+              label="About the latest development run"
+            />
+          </div>
           </div>
           <div class="actions">
             <button

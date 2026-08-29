@@ -9,27 +9,13 @@
       v-if="!enabled"
       class="grid gap-4 rounded border border-border bg-surface-subtle p-4 text-sm"
     >
-      <div class="grid gap-1">
+      <div class="flex items-center gap-1">
         <h3 class="m-0 text-base font-semibold text-fg">Set up correlated execution</h3>
-        <p class="m-0 text-fg-muted">
-          Connect external events to this pipeline, decide how a live execution responds, and
-          retain the evidence and workspace settings each phase needs.
-        </p>
+        <HelpBubble
+          text="Connect external events to this pipeline by matching provider events to a correlation scope and lifecycle. Define whether updates observe, pause, restart, or signal a run, then map the result, evidence, and workspace state retained for each phase."
+          label="About correlated execution"
+        />
       </div>
-      <ol class="grid gap-2 text-fg-muted md:grid-cols-3">
-        <li class="rounded border border-border bg-surface p-3">
-          <strong class="block text-fg">1. Admit events</strong>
-          Match provider events to a correlation scope and lifecycle.
-        </li>
-        <li class="rounded border border-border bg-surface p-3">
-          <strong class="block text-fg">2. Define intents</strong>
-          Choose whether an update observes, pauses, restarts, or signals a run.
-        </li>
-        <li class="rounded border border-border bg-surface p-3">
-          <strong class="block text-fg">3. Map phase state</strong>
-          Keep result, evidence, and workspace details with each pipeline phase.
-        </li>
-      </ol>
       <div>
         <button type="button" class="btn btn-primary" @click="enableConfiguration">
           Enable orchestration editor
@@ -168,6 +154,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import type {
   AdapterKindMetadata,
   IngressAction,

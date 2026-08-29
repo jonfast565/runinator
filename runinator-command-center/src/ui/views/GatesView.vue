@@ -12,13 +12,10 @@
     >
       <template #first>
         <div class="panel">
-          <div class="panel-toolbar">
-            <div class="grid gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">Gates</h2>
-              <p class="m-0 text-xs text-fg-muted">
-                Select a blocking gate and verify its run before changing the outcome.
-              </p>
-            </div>
+          <PanelHeader
+            title="Gates"
+            description="Select a blocking gate and verify its run before changing the outcome."
+          >
             <div class="btn-row">
               <button class="btn" :disabled="loadingGates" @click="gates.refreshGates">
                 <LoadingSpinner v-if="loadingGates" size="sm" label="Refreshing gates" />
@@ -46,7 +43,7 @@
                 <span>Delete</span>
               </button>
             </div>
-          </div>
+          </PanelHeader>
           <DataTable>
             <table>
               <thead>
@@ -103,7 +100,13 @@
       <template #second>
         <div class="panel details overflow-hidden">
           <MobileBackBar @back="gates.selectedGate = null" />
-          <h2 class="m-0 text-base font-semibold text-fg">Gate Detail</h2>
+          <div class="flex items-center gap-1">
+            <h2 class="m-0 text-base font-semibold text-fg">Gate Detail</h2>
+            <HelpBubble
+              text="A reason is required so the operator decision remains auditable."
+              label="About resolving gates"
+            />
+          </div>
           <label class="grid gap-1 text-xs text-fg-muted">
             Reason
             <input
@@ -113,7 +116,6 @@
               placeholder="Why are you opening or closing this gate?"
             />
           </label>
-          <p class="hint m-0">A reason is required so the operator decision remains auditable.</p>
           <pre class="output">{{ gates.selectedGate ? pretty(gates.selectedGate) : "" }}</pre>
         </div>
       </template>
@@ -125,10 +127,12 @@
 import { onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useGatesStore } from "../../ui/adapters/pinia/gates";

@@ -1,11 +1,11 @@
 <template>
   <Modal title="Import workflow pack" width="min(560px, calc(100vw - 32px))" @close="emit('close')">
-    <p class="hint m-0">
+    <template #help>
       Choose a compiled pack ZIP. It may contain a <code>.rexrapm</code> manifest plus workflows,
       settings, pipelines, and packaged functions. Source directories and standalone manifests are
       compiled and imported by <code>runinatorctl workflows apply</code> or the desktop Dev Pack
       panel.
-    </p>
+    </template>
 
     <section class="form-section">
       <label class="grid gap-1 text-xs text-fg-subtle">

@@ -3,13 +3,14 @@
     <header class="step-detail-header">
       <div class="step-detail-titles">
         <span class="node-kind">interrupts</span>
-        <h2>{{ workflows.workflowDraft.name || "Untitled workflow" }}</h2>
+        <div class="flex items-center gap-1">
+          <h2>{{ workflows.workflowDraft.name || "Untitled workflow" }}</h2>
+          <HelpBubble
+            text="An interrupt suspends one thread of control, runs a handler region beside it, and hands control back at a resume. Adding a handler creates the complete region and opens its first editable step; extend that mini-flow on the canvas like any other sequence."
+            label="About workflow interrupts"
+          />
+        </div>
       </div>
-      <p class="step-headline">
-        An interrupt suspends one thread of control, runs a handler region beside it, and hands
-        control back at a <code>resume</code>. Adding a handler creates the complete region and opens
-        its first editable step; extend that mini-flow on the canvas like any other sequence.
-      </p>
     </header>
 
     <section v-if="issues.length" class="detail-section validation-section">
@@ -41,6 +42,7 @@ import { computed } from "vue";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useCatalogMetadataStore } from "../../adapters/pinia/catalogMetadata";
 import HeaderInterruptsSection from "./HeaderInterruptsSection.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 
 const workflows = useWorkflowsStore();

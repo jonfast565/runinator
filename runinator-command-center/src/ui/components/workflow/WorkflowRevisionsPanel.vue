@@ -1,7 +1,13 @@
 <template>
   <section class="form-section revisions-section">
     <div class="section-toolbar">
-      <h3>Revision history</h3>
+      <div class="flex items-center gap-1">
+        <h3>Revision history</h3>
+        <HelpBubble
+          text="Each save records a revision. Restoring re-validates the old definition and saves it as a new revision, so nothing is overwritten and the rollback remains in history."
+          label="About workflow revisions"
+        />
+      </div>
       <div class="section-actions">
         <button type="button" :disabled="!workflowId || loading" @click="refresh">Refresh</button>
       </div>
@@ -95,11 +101,6 @@
         </table>
       </div>
 
-      <p class="hint">
-        Restoring re-validates the old definition against the current provider catalog and saves it
-        as a new revision — nothing is overwritten, and the rollback itself stays in the history.
-      </p>
-
       <JsonDiff
         v-if="diffPair"
         :before="diffPair.before.definition"
@@ -121,6 +122,7 @@ import { revisionAuthorLabel } from "../../../core/domain/models";
 import { workflowRevisionsService } from "../../../core/services";
 import { useAppStore } from "../../adapters/pinia/app";
 import EmptyState from "../shared/EmptyState.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import JsonDiff from "./JsonDiff.vue";
 
 const props = defineProps<{ workflowId: string | null }>();

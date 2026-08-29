@@ -12,11 +12,7 @@
     >
       <template #first>
         <div class="panel">
-          <div class="panel-toolbar">
-            <div class="grid gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">{{ title }}</h2>
-              <p class="m-0 text-xs text-fg-muted">{{ paneDescription }}</p>
-            </div>
+          <PanelHeader :title="title" :description="paneDescription">
             <div class="btn-row">
               <button class="btn" :disabled="loadingResources" @click="refresh">
                 <LoadingSpinner v-if="loadingResources" size="sm" label="Refreshing resources" />
@@ -55,7 +51,7 @@
                 <span>Delete</span>
               </button>
             </div>
-          </div>
+          </PanelHeader>
           <DataTable>
             <table>
               <thead>
@@ -159,6 +155,7 @@ import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";

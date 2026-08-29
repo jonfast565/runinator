@@ -13,7 +13,7 @@
     >
       <Icon :name="icon" :size="compact ? 18 : 24" />
     </div>
-    <p
+    <div
       class="m-0"
       :class="
         loading
@@ -23,11 +23,15 @@
             : 'font-semibold text-fg'
       "
     >
-      {{ loading ? loadingMessage || title : title }}
-    </p>
-    <p v-if="!loading && description" class="m-0 max-w-xl text-xs leading-relaxed text-fg-muted">
-      {{ description }}
-    </p>
+      <span>{{ loading ? loadingMessage || title : title }}</span>
+      <HelpBubble
+        v-if="!loading && description"
+        class="ml-0.5 align-middle"
+        :text="description"
+        label="About this empty state"
+        :size="compact ? 14 : 16"
+      />
+    </div>
     <div v-if="!loading && $slots.default" class="mt-1.5 flex flex-wrap justify-center gap-2">
       <slot />
     </div>
@@ -35,11 +39,11 @@
 </template>
 
 <script setup lang="ts">
+import HelpBubble from "./HelpBubble.vue";
 import Icon, { type IconName } from "./Icon.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 
-// Shared empty-state placeholder. A useful empty state explains both why the pane is empty and the
-// safest next action, so callers can supply that guidance through `description`.
+// Empty-state guidance stays available in help without adding instructional paragraphs to panes.
 withDefaults(
   defineProps<{
     title: string;

@@ -9,6 +9,7 @@ import { usePipelineRunsStore } from "../../../ui/adapters/pinia/pipeline-runs";
 import { useOrchestrationsStore } from "../../../ui/adapters/pinia/orchestrations";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 import Icon from "../shared/Icon.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
 import RunTimeline from "../shared/RunTimeline.vue";

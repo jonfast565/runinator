@@ -3,11 +3,17 @@
     <div class="flex h-full min-h-0 flex-col gap-2.5 overflow-auto">
       <div class="panel shrink-0">
         <div class="panel-toolbar">
-          <h2 class="m-0 text-base font-semibold text-fg">
-            Resources &amp; Billing<template v-if="orgs.activeOrg">
-              — {{ orgs.activeOrg.name }}</template
-            >
-          </h2>
+          <div class="flex items-center gap-1">
+            <h2 class="m-0 text-base font-semibold text-fg">
+              Resources &amp; Billing<template v-if="orgs.activeOrg">
+                — {{ orgs.activeOrg.name }}</template
+              >
+            </h2>
+            <HelpBubble
+              text="Review organization limits, projected cost, recent usage, and dedicated node allocations."
+              label="About resources and billing"
+            />
+          </div>
           <button class="btn" :disabled="refreshing || !orgs.activeOrg" @click="refresh">
             <LoadingSpinner v-if="refreshing" size="sm" label="Refreshing org resources" />
             <Icon v-else name="refresh" />
@@ -68,7 +74,13 @@
       <template v-if="orgs.activeOrg">
         <div class="panel shrink-0">
           <div class="panel-toolbar">
-            <h3 class="m-0 text-sm font-semibold text-fg">Dedicated allocations</h3>
+            <div class="flex items-center gap-1">
+              <h3 class="m-0 text-sm font-semibold text-fg">Dedicated allocations</h3>
+              <HelpBubble
+                text="Dedicated node pools reserved for the active organization and their projected monthly cost."
+                label="About dedicated allocations"
+              />
+            </div>
             <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-fg-subtle"
               >{{ groups.length }} pool(s)</span
             >
@@ -112,7 +124,13 @@
 
         <div class="panel shrink-0">
           <div class="panel-toolbar">
-            <h3 class="m-0 text-sm font-semibold text-fg">Node-hours (30d)</h3>
+            <div class="flex items-center gap-1">
+              <h3 class="m-0 text-sm font-semibold text-fg">Node-hours (30d)</h3>
+              <HelpBubble
+                text="Runtime usage accrued by node kind during the last 30 days."
+                label="About node-hour usage"
+              />
+            </div>
           </div>
           <LoadingPanel v-if="refreshing && !usageKinds.length" compact message="Loading usage…" />
           <EmptyState
@@ -141,7 +159,13 @@
 
         <div v-if="can('org:nodes:scale')" class="panel shrink-0">
           <div class="panel-toolbar">
-            <h3 class="m-0 text-sm font-semibold text-fg">Scale a pool</h3>
+            <div class="flex items-center gap-1">
+              <h3 class="m-0 text-sm font-semibold text-fg">Scale a pool</h3>
+              <HelpBubble
+                text="Set the desired nodes for an organization-owned backend pool and preview its monthly cost."
+                label="About scaling a pool"
+              />
+            </div>
           </div>
           <form class="flex flex-wrap items-end gap-2" @submit.prevent="scale">
             <label class="grid gap-1 text-xs text-fg-muted">
@@ -187,6 +211,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MetricCard from "../components/shared/MetricCard.vue";

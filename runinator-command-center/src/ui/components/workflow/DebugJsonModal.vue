@@ -1,13 +1,14 @@
 <template>
-  <Modal :title="title" width="min(640px, 90vw)" @close="$emit('close')">
-    <p v-if="hint" class="hint m-0">{{ hint }}</p>
+  <Modal :title="title" :description="hint" width="min(640px, 90vw)" @close="$emit('close')">
     <div class="min-h-0 flex-1 [&_.json-editor-container]:h-[280px]">
       <JsonEditor :model-value="text" :title="editorTitle" @update:model-value="onChange" />
     </div>
     <div v-if="error" class="error text-xs">{{ error }}</div>
     <template #actions>
       <button class="btn" @click="$emit('close')">Cancel</button>
-      <button class="btn btn-primary" :disabled="!isValid" @click="onSubmit">{{ submitLabel }}</button>
+      <button class="btn btn-primary" :disabled="!isValid" @click="onSubmit">
+        {{ submitLabel }}
+      </button>
     </template>
   </Modal>
 </template>
