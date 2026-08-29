@@ -25,6 +25,7 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_comm::{AgentDirectiveKind, ControlKind};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
+use runinator_models::telemetry::ResourceTelemetry;
 use runinator_observability::resource_telemetry::TelemetryCollector;
 use runinator_provider_catalog::{StaticProvider, built_in_providers};
 use runinator_provider_local_files::LocalProvider;
@@ -47,6 +48,9 @@ const ALLOW_WRITE_ENV: &str = "RUNINATOR_LOCAL_FILES_ALLOW_WRITE";
 // rolling cap on retained console lines; the oldest are dropped once it fills, so the buffer never
 // grows without bound during a long-running session.
 const MAX_LOG_LINES: usize = 10_000;
+/// The local dashboard keeps one minute of telemetry, matching the terminal dashboard. This is
+/// presentation-only state; durable history remains the replica heartbeat's job.
+pub(crate) const RESOURCE_HISTORY_CAPACITY: usize = 60;
 // broker channel names/client id; fixed rather than exposed in the GUI — an advanced operator who
 // needs to match a non-default cluster naming scheme can still edit the persisted config JSON.
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
@@ -74,6 +78,9 @@ pub struct Shared {
     pub status: AgentStatus,
     pub connection: ConnectionState,
     pub metrics: AgentMetrics,
+    pub agent_activity: Activity,
+    pub worker_activity: Activity,
+    pub resource_history: ResourceHistory,
     pub busy: bool,
     pub logs: VecDeque<String>,
     // latch so one degraded episode fires exactly one "reconnecting" toast (and one "reconnected"
@@ -93,6 +100,85 @@ pub struct Shared {
     // an abort that lands too late (or one issued before the task was even recorded) still cannot
     // leave a lifecycle running that the operator asked to cancel.
     start_generation: u64,
+}
+
+/// A live dashboard activity and the instant at which it last materially changed. Repeated
+/// heartbeats with the same status deliberately do not reset `since`, so the GUI can show how long
+/// the agent has been waiting, reconnecting, or executing work.
+#[derive(Debug, Clone)]
+pub struct Activity {
+    pub label: String,
+    pub since: std::time::Instant,
+}
+
+impl Default for Activity {
+    fn default() -> Self {
+        Self {
+            label: "not started".to_string(),
+            since: std::time::Instant::now(),
+        }
+    }
+}
+
+pub(crate) fn set_activity(activity: &mut Activity, label: impl Into<String>) {
+    let label = label.into();
+    if activity.label != label {
+        activity.label = label;
+        activity.since = std::time::Instant::now();
+    }
+}
+
+/// A compact, GUI-friendly projection of one resource sample. Keeping only rendered values avoids
+/// coupling desktop UI state to the wire model while retaining every graph from `--tui`.
+#[derive(Debug, Clone, Default)]
+pub struct ResourceSample {
+    pub host_cpu_percent: f32,
+    pub host_mem_percent: f32,
+    pub host_mem_used_bytes: u64,
+    pub host_mem_total_bytes: u64,
+    pub process_cpu_percent: f32,
+    pub process_mem_used_bytes: u64,
+    pub network_rx_bytes_per_sec: f64,
+    pub network_tx_bytes_per_sec: f64,
+    pub disk_io_bytes_per_sec: f64,
+}
+
+impl From<&ResourceTelemetry> for ResourceSample {
+    fn from(sample: &ResourceTelemetry) -> Self {
+        Self {
+            host_cpu_percent: sample.cpu_percent,
+            host_mem_percent: sample.mem_percent,
+            host_mem_used_bytes: sample.mem_used_bytes,
+            host_mem_total_bytes: sample.mem_total_bytes,
+            process_cpu_percent: sample.process.cpu_percent,
+            process_mem_used_bytes: sample.process.mem_used_bytes,
+            network_rx_bytes_per_sec: sample.network.rx_bytes_per_sec,
+            network_tx_bytes_per_sec: sample.network.tx_bytes_per_sec,
+            disk_io_bytes_per_sec: sample
+                .disks
+                .iter()
+                .map(|disk| disk.read_bytes_per_sec + disk.written_bytes_per_sec)
+                .sum(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ResourceHistory {
+    samples: VecDeque<ResourceSample>,
+}
+
+impl ResourceHistory {
+    pub fn push(&mut self, sample: ResourceSample) {
+        if self.samples.len() == RESOURCE_HISTORY_CAPACITY {
+            self.samples.pop_front();
+        }
+        self.samples.push_back(sample);
+    }
+
+    pub fn samples(&self) -> impl Iterator<Item = &ResourceSample> {
+        self.samples.iter()
+    }
 }
 
 /// what the operator can do to the lifecycle right now, derived from the shared state in one place
@@ -283,6 +369,10 @@ impl AgentObserver for DesktopObserver {
             };
             guard.connection = status.connection.clone();
             guard.metrics = status.metrics.clone();
+            set_activity(
+                &mut guard.agent_activity,
+                connection_activity(&status.connection),
+            );
             guard.status = AgentStatus {
                 running: status.running,
                 replica_id: status.replica_id,
@@ -339,7 +429,48 @@ impl AgentObserver for DesktopObserver {
     }
 
     fn on_worker_event(&self, event: &WorkerEvent) {
+        let activity = match event {
+            WorkerEvent::EffectStarted {
+                provider, function, ..
+            } => format!("executing {provider}.{function}"),
+            WorkerEvent::EffectFinished { .. } => "waiting for desktop work".to_string(),
+            WorkerEvent::EffectSkippedDuplicate { .. } => "skipped duplicate delivery".to_string(),
+            WorkerEvent::ControlReceived { kind, .. } => {
+                format!("handling {} control", control_name(kind))
+            }
+        };
+        if let Ok(mut guard) = self.shared.lock() {
+            set_activity(&mut guard.worker_activity, activity);
+        }
         log_line(&self.shared, describe_worker_event(event));
+    }
+}
+
+fn connection_activity(connection: &ConnectionState) -> String {
+    match connection {
+        ConnectionState::Reconnecting {
+            retry_secs,
+            attempt,
+            max_attempts,
+        } => match max_attempts {
+            Some(max) => format!("reconnecting ({attempt}/{max}; retry in {retry_secs}s)"),
+            None => format!("reconnecting (retry in {retry_secs}s)"),
+        },
+        ConnectionState::Disconnected { attempts, reason } => {
+            format!("disconnected after {attempts} attempts: {reason}")
+        }
+        ConnectionState::ReenrollmentRequired { reason } => {
+            format!("re-enrollment required: {reason}")
+        }
+        connection => connection.as_str().to_string(),
+    }
+}
+
+fn control_name(kind: &ControlKind) -> &'static str {
+    match kind {
+        ControlKind::Cancel => "cancel",
+        ControlKind::Pause => "pause",
+        ControlKind::Resume => "resume",
     }
 }
 
@@ -407,11 +538,7 @@ fn describe_worker_event(event: &WorkerEvent) -> String {
             kind,
             workflow_run_id,
         } => {
-            let kind = match kind {
-                ControlKind::Cancel => "cancel",
-                ControlKind::Pause => "pause",
-                ControlKind::Resume => "resume",
-            };
+            let kind = control_name(kind);
             format!(
                 "Received {kind} control for run {}.",
                 short_id(workflow_run_id)
@@ -553,7 +680,10 @@ pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentCon
         guard.start_generation = guard.start_generation.wrapping_add(1);
         generation = guard.start_generation;
         guard.metrics = AgentMetrics::default();
+        guard.resource_history = ResourceHistory::default();
         guard.connection = ConnectionState::Registering;
+        set_activity(&mut guard.agent_activity, "preparing credentials");
+        set_activity(&mut guard.worker_activity, "waiting for desktop work");
         guard.degraded_notified = false;
         guard.disconnected_notified = false;
         guard.status.running = false;
@@ -763,18 +893,21 @@ async fn drain_and_settle(shared: &SharedHandle, handle: Option<AgentHandle>, se
     guard.status = AgentStatus::default();
     guard.connection = ConnectionState::Stopped;
     guard.metrics = AgentMetrics::default();
+    guard.resource_history = ResourceHistory::default();
+    set_activity(&mut guard.agent_activity, "stopped");
+    set_activity(&mut guard.worker_activity, "not running");
     guard.degraded_notified = false;
     guard.disconnected_notified = false;
     guard.busy = false;
 }
 
-// cadence for refreshing the header's cpu/ram readout; the heartbeat already reports telemetry to the
-// service, this is only the local mirror for the status window.
-const TELEMETRY_SAMPLE_INTERVAL: Duration = Duration::from_secs(3);
+// Cadence for the GUI dashboard's one-minute telemetry window. The heartbeat already reports
+// telemetry to the service; this is only the local mirror for the desktop status window.
+const TELEMETRY_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
-/// periodically sample host cpu/memory into `shared` for the status header, until the agent stops.
-/// the sample runs on a blocking thread since it refreshes system counters; kept separate from the
-/// heartbeat so the window updates even between heartbeat ticks.
+/// Periodically sample host, process, network, and disk telemetry into `shared` until the agent
+/// stops. The sample runs on a blocking thread since it refreshes system counters; kept separate
+/// from the heartbeat so the window updates even between heartbeat ticks.
 fn spawn_telemetry_sampler(
     rt: &tokio::runtime::Handle,
     shared: SharedHandle,
@@ -789,6 +922,7 @@ fn spawn_telemetry_sampler(
             {
                 guard.metrics.cpu_percent = Some(sample.cpu_percent);
                 guard.metrics.mem_percent = Some(sample.mem_percent);
+                guard.resource_history.push(ResourceSample::from(&sample));
             }
             // stop sampling when the lifecycle settles, rather than outliving the agent.
             tokio::select! {

@@ -10,8 +10,10 @@ fn start_is_allowed_when_idle() {
 
 #[test]
 fn start_is_skipped_while_busy() {
-    let mut shared = Shared::default();
-    shared.busy = true;
+    let shared = Shared {
+        busy: true,
+        ..Shared::default()
+    };
     assert!(should_skip_start(&shared));
 }
 
@@ -38,9 +40,11 @@ fn start_is_allowed_when_running_flag_is_set_without_a_live_handle() {
 // only a start is cancellable.
 #[test]
 fn a_start_in_flight_offers_cancel() {
-    let mut shared = Shared::default();
-    shared.busy = true;
-    shared.starting = true;
+    let shared = Shared {
+        busy: true,
+        starting: true,
+        ..Shared::default()
+    };
     assert_eq!(control_state(&shared), Control::Starting);
     // and a second Start click during it stays a no-op.
     assert!(should_skip_start(&shared));
@@ -48,8 +52,10 @@ fn a_start_in_flight_offers_cancel() {
 
 #[test]
 fn a_stop_in_flight_offers_nothing() {
-    let mut shared = Shared::default();
-    shared.busy = true;
+    let shared = Shared {
+        busy: true,
+        ..Shared::default()
+    };
     assert_eq!(control_state(&shared), Control::Stopping);
 }
 
@@ -79,4 +85,36 @@ fn a_settled_lifecycle_is_startable_not_running() {
     let mut shared = Shared::default();
     shared.status.running = true;
     assert_eq!(control_state(&shared), Control::Startable);
+}
+
+#[test]
+fn resource_history_keeps_the_same_one_minute_window_as_the_tui() {
+    let mut history = ResourceHistory::default();
+    for index in 0..=RESOURCE_HISTORY_CAPACITY {
+        history.push(ResourceSample {
+            host_cpu_percent: index as f32,
+            ..ResourceSample::default()
+        });
+    }
+
+    let samples = history.samples().collect::<Vec<_>>();
+    assert_eq!(samples.len(), RESOURCE_HISTORY_CAPACITY);
+    assert_eq!(samples[0].host_cpu_percent, 1.0);
+    assert_eq!(
+        samples.last().map(|sample| sample.host_cpu_percent),
+        Some(RESOURCE_HISTORY_CAPACITY as f32)
+    );
+}
+
+#[test]
+fn activity_age_only_resets_when_the_work_changes() {
+    let mut activity = Activity::default();
+    set_activity(&mut activity, "waiting for desktop work");
+    let since = activity.since;
+    set_activity(&mut activity, "waiting for desktop work");
+
+    assert_eq!(activity.since, since);
+    set_activity(&mut activity, "executing std.echo");
+    assert_eq!(activity.label, "executing std.echo");
+    assert!(activity.since >= since);
 }

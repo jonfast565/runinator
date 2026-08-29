@@ -1,9 +1,9 @@
 //! the desktop agent's control surface: a small window to configure the sandbox folder, start the
-//! worker loop — or cancel a start still coming up — stop it, and watch its status. the window's
-//! close button asks whether to hide it behind the tray icon or quit. deliberately minimal — this
-//! is a status console for the agent process, not a workflow editor.
+//! worker loop — or cancel a start still coming up — stop it, and watch its status. Its live
+//! dashboard mirrors the terminal host's operational view without turning this into a workflow
+//! editor. The window's close button asks whether to hide it behind the tray icon or quit.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 
@@ -27,6 +27,24 @@ struct Snapshot {
     busy: bool,
     /// which of Start / Cancel startup / Stop this phase warrants; see [`agent::Control`].
     control: Control,
+    agent_activity: String,
+    agent_activity_age: Duration,
+    worker_activity: String,
+    worker_activity_age: Duration,
+    resources: Vec<agent::ResourceSample>,
+}
+
+struct RuntimeDashboard<'a> {
+    status: &'a AgentStatus,
+    metrics: &'a AgentMetrics,
+    agent_activity: &'a str,
+    agent_activity_age: Duration,
+    worker_activity: &'a str,
+    worker_activity_age: Duration,
+    resources: &'a [agent::ResourceSample],
+    uptime: Duration,
+    capacity: usize,
+    service_url: &'a str,
 }
 
 // the status-dot palette. amber and red are the two the operator is meant to tell apart at a
@@ -49,7 +67,7 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
     // a start/stop transition in flight reads as "working" regardless of the underlying phase.
     if busy {
         return StatusPresentation {
-            label: "● working…".to_string(),
+            label: "working…".to_string(),
             color: DOT_AMBER,
             tray_color: TrayColor::Connecting,
             tooltip: "Runinator Desktop Agent — working…".to_string(),
@@ -57,25 +75,25 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
     }
     match connection {
         ConnectionState::Stopped => StatusPresentation {
-            label: "● stopped".to_string(),
+            label: "stopped".to_string(),
             color: DOT_GRAY,
             tray_color: TrayColor::Idle,
             tooltip: "Runinator Desktop Agent — stopped".to_string(),
         },
         ConnectionState::Registering => StatusPresentation {
-            label: "● registering…".to_string(),
+            label: "registering…".to_string(),
             color: DOT_BLUE,
             tray_color: TrayColor::Connecting,
             tooltip: "Runinator Desktop Agent — registering…".to_string(),
         },
         ConnectionState::Connecting => StatusPresentation {
-            label: "● connecting…".to_string(),
+            label: "connecting…".to_string(),
             color: DOT_BLUE,
             tray_color: TrayColor::Connecting,
             tooltip: "Runinator Desktop Agent — connecting…".to_string(),
         },
         ConnectionState::Connected => StatusPresentation {
-            label: "● running".to_string(),
+            label: "running".to_string(),
             color: DOT_GREEN,
             tray_color: TrayColor::Connected,
             tooltip: "Runinator Desktop Agent — running".to_string(),
@@ -85,7 +103,7 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
             attempt,
             max_attempts,
         } => StatusPresentation {
-            label: format!("● reconnecting{}", attempt_suffix(*attempt, *max_attempts)),
+            label: format!("reconnecting{}", attempt_suffix(*attempt, *max_attempts)),
             color: DOT_AMBER,
             tray_color: TrayColor::Reconnecting,
             tooltip: format!(
@@ -94,7 +112,7 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
             ),
         },
         ConnectionState::Disconnected { attempts, reason } => StatusPresentation {
-            label: "● disconnected".to_string(),
+            label: "disconnected".to_string(),
             color: DOT_RED,
             tray_color: TrayColor::Disconnected,
             tooltip: format!(
@@ -102,7 +120,7 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
             ),
         },
         ConnectionState::ReenrollmentRequired { reason } => StatusPresentation {
-            label: "● re-enrollment required".to_string(),
+            label: "re-enrollment required".to_string(),
             color: DOT_RED,
             tray_color: TrayColor::Disconnected,
             tooltip: format!("Runinator Desktop Agent — credential rejected ({reason})"),
@@ -180,6 +198,9 @@ pub struct DesktopAgentApp {
     // whether this machine continues accepting desktop work.
     exit_dialog: bool,
     exit_dont_ask_again: bool,
+    /// The GUI's equivalent of the terminal dashboard uptime, measured from this control surface
+    /// coming up rather than from the most recent worker start.
+    started_at: Instant,
 }
 
 impl DesktopAgentApp {
@@ -214,6 +235,7 @@ impl DesktopAgentApp {
             quitting: false,
             exit_dialog: false,
             exit_dont_ask_again: false,
+            started_at: Instant::now(),
         }
     }
 
@@ -228,6 +250,11 @@ impl DesktopAgentApp {
             metrics: guard.metrics.clone(),
             busy: guard.busy,
             control: agent::control_state(&guard),
+            agent_activity: guard.agent_activity.label.clone(),
+            agent_activity_age: guard.agent_activity.since.elapsed(),
+            worker_activity: guard.worker_activity.label.clone(),
+            worker_activity_age: guard.worker_activity.since.elapsed(),
+            resources: guard.resource_history.samples().cloned().collect(),
         }
     }
 
@@ -488,6 +515,193 @@ impl DesktopAgentApp {
         }
     }
 
+    /// The GUI counterpart to the terminal dashboard's component cards. Keeping agent lifecycle
+    /// and worker execution separate makes a broker problem distinguishable from an idle worker at
+    /// a glance.
+    fn runtime_dashboard(ui: &mut egui::Ui, dashboard: RuntimeDashboard<'_>) {
+        ui.add_space(8.0);
+        ui.heading("Runtime dashboard");
+        ui.label(
+            egui::RichText::new(format!(
+                "Running for {}",
+                display_duration(dashboard.uptime)
+            ))
+            .small()
+            .weak(),
+        );
+
+        ui.group(|ui| {
+            ui.strong("Desktop agent");
+            ui.label(format!(
+                "Now: {} · for {}",
+                dashboard.agent_activity,
+                display_duration(dashboard.agent_activity_age)
+            ));
+            ui.label(
+                egui::RichText::new(format!(
+                    "service {}  •  broker {}  •  {}  •  sandbox {}",
+                    dashboard.service_url,
+                    dashboard
+                        .status
+                        .broker_connection
+                        .as_deref()
+                        .unwrap_or("broker not connected"),
+                    dashboard
+                        .status
+                        .replica_id
+                        .map(|id| format!("replica {id}"))
+                        .unwrap_or_else(|| "not registered".to_string()),
+                    dashboard.status.root.as_deref().unwrap_or("not configured"),
+                ))
+                .small()
+                .weak(),
+            );
+        });
+        ui.add_space(4.0);
+        ui.group(|ui| {
+            ui.strong("Worker");
+            ui.label(format!(
+                "Now: {} · for {}",
+                dashboard.worker_activity,
+                display_duration(dashboard.worker_activity_age)
+            ));
+            ui.label(
+                egui::RichText::new(format!(
+                    "exclusive pool=desktop  •  action capacity {}  •  {} available",
+                    dashboard.capacity,
+                    dashboard
+                        .capacity
+                        .saturating_sub(dashboard.metrics.in_flight as usize)
+                ))
+                .small()
+                .weak(),
+            );
+            Self::activity_panel(ui, dashboard.metrics);
+        });
+
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Resources · last minute").strong());
+        Self::resource_charts(ui, dashboard.resources);
+    }
+
+    /// Small native sparklines give the window the same short-horizon operational visibility as
+    /// `--tui`, without adding a plotting dependency to the desktop agent.
+    fn resource_charts(ui: &mut egui::Ui, samples: &[agent::ResourceSample]) {
+        let latest = samples.last();
+        let host_cpu = samples
+            .iter()
+            .map(|sample| sample.host_cpu_percent as f64)
+            .collect::<Vec<_>>();
+        let host_memory = samples
+            .iter()
+            .map(|sample| sample.host_mem_percent as f64)
+            .collect::<Vec<_>>();
+        let process_cpu = samples
+            .iter()
+            .map(|sample| sample.process_cpu_percent as f64)
+            .collect::<Vec<_>>();
+        let process_memory = samples
+            .iter()
+            .map(|sample| sample.process_mem_used_bytes as f64)
+            .collect::<Vec<_>>();
+        let network_rx = samples
+            .iter()
+            .map(|sample| sample.network_rx_bytes_per_sec)
+            .collect::<Vec<_>>();
+        let network_tx = samples
+            .iter()
+            .map(|sample| sample.network_tx_bytes_per_sec)
+            .collect::<Vec<_>>();
+        let disk_io = samples
+            .iter()
+            .map(|sample| sample.disk_io_bytes_per_sec)
+            .collect::<Vec<_>>();
+
+        ui.columns(2, |columns| {
+            resource_chart(
+                &mut columns[0],
+                "Host CPU",
+                latest
+                    .map(|sample| format!("{:.0}%", sample.host_cpu_percent))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                &host_cpu,
+                Some(100.0),
+                DOT_BLUE,
+            );
+            resource_chart(
+                &mut columns[1],
+                "Host RAM",
+                latest
+                    .map(|sample| {
+                        format!(
+                            "{:.0}% · {}/{}",
+                            sample.host_mem_percent,
+                            format_bytes(sample.host_mem_used_bytes as f64),
+                            format_bytes(sample.host_mem_total_bytes as f64)
+                        )
+                    })
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                &host_memory,
+                Some(100.0),
+                DOT_GREEN,
+            );
+        });
+        ui.columns(2, |columns| {
+            resource_chart(
+                &mut columns[0],
+                "Process CPU",
+                latest
+                    .map(|sample| format!("{:.0}%", sample.process_cpu_percent))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                &process_cpu,
+                None,
+                DOT_AMBER,
+            );
+            resource_chart(
+                &mut columns[1],
+                "Process RAM",
+                latest
+                    .map(|sample| format_bytes(sample.process_mem_used_bytes as f64))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                &process_memory,
+                None,
+                DOT_GREEN,
+            );
+        });
+        ui.columns(2, |columns| {
+            resource_chart(
+                &mut columns[0],
+                "Network RX",
+                latest
+                    .map(|sample| format!("{}/s", format_bytes(sample.network_rx_bytes_per_sec)))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                &network_rx,
+                None,
+                DOT_BLUE,
+            );
+            resource_chart(
+                &mut columns[1],
+                "Network TX",
+                latest
+                    .map(|sample| format!("{}/s", format_bytes(sample.network_tx_bytes_per_sec)))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                &network_tx,
+                None,
+                DOT_BLUE,
+            );
+        });
+        resource_chart(
+            ui,
+            "Disk I/O",
+            latest
+                .map(|sample| format!("{}/s", format_bytes(sample.disk_io_bytes_per_sec)))
+                .unwrap_or_else(|| "collecting…".to_string()),
+            &disk_io,
+            None,
+            DOT_AMBER,
+        );
+    }
+
     // the log console, rendered in a bottom-pinned panel so it stays at the foot of the window while
     // the config/status area scrolls above it. carries the level/filter controls, copy/save/clear
     // actions, and the (filtered) line view.
@@ -589,6 +803,99 @@ impl DesktopAgentApp {
     }
 }
 
+fn resource_chart(
+    ui: &mut egui::Ui,
+    title: &str,
+    value: String,
+    values: &[f64],
+    fixed_max: Option<f64>,
+    color: egui::Color32,
+) {
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(title).small().strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new(value).small().weak());
+            });
+        });
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
+        let values = values
+            .iter()
+            .copied()
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .collect::<Vec<_>>();
+        if values.len() < 2 || rect.width() <= 1.0 {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "collecting…",
+                egui::TextStyle::Small.resolve(ui.style()),
+                ui.visuals().weak_text_color(),
+            );
+            return;
+        }
+        let max = fixed_max
+            .unwrap_or_else(|| values.iter().copied().fold(0.0_f64, f64::max))
+            .max(1.0);
+        let points = values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let x = rect.left() + rect.width() * index as f32 / (values.len() - 1) as f32;
+                let y = rect.bottom() - rect.height() * (*value / max).clamp(0.0, 1.0) as f32;
+                egui::pos2(x, y)
+            })
+            .collect::<Vec<_>>();
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            egui::Stroke::new(1.0_f32, DOT_GRAY),
+        );
+        ui.painter()
+            .add(egui::Shape::line(points, egui::Stroke::new(1.5_f32, color)));
+    });
+}
+
+/// A painted light, rather than a font-dependent Unicode glyph, makes the current lifecycle state
+/// readable at a glance on every platform and at every UI scale.
+fn status_light(ui: &mut egui::Ui, presentation: &StatusPresentation) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+    let center = rect.center();
+    ui.painter().circle_filled(center, 5.5, presentation.color);
+    ui.painter().circle_stroke(
+        center,
+        5.5,
+        egui::Stroke::new(1.0_f32, ui.visuals().widgets.inactive.bg_fill),
+    );
+    response.on_hover_text(&presentation.tooltip);
+}
+
+fn display_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 3_600 {
+        format!("{}h {:02}m", seconds / 3_600, (seconds % 3_600) / 60)
+    } else if seconds >= 60 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn format_bytes(value: f64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut value = value.max(0.0);
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 impl eframe::App for DesktopAgentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // the worker loop runs on a background runtime, so poll for its status/log updates, and for
@@ -605,6 +912,11 @@ impl eframe::App for DesktopAgentApp {
             metrics,
             busy,
             control,
+            agent_activity,
+            agent_activity_age,
+            worker_activity,
+            worker_activity_age,
+            resources,
         } = self.snapshot();
 
         let presentation = present_status(&connection, busy);
@@ -620,32 +932,36 @@ impl eframe::App for DesktopAgentApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Runinator Desktop Agent");
-                ui.colored_label(presentation.color, &presentation.label);
-            });
-            match &connection {
-                ConnectionState::Reconnecting {
-                    retry_secs,
-                    attempt,
-                    max_attempts,
-                } => {
-                    let budget = match max_attempts {
-                        Some(max) => format!(" (attempt {attempt} of {max})"),
-                        None => String::new(),
-                    };
-                    ui.colored_label(
-                        presentation.color,
-                        egui::RichText::new(format!(
-                            "Broker unreachable — retrying in {retry_secs}s{budget}"
-                        ))
-                        .small(),
-                    );
-                }
-                // the agent stopped itself here, so say what ends the state: the operator has to
-                // start it again once the service is back.
-                ConnectionState::Disconnected { attempts, reason } => {
-                    ui.colored_label(
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.heading("Runinator Desktop Agent");
+                        status_light(ui, &presentation);
+                        ui.colored_label(presentation.color, &presentation.label);
+                    });
+                    match &connection {
+                        ConnectionState::Reconnecting {
+                            retry_secs,
+                            attempt,
+                            max_attempts,
+                        } => {
+                            let budget = match max_attempts {
+                                Some(max) => format!(" (attempt {attempt} of {max})"),
+                                None => String::new(),
+                            };
+                            ui.colored_label(
+                                presentation.color,
+                                egui::RichText::new(format!(
+                                    "Broker unreachable — retrying in {retry_secs}s{budget}"
+                                ))
+                                .small(),
+                            );
+                        }
+                        // the agent stopped itself here, so say what ends the state: the operator has to
+                        // start it again once the service is back.
+                        ConnectionState::Disconnected { attempts, reason } => {
+                            ui.colored_label(
                         presentation.color,
                         egui::RichText::new(format!(
                             "Disconnected after {attempts} reconnect attempts ({reason}). The \
@@ -653,294 +969,320 @@ impl eframe::App for DesktopAgentApp {
                         ))
                         .small(),
                     );
-                }
-                _ => {}
-            }
-            ui.separator();
+                        }
+                        _ => {}
+                    }
+                    ui.separator();
 
-            let has_app = !self.draft.command_center_app_path.trim().is_empty();
-            let has_url = !self.draft.command_center_url.trim().is_empty();
-            if ui
-                .add_enabled(has_app || has_url, egui::Button::new("Open UI"))
-                .on_hover_text(if has_app {
-                    "Launch the command-center app"
-                } else {
-                    "Open the command center in your default browser"
-                })
-                .clicked()
-            {
-                self.open_command_center();
-            }
+                    let has_app = !self.draft.command_center_app_path.trim().is_empty();
+                    let has_url = !self.draft.command_center_url.trim().is_empty();
+                    if ui
+                        .add_enabled(has_app || has_url, egui::Button::new("Open UI"))
+                        .on_hover_text(if has_app {
+                            "Launch the command-center app"
+                        } else {
+                            "Open the command center in your default browser"
+                        })
+                        .clicked()
+                    {
+                        self.open_command_center();
+                    }
 
-            if status.running {
-                ui.add_space(6.0);
-                if let Some(replica_id) = status.replica_id {
-                    ui.label(format!("Replica: {replica_id}"));
-                }
-                ui.label(format!("Root: {}", status.root.clone().unwrap_or_default()));
-                ui.label(format!(
-                    "Broker: {}",
-                    status.broker_connection.clone().unwrap_or_default()
-                ));
+                    if status.running {
+                        Self::runtime_dashboard(
+                            ui,
+                            RuntimeDashboard {
+                                status: &status,
+                                metrics: &metrics,
+                                agent_activity: &agent_activity,
+                                agent_activity_age,
+                                worker_activity: &worker_activity,
+                                worker_activity_age,
+                                resources: &resources,
+                                uptime: self.started_at.elapsed(),
+                                capacity: self.draft.max_concurrent_actions.max(1),
+                                service_url: &self.draft.service_url,
+                            },
+                        );
 
-                Self::activity_panel(ui, &metrics);
-
-                ui.add_space(8.0);
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Stop agent"))
-                    .clicked()
-                {
-                    agent::stop(self.rt.handle(), self.shared.clone());
-                }
-            } else {
-                let starting = control == Control::Starting;
-                if starting {
-                    // the form stays editable while a start is in flight, so say what an edit does
-                    // now: the running attempt is already carrying the config it was given.
-                    ui.colored_label(
-                        DOT_BLUE,
-                        egui::RichText::new(
-                            "Starting — changes below apply the next time you start.",
-                        )
-                        .small(),
-                    );
-                    ui.add_space(4.0);
-                }
-                egui::Grid::new("agent-config-form")
-                    .num_columns(2)
-                    .spacing([8.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label("Service URL");
-                        ui.add(egui::TextEdit::singleline(&mut self.draft.service_url));
-                        ui.end_row();
-
-                        ui.label("Sandbox folder");
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.draft.sandbox_root)
-                                    .hint_text("/Users/me/runinator-files"),
+                        ui.add_space(8.0);
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Stop agent"))
+                            .clicked()
+                        {
+                            agent::stop(self.rt.handle(), self.shared.clone());
+                        }
+                    } else {
+                        let starting = control == Control::Starting;
+                        if starting {
+                            // the form stays editable while a start is in flight, so say what an edit does
+                            // now: the running attempt is already carrying the config it was given.
+                            ui.colored_label(
+                                DOT_BLUE,
+                                egui::RichText::new(
+                                    "Starting — changes below apply the next time you start.",
+                                )
+                                .small(),
                             );
-                            if ui.button("Browse…").clicked() {
-                                // a native modal folder picker; declining it leaves the field as-is.
-                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                    self.draft.sandbox_root = dir.display().to_string();
-                                }
-                            }
-                        });
-                        ui.end_row();
+                            ui.add_space(4.0);
+                        }
+                        egui::Grid::new("agent-config-form")
+                            .num_columns(2)
+                            .spacing([8.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("Service URL");
+                                ui.add(egui::TextEdit::singleline(&mut self.draft.service_url));
+                                ui.end_row();
 
-                        ui.label("Working directory").on_hover_text(
+                                ui.label("Sandbox folder");
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.draft.sandbox_root)
+                                            .hint_text("/Users/me/runinator-files"),
+                                    );
+                                    if ui.button("Browse…").clicked() {
+                                        // a native modal folder picker; declining it leaves the field as-is.
+                                        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                            self.draft.sandbox_root = dir.display().to_string();
+                                        }
+                                    }
+                                });
+                                ui.end_row();
+
+                                ui.label("Working directory").on_hover_text(
                             "Base directory console.run commands execute from, so a workflow can \
                                  reference files by a relative path (e.g. a repo checkout for \
                                  packs/creds-sync). Empty inherits this agent's own directory.",
                         );
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.draft.console_working_dir)
-                                    .hint_text("optional — e.g. /Users/me/GitHub/runinator"),
-                            );
-                            if ui.button("Browse…").clicked()
-                                && let Some(dir) = rfd::FileDialog::new().pick_folder()
-                            {
-                                self.draft.console_working_dir = dir.display().to_string();
-                            }
-                        });
-                        ui.end_row();
-                    });
-
-                ui.add_space(4.0);
-                ui.checkbox(&mut self.draft.allow_write, "Allow writes and deletes")
-                    .on_hover_text("Off = read-only sandbox");
-                ui.checkbox(&mut self.draft.auto_start, "Start automatically on launch");
-
-                if self.draft.api_key.as_deref().is_some_and(str::is_empty) {
-                    self.draft.api_key = None;
-                }
-
-                ui.add_space(8.0);
-                egui::CollapsingHeader::new("Command center")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        egui::Grid::new("command-center-form")
-                            .num_columns(2)
-                            .spacing([8.0, 6.0])
-                            .show(ui, |ui| {
-                                ui.label("App");
-                                ui.add(
-                                    egui::TextEdit::singleline(
-                                        &mut self.draft.command_center_app_path,
-                                    )
-                                    .hint_text("/Applications/Runinator Command Center.app"),
-                                );
-                                ui.end_row();
-
-                                ui.label("URL");
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.draft.command_center_url)
-                                        .hint_text("https://runinator.example.com/ (fallback)"),
-                                );
-                                ui.end_row();
-                            });
-                    });
-
-                egui::CollapsingHeader::new("Connection")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        egui::Grid::new("connection-form")
-                            .num_columns(2)
-                            .spacing([8.0, 6.0])
-                            .show(ui, |ui| {
-                                ui.label("API key");
-                                ui.add(
-                                    egui::TextEdit::singleline(
-                                        self.draft.api_key.get_or_insert_with(String::new),
-                                    )
-                                    .password(true)
-                                    .hint_text("optional"),
-                                );
-                                ui.end_row();
-
-                                ui.label("Broker");
                                 ui.horizontal(|ui| {
-                                    ui.selectable_value(
-                                        &mut self.draft.broker_mode,
-                                        crate::config::BrokerMode::Relay,
-                                        "Via web service",
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut self.draft.console_working_dir,
+                                        )
+                                        .hint_text("optional — e.g. /Users/me/GitHub/runinator"),
                                     );
-                                    ui.selectable_value(
-                                        &mut self.draft.broker_mode,
-                                        crate::config::BrokerMode::Direct,
-                                        "Direct",
-                                    )
-                                    .on_hover_text(
-                                        "Only if this machine is on the broker's trusted \
-                                         network; otherwise leave it on \"Via web service\".",
-                                    );
+                                    if ui.button("Browse…").clicked()
+                                        && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                                    {
+                                        self.draft.console_working_dir = dir.display().to_string();
+                                    }
                                 });
                                 ui.end_row();
-
-                                if self.draft.broker_mode == crate::config::BrokerMode::Direct {
-                                    ui.label("Backend");
-                                    ui.add(
-                                        egui::TextEdit::singleline(
-                                            &mut self.draft.direct_broker_backend,
-                                        )
-                                        .hint_text("tcp | rabbitmq | kafka | http"),
-                                    );
-                                    ui.end_row();
-
-                                    ui.label("Endpoint");
-                                    ui.add(
-                                        egui::TextEdit::singleline(
-                                            &mut self.draft.direct_broker_endpoint,
-                                        )
-                                        .hint_text("host:port, or amqp://user:pass@host:port/%2f"),
-                                    );
-                                    ui.end_row();
-                                }
                             });
-                    });
 
-                egui::CollapsingHeader::new("Labels")
-                    .default_open(false)
-                    .show(ui, |ui| self.label_editor(ui));
+                        ui.add_space(4.0);
+                        ui.checkbox(&mut self.draft.allow_write, "Allow writes and deletes")
+                            .on_hover_text("Off = read-only sandbox");
+                        ui.checkbox(&mut self.draft.auto_start, "Start automatically on launch");
 
-                egui::CollapsingHeader::new("Worker tuning")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        egui::Grid::new("worker-tuning-form")
-                            .num_columns(2)
-                            .spacing([8.0, 6.0])
+                        if self.draft.api_key.as_deref().is_some_and(str::is_empty) {
+                            self.draft.api_key = None;
+                        }
+
+                        ui.add_space(8.0);
+                        egui::CollapsingHeader::new("Command center")
+                            .default_open(false)
                             .show(ui, |ui| {
-                                ui.label("Max concurrent actions");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.draft.max_concurrent_actions)
-                                        .range(1..=32),
-                                );
-                                ui.end_row();
+                                egui::Grid::new("command-center-form")
+                                    .num_columns(2)
+                                    .spacing([8.0, 6.0])
+                                    .show(ui, |ui| {
+                                        ui.label("App");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.draft.command_center_app_path,
+                                            )
+                                            .hint_text(
+                                                "/Applications/Runinator Command Center.app",
+                                            ),
+                                        );
+                                        ui.end_row();
 
-                                ui.label("Shutdown grace (seconds)");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.draft.shutdown_grace_seconds)
-                                        .range(1..=300),
-                                );
-                                ui.end_row();
+                                        ui.label("URL");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.draft.command_center_url,
+                                            )
+                                            .hint_text("https://runinator.example.com/ (fallback)"),
+                                        );
+                                        ui.end_row();
+                                    });
+                            });
 
-                                ui.label("Reconnect attempts").on_hover_text(
+                        egui::CollapsingHeader::new("Connection")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                egui::Grid::new("connection-form")
+                                    .num_columns(2)
+                                    .spacing([8.0, 6.0])
+                                    .show(ui, |ui| {
+                                        ui.label("API key");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                self.draft.api_key.get_or_insert_with(String::new),
+                                            )
+                                            .password(true)
+                                            .hint_text("optional"),
+                                        );
+                                        ui.end_row();
+
+                                        ui.label("Broker");
+                                        ui.horizontal(|ui| {
+                                            ui.selectable_value(
+                                                &mut self.draft.broker_mode,
+                                                crate::config::BrokerMode::Relay,
+                                                "Via web service",
+                                            );
+                                            ui.selectable_value(
+                                                &mut self.draft.broker_mode,
+                                                crate::config::BrokerMode::Direct,
+                                                "Direct",
+                                            )
+                                            .on_hover_text(
+                                                "Only if this machine is on the broker's trusted \
+                                         network; otherwise leave it on \"Via web service\".",
+                                            );
+                                        });
+                                        ui.end_row();
+
+                                        if self.draft.broker_mode
+                                            == crate::config::BrokerMode::Direct
+                                        {
+                                            ui.label("Backend");
+                                            ui.add(
+                                                egui::TextEdit::singleline(
+                                                    &mut self.draft.direct_broker_backend,
+                                                )
+                                                .hint_text("tcp | rabbitmq | kafka | http"),
+                                            );
+                                            ui.end_row();
+
+                                            ui.label("Endpoint");
+                                            ui.add(
+                                                egui::TextEdit::singleline(
+                                                    &mut self.draft.direct_broker_endpoint,
+                                                )
+                                                .hint_text(
+                                                    "host:port, or amqp://user:pass@host:port/%2f",
+                                                ),
+                                            );
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
+
+                        egui::CollapsingHeader::new("Labels")
+                            .default_open(false)
+                            .show(ui, |ui| self.label_editor(ui));
+
+                        egui::CollapsingHeader::new("Worker tuning")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                egui::Grid::new("worker-tuning-form")
+                                    .num_columns(2)
+                                    .spacing([8.0, 6.0])
+                                    .show(ui, |ui| {
+                                        ui.label("Max concurrent actions");
+                                        ui.add(
+                                            egui::DragValue::new(
+                                                &mut self.draft.max_concurrent_actions,
+                                            )
+                                            .range(1..=32),
+                                        );
+                                        ui.end_row();
+
+                                        ui.label("Shutdown grace (seconds)");
+                                        ui.add(
+                                            egui::DragValue::new(
+                                                &mut self.draft.shutdown_grace_seconds,
+                                            )
+                                            .range(1..=300),
+                                        );
+                                        ui.end_row();
+
+                                        ui.label("Reconnect attempts").on_hover_text(
                                     "Consecutive failed reconnects tolerated before the agent \
                                      disconnects and stops itself. The count resets after a \
                                      connection that stays up. 0 retries forever.",
                                 );
-                                ui.add(
-                                    egui::DragValue::new(&mut self.draft.reconnect_max_attempts)
-                                        .range(0..=100)
-                                        .custom_formatter(|value, _| {
-                                            if value < 1.0 {
-                                                "unlimited".to_string()
-                                            } else {
-                                                format!("{value:.0}")
-                                            }
-                                        }),
-                                );
-                                ui.end_row();
+                                        ui.add(
+                                            egui::DragValue::new(
+                                                &mut self.draft.reconnect_max_attempts,
+                                            )
+                                            .range(0..=100)
+                                            .custom_formatter(|value, _| {
+                                                if value < 1.0 {
+                                                    "unlimited".to_string()
+                                                } else {
+                                                    format!("{value:.0}")
+                                                }
+                                            }),
+                                        );
+                                        ui.end_row();
+                                    });
                             });
-                    });
 
-                ui.add_space(8.0);
-                let validation = validate_config(&self.draft);
-                ui.horizontal(|ui| {
-                    // coming up is its own phase, and it can park for a long time (an unreachable
-                    // service, registration backoff, a relay that never accepts the credential), so
-                    // it gets a way out that isn't killing the process.
-                    if starting {
-                        if ui
-                            .button("Cancel startup")
-                            .on_hover_text(
-                                "Stop the agent coming up and go back to the configuration",
-                            )
-                            .clicked()
-                        {
-                            agent::cancel_start(self.rt.handle(), self.shared.clone());
-                        }
-                    } else {
-                        let can_start = !busy && validation.is_none();
-                        let start = ui.add_enabled(can_start, egui::Button::new("Start agent"));
-                        // surface why Start is blocked on hover rather than leaving a dead button.
-                        let start = match &validation {
-                            Some(reason) => start.on_disabled_hover_text(reason.clone()),
-                            None => start,
-                        };
-                        if start.clicked() {
-                            config::save(&self.draft);
-                            agent::start(self.rt.handle(), self.shared.clone(), self.draft.clone());
-                        }
-                    }
+                        ui.add_space(8.0);
+                        let validation = validate_config(&self.draft);
+                        ui.horizontal(|ui| {
+                            // coming up is its own phase, and it can park for a long time (an unreachable
+                            // service, registration backoff, a relay that never accepts the credential), so
+                            // it gets a way out that isn't killing the process.
+                            if starting {
+                                if ui
+                                    .button("Cancel startup")
+                                    .on_hover_text(
+                                        "Stop the agent coming up and go back to the configuration",
+                                    )
+                                    .clicked()
+                                {
+                                    agent::cancel_start(self.rt.handle(), self.shared.clone());
+                                }
+                            } else {
+                                let can_start = !busy && validation.is_none();
+                                let start =
+                                    ui.add_enabled(can_start, egui::Button::new("Start agent"));
+                                // surface why Start is blocked on hover rather than leaving a dead button.
+                                let start = match &validation {
+                                    Some(reason) => start.on_disabled_hover_text(reason.clone()),
+                                    None => start,
+                                };
+                                if start.clicked() {
+                                    config::save(&self.draft);
+                                    agent::start(
+                                        self.rt.handle(),
+                                        self.shared.clone(),
+                                        self.draft.clone(),
+                                    );
+                                }
+                            }
 
-                    // a throwaway connectivity probe; independent of the sandbox/broker config, so
-                    // it only needs a service URL.
-                    let can_test = !busy && !self.draft.service_url.trim().is_empty();
-                    if ui
-                        .add_enabled(can_test, egui::Button::new("Test connection"))
-                        .on_hover_text(
-                            "Check the service URL and API key without starting the agent",
-                        )
-                        .clicked()
-                    {
-                        agent::test_connection(
-                            self.rt.handle(),
-                            self.shared.clone(),
-                            self.draft.service_url.clone(),
-                            self.draft.api_key.clone(),
-                        );
+                            // a throwaway connectivity probe; independent of the sandbox/broker config, so
+                            // it only needs a service URL.
+                            let can_test = !busy && !self.draft.service_url.trim().is_empty();
+                            if ui
+                                .add_enabled(can_test, egui::Button::new("Test connection"))
+                                .on_hover_text(
+                                    "Check the service URL and API key without starting the agent",
+                                )
+                                .clicked()
+                            {
+                                agent::test_connection(
+                                    self.rt.handle(),
+                                    self.shared.clone(),
+                                    self.draft.service_url.clone(),
+                                    self.draft.api_key.clone(),
+                                );
+                            }
+                        });
+                        if let Some(reason) = validation.filter(|_| !starting) {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(210, 90, 70),
+                                egui::RichText::new(reason).small(),
+                            );
+                        }
                     }
                 });
-                if let Some(reason) = validation.filter(|_| !starting) {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(210, 90, 70),
-                        egui::RichText::new(reason).small(),
-                    );
-                }
-            }
         });
     }
 

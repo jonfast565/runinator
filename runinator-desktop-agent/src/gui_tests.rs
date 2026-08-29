@@ -61,7 +61,7 @@ fn an_unlimited_budget_shows_no_attempt_count() {
         },
         false,
     );
-    assert_eq!(presentation.label, "● reconnecting");
+    assert_eq!(presentation.label, "reconnecting");
     assert!(
         !presentation.tooltip.contains("42"),
         "{}",
@@ -98,5 +98,14 @@ fn a_transition_in_flight_outranks_the_underlying_phase() {
         },
         true,
     );
-    assert_eq!(presentation.label, "● working…");
+    assert_eq!(presentation.label, "working…");
+}
+
+#[test]
+fn dashboard_duration_and_byte_values_stay_compact() {
+    assert_eq!(
+        display_duration(std::time::Duration::from_secs(65)),
+        "1m 05s"
+    );
+    assert_eq!(format_bytes(1_536.0), "1.5 KB");
 }
