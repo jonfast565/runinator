@@ -214,11 +214,11 @@ const columns: DataTableColumn<Notification>[] = [
   { key: "id", label: "ID", sortable: true },
   { key: "channel", label: "Channel", sortable: true },
   { key: "severity", label: "Severity", sortable: true },
-  { key: "title", label: "Title", sortable: true },
+  { key: "title", label: "Title", sortable: true, mobile: true },
   { key: "body", label: "Body" },
   { key: "workflow_run_id", label: "Run" },
   { key: "created_at", label: "Created", sortable: true },
-  { key: "actions", label: "", align: "right" },
+  { key: "actions", label: "", align: "right", mobile: true },
 ];
 
 function rowClass(notification: Notification): Record<string, boolean> {
@@ -318,7 +318,7 @@ function eventLabel(event: NotificationEvent): string {
 }
 
 const policyColumns: DataTableColumn<NotificationPolicy>[] = [
-  { key: "name", label: "Name", sortable: true },
+  { key: "name", label: "Name", sortable: true, mobile: true },
   { key: "event", label: "Event", sortable: true },
   { key: "channel", label: "Channel", sortable: true },
   { key: "target", label: "Target" },
@@ -327,7 +327,7 @@ const policyColumns: DataTableColumn<NotificationPolicy>[] = [
   { key: "workflow_id", label: "Scope" },
   { key: "managed_by", label: "Source" },
   { key: "enabled", label: "Enabled", sortable: true },
-  { key: "actions", label: "", align: "right" },
+  { key: "actions", label: "", align: "right", mobile: true },
 ];
 
 const needsThreshold = computed(

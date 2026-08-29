@@ -129,13 +129,13 @@ const editingId = ref<string | null>(null);
 const canManage = computed(() => actions.has("schedules:manage"));
 
 const columns: DataTableColumn<FreezeWindow>[] = [
-  { key: "name", label: "Name", sortable: true },
+  { key: "name", label: "Name", sortable: true, mobile: true },
   { key: "scope", label: "Scope" },
   { key: "starts_at", label: "Starts", sortable: true },
   { key: "ends_at", label: "Ends", sortable: true },
   { key: "state", label: "State" },
   { key: "reason", label: "Reason" },
-  { key: "actions", label: "", align: "right" },
+  { key: "actions", label: "", align: "right", mobile: true },
 ];
 
 function scopeLabel(window: FreezeWindow): string {

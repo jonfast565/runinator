@@ -80,8 +80,8 @@ const rows = ref<JsonRecord[]>([]);
 const action = ref("");
 
 const columns: DataTableColumn<JsonRecord>[] = [
-  { key: "created_at", label: "Time", sortable: true },
-  { key: "action", label: "Action", sortable: true },
+  { key: "created_at", label: "Time", sortable: true, mobile: true },
+  { key: "action", label: "Action", sortable: true, mobile: true },
   { key: "outcome", label: "Outcome", sortable: true },
   {
     key: "actor",

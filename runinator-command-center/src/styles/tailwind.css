@@ -336,6 +336,12 @@
   }
 
   @media (max-width: 760px) {
+    /* DataTable keeps a deliberately small, configured slice of every table on phones. The
+       source table stays intact, so widening the viewport restores every column immediately. */
+    table.data-table-mobile-columns-1 > :is(thead, tbody, tfoot) > tr > :nth-child(n + 2),
+    table.data-table-mobile-columns-2 > :is(thead, tbody, tfoot) > tr > :nth-child(n + 3),
+    th.col-mobile-hidden,
+    td.col-mobile-hidden,
     th.col-low,
     td.col-low {
       @apply hidden;

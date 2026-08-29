@@ -11,6 +11,9 @@ export interface DataTableColumn<Row = Record<string, unknown>> {
   value?: (row: Row) => unknown;
   // 'low' columns are hidden on mobile in scroll mode to reduce horizontal overflow.
   priority?: "high" | "low";
+  // When present on one or more columns, this explicitly chooses the columns retained on phones.
+  // Without it, DataTable retains the leading `mobileColumns` columns instead.
+  mobile?: boolean;
 }
 </script>
 
@@ -49,8 +52,12 @@ const props = withDefaults(
     loadingMessage?: string;
     initialSortKey?: string;
     initialSortDir?: "asc" | "desc";
-    // 'cards' renders label:value cards on mobile; 'scroll' keeps the table and hides low-priority columns.
+    // 'cards' renders label:value cards on mobile; 'scroll' keeps the compact table layout.
     responsive?: "scroll" | "cards";
+    // Number of leading table columns to retain at phone widths. Slot tables use their visible
+    // source order; column-mode tables use the declared `columns` order. Keep this deliberately
+    // small so every table remains readable without horizontal scrolling.
+    mobileColumns?: 1 | 2;
     // render a leading checkbox column. selection state is owned by the caller (useBulkSelection),
     // so this component only displays it and reports intent.
     selectable?: boolean;
@@ -78,6 +85,7 @@ const props = withDefaults(
     initialSortKey: undefined,
     initialSortDir: undefined,
     responsive: "scroll",
+    mobileColumns: 2,
     selectable: false,
     selectedKeys: () => [],
     allSelected: false,
@@ -89,6 +97,23 @@ const props = withDefaults(
 const { isMobile } = useBreakpoint();
 // switch to a stacked card layout on phones when the caller opts in via responsive="cards".
 const cardMode = computed(() => props.responsive === "cards" && isMobile.value);
+const hasExplicitMobileColumns = computed(() => props.columns?.some((column) => column.mobile) ?? false);
+const mobileVisibleColumns = computed(() => {
+  if (hasExplicitMobileColumns.value) {
+    return props.columns?.filter((column) => column.mobile) ?? [];
+  }
+
+  return props.columns?.slice(0, props.mobileColumns) ?? [];
+});
+const mobileTableClass = computed(() =>
+  hasExplicitMobileColumns.value
+    ? "data-table-mobile-columns-explicit"
+    : `data-table-mobile-columns-${String(props.mobileColumns)}`,
+);
+
+function isMobileHidden(column: DataTableColumn<Row>): boolean {
+  return hasExplicitMobileColumns.value && !column.mobile;
+}
 
 // only blank the table for a full loading panel on the first load (no rows yet). once we have
 // rows, a background refresh keeps the current rows mounted and dims them instead of tearing the
@@ -269,11 +294,11 @@ function compareValues(left: unknown, right: unknown): number {
 
 <template>
   <div v-if="!columns && !bare" class="table-scroll">
-    <table :class="[tableClass, { compact }]">
+    <table :class="[tableClass, mobileTableClass, { compact }]">
       <slot />
     </table>
   </div>
-  <table v-else-if="!columns" :class="[tableClass, { compact }]">
+  <table v-else-if="!columns" :class="[tableClass, mobileTableClass, { compact }]">
     <slot />
   </table>
   <div v-else class="flex min-h-0 flex-1 flex-col gap-2">
@@ -323,7 +348,7 @@ function compareValues(left: unknown, right: unknown): number {
           <span class="text-xs text-fg-muted">Select</span>
         </div>
         <div
-          v-for="column in columns"
+          v-for="column in mobileVisibleColumns"
           :key="column.key"
           class="flex min-w-0 items-baseline justify-between gap-3"
         >
@@ -344,7 +369,7 @@ function compareValues(left: unknown, right: unknown): number {
       class="table-scroll"
       :class="refreshing ? 'opacity-60 transition-opacity duration-[120ms]' : ''"
     >
-      <table :class="[tableClass, { compact }]">
+      <table :class="[tableClass, mobileTableClass, { compact }]">
         <thead>
           <tr>
             <th v-if="selectable" class="w-9" scope="col">
@@ -361,6 +386,7 @@ function compareValues(left: unknown, right: unknown): number {
               :class="[
                 alignClass(column.align),
                 column.priority === 'low' ? 'col-low' : '',
+                isMobileHidden(column) ? 'col-mobile-hidden' : '',
                 column.sortable ? 'cursor-pointer select-none hover:text-fg' : '',
               ]"
               :style="column.width ? { width: column.width } : undefined"
@@ -406,7 +432,11 @@ function compareValues(left: unknown, right: unknown): number {
             <td
               v-for="column in columns"
               :key="column.key"
-              :class="[alignClass(column.align), column.priority === 'low' ? 'col-low' : '']"
+              :class="[
+                alignClass(column.align),
+                column.priority === 'low' ? 'col-low' : '',
+                isMobileHidden(column) ? 'col-mobile-hidden' : '',
+              ]"
             >
               <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
                 {{ displayCell(cellValue(row, column)) }}

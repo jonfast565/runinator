@@ -75,6 +75,26 @@ describe("DataTable (column mode)", () => {
     expect(html).toContain("table-scroll");
     expect(html.match(/<table/g)).toHaveLength(1);
     expect(html).toContain("custom");
+    expect(html).toContain("data-table-mobile-columns-2");
+  });
+
+  it("retains the requested leading columns on phones", async () => {
+    const html = await render({ columns, rows, mobileColumns: 1 });
+
+    expect(html).toContain("data-table-mobile-columns-1");
+  });
+
+  it("supports an explicit mobile column selection when source order is not suitable", async () => {
+    const html = await render({
+      columns: [
+        { key: "id", label: "ID" },
+        { key: "name", label: "Name", mobile: true },
+      ],
+      rows,
+    });
+
+    expect(html).toContain("data-table-mobile-columns-explicit");
+    expect(html).toContain("col-mobile-hidden");
   });
 
   it("renders a table skeleton, not rows, on a first load", async () => {
