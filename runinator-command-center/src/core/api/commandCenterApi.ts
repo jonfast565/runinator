@@ -659,21 +659,30 @@ export async function fetchOrchestrationEpochs(orchestrationId: string) {
 }
 
 export async function fetchOrchestrationEvents(orchestrationId: string) {
-  return command<import("../domain/models").OrchestrationReduction[]>("fetch_orchestration_events", {
-    orchestrationId,
-  });
+  return command<import("../domain/models").OrchestrationReduction[]>(
+    "fetch_orchestration_events",
+    {
+      orchestrationId,
+    },
+  );
 }
 
 export async function fetchOrchestrationEvidence(orchestrationId: string) {
-  return command<import("../domain/models").OrchestrationEvidence[]>("fetch_orchestration_evidence", {
-    orchestrationId,
-  });
+  return command<import("../domain/models").OrchestrationEvidence[]>(
+    "fetch_orchestration_evidence",
+    {
+      orchestrationId,
+    },
+  );
 }
 
 export async function fetchOrchestrationCommands(orchestrationId: string) {
-  return command<import("../domain/models").OrchestrationCommand[]>("fetch_orchestration_commands", {
-    orchestrationId,
-  });
+  return command<import("../domain/models").OrchestrationCommand[]>(
+    "fetch_orchestration_commands",
+    {
+      orchestrationId,
+    },
+  );
 }
 
 export async function fetchOrchestrationWorkspaces(orchestrationId: string) {
@@ -740,11 +749,15 @@ export async function fetchAdapter(adapterId: string) {
 }
 
 export async function fetchAdapterRevisions(adapterId: string) {
-  return command<import("../domain/models").AdapterRevision[]>("fetch_adapter_revisions", { adapterId });
+  return command<import("../domain/models").AdapterRevision[]>("fetch_adapter_revisions", {
+    adapterId,
+  });
 }
 
 export async function fetchAdapterPollStatus(adapterId: string) {
-  return command<import("../domain/models").AdapterPollStatus>("fetch_adapter_poll_status", { adapterId });
+  return command<import("../domain/models").AdapterPollStatus>("fetch_adapter_poll_status", {
+    adapterId,
+  });
 }
 
 export interface AdapterApplyInput {
@@ -955,7 +968,11 @@ function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, str
       continue;
     }
 
-    if (entry.type !== "effect_requested" || !continuationId || typeof entry.effect_id !== "string") {
+    if (
+      entry.type !== "effect_requested" ||
+      !continuationId ||
+      typeof entry.effect_id !== "string"
+    ) {
       continue;
     }
 
@@ -989,6 +1006,80 @@ function projectedEffectNodeId(
       : null) ??
     null
   );
+}
+
+/**
+ * A transitional server can return a partially materialized `nodes` array alongside the newer VM
+ * effect history. Treat neither as complete: retain the server rows with their precise timing, and
+ * add every projected effect/journal row it omitted. Matching effect ids are merged so the timeline
+ * does not show the same execution twice.
+ */
+function mergeWorkflowRunNodes(
+  materialized: WorkflowNodeRun[],
+  projected: WorkflowNodeRun[],
+): WorkflowNodeRun[] {
+  const merged = [...materialized];
+  const indexById = new Map(merged.map((node, index) => [node.id, index] as const));
+  const indexByEffectId = new Map(
+    merged.flatMap((node, index) => {
+      const state = node.state;
+      const effectId = state?.effect_id;
+      return state !== undefined &&
+        typeof effectId === "string" &&
+        state.journal_entry_id === undefined
+        ? ([[effectId, index]] as const)
+        : [];
+    }),
+  );
+
+  for (const node of projected) {
+    const state = node.state;
+    const effectId =
+      state !== undefined &&
+      typeof state.effect_id === "string" &&
+      state.journal_entry_id === undefined
+        ? state.effect_id
+        : null;
+    const existingIndex =
+      indexById.get(node.id) ?? (effectId ? indexByEffectId.get(effectId) : undefined);
+
+    if (existingIndex === undefined) {
+      const index = merged.length;
+      merged.push(node);
+      indexById.set(node.id, index);
+
+      if (effectId) {
+        indexByEffectId.set(effectId, index);
+      }
+
+      continue;
+    }
+
+    const existing = merged[existingIndex];
+    merged[existingIndex] = {
+      ...node,
+      ...existing,
+      state: { ...(node.state ?? {}), ...(existing.state ?? {}) },
+      parameters:
+        Object.keys(existing.parameters).length > 0 ? existing.parameters : node.parameters,
+      output_json: existing.output_json ?? node.output_json,
+      created_at: existing.created_at ?? node.created_at,
+      started_at: existing.started_at ?? node.started_at,
+      finished_at: existing.finished_at ?? node.finished_at,
+      message: existing.message ?? node.message,
+    };
+  }
+
+  return merged.sort((left, right) => {
+    const leftAt = Date.parse(left.created_at ?? "");
+    const rightAt = Date.parse(right.created_at ?? "");
+
+    if (Number.isFinite(leftAt) && Number.isFinite(rightAt) && leftAt !== rightAt) {
+      return leftAt - rightAt;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
 }
 
 export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowRunDetail> {
@@ -1131,14 +1222,10 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   });
   return {
     ...detail,
-    // A server-side run detail can already carry fully materialized steps. Preserve those rows:
-    // they have the most precise lifecycle timestamps and remain useful when a VM side endpoint
-    // is temporarily unavailable. VM-only runs have no rows there, so project their durable
-    // journal/effects for the graph, timeline, and Gantt instead.
-    nodes:
-      detail.nodes.length > 0
-        ? detail.nodes
-        : [...enteredNodes, ...retryNodes, ...effectNodes],
+    // Mixed-version servers can materialize only infrastructure steps while the VM endpoints own
+    // action history. Merge both sources or ordinary actions disappear from the graph, step log,
+    // timeline, and Gantt whenever one materialized row happens to be present.
+    nodes: mergeWorkflowRunNodes(detail.nodes, [...enteredNodes, ...retryNodes, ...effectNodes]),
     continuations,
     effects,
     journal,

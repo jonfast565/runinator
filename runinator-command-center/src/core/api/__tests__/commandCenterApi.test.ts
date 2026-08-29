@@ -196,6 +196,161 @@ describe("command center catalog metadata API", () => {
     ]);
   });
 
+  it("merges VM action effects into a partially materialized step list", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "succeeded" },
+          nodes: [
+            {
+              id: "effect-mutex",
+              workflow_run_id: "run-1",
+              node_id: "mutex_1",
+              status: "succeeded",
+              attempt: 0,
+              parameters: {},
+              output_json: { acquired: true },
+              created_at: "2026-08-29T03:43:12.000Z",
+              started_at: "2026-08-29T03:43:12.000Z",
+              finished_at: "2026-08-29T03:43:12.000Z",
+              message: null,
+            },
+          ],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: [
+          {
+            version: 1,
+            id: "effect-mutex",
+            workflow_run_id: "run-1",
+            continuation_id: "continuation-1",
+            sequence: 0,
+            attempt: 0,
+            node_id: "mutex_1",
+            request: { type: "coordination", kind: "mutex" },
+            status: "succeeded",
+            result: { acquired: true },
+            created_at: 1787974992,
+            updated_at: 1787974992,
+            finished_at: 1787974992,
+          },
+          {
+            version: 1,
+            id: "effect-sync",
+            workflow_run_id: "run-1",
+            continuation_id: "continuation-1",
+            sequence: 1,
+            attempt: 0,
+            node_id: "sync_claude",
+            request: { type: "action", provider: "console", function: "run" },
+            status: "succeeded",
+            result: { exit_code: 0 },
+            created_at: 1787974993,
+            updated_at: 1787974995,
+            finished_at: 1787974995,
+          },
+        ],
+        fetch_workflow_journal: [],
+        fetch_workflow_vm_cursors: [],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes).toHaveLength(2);
+    expect(detail.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "effect-mutex", node_id: "mutex_1" }),
+        expect.objectContaining({
+          id: "effect-sync",
+          node_id: "sync_claude",
+          status: "succeeded",
+          output_json: { exit_code: 0 },
+        }),
+      ]),
+    );
+  });
+
+  it("keeps every projected node category when materialized steps are also present", async () => {
+    const effects = [
+      { id: "action", nodeId: "publish", status: "succeeded", request: { type: "action" } },
+      { id: "approval", nodeId: "review", status: "requested", request: { type: "approval" } },
+      { id: "input", nodeId: "collect_input", status: "running", request: { type: "input" } },
+      { id: "signal", nodeId: "await_signal", status: "requested", request: { type: "signal" } },
+      { id: "timer", nodeId: "backoff", status: "running", request: { type: "timer" } },
+      {
+        id: "mutex",
+        nodeId: "serialize",
+        status: "succeeded",
+        request: { type: "coordination", kind: "mutex" },
+      },
+    ].map(({ id, nodeId, status, request }, sequence) => ({
+      version: 1,
+      id: `effect-${id}`,
+      workflow_run_id: "run-1",
+      continuation_id: "continuation-1",
+      sequence,
+      attempt: 0,
+      node_id: nodeId,
+      request,
+      status,
+      created_at: sequence + 1,
+      updated_at: sequence + 1,
+      finished_at: status === "succeeded" ? sequence + 2 : null,
+    }));
+
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "running" },
+          nodes: [
+            {
+              id: "materialized-compute",
+              workflow_run_id: "run-1",
+              node_id: "prepare",
+              status: "succeeded",
+              attempt: 0,
+              parameters: {},
+              created_at: "1970-01-01T00:00:00.000Z",
+              started_at: "1970-01-01T00:00:00.000Z",
+              finished_at: "1970-01-01T00:00:00.001Z",
+              message: null,
+            },
+          ],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: effects,
+        fetch_workflow_journal: [],
+        fetch_workflow_vm_cursors: [],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes.map((node) => node.node_id)).toEqual([
+      "prepare",
+      "publish",
+      "review",
+      "collect_input",
+      "await_signal",
+      "backoff",
+      "serialize",
+    ]);
+    expect(
+      Object.fromEntries(detail.nodes.map((node) => [node.node_id, node.status])),
+    ).toMatchObject({
+      prepare: "succeeded",
+      publish: "succeeded",
+      review: "approval_required",
+      collect_input: "waiting",
+      await_signal: "waiting",
+      backoff: "running",
+      serialize: "succeeded",
+    });
+  });
+
   it("projects an effect to the node entries persisted after its request boundary", async () => {
     vi.mocked(invoke).mockImplementation((name) => {
       const responses: Record<string, unknown> = {

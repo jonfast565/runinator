@@ -103,7 +103,7 @@
               <WorkflowRunGraph />
             </template>
             <template #second>
-              <div class="panel details min-h-0 overflow-auto">
+              <div ref="runDetailScroller" class="panel details min-h-0 overflow-auto">
                 <WorkflowRunDetail />
                 <IngressTimeline />
                 <section class="grid gap-2 border-t border-border-subtle pt-3">
@@ -120,8 +120,8 @@
                 </section>
                 <section class="grid gap-2 border-t border-border-subtle pt-3">
                   <div class="flex items-baseline justify-between gap-2">
-                    <h2 class="m-0 text-base font-semibold text-fg">Run Output Chunks</h2>
-                    <span class="text-xs text-fg-muted">Streamed log and output segments</span>
+                    <h2 class="m-0 text-base font-semibold text-fg">Step Output</h2>
+                    <span class="text-xs text-fg-muted">Selected step diagnostics and logs</span>
                   </div>
                   <LogPanel
                     :chunks="logChunks"
@@ -239,7 +239,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { workflowRunExtrasService } from "../../core/services";
 import { downloadWorkflowEffectArtifact } from "../../core/api/commandCenterApi";
 import { downloadBlob } from "../adapters/browser/files";
@@ -280,6 +280,7 @@ const artifacts = ref<RunArtifact[]>([]);
 const runArtifacts = ref<WorkflowRunArtifact[]>([]);
 const logChunks = ref<RunChunk[]>([]);
 const lastLogChunkAt = ref(0);
+const runDetailScroller = ref<HTMLElement | null>(null);
 
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
 const workflowNames = computed(() =>
@@ -437,6 +438,18 @@ watch(
 watch(
   () => workflows.selectedWorkflowRunId,
   async (id) => {
+    await nextTick();
+    const scroller = runDetailScroller.value;
+
+    if (scroller) {
+      scroller.scrollTop = 0;
+      const stackedPane = scroller.closest<HTMLElement>(".split-pane-stacked");
+
+      if (stackedPane) {
+        stackedPane.scrollTop = 0;
+      }
+    }
+
     runArtifacts.value = id ? await workflowRunExtrasService.fetchRunArtifacts(id) : [];
   },
   { immediate: true },

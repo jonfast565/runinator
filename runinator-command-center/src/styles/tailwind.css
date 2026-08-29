@@ -1466,6 +1466,14 @@
   .log-context-title span {
     color: var(--text-subtle);
   }
+  .log-context-title .log-context-action {
+    color: var(--accent-text);
+    font-family: "SFMono-Regular", Consolas, monospace;
+  }
+  .log-context-title .log-context-status {
+    margin-left: auto;
+    font-weight: 600;
+  }
   .log-context-meta {
     color: var(--text-faint);
     font-family: "SFMono-Regular", Consolas, monospace;
@@ -1474,10 +1482,13 @@
     max-height: 96px;
     margin: 2px 0 0;
     overflow: auto;
-    color: var(--danger-fg);
+    color: var(--text-subtle);
     font: inherit;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  .log-context.is-error .log-context-message {
+    color: var(--danger-fg);
   }
   .log-empty-state {
     display: grid;

@@ -1,6 +1,6 @@
 <template>
   <div class="log-panel">
-    <div class="log-controls">
+    <div v-if="chunks.length" class="log-controls">
       <input v-model="filter" class="log-filter-input" placeholder="Filter logs (substring)" />
       <label class="log-toggle">
         <input v-model="showStdout" type="checkbox" />
@@ -26,15 +26,16 @@
     <div v-if="context" class="log-context" :class="contextTone">
       <div class="log-context-title">
         <strong>{{ context.nodeId || "Run diagnostics" }}</strong>
-        <span>{{ context.nodeStatus || context.runStatus }}</span>
-        <span v-if="context.effectStatus">effect {{ context.effectStatus }}</span>
-        <span v-if="context.attempt !== null">attempt {{ context.attempt }}</span>
+        <span v-if="context.action" class="log-context-action">{{ context.action }}</span>
+        <span class="log-context-status">{{
+          context.effectStatus || context.nodeStatus || context.runStatus
+        }}</span>
       </div>
       <div class="log-context-meta">
+        <span v-if="(context.attempt ?? null) !== null">attempt {{ context.attempt }}</span>
         <span>run {{ shortId(context.runId) }}</span>
         <span v-if="context.effectId">effect {{ shortId(context.effectId) }}</span>
         <span v-if="context.continuationId">thread {{ shortId(context.continuationId) }}</span>
-        <span v-if="context.action">{{ context.action }}</span>
       </div>
       <pre v-if="context.message" class="log-context-message">{{ context.message }}</pre>
     </div>
@@ -45,14 +46,17 @@
         the worker emits stdout or stderr chunks.
       </span>
     </div>
-    <pre class="log-output">
+    <pre v-if="filteredLines.length" class="log-output">
 <span
   v-for="line in filteredLines"
   :key="line.id"
   :class="colorize ? lineClass(line) : ''"
-><span class="log-line-meta">{{ line.timestamp }} · {{ line.stream }} · attempt {{ line.attempt }} · effect {{ shortId(line.effectId) }}</span> {{ line.content }}
+><span class="log-line-meta">{{ line.timestamp }} [{{ line.stream }} · attempt {{ line.attempt }}]</span> {{ line.content }}
 </span>
     </pre>
+    <div v-else-if="chunks.length" class="log-empty-state">
+      No output lines match the current filter.
+    </div>
   </div>
 </template>
 
@@ -132,7 +136,14 @@ const filteredLines = computed<Line[]>(() => {
   }
 
   return lines.filter((line) =>
-    [line.timestamp, line.stream, String(line.attempt), line.effectId, line.continuationId, line.content]
+    [
+      line.timestamp,
+      line.stream,
+      String(line.attempt),
+      line.effectId,
+      line.continuationId,
+      line.content,
+    ]
       .join(" ")
       .toLowerCase()
       .includes(query),
@@ -169,5 +180,4 @@ function lineClass(line: Line): string {
 function shortId(value: string): string {
   return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
-
 </script>

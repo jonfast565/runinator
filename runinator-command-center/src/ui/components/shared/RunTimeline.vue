@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootEl" class="flex min-h-0 flex-col gap-2">
+  <div class="flex min-h-0 flex-col gap-2">
     <!-- failure reason pinned at the top for an at-a-glance "what broke and where". -->
     <div
       v-if="failure"
@@ -34,8 +34,7 @@
       <pre
         v-if="failure.message"
         class="mt-2 max-h-[180px] overflow-auto rounded-md border border-danger-fg bg-surface p-2 font-mono text-[11px] leading-[1.55] break-words whitespace-pre-wrap text-danger-fg"
-        >{{ failure.message }}</pre
-      >
+        >{{ failure.message }}</pre>
     </div>
 
     <!-- quick status filter for long runs (opt-in via the filterable prop). -->
@@ -58,7 +57,11 @@
     </div>
 
     <div v-if="!detail" class="px-0 py-2.5 text-[13px] text-fg-muted">No run selected.</div>
-    <ol v-else-if="visibleNodes.length" class="m-0 min-h-0 list-none overflow-auto p-0">
+    <ol
+      v-else-if="visibleNodes.length"
+      ref="listEl"
+      class="m-0 min-h-0 list-none overflow-auto p-0"
+    >
       <li
         v-for="node in visibleNodes"
         :key="node.id"
@@ -67,10 +70,7 @@
         :class="{ 'rounded-md': isActive(node) }"
       >
         <div class="run-timeline-rail relative flex justify-center">
-          <span
-            class="run-timeline-dot"
-            :class="timelineDotClass(node.status)"
-          ></span>
+          <span class="run-timeline-dot" :class="timelineDotClass(node.status)"></span>
         </div>
         <div class="min-w-0 pb-2">
           <button
@@ -146,8 +146,7 @@
               </div>
               <pre
                 class="m-0 max-h-[200px] overflow-auto rounded border border-border-subtle bg-surface-sunken p-2 font-mono text-[11px] leading-[1.45] break-words whitespace-pre-wrap"
-                >{{ outputText(node) }}</pre
-              >
+                >{{ outputText(node) }}</pre>
             </template>
             <div
               class="mb-0.5 text-[10px] tracking-wide text-fg-muted uppercase"
@@ -157,8 +156,7 @@
             </div>
             <pre
               class="m-0 max-h-[200px] overflow-auto rounded border border-border-subtle bg-surface-sunken p-2 font-mono text-[11px] leading-[1.45] break-words whitespace-pre-wrap"
-              >{{ logState(node) }}</pre
-            >
+              >{{ logState(node) }}</pre>
           </div>
         </div>
       </li>
@@ -207,7 +205,7 @@ const emit = defineEmits<{
 const RUNNING_STATUSES = new Set(["running", "waiting", "queued", "retrying"]);
 const FAILED_STATUSES = new Set(["failed", "timed_out"]);
 
-const rootEl = ref<HTMLElement | null>(null);
+const listEl = ref<HTMLOListElement | null>(null);
 const expandedId = ref<string | null>(null);
 const logCache = ref<Record<string, string>>({});
 const logLoading = ref<Set<string>>(new Set());
@@ -467,7 +465,9 @@ watch(
   },
 );
 
-// keep the running step in view while a run is in flight, without yanking finished runs around.
+// Keep the running step visible *inside the step list*. `scrollIntoView` also scrolls every ancestor
+// and used to push the entire run-detail pane down to Steps, hiding the graph and Gantt whenever a
+// freshly opened run was still active.
 const activeNodeRunId = computed(
   () => visibleNodes.value.find((node) => isActive(node))?.id ?? null,
 );
@@ -477,9 +477,21 @@ watch(activeNodeRunId, async (id) => {
   }
 
   await nextTick();
-  rootEl.value
-    ?.querySelector(`[data-node-run-id="${id}"]`)
-    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  const list = listEl.value;
+  const row = list?.querySelector<HTMLElement>(`[data-node-run-id="${id}"]`);
+
+  if (!list || !row || list.scrollHeight <= list.clientHeight) {
+    return;
+  }
+
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+
+  if (rowRect.top < listRect.top) {
+    list.scrollTop -= listRect.top - rowRect.top;
+  } else if (rowRect.bottom > listRect.bottom) {
+    list.scrollTop += rowRect.bottom - listRect.bottom;
+  }
 });
 
 onMounted(() => {
