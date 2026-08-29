@@ -64,11 +64,22 @@
             class="w-auto min-w-56"
             @keyup.enter="refreshInstances"
         /></label>
-        <button class="btn" :disabled="store.loading" @click="refreshInstances">
-          <LoadingSpinner v-if="store.loading" size="sm" label="Refreshing orchestrations" />
-          <Icon v-else name="refresh" />
-          <span>Refresh</span>
+        <button class="btn btn-primary" :disabled="store.loading" @click="refreshInstances">
+          <LoadingSpinner v-if="store.loading" size="sm" label="Applying filters" />
+          <Icon v-else name="search" />
+          <span>Apply filters</span>
         </button>
+        <button
+          v-if="activeFilterCount"
+          class="btn"
+          :disabled="store.loading"
+          @click="clearFilters"
+        >
+          Clear {{ activeFilterCount }}
+        </button>
+        <span class="pb-2 text-xs text-fg-muted">
+          {{ store.bindings.length }} result{{ store.bindings.length === 1 ? "" : "s" }}
+        </span>
       </div>
 
       <div v-else class="flex flex-wrap items-center justify-between gap-3">
@@ -138,7 +149,10 @@
         <template #second>
           <div class="panel details overflow-auto">
             <MobileBackBar label="Back to orchestrations" @back="showInstanceList = true" />
-            <main v-if="store.selected">
+            <div v-if="store.detailLoading" class="grid min-h-52 place-items-center">
+              <LoadingSpinner label="Loading orchestration details" />
+            </div>
+            <main v-else-if="store.selected">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 class="text-lg font-semibold text-fg">
@@ -155,9 +169,15 @@
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <button
-                    v-for="(_, name) in store.selected.policy.intents"
+                    v-for="(intent, name) in store.selected.policy.intents"
                     :key="name"
                     class="btn"
+                    :class="
+                      intent.effect === 'terminate' || intent.effect === 'supersede'
+                        ? 'btn-danger'
+                        : ''
+                    "
+                    :title="intentButtonHint(String(name))"
                     @click="openIntent(String(name))"
                   >
                     {{ name }}</button
@@ -410,7 +430,7 @@
                         {{ alias.source }} · {{ alias.scope }} · generation {{ alias.generation }}
                       </p>
                     </div>
-                    <button class="btn" @click="store.removeAlias(alias.id)">Remove</button>
+                    <button class="btn btn-danger" @click="openAliasRemoval(alias)">Remove</button>
                   </article>
                   <p v-if="store.aliases.length === 0" class="text-sm text-fg-muted">
                     No alternate correlation identities route to this generation.
@@ -998,15 +1018,30 @@
       @close="intentName = null"
     >
       <form id="orchestration-intent-form" class="grid gap-3" @submit.prevent="submitIntent">
+        <p
+          v-if="selectedIntent"
+          class="action-impact"
+          :class="{ 'is-danger': intentIsDestructive }"
+        >
+          <strong>{{ humanizeKey(selectedIntent.effect) }}</strong>
+          <span>{{ selectedIntentSummary }}</span>
+        </p>
         <label>Reason<textarea v-model="reason" required class="min-h-24" /></label>
         <label
           >Payload JSON<textarea v-model="intentPayload" class="min-h-28 font-mono text-xs" />
         </label>
         <p v-if="intentPayloadError" class="m-0 text-sm text-danger-fg">{{ intentPayloadError }}</p>
+        <p v-if="actionError" class="m-0 text-sm text-danger-fg">{{ actionError }}</p>
       </form>
       <template #actions>
         <button type="button" class="btn" @click="intentName = null">Cancel</button>
-        <button class="btn btn-primary" type="submit" form="orchestration-intent-form">
+        <button
+          class="btn"
+          :class="intentIsDestructive ? 'btn-danger' : 'btn-primary'"
+          type="submit"
+          form="orchestration-intent-form"
+          :disabled="actionPending || !reason.trim() || !!intentPayloadError"
+        >
           Dispatch
         </button>
       </template>
@@ -1020,10 +1055,16 @@
     >
       <form id="orchestration-requeue-form" class="grid gap-3" @submit.prevent="submitRequeue">
         <label>Reason<textarea v-model="reason" required class="min-h-24" /></label>
+        <p v-if="actionError" class="m-0 text-sm text-danger-fg">{{ actionError }}</p>
       </form>
       <template #actions>
         <button type="button" class="btn" @click="requeueOpen = false">Cancel</button>
-        <button class="btn btn-primary" type="submit" form="orchestration-requeue-form">
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="orchestration-requeue-form"
+          :disabled="actionPending || !reason.trim()"
+        >
           Requeue
         </button>
       </template>
@@ -1044,11 +1085,46 @@
         <label
           >Receipt JSON<textarea v-model="resolutionReceipt" class="min-h-28 font-mono text-xs" />
         </label>
+        <p v-if="resolutionReceiptError" class="m-0 text-sm text-danger-fg">
+          {{ resolutionReceiptError }}
+        </p>
+        <p v-if="actionError" class="m-0 text-sm text-danger-fg">{{ actionError }}</p>
       </form>
       <template #actions>
         <button type="button" class="btn" @click="resolvingOperation = null">Cancel</button>
-        <button class="btn btn-primary" type="submit" form="orchestration-resolution-form">
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="orchestration-resolution-form"
+          :disabled="actionPending || !resolutionReason.trim() || !!resolutionReceiptError"
+        >
           Apply resolution
+        </button>
+      </template>
+    </Modal>
+    <Modal
+      v-if="removingAlias"
+      title="Remove correlation alias"
+      description="Events using this alternate identity will no longer route to the selected orchestration."
+      width="min(520px, 100%)"
+      @close="removingAlias = null"
+    >
+      <div class="rounded border border-border bg-surface-subtle p-3 text-sm">
+        <strong class="break-all text-fg">{{ removingAlias.correlation_key }}</strong>
+        <p class="mt-1 mb-0 text-xs text-fg-muted">
+          {{ removingAlias.source }} · {{ removingAlias.scope }}
+        </p>
+      </div>
+      <p v-if="actionError" class="m-0 text-sm text-danger-fg">{{ actionError }}</p>
+      <template #actions>
+        <button type="button" class="btn" @click="removingAlias = null">Keep alias</button>
+        <button
+          type="button"
+          class="btn btn-danger"
+          :disabled="actionPending"
+          @click="confirmAliasRemoval"
+        >
+          Remove alias
         </button>
       </template>
     </Modal>
@@ -1199,6 +1275,7 @@ import type {
   AdapterRevision,
   ExternalOperation,
   JsonValue,
+  OrchestrationCorrelationAlias,
   OrchestrationEvidence,
   PipelineRunDetail,
   WorkspaceLease,
@@ -1282,7 +1359,6 @@ function openAdapter(id: string) {
 
 const intentName = ref<string | null>(null);
 const intentPayload = ref("{}");
-const intentPayloadError = ref<string | null>(null);
 const requeueOpen = ref(false);
 const reason = ref("");
 const aliasSource = ref("");
@@ -1292,6 +1368,9 @@ const resolvingOperation = ref<ExternalOperation | null>(null);
 const resolution = ref<"succeeded" | "failed" | "retry">("succeeded");
 const resolutionReason = ref("");
 const resolutionReceipt = ref("null");
+const removingAlias = ref<OrchestrationCorrelationAlias | null>(null);
+const actionPending = ref(false);
+const actionError = ref<string | null>(null);
 const hostResult = ref<unknown>(null);
 const adapterCatalog = shallowRef<AdapterKindCatalogEntry[]>([]);
 const testHeaders = ref("{}");
@@ -1386,6 +1465,37 @@ const identityLocked = computed(() =>
 const isSelectedTerminal = computed(() =>
   Boolean(store.selected && ["completed", "failed", "terminated"].includes(store.selected.status)),
 );
+const activeFilterCount = computed(
+  () => Object.values(filters).filter((value) => value.trim()).length,
+);
+const selectedIntent = computed(() =>
+  intentName.value ? store.selected?.policy.intents[intentName.value] : undefined,
+);
+const intentIsDestructive = computed(() =>
+  Boolean(selectedIntent.value && ["terminate", "supersede"].includes(selectedIntent.value.effect)),
+);
+const selectedIntentSummary = computed(() => {
+  const intent = selectedIntent.value;
+
+  if (!intent) {
+    return "";
+  }
+
+  const configuredSignalName = intent.signal_name?.trim() ?? "";
+  const signalName =
+    configuredSignalName.length > 0 ? configuredSignalName : (intentName.value ?? "configured");
+  const summaries = {
+    terminate: "Ends the orchestration and its active execution.",
+    suspend: "Pauses the active execution until a resume intent is dispatched.",
+    resume: "Resumes a previously suspended execution.",
+    supersede: "Stops the current execution and starts a replacement epoch.",
+    observe: "Records the event without interrupting the active execution.",
+    signal: `Sends the ${signalName} workflow signal.`,
+  };
+  return summaries[intent.effect];
+});
+const intentPayloadError = computed(() => jsonError(intentPayload.value, "Payload"));
+const resolutionReceiptError = computed(() => jsonError(resolutionReceipt.value, "Receipt"));
 const instanceChips = computed(() =>
   store.selected
     ? [
@@ -1494,8 +1604,39 @@ function parseJson(value: string): unknown {
   return parsed;
 }
 
+function jsonError(value: string, label: string): string | null {
+  try {
+    parseJson(value);
+    return null;
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : "invalid JSON";
+    return `${label} must be valid JSON: ${detail}`;
+  }
+}
+
 function refreshInstances(): void {
-  void store.refresh(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)));
+  const query: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(filters)) {
+    const trimmed = value.trim();
+
+    if (trimmed) {
+      query[key] = trimmed;
+    }
+  }
+
+  void store.refresh(query);
+}
+
+function clearFilters(): void {
+  Object.assign(filters, {
+    status: "",
+    scope: "",
+    correlation_key: "",
+    pipeline_id: "",
+    adapter_id: "",
+  });
+  refreshInstances();
 }
 
 async function refreshAdapters(): Promise<void> {
@@ -1521,12 +1662,33 @@ function openIntent(name: string): void {
   intentName.value = name;
   reason.value = "";
   intentPayload.value = "{}";
-  intentPayloadError.value = null;
+  actionError.value = null;
+}
+
+function intentButtonHint(name: string): string {
+  const intent = store.selected?.policy.intents[name];
+  return intent ? `${humanizeKey(intent.effect)} · priority ${String(intent.priority)}` : name;
 }
 
 function openRequeue(): void {
   reason.value = "";
+  actionError.value = null;
   requeueOpen.value = true;
+}
+
+async function performAction(action: () => Promise<void>): Promise<boolean> {
+  actionPending.value = true;
+  actionError.value = null;
+
+  try {
+    await action();
+    return true;
+  } catch (cause) {
+    actionError.value = cause instanceof Error ? cause.message : String(cause);
+    return false;
+  } finally {
+    actionPending.value = false;
+  }
 }
 
 async function submitIntent(): Promise<void> {
@@ -1538,14 +1700,16 @@ async function submitIntent(): Promise<void> {
 
   try {
     payload = parseJson(intentPayload.value || "{}");
-  } catch (cause) {
-    intentPayloadError.value =
-      cause instanceof Error ? cause.message : "Payload must be valid JSON.";
+  } catch {
     return;
   }
 
-  await store.dispatch(intentName.value, reason.value.trim(), payload);
-  intentName.value = null;
+  const intent = intentName.value;
+  const saved = await performAction(() => store.dispatch(intent, reason.value.trim(), payload));
+
+  if (saved) {
+    intentName.value = null;
+  }
 }
 
 async function openPipelineRun(id: string): Promise<void> {
@@ -1567,8 +1731,11 @@ async function submitRequeue(): Promise<void> {
     return;
   }
 
-  await store.requeue(reason.value.trim());
-  requeueOpen.value = false;
+  const saved = await performAction(() => store.requeue(reason.value.trim()));
+
+  if (saved) {
+    requeueOpen.value = false;
+  }
 }
 
 async function submitAlias(): Promise<void> {
@@ -1586,27 +1753,53 @@ async function submitAlias(): Promise<void> {
   aliasCorrelation.value = "";
 }
 
+function openAliasRemoval(alias: OrchestrationCorrelationAlias): void {
+  actionError.value = null;
+  removingAlias.value = alias;
+}
+
+async function confirmAliasRemoval(): Promise<void> {
+  if (!removingAlias.value) {
+    return;
+  }
+
+  const aliasId = removingAlias.value.id;
+  const saved = await performAction(() => store.removeAlias(aliasId));
+
+  if (saved) {
+    removingAlias.value = null;
+  }
+}
+
 function openResolution(operation: ExternalOperation, next: typeof resolution.value): void {
   resolvingOperation.value = operation;
   resolution.value = next;
   resolutionReason.value = "";
   resolutionReceipt.value = "null";
+  actionError.value = null;
 }
 
 async function submitResolution(): Promise<void> {
-  if (!resolvingOperation.value || !resolutionReason.value.trim()) {
+  if (!resolvingOperation.value || !resolutionReason.value.trim() || resolutionReceiptError.value) {
     return;
   }
 
-  const receipt = parseJson(resolutionReceipt.value || "null");
+  let receipt: unknown;
 
-  await store.resolveOperation(
-    resolvingOperation.value,
-    resolution.value,
-    resolutionReason.value.trim(),
-    receipt,
+  try {
+    receipt = parseJson(resolutionReceipt.value || "null");
+  } catch {
+    return;
+  }
+
+  const operation = resolvingOperation.value;
+  const saved = await performAction(() =>
+    store.resolveOperation(operation, resolution.value, resolutionReason.value.trim(), receipt),
   );
-  resolvingOperation.value = null;
+
+  if (saved) {
+    resolvingOperation.value = null;
+  }
 }
 
 async function checkHost(): Promise<void> {
@@ -1763,6 +1956,33 @@ onMounted(refreshInstances);
 </script>
 
 <style scoped>
+.action-impact {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.action-impact strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.action-impact.is-danger {
+  border-color: color-mix(in srgb, var(--danger-fg) 30%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.action-impact.is-danger strong {
+  color: var(--danger-fg);
+}
+
 .adapter-list {
   gap: 0;
   background: var(--surface);

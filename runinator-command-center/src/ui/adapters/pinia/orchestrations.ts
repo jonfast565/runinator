@@ -58,7 +58,9 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   const adapterRevisions = shallowRef<AdapterRevision[]>([]);
   const adapterPollStatus = shallowRef<AdapterPollStatus | null>(null);
   const loading = ref(false);
+  const detailLoading = ref(false);
   const error = ref<string | null>(null);
+  let selectionVersion = 0;
 
   async function refresh(filters: Record<string, unknown> = {}): Promise<void> {
     loading.value = true;
@@ -71,6 +73,8 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
         await select(selectedId.value);
       } else if (bindings.value[0]) {
         await select(bindings.value[0].id);
+      } else {
+        clearSelection();
       }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause);
@@ -79,18 +83,62 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     }
   }
 
+  function clearSelection(): void {
+    selectionVersion += 1;
+    selectedId.value = null;
+    selected.value = null;
+    epochs.value = [];
+    events.value = [];
+    evidence.value = [];
+    commands.value = [];
+    operations.value = [];
+    workspaces.value = [];
+    aliases.value = [];
+    detailLoading.value = false;
+  }
+
   async function select(id: string): Promise<void> {
+    const requestVersion = ++selectionVersion;
     selectedId.value = id;
-    [selected.value, epochs.value, events.value, evidence.value, commands.value, operations.value, workspaces.value, aliases.value] = await Promise.all([
-      fetchOrchestration(id),
-      fetchOrchestrationEpochs(id),
-      fetchOrchestrationEvents(id),
-      fetchOrchestrationEvidence(id),
-      fetchOrchestrationCommands(id),
-      fetchExternalOperations(id),
-      fetchOrchestrationWorkspaces(id),
-      fetchOrchestrationAliases(id),
-    ]);
+    selected.value = null;
+    detailLoading.value = true;
+    error.value = null;
+
+    try {
+      const detail = await Promise.all([
+        fetchOrchestration(id),
+        fetchOrchestrationEpochs(id),
+        fetchOrchestrationEvents(id),
+        fetchOrchestrationEvidence(id),
+        fetchOrchestrationCommands(id),
+        fetchExternalOperations(id),
+        fetchOrchestrationWorkspaces(id),
+        fetchOrchestrationAliases(id),
+      ]);
+
+      if (requestVersion !== selectionVersion) {
+        return;
+      }
+
+      [
+        selected.value,
+        epochs.value,
+        events.value,
+        evidence.value,
+        commands.value,
+        operations.value,
+        workspaces.value,
+        aliases.value,
+      ] = detail;
+    } catch (cause) {
+      if (requestVersion === selectionVersion) {
+        error.value = cause instanceof Error ? cause.message : String(cause);
+      }
+    } finally {
+      if (requestVersion === selectionVersion) {
+        detailLoading.value = false;
+      }
+    }
   }
 
   function currentBinding(): OrchestrationBinding | null {
@@ -139,16 +187,16 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     error.value = null;
 
     try {
-      const [catalog, definitions] = await Promise.all([
-        fetchAdapterKinds(),
-        fetchAdapters(),
-      ]);
+      const [catalog, definitions] = await Promise.all([fetchAdapterKinds(), fetchAdapters()]);
       adapters.value = definitions;
       adapterKinds.value = catalog
         .filter((entry) => entry.healthy && !entry.error)
         .map((entry) => entry.metadata);
 
-      if (selectedAdapterId.value && adapters.value.some((item) => item.id === selectedAdapterId.value)) {
+      if (
+        selectedAdapterId.value &&
+        adapters.value.some((item) => item.id === selectedAdapterId.value)
+      ) {
         await selectAdapter(selectedAdapterId.value);
       } else if (adapters.value[0]) {
         await selectAdapter(adapters.value[0].id);
@@ -171,12 +219,12 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     adapterRevisions.value = await fetchAdapterRevisions(id);
     // `.at(0)` rather than `[0]`: an index read is typed as always present, which is what let an
     // adapter with no readable revisions throw here instead of simply having no poll status.
-    const current = adapterRevisions.value.find(
-      (revision) => revision.revision === selectedAdapter.value?.current_revision,
-    ) ?? adapterRevisions.value.at(0);
-    adapterPollStatus.value = current?.transport === "polling"
-      ? await fetchAdapterPollStatus(id)
-      : null;
+    const current =
+      adapterRevisions.value.find(
+        (revision) => revision.revision === selectedAdapter.value?.current_revision,
+      ) ?? adapterRevisions.value.at(0);
+    adapterPollStatus.value =
+      current?.transport === "polling" ? await fetchAdapterPollStatus(id) : null;
   }
 
   async function saveAdapter(input: AdapterApplyInput, adapterId?: string): Promise<void> {
@@ -196,7 +244,11 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     await refreshAdapters();
   }
 
-  async function runAdapterTest(adapterId: string, headers: Record<string, string>, bodyBase64: string): Promise<unknown> {
+  async function runAdapterTest(
+    adapterId: string,
+    headers: Record<string, string>,
+    bodyBase64: string,
+  ): Promise<unknown> {
     return testAdapter(adapterId, headers, bodyBase64);
   }
 
@@ -214,9 +266,38 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   }
 
   return {
-    bindings, selectedId, selected, epochs, events, evidence, commands, operations, workspaces, aliases,
-    adapterKinds, adapters, selectedAdapterId, selectedAdapter, adapterRevisions, adapterPollStatus,
-    loading, error, refresh, select, currentBinding, dispatch, requeue, addAlias, removeAlias, refreshAdapters, selectAdapter, saveAdapter,
-    toggleAdapter, removeAdapter, runAdapterTest, resolveOperation,
+    bindings,
+    selectedId,
+    selected,
+    epochs,
+    events,
+    evidence,
+    commands,
+    operations,
+    workspaces,
+    aliases,
+    adapterKinds,
+    adapters,
+    selectedAdapterId,
+    selectedAdapter,
+    adapterRevisions,
+    adapterPollStatus,
+    loading,
+    detailLoading,
+    error,
+    refresh,
+    select,
+    currentBinding,
+    dispatch,
+    requeue,
+    addAlias,
+    removeAlias,
+    refreshAdapters,
+    selectAdapter,
+    saveAdapter,
+    toggleAdapter,
+    removeAdapter,
+    runAdapterTest,
+    resolveOperation,
   };
 });
