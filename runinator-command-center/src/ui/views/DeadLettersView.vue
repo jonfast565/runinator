@@ -1,7 +1,10 @@
 <template>
   <section class="pane">
     <div class="panel flex min-h-0 flex-col">
-      <PanelHeader title="Dead Letters">
+      <PanelHeader
+        title="Dead Letters"
+        description="Select a channel, then expand a delivery to inspect the final error and payload before deciding how to recover it."
+      >
         <select v-model="channel" class="input" @change="refresh">
           <option value="">All channels</option>
           <option value="result">result</option>
@@ -68,8 +71,7 @@
                 <td colspan="5" class="border-b border-border px-2.5 py-2">
                   <pre
                     class="m-0 overflow-auto rounded-md border border-border bg-surface-sunken p-3 font-mono text-xs leading-snug"
-                    >{{ pretty(row.payload ?? {}) }}</pre
-                  >
+                    >{{ pretty(row.payload ?? {}) }}</pre>
                 </td>
               </tr>
             </template>

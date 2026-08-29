@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCursorMarkers,
+  buildTerminalCursorMarker,
   coerceRunCursors,
   cursorDebug,
   cursorLabel,
@@ -108,6 +109,36 @@ describe("buildCursorMarkers", () => {
     expect(elsewhere.armed).toBe(false);
     // a real cursor never shadows, so "armed" is not a state it can be in.
     expect(real.armed).toBe(false);
+  });
+});
+
+describe("buildTerminalCursorMarker", () => {
+  it("moves the selected live cursor to its completed endpoint", () => {
+    const marker = buildTerminalCursorMarker(
+      [cursor({ id: "a", node_id: "send" }), cursor({ id: "b", node_id: "wait" })],
+      "end",
+      "run-1",
+      null,
+      "b",
+    );
+
+    expect(marker).toMatchObject({
+      id: "b",
+      nodeId: "end",
+      label: "wait",
+      paused: true,
+      terminal: true,
+      selected: true,
+    });
+  });
+
+  it("still draws a completed main marker when the runtime has already cleared cursors", () => {
+    expect(buildTerminalCursorMarker([], "end", "run-1")).toMatchObject({
+      id: "terminal:run-1",
+      nodeId: "end",
+      label: "main",
+      terminal: true,
+    });
   });
 });
 

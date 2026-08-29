@@ -5,6 +5,10 @@
       @submit.prevent="submit"
     >
       <h1 class="m-0 text-xl text-fg">Runinator</h1>
+      <p class="m-0 text-xs leading-relaxed text-fg-muted">
+        Sign in with your Runinator account. Your available pages and actions are limited by the
+        roles assigned to that account.
+      </p>
       <label class="grid gap-1 text-xs font-semibold text-fg-subtle">
         Username
         <input
@@ -12,6 +16,8 @@
           class="rounded-md border border-border-strong px-2.5 py-2 font-inherit"
           autocomplete="username"
           autofocus
+          required
+          maxlength="254"
         />
       </label>
       <label class="grid gap-1 text-xs font-semibold text-fg-subtle">
@@ -21,6 +27,7 @@
           class="rounded-md border border-border-strong px-2.5 py-2 font-inherit"
           type="password"
           autocomplete="current-password"
+          required
         />
       </label>
       <p v-if="auth.error" class="m-0 text-xs text-danger-fg">{{ auth.error }}</p>

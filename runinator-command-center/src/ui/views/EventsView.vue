@@ -12,7 +12,10 @@
     >
       <template #first>
         <div class="panel">
-          <PanelHeader title="Events">
+          <PanelHeader
+            title="Events"
+            description="Select an event to inspect its complete payload; use search to narrow by provider, run, node, or message."
+          >
             <button class="btn" @click="refresh">
               <Icon name="refresh" />
               <span>Refresh</span>

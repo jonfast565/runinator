@@ -46,9 +46,7 @@
             />
           </div>
 
-          <div
-            class="min-h-0 overflow-auto rounded-md border border-border-subtle bg-surface p-2"
-          >
+          <div class="min-h-0 overflow-auto rounded-md border border-border-subtle bg-surface p-2">
             <LoadingPanel
               v-if="loadingSecrets"
               compact
@@ -91,22 +89,19 @@
           <template v-else>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label
-                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                <label class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
                   >Scope</label
                 >
                 <div>{{ selected.scope }}</div>
               </div>
               <div>
-                <label
-                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                <label class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
                   >Name</label
                 >
                 <div>{{ selected.name }}</div>
               </div>
               <div>
-                <label
-                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                <label class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
                   >Reference</label
                 >
                 <code class="break-words font-mono text-xs">{{
@@ -114,8 +109,7 @@
                 }}</code>
               </div>
               <div>
-                <label
-                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                <label class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
                   >Kind</label
                 >
                 <div>{{ selected.kind }}</div>
@@ -126,8 +120,7 @@
               <pre
                 v-if="isConfig"
                 class="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-sunken p-3 font-mono text-xs"
-                >{{ overviewValue }}</pre
-              >
+                >{{ overviewValue }}</pre>
               <div
                 v-else
                 class="rounded-md border border-dashed border-border p-3 text-xs text-fg-muted"
@@ -147,7 +140,10 @@
       tabindex="-1"
       @keydown.esc.stop.prevent="closeEditor"
     >
-      <form class="modal w-full max-w-[860px] [&_textarea]:min-h-[180px]" @submit.prevent="saveEditor">
+      <form
+        class="modal w-full max-w-[860px] [&_textarea]:min-h-[180px]"
+        @submit.prevent="saveEditor"
+      >
         <header class="modal-header">
           <div>
             <h2 class="m-0">{{ formTitle }}</h2>
@@ -161,11 +157,17 @@
         <div class="form-grid !grid-cols-1 sm:!grid-cols-2">
           <label>
             <span>Scope</span>
-            <input v-model="secrets.draft.scope" list="setting-scopes" placeholder="github" />
+            <input
+              v-model.trim="secrets.draft.scope"
+              list="setting-scopes"
+              required
+              maxlength="120"
+              placeholder="github"
+            />
           </label>
           <label>
             <span>Name</span>
-            <input v-model="secrets.draft.name" placeholder="token" />
+            <input v-model.trim="secrets.draft.name" required maxlength="120" placeholder="token" />
           </label>
           <label class="col-span-full">
             <span>{{ isConfig ? "Config Value (JSON)" : "Secret Value" }}</span>
@@ -176,9 +178,15 @@
               title=""
               @update:model-value="secrets.draft.secret = $event"
             />
-            <textarea v-else v-model="secrets.draft.secret" :placeholder="valuePlaceholder" />
+            <textarea
+              v-else
+              v-model="secrets.draft.secret"
+              required
+              :placeholder="valuePlaceholder"
+            />
           </label>
         </div>
+        <p v-if="editorError" class="error m-0 text-xs" role="alert">{{ editorError }}</p>
         <datalist id="setting-scopes">
           <option v-for="scope in knownScopes" :key="scope" :value="scope" />
         </datalist>
@@ -202,7 +210,7 @@
             <span>Delete</span>
           </button>
           <button class="btn" type="button" @click="closeEditor">Cancel</button>
-          <button class="btn btn-primary" type="submit">
+          <button class="btn btn-primary" type="submit" :disabled="Boolean(editorError)">
             <Icon name="save" />
             <span>{{ saveLabel }}</span>
           </button>
@@ -236,8 +244,10 @@ const props = defineProps<{
 const app = useAppStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
-const { isLoading: loadingSecrets, loadingMessage: loadingSecretsMessage } =
-  useOperationLoading(["Refreshing secrets", "Loading config value"]);
+const { isLoading: loadingSecrets, loadingMessage: loadingSecretsMessage } = useOperationLoading([
+  "Refreshing secrets",
+  "Loading config value",
+]);
 const editorOpen = ref(false);
 const modalRoot = ref<HTMLElement | null>(null);
 
@@ -281,6 +291,32 @@ const hint = computed(() =>
     ? "Config values are visible JSON. The web service infers the slot schema from the first value; later writes must stay consistent with it."
     : "Secret values are write-only from this interface. Select an existing secret, enter a new value, and save to replace it.",
 );
+const editorError = computed(() => {
+  if (!secrets.draft.scope.trim()) {
+    return "Scope is required; use the provider name when this value belongs to a provider.";
+  }
+
+  if (!secrets.draft.name.trim()) {
+    return "Name is required and becomes part of the setting reference.";
+  }
+
+  if (!secrets.draft.secret.trim()) {
+    return isConfig.value
+      ? "Enter a JSON value before saving the config."
+      : "Enter a new value before saving the secret.";
+  }
+
+  if (!isConfig.value) {
+    return "";
+  }
+
+  try {
+    JSON.parse(secrets.draft.secret);
+    return "";
+  } catch (error) {
+    return `Config value must be valid JSON: ${error instanceof Error ? error.message : String(error)}`;
+  }
+});
 
 const knownScopes = computed(() => {
   const scopes = new Set<string>(secrets.scopes);
@@ -349,6 +385,10 @@ function closeEditor() {
 }
 
 async function saveEditor() {
+  if (editorError.value) {
+    return;
+  }
+
   secrets.draft.kind = props.settingKind;
   await secrets.saveDraft();
 
@@ -410,4 +450,3 @@ onMounted(() => {
   void refreshPage();
 });
 </script>
-

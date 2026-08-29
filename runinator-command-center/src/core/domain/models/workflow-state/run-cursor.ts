@@ -74,6 +74,8 @@ export interface CursorMarker {
   interruptSource: string | null;
   /** true while this thread is frozen behind an interrupt handler. */
   suspended: boolean;
+  /** a retained terminal marker: the run has ended and this token is only showing where it landed. */
+  terminal: boolean;
 }
 
 /**
@@ -214,7 +216,38 @@ export function buildCursorMarkers(
     selected: cursor.id === selectedCursorId,
     interruptSource: cursor.interrupt?.source ?? null,
     suspended: isSuspended(cursor),
+    terminal: false,
   }));
+}
+
+/**
+ * Keep one cursor visible when a run finishes so its final hop can land on the endpoint instead
+ * of disappearing with the continuation. The marker is deliberately non-interactive: it records
+ * the completed path and does not describe a live branch.
+ */
+export function buildTerminalCursorMarker(
+  cursors: RunCursor[],
+  terminalNodeId: string,
+  runId: string,
+  runFrame?: DebugFrame | null,
+  selectedCursorId?: string | null,
+): CursorMarker {
+  const live = buildCursorMarkers(cursors, runFrame, selectedCursorId);
+  const source: CursorMarker | undefined = live.find((marker) => marker.selected) ?? live.at(0);
+
+  return {
+    id: source?.id ?? `terminal:${runId}`,
+    nodeId: terminalNodeId,
+    paletteIndex: source?.paletteIndex ?? 0,
+    label: source?.label ?? "main",
+    paused: true,
+    speculative: false,
+    armed: false,
+    selected: true,
+    interruptSource: null,
+    suspended: false,
+    terminal: true,
+  };
 }
 
 /** markers grouped by the node they sit on; a node may carry several. */

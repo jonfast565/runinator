@@ -293,17 +293,9 @@ const isWaitingState = computed(() =>
   ),
 );
 const isNodeRunning = computed(() => {
-  // VM history can include the node-entered marker, retry markers, and the current effect. The
-  // most recent projection is authoritative; selecting the first marker made a later running
-  // effect look completed.
-  const run = [...(workflows.workflowRunDetail?.nodes ?? [])]
-    .reverse()
-    .find((n) => n.node_id === props.id);
-
-  if (run) {
-    return run.status === "running" || run.status === "queued";
-  }
-
+  // `data.running` is the graph projection: it incorporates both the durable node-run history
+  // and the live VM cursor. Reading workflowRunDetail here again bypasses that cursor signal and
+  // leaves a node looking queued until the effect row catches up.
   return props.data.running ?? false;
 });
 

@@ -13,12 +13,14 @@
           'is-selected': token.selected,
           'is-speculative': token.speculative,
           'is-paused': token.paused,
+          'is-terminal': token.terminal,
         }"
         :style="{ transform: `translate(-50%, -50%) translate(${token.x}px, ${token.y}px)` }"
-        :title="`${token.label} — ${token.paused ? 'paused' : 'running'} at ${token.nodeId}`"
+        :title="`${token.label} — ${token.terminal ? 'completed' : token.paused ? 'paused' : 'running'} at ${token.nodeId}`"
         :aria-label="`Thread of control ${token.label}, ${
-          token.paused ? 'paused' : 'running'
+          token.terminal ? 'completed' : token.paused ? 'paused' : 'running'
         } at ${token.nodeId}`"
+        :disabled="token.terminal"
         @click.stop="select(token.id)"
       >
         <span class="cursor-token-hop" :class="hopClass(token.id)">
@@ -199,6 +201,10 @@ function select(cursorId: string) {
 .cursor-token.is-paused .cursor-token-halo {
   animation: none;
   opacity: 0;
+}
+
+.cursor-token.is-terminal {
+  cursor: default;
 }
 
 @keyframes cursor-breathe {

@@ -64,7 +64,7 @@ describe("DataTable (column mode)", () => {
       emptyDescription: "Nothing here.",
     });
     expect(html).toContain("No records yet");
-    expect(html).not.toContain("Nothing here.");
+    expect(html).toContain("Nothing here.");
   });
 
   it("stays a plain scroll wrapper when no columns are given", async () => {
@@ -76,7 +76,12 @@ describe("DataTable (column mode)", () => {
   });
 
   it("renders a table skeleton, not rows, on a first load", async () => {
-    const html = await render({ columns, rows: [], loading: true, loadingMessage: "Loading rows…" });
+    const html = await render({
+      columns,
+      rows: [],
+      loading: true,
+      loadingMessage: "Loading rows…",
+    });
     expect(html).toContain("Loading rows…");
     expect(html).toContain("animate-pulse");
   });
@@ -104,7 +109,10 @@ describe("DataTable (selection)", () => {
 
   it("labels each row checkbox from the first column and the caller's noun", async () => {
     const html = await render({
-      columns: [{ key: "name", label: "Name" }, { key: "id", label: "ID" }],
+      columns: [
+        { key: "name", label: "Name" },
+        { key: "id", label: "ID" },
+      ],
       rows,
       rowKey: "id",
       selectable: true,

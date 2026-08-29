@@ -83,7 +83,6 @@ import ConnectionStrip from "./ConnectionStrip.vue";
 import UserMenu from "./UserMenu.vue";
 import { navItemForTab, useAppStore } from "../../../ui/adapters/pinia/app";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
-import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
 import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
@@ -95,7 +94,6 @@ defineEmits<{ refresh: [] }>();
 const app = useAppStore();
 const auth = useAuthStore();
 const workflows = useWorkflowsStore();
-const resources = useResourcesStore();
 const orgs = useOrgsStore();
 const secrets = useSecretsStore();
 const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
@@ -116,25 +114,25 @@ function headingFor(tab: AppTab): string {
 const searchPlaceholder = computed(() => navItemForTab(app.activeTab)?.searchPlaceholder ?? "");
 
 const activeSubtitle = computed(() => {
+  const guidance = navItemForTab(app.activeTab)?.description ?? "";
+
   switch (app.activeTab) {
     case "Runs":
       return workflows.selectedWorkflowRunId
-        ? `Run ${workflows.selectedWorkflowRunId}`
-        : "Selected workflow runs";
+        ? `Run ${workflows.selectedWorkflowRunId} · ${guidance}`
+        : guidance;
     case "Workflows":
-      return workflows.selectedWorkflow?.name ?? `${String(workflows.workflows.length)} workflows`;
+      return workflows.selectedWorkflow?.name
+        ? `${workflows.selectedWorkflow.name} · ${guidance}`
+        : guidance;
     case "Replicas":
-      return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy across ${String(app.replicaCounts.webservices)} ws, ${String(app.replicaCounts.workers)} workers, ${String(app.replicaCounts.wakers)} wakers`;
+      return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy · ${guidance}`;
     case "Secrets":
-      return `${String(secrets.secrets.length)} secrets`;
+      return `${String(secrets.secrets.length)} secrets · ${guidance}`;
     case "Notifications":
-      return "In-app and email notifications";
+      return guidance;
     default:
-      return (
-        resources.resources.find(
-          (resource) => resource.endpoint === resources.selectedResourceEndpoint,
-        )?.label ?? ""
-      );
+      return guidance;
   }
 });
 </script>

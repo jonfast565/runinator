@@ -8,6 +8,9 @@
       >
         <slot name="title">{{ title }}</slot>
       </component>
+      <p v-if="description" class="m-0 max-w-3xl text-xs leading-relaxed text-fg-muted">
+        {{ description }}
+      </p>
     </div>
     <div v-if="$slots.default" class="btn-row items-center self-center">
       <slot />
@@ -16,8 +19,8 @@
 </template>
 
 <script setup lang="ts">
-// Shared panel title row. `description` remains accepted while callers are migrated, but panel
-// chrome intentionally renders titles and controls only.
+// Shared panel title row. Descriptions are intentionally rendered: they give every pane a concise
+// purpose/next-step without forcing each view to invent a second header layout.
 withDefaults(
   defineProps<{
     title?: string;

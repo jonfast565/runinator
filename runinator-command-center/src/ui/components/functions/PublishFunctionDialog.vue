@@ -59,12 +59,19 @@
       </table>
       <label class="grid gap-1 text-xs text-fg-subtle">
         Alias to move onto this version
-        <input v-model="alias" :placeholder="manifest.alias ?? DEFAULT_ALIAS" />
+        <input
+          v-model.trim="alias"
+          maxlength="64"
+          pattern="[A-Za-z][A-Za-z0-9_-]*"
+          title="Start with a letter and use only letters, numbers, underscores, and hyphens."
+          :placeholder="manifest.alias ?? DEFAULT_ALIAS"
+        />
         <span class="hint">
           Leave blank to use the manifest's. Calls already compiled keep the version they were built
           against — only new ones follow the alias.
         </span>
       </label>
+      <p v-if="aliasError" class="error m-0 text-xs" role="alert">{{ aliasError }}</p>
     </section>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -126,7 +133,24 @@ const exportNames = computed(() =>
   (manifest.value?.exports ?? []).map((entry) => entry.name).join(", "),
 );
 
-const canPublish = computed(() => Boolean(archive.value && manifest.value) && !busy.value);
+const aliasError = computed(() => {
+  const value = alias.value.trim();
+
+  if (!value) {
+    return "";
+  }
+
+  if (!/^[A-Za-z]/.test(value)) {
+    return "Alias must start with a letter.";
+  }
+
+  return /^[A-Za-z0-9_-]+$/.test(value)
+    ? ""
+    : "Alias may contain only letters, numbers, underscores, and hyphens.";
+});
+const canPublish = computed(
+  () => Boolean(archive.value && manifest.value) && !busy.value && !aliasError.value,
+);
 
 // a manifest that does not parse is worth saying so about, but only once something has been typed.
 watch(manifestText, () => {
@@ -150,7 +174,21 @@ async function onArchive(event: Event) {
     return;
   }
 
+  error.value = "";
+
+  if (!file.name.toLowerCase().endsWith(".zip")) {
+    error.value = "Choose a .zip package archive.";
+    return;
+  }
+
   const bytes = await file.arrayBuffer();
+  const signature = new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength));
+
+  if (signature.length < 2 || signature[0] !== 0x50 || signature[1] !== 0x4b) {
+    error.value = "The selected file is not a valid ZIP archive.";
+    return;
+  }
+
   archive.value = bytes;
   archiveName.value = file.name;
   digest.value = await archiveDigest(bytes);

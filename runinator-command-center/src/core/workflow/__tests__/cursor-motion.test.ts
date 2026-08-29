@@ -20,6 +20,7 @@ function marker(overrides: Partial<CursorMarker> & Pick<CursorMarker, "id" | "no
     selected: false,
     interruptSource: null,
     suspended: false,
+    terminal: false,
     ...overrides,
   } satisfies CursorMarker;
 }

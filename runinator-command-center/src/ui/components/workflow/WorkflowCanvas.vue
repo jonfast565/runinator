@@ -19,6 +19,7 @@ import type {
 } from "../../../core/domain/models";
 import { workflowInputType } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import {
@@ -41,6 +42,7 @@ import Icon from "../shared/Icon.vue";
 provide("workflowEdgeInteractive", true);
 
 const workflows = useWorkflowsStore();
+const app = useAppStore();
 const providersStore = useProvidersStore();
 const catalogMetadata = useCatalogMetadataStore();
 const { fitView, flowToScreenCoordinate, onPaneReady } = useVueFlow();
@@ -229,6 +231,17 @@ watch(
   () => workflows.selectedWorkflowId,
   () => {
     void recenter();
+  },
+);
+
+// This canvas stays mounted while another tab is displayed. Refit after it becomes visible again,
+// otherwise Vue Flow keeps the viewport from the workflow the user visited previously.
+watch(
+  () => app.activeTab,
+  (tab) => {
+    if (tab === "Workflows") {
+      void recenter();
+    }
   },
 );
 

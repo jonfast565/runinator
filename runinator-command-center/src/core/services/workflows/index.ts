@@ -9,6 +9,7 @@ import type {
 import { runWorkflowSnapshot, workflowInputType } from "../../domain/models";
 import {
   buildCursorMarkers,
+  buildTerminalCursorMarker,
   coerceControlFrame,
   coerceDebugFrame,
   coerceRunCursors,
@@ -136,11 +137,34 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
 
   /** draw-ready markers for the graph and the cursor rail. */
   function getCursorMarkers(): CursorMarker[] {
-    if (isTerminalWorkflowRunStatus(state.workflowRunDetail?.run.status)) {
+    const detail = state.workflowRunDetail;
+
+    if (!detail || !isTerminalWorkflowRunStatus(detail.run.status)) {
+      return buildCursorMarkers(getCursors(), getDebugState(), getSelectedCursorId());
+    }
+
+    const terminalKind =
+      detail.run.status === "succeeded" ? "end" : detail.run.status === "failed" ? "fail" : null;
+    const terminalNode = terminalKind
+      ? asArray(getWorkflowRunWorkflow()?.definition.nodes)
+          .filter(isRecord)
+          .find((node) => node.kind === terminalKind)
+      : undefined;
+    const terminalNodeId = typeof terminalNode?.id === "string" ? terminalNode.id : null;
+
+    if (!terminalNodeId) {
       return [];
     }
 
-    return buildCursorMarkers(getCursors(), getDebugState(), getSelectedCursorId());
+    return [
+      buildTerminalCursorMarker(
+        getCursors(),
+        terminalNodeId,
+        detail.run.id,
+        getDebugState(),
+        getSelectedCursorId(),
+      ),
+    ];
   }
 
   /**

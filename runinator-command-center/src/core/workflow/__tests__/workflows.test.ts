@@ -1245,6 +1245,40 @@ describe("workflow graph utils", () => {
     expect(active?.class).toBe("node-running");
   });
 
+  it("marks a queued node as running as soon as a live VM cursor reaches it", () => {
+    const nodes = buildGraphNodes(workflow, {
+      run: {
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
+        status: "running",
+        active_node_id: null,
+        created_at: "",
+        started_at: null,
+        finished_at: null,
+      },
+      nodes: [
+        {
+          id: NODE_RUN_ID,
+          workflow_run_id: RUN_ID,
+          node_id: "b",
+          status: "queued",
+          attempt: 1,
+          parameters: {},
+          message: null,
+        },
+      ],
+      execution_state: {
+        cursors: [{ id: "cursor-b", node_id: "b" }],
+      },
+    });
+    const active = nodes.find((node) => node.id === "b");
+
+    expect(active?.data.status).toBe("running");
+    expect(active?.data.running).toBe(true);
+    expect(active?.data.statusLabel).toBe("running a1");
+    expect(active?.class).toBe("node-running");
+  });
+
   it("colors visited, retrying, parked, and failed nodes and counts effect attempts once", () => {
     const detail: WorkflowRunDetail = {
       run: {
@@ -1391,6 +1425,33 @@ describe("workflow graph utils", () => {
     expect(end?.data.status).toBe("succeeded");
     expect(end?.class).toBe("node-success");
     expect(nodes.every((node) => node.data.cursors?.length === 0)).toBe(true);
+  });
+
+  it("marks the successful endpoint before the terminal cursor refresh arrives", () => {
+    const terminalWorkflow: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        start: "start",
+        nodes: [
+          { id: "start", kind: "start", transitions: { next: { $node: "end" } } },
+          { id: "end", kind: "end", transitions: {} },
+        ],
+      },
+    };
+    const nodes = buildGraphNodes(terminalWorkflow, {
+      run: {
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
+        status: "succeeded",
+        active_node_id: "start",
+        created_at: "",
+        started_at: null,
+        finished_at: "",
+      },
+      nodes: [],
+    });
+
+    expect(nodes.find((node) => node.id === "end")?.class).toBe("node-success");
   });
 
   it("marks the active workflow node as debug paused", () => {

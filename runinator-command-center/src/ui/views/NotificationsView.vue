@@ -1,7 +1,10 @@
 <template>
   <section class="pane">
     <div class="panel">
-      <PanelHeader title="Notifications">
+      <PanelHeader
+        title="Notifications"
+        description="Review unread alerts first. Deleting a notification removes it permanently from this inbox."
+      >
         <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
           <input v-model="store.unreadOnly" type="checkbox" class="w-auto" @change="refresh" />
           <span>Unread only</span>
@@ -64,7 +67,10 @@
     </div>
 
     <div v-if="canManagePolicies" class="panel">
-      <PanelHeader title="Alert policies">
+      <PanelHeader
+        title="Alert policies"
+        description="Choose the failure event, delivery channel, and a valid destination. Pack-managed policies must be changed in REXRAP."
+      >
         <Button variant="default" :loading="policiesLoading" @click="refreshPolicies">
           <Icon name="refresh" />
           <span>Refresh</span>
@@ -76,10 +82,12 @@
       </PanelHeader>
 
       <form v-if="draft" class="border-b border-border px-4 py-3" @submit.prevent="savePolicy">
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&_label]:flex [&_label]:flex-col [&_label]:gap-1 [&_label]:text-xs [&_label]:text-fg-muted">
+        <div
+          class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&_label]:flex [&_label]:flex-col [&_label]:gap-1 [&_label]:text-xs [&_label]:text-fg-muted"
+        >
           <label>
             <span>Name</span>
-            <input v-model="draft.name" required placeholder="oncall" />
+            <input v-model.trim="draft.name" required maxlength="80" placeholder="oncall" />
           </label>
           <label>
             <span>Event</span>
@@ -110,6 +118,9 @@
             <input
               v-model="draftTarget"
               :required="draft.channel !== 'in_app'"
+              :type="draft.channel === 'email' ? 'email' : 'text'"
+              :pattern="targetPattern"
+              :title="targetTitle"
               :placeholder="draft.channel === 'email' ? 'ops@example.com' : '#oncall'"
             />
           </label>
@@ -259,10 +270,25 @@ async function markAllRead() {
 }
 
 async function remove(id: string) {
+  const notification = store.notifications.find((candidate) => candidate.id === id);
+
+  if (!notification || !window.confirm(`Delete notification “${notification.title}”?`)) {
+    return;
+  }
+
   await store.remove(id);
 }
 
 async function deleteRead() {
+  const count = store.notifications.filter((notification) => notification.read_at).length;
+
+  if (
+    !count ||
+    !window.confirm(`Delete ${String(count)} read notification${count === 1 ? "" : "s"}?`)
+  ) {
+    return;
+  }
+
   await store.removeAllRead();
 }
 
@@ -306,6 +332,12 @@ const policyColumns: DataTableColumn<NotificationPolicy>[] = [
 
 const needsThreshold = computed(
   () => !!draft.value && DURATION_NOTIFICATION_EVENTS.includes(draft.value.event),
+);
+const targetPattern = computed(() =>
+  draft.value?.channel === "slack" ? "#[A-Za-z0-9_-]+" : undefined,
+);
+const targetTitle = computed(() =>
+  draft.value?.channel === "slack" ? "Enter a Slack channel such as #oncall." : undefined,
 );
 
 // the wire field is nullable but the input binds a plain string; bridge the two.
@@ -399,6 +431,12 @@ async function savePolicy() {
 }
 
 async function removePolicy(policyId: string) {
+  const policy = store.policies.find((candidate) => candidate.id === policyId);
+
+  if (!policy || !window.confirm(`Delete alert policy “${policy.name}”?`)) {
+    return;
+  }
+
   policiesLoading.value = true;
 
   try {
@@ -416,4 +454,3 @@ onMounted(async () => {
   }
 });
 </script>
-

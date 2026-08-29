@@ -74,19 +74,24 @@
         </button>
       </div>
 
-      <div v-else class="flex flex-wrap items-center gap-2">
-        <button class="btn btn-primary" @click="openAdapterForm()">
-          <Icon name="plus" />
-          <span>New adapter</span>
-        </button>
-        <button class="btn" :disabled="store.loading" @click="refreshAdapters">
-          <LoadingSpinner v-if="store.loading" size="sm" label="Refreshing adapters" />
-          <Icon v-else name="refresh" />
-          <span>Refresh</span>
-        </button>
-        <button class="btn" @click="checkHost">Host health</button>
-        <button class="btn" @click="reloadHost">Reload plugins</button>
-        <pre v-if="hostResult" class="output max-w-xl">{{ pretty(hostResult) }}</pre>
+      <div v-else class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="m-0 text-sm font-medium text-fg">Provider adapters</p>
+          <p class="mt-1 mb-0 text-xs text-fg-muted">
+            Receive provider events, normalize them, and route them into orchestrations.
+          </p>
+        </div>
+        <div class="btn-row flex-wrap">
+          <button class="btn btn-primary" @click="openAdapterForm()">
+            <Icon name="plus" />
+            <span>New adapter</span>
+          </button>
+          <button class="btn" :disabled="store.loading" @click="refreshAdapters">
+            <LoadingSpinner v-if="store.loading" size="sm" label="Refreshing adapters" />
+            <Icon v-else name="refresh" />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -439,281 +444,542 @@
         :mobile-detail-active="!!store.selectedAdapter && !showAdapterList"
       >
         <template #first>
-          <aside class="panel overflow-auto p-0">
-            <div class="border-b border-border p-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-fg-muted">
-                Adapter kinds
-              </h3>
-              <div class="mt-2 grid gap-1">
-                <div
-                  v-for="entry in adapterCatalog"
-                  :key="`${entry.metadata.kind}:${entry.origin}`"
-                  class="rounded bg-surface-subtle px-2 py-1 text-xs"
-                  :title="entry.error || entry.metadata.description || ''"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <span>{{ entry.metadata.display_name }} v{{ entry.metadata.version }}</span
-                    ><span :class="entry.healthy ? 'text-success-fg' : 'text-danger-fg'">{{
-                      entry.healthy ? "healthy" : "error"
-                    }}</span>
-                  </div>
-                  <p class="truncate text-fg-muted">{{ entry.origin }}</p>
-                  <p v-if="entry.error" class="mt-1 text-danger-fg">{{ entry.error }}</p>
+          <aside class="adapter-list panel overflow-auto p-0">
+            <div class="adapter-list-header">
+              <div class="flex min-w-0 items-center gap-3">
+                <span class="adapter-list-icon"><Icon name="box" :size="18" /></span>
+                <div class="min-w-0">
+                  <p class="adapter-eyebrow">Configured</p>
+                  <h3 class="m-0 text-sm font-semibold text-fg">Adapters</h3>
                 </div>
               </div>
+              <span class="adapter-count" :title="`${store.adapters.length} configured adapters`">
+                {{ store.adapters.length }}
+              </span>
             </div>
-            <button
-              v-for="adapter in store.adapters"
-              :key="adapter.id"
-              class="block w-full border-b border-border p-3 text-left hover:bg-surface-hover"
-              :class="{ 'bg-surface-muted': adapter.id === store.selectedAdapterId }"
-              @click="openAdapter(adapter.id)"
-            >
-              <div class="flex justify-between gap-2">
-                <span class="truncate font-medium">{{ adapter.name }}</span
-                ><span
-                  class="text-xs"
-                  :class="adapter.enabled ? 'text-success-fg' : 'text-fg-muted'"
-                  >{{ adapter.enabled ? "enabled" : "disabled" }}</span
-                >
+
+            <div v-if="store.adapters.length" class="adapter-list-items">
+              <button
+                v-for="adapter in store.adapters"
+                :key="adapter.id"
+                type="button"
+                class="adapter-list-item"
+                :class="{ 'is-selected': adapter.id === store.selectedAdapterId }"
+                @click="openAdapter(adapter.id)"
+              >
+                <span class="adapter-mark">{{ adapterMark(adapter.kind) }}</span>
+                <span class="min-w-0 flex-1">
+                  <span class="flex min-w-0 items-start justify-between gap-2">
+                    <span class="truncate font-medium text-fg">{{ adapter.name }}</span>
+                    <StatusBadge :status="adapter.enabled" true-label="Live" false-label="Paused" />
+                  </span>
+                  <span class="mt-1 block truncate text-xs text-fg-muted">
+                    {{ adapter.kind }} · revision {{ adapter.current_revision }}
+                  </span>
+                </span>
+              </button>
+            </div>
+            <EmptyState v-else compact icon="box" title="No adapters configured">
+              <button class="btn btn-primary btn-sm" @click="openAdapterForm()">
+                <Icon name="plus" :size="15" />
+                <span>Create the first adapter</span>
+              </button>
+            </EmptyState>
+
+            <section class="adapter-catalog" aria-label="Available adapter kinds">
+              <div class="adapter-catalog-heading">
+                <div>
+                  <p class="adapter-eyebrow">Adapter host</p>
+                  <h3 class="m-0 text-sm font-semibold text-fg">Available kinds</h3>
+                </div>
+                <div class="btn-row">
+                  <button
+                    class="btn btn-ghost btn-icon"
+                    type="button"
+                    title="Check adapter host health"
+                    aria-label="Check adapter host health"
+                    @click="checkHost"
+                  >
+                    <Icon name="info" :size="16" />
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-icon"
+                    type="button"
+                    title="Reload adapter plugins"
+                    aria-label="Reload adapter plugins"
+                    @click="reloadHost"
+                  >
+                    <Icon name="refresh" :size="16" />
+                  </button>
+                </div>
               </div>
-              <p class="mt-1 text-xs text-fg-muted">
-                {{ adapter.kind }} · revision {{ adapter.current_revision }}
+              <div v-if="adapterCatalog.length" class="grid gap-1.5">
+                <article
+                  v-for="entry in adapterCatalog"
+                  :key="`${entry.metadata.kind}:${entry.origin}`"
+                  class="adapter-catalog-item"
+                  :class="{ 'has-error': !entry.healthy || entry.error }"
+                  :title="entry.error || entry.metadata.description || ''"
+                >
+                  <span class="adapter-catalog-mark">{{ adapterMark(entry.metadata.kind) }}</span>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="truncate text-xs font-medium text-fg">
+                        {{ entry.metadata.display_name }}
+                      </span>
+                      <span
+                        class="adapter-health-dot"
+                        :class="entry.healthy && !entry.error ? 'is-healthy' : 'is-error'"
+                        :title="entry.healthy && !entry.error ? 'Healthy' : 'Unavailable'"
+                      />
+                    </div>
+                    <p class="mt-0.5 truncate text-[11px] text-fg-muted">
+                      v{{ entry.metadata.version }} · {{ entry.origin }}
+                    </p>
+                    <p v-if="entry.error" class="mt-1 text-xs text-danger-fg">{{ entry.error }}</p>
+                  </div>
+                </article>
+              </div>
+              <p v-else class="m-0 text-xs text-fg-muted">
+                No provider kinds are currently loaded.
               </p>
-            </button>
-            <EmptyState
-              v-if="store.adapters.length === 0"
-              compact
-              icon="box"
-              title="No adapters configured"
-            />
+              <details v-if="hostResult" class="adapter-host-details">
+                <summary>Host response</summary>
+                <pre>{{ pretty(hostResult) }}</pre>
+              </details>
+            </section>
           </aside>
         </template>
 
         <template #second>
-          <div class="panel details overflow-auto">
+          <div class="panel details adapter-detail overflow-auto">
             <MobileBackBar label="Back to adapters" @back="showAdapterList = true" />
-            <main v-if="store.selectedAdapter">
-              <div class="flex flex-wrap justify-between gap-3">
-                <div>
-                  <h2 class="text-lg font-semibold">{{ store.selectedAdapter.name }}</h2>
-                  <p class="text-sm text-fg-muted">
-                    {{ selectedKind?.display_name || store.selectedAdapter.kind }} ·
-                    {{ currentTransport }} · immutable revision
-                    {{ store.selectedAdapter.current_revision }}
-                  </p>
+            <main v-if="store.selectedAdapter" class="grid gap-4">
+              <section class="adapter-hero">
+                <div class="adapter-hero-top">
+                  <div class="flex min-w-0 items-start gap-3">
+                    <span class="adapter-hero-mark">{{
+                      adapterMark(store.selectedAdapter.kind)
+                    }}</span>
+                    <div class="min-w-0">
+                      <p class="adapter-eyebrow">
+                        {{ selectedKind?.display_name || store.selectedAdapter.kind }} adapter
+                      </p>
+                      <div class="mt-1 flex flex-wrap items-center gap-2">
+                        <h2 class="m-0 truncate text-xl font-semibold text-fg">
+                          {{ store.selectedAdapter.name }}
+                        </h2>
+                        <StatusBadge
+                          :status="store.selectedAdapter.enabled"
+                          true-label="Live"
+                          false-label="Paused"
+                        />
+                      </div>
+                      <p class="mt-1 mb-0 text-sm text-fg-muted">
+                        {{
+                          selectedKind?.description || "Routes provider events into orchestrations."
+                        }}
+                      </p>
+                    </div>
+                  </div>
+                  <div class="adapter-actions">
+                    <button
+                      v-if="currentTransport === 'webhook'"
+                      class="btn"
+                      type="button"
+                      @click="copyWebhook"
+                    >
+                      Copy endpoint
+                    </button>
+                    <button
+                      class="btn"
+                      type="button"
+                      @click="openAdapterForm(store.selectedAdapter)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      class="btn"
+                      type="button"
+                      @click="openAdapterForm(store.selectedAdapter, true)"
+                    >
+                      Clone
+                    </button>
+                    <button class="btn" type="button" @click="toggleSelectedAdapter">
+                      {{ store.selectedAdapter.enabled ? "Pause" : "Enable" }}
+                    </button>
+                    <button
+                      class="btn btn-danger"
+                      type="button"
+                      :disabled="store.selectedAdapter.has_admitted_binding"
+                      :title="
+                        store.selectedAdapter.has_admitted_binding
+                          ? 'Adapters with admitted correlations cannot be deleted.'
+                          : 'Delete adapter'
+                      "
+                      @click="removeSelectedAdapter"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                  <button v-if="currentTransport === 'webhook'" class="btn" @click="copyWebhook">
-                    Copy webhook URL</button
-                  ><button class="btn" @click="openAdapterForm(store.selectedAdapter)">Edit</button
-                  ><button class="btn" @click="openAdapterForm(store.selectedAdapter, true)">
-                    Clone</button
-                  ><button class="btn" @click="toggleSelectedAdapter">
-                    {{ store.selectedAdapter.enabled ? "Disable" : "Enable" }}</button
-                  ><button
-                    class="btn"
-                    :disabled="store.selectedAdapter.has_admitted_binding"
-                    @click="removeSelectedAdapter"
-                  >
-                    Delete
-                  </button>
+                <div class="adapter-metrics">
+                  <MetricCard label="Transport" :value="transportLabel" />
+                  <MetricCard
+                    label="Current revision"
+                    :value="`r${String(store.selectedAdapter.current_revision)}`"
+                  />
+                  <MetricCard
+                    label="Change safety"
+                    :value="
+                      store.selectedAdapter.has_admitted_binding ? 'Identity locked' : 'Editable'
+                    "
+                    :value-class="
+                      store.selectedAdapter.has_admitted_binding
+                        ? 'text-warning-fg'
+                        : 'text-success-fg'
+                    "
+                  />
                 </div>
-              </div>
-              <code
-                v-if="currentTransport === 'webhook'"
-                class="mt-3 block break-all rounded bg-surface-subtle p-2 text-xs"
-                >{{ webhookPath }}</code
-              >
-              <section
-                v-else-if="store.adapterPollStatus"
-                class="mt-3 grid gap-3 rounded border border-border bg-surface-subtle p-3 text-sm md:grid-cols-3"
-              >
-                <div>
-                  <strong>Next poll</strong>
-                  <p class="text-fg-muted">
-                    {{ formatTimestamp(store.adapterPollStatus.next_poll_at) }}
-                  </p>
+              </section>
+
+              <section v-if="currentTransport === 'webhook'" class="adapter-endpoint">
+                <div class="flex min-w-0 items-center gap-2">
+                  <span class="adapter-section-icon"><Icon name="key" :size="17" /></span>
+                  <div class="min-w-0">
+                    <p class="adapter-eyebrow">Delivery endpoint</p>
+                    <code class="block truncate text-xs text-fg">{{ webhookPath }}</code>
+                  </div>
                 </div>
-                <div>
-                  <strong>Last success</strong>
-                  <p class="text-fg-muted">
-                    {{ formatTimestamp(store.adapterPollStatus.last_success_at) }}
-                  </p>
+                <button class="btn btn-sm" type="button" @click="copyWebhook">Copy URL</button>
+              </section>
+
+              <section v-else-if="store.adapterPollStatus" class="adapter-poll-status">
+                <div class="flex items-center gap-2">
+                  <span class="adapter-section-icon"><Icon name="clock" :size="17" /></span>
+                  <div>
+                    <p class="adapter-eyebrow">Polling status</p>
+                    <h3 class="m-0 text-sm font-semibold text-fg">Scheduled delivery</h3>
+                  </div>
                 </div>
-                <div>
-                  <strong>Last attempt</strong>
-                  <p class="text-fg-muted">
-                    {{ formatTimestamp(store.adapterPollStatus.last_attempt_at) }}
-                  </p>
+                <div class="adapter-poll-grid">
+                  <div>
+                    <span>Next poll</span>
+                    <strong>{{ formatTimestamp(store.adapterPollStatus.next_poll_at) }}</strong>
+                  </div>
+                  <div>
+                    <span>Last success</span>
+                    <strong>{{ formatTimestamp(store.adapterPollStatus.last_success_at) }}</strong>
+                  </div>
+                  <div>
+                    <span>Last attempt</span>
+                    <strong>{{ formatTimestamp(store.adapterPollStatus.last_attempt_at) }}</strong>
+                  </div>
                 </div>
-                <div v-if="store.adapterPollStatus.last_error" class="md:col-span-3">
-                  <strong class="text-danger-fg">Last error</strong>
-                  <p class="mt-1 text-danger-fg">{{ store.adapterPollStatus.last_error }}</p>
+                <div v-if="store.adapterPollStatus.last_error" class="adapter-poll-error">
+                  <strong>Latest delivery error</strong>
+                  <p>{{ store.adapterPollStatus.last_error }}</p>
                 </div>
-                <details class="md:col-span-3">
-                  <summary class="cursor-pointer text-xs text-fg-muted">Durable checkpoint</summary>
-                  <pre class="mt-2 overflow-auto text-xs">{{
-                    pretty(store.adapterPollStatus.checkpoint)
-                  }}</pre>
+                <details class="adapter-raw-details">
+                  <summary>View durable checkpoint</summary>
+                  <pre>{{ pretty(store.adapterPollStatus.checkpoint) }}</pre>
                 </details>
               </section>
-              <p
-                v-if="store.selectedAdapter.has_admitted_binding"
-                class="mt-2 text-xs text-fg-muted"
-              >
+
+              <p v-if="store.selectedAdapter.has_admitted_binding" class="adapter-safety-note">
+                <Icon name="lock" :size="16" />
                 Identity extraction and transport are locked because this adapter has admitted a
-                correlation.
+                correlation. You can still create a new immutable revision for other settings.
               </p>
-              <div v-if="selectedKind" class="mt-3 grid gap-2 text-xs md:grid-cols-3">
-                <div>
-                  <strong>Capabilities</strong>
-                  <p class="text-fg-muted">
-                    {{ selectedKind.capabilities.join(", ") || "normalize" }}
-                  </p>
-                </div>
-                <div>
-                  <strong>Canonical events</strong>
-                  <p class="text-fg-muted">
-                    {{ selectedKind.event_names.join(", ") || "provider-defined" }}
-                  </p>
-                </div>
-                <div>
-                  <strong>Canonical pointers</strong>
-                  <p class="break-all text-fg-muted">
-                    {{ selectedKind.canonical_pointers.join(", ") || "provider-defined" }}
-                  </p>
-                </div>
-              </div>
-              <section
-                v-if="selectedKind?.setup_instructions?.length"
-                class="mt-3 rounded border border-border bg-surface-subtle p-3 text-sm"
-              >
-                <strong>Provider setup</strong>
-                <ol class="mt-2 list-decimal space-y-1 pl-5 text-fg-muted">
+
+              <section v-if="selectedKind" class="adapter-overview-grid">
+                <article class="adapter-info-card">
+                  <p class="adapter-eyebrow">Provider behavior</p>
+                  <h3>Capabilities</h3>
+                  <div class="adapter-chip-list">
+                    <span
+                      v-for="capability in selectedKind.capabilities"
+                      :key="capability"
+                      class="adapter-chip"
+                    >
+                      {{ capability }}
+                    </span>
+                    <span v-if="!selectedKind.capabilities.length" class="text-xs text-fg-muted">
+                      normalize
+                    </span>
+                  </div>
+                </article>
+                <article class="adapter-info-card">
+                  <p class="adapter-eyebrow">Normalized events</p>
+                  <h3>Event vocabulary</h3>
+                  <div class="adapter-chip-list">
+                    <span
+                      v-for="event in selectedKind.event_names"
+                      :key="event"
+                      class="adapter-chip"
+                    >
+                      {{ event }}
+                    </span>
+                    <span v-if="!selectedKind.event_names.length" class="text-xs text-fg-muted">
+                      Provider-defined
+                    </span>
+                  </div>
+                </article>
+                <article class="adapter-info-card">
+                  <p class="adapter-eyebrow">Routing data</p>
+                  <h3>Canonical pointers</h3>
+                  <div class="adapter-pointer-list">
+                    <code v-for="pointer in selectedKind.canonical_pointers" :key="pointer">{{
+                      pointer
+                    }}</code>
+                    <span
+                      v-if="!selectedKind.canonical_pointers.length"
+                      class="text-xs text-fg-muted"
+                    >
+                      Provider-defined
+                    </span>
+                  </div>
+                </article>
+              </section>
+
+              <details v-if="selectedKind?.setup_instructions?.length" class="adapter-setup">
+                <summary>
+                  <span>
+                    <span class="adapter-eyebrow">Provider setup</span>
+                    <strong>Setup checklist</strong>
+                  </span>
+                  <span class="text-xs text-fg-muted">
+                    {{ selectedKind.setup_instructions.length }} steps
+                  </span>
+                </summary>
+                <ol>
                   <li v-for="instruction in selectedKind.setup_instructions" :key="instruction">
                     {{ instruction }}
                   </li>
                 </ol>
-              </section>
-              <nav class="mt-5 flex gap-1 border-b border-border">
-                <button
-                  v-for="tab in adapterTabs"
-                  :key="tab"
-                  class="px-3 py-2 text-sm"
-                  :class="tab === activeAdapterTab ? 'border-b-2 border-accent' : 'text-fg-muted'"
-                  @click="activeAdapterTab = tab"
-                >
-                  {{ tab }}
-                </button>
-              </nav>
-              <pre v-if="activeAdapterTab === 'Configuration'" class="mt-4 overflow-auto text-xs">{{
-                pretty(currentAdapterRevision)
-              }}</pre>
-              <pre
-                v-else-if="activeAdapterTab === 'Revisions'"
-                class="mt-4 overflow-auto text-xs"
-                >{{ pretty(store.adapterRevisions) }}</pre>
-              <div v-else class="mt-4 grid gap-3">
-                <label class="text-sm"
-                  >Headers JSON<textarea
-                    v-model="testHeaders"
-                    class="mt-1 min-h-24 w-full font-mono text-xs"
-                  />
-                </label>
-                <label class="text-sm"
-                  >Sample request body<textarea
-                    v-model="testBody"
-                    class="mt-1 min-h-40 w-full font-mono text-xs"
-                  />
-                </label>
-                <button class="btn w-fit" @click="runTest">
-                  Verify, normalize, and preview routes
-                </button>
-                <section v-if="testResult" class="grid gap-3">
-                  <div class="flex items-center gap-2 rounded border border-border p-3 text-sm">
-                    <span
-                      class="rounded px-2 py-1 text-xs"
-                      :class="
-                        testResult.verified
-                          ? 'bg-success-bg text-success-fg'
-                          : 'bg-danger-bg text-danger-fg'
-                      "
-                      >{{ testResult.verified ? "Verified" : "Rejected" }}</span
-                    >
-                    <span class="text-fg-muted"
-                      >{{ testResult.events.length }} normalized event(s)</span
+              </details>
+
+              <section class="adapter-workspace">
+                <nav class="adapter-tabs" aria-label="Adapter detail sections" role="tablist">
+                  <button
+                    v-for="tab in adapterTabs"
+                    :key="tab"
+                    type="button"
+                    role="tab"
+                    :aria-selected="tab === activeAdapterTab"
+                    :class="{ 'is-active': tab === activeAdapterTab }"
+                    @click="activeAdapterTab = tab"
+                  >
+                    {{ tab }}
+                  </button>
+                </nav>
+
+                <section v-if="activeAdapterTab === 'Configuration'" class="adapter-tab-panel">
+                  <div class="adapter-tab-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Immutable revision</p>
+                      <h3>Configuration at a glance</h3>
+                    </div>
+                    <span class="badge status-muted"
+                      >r{{ store.selectedAdapter.current_revision }}</span
                     >
                   </div>
-                  <ul
-                    v-if="testResult.errors.length"
-                    class="rounded border border-danger bg-danger-bg p-3 text-sm text-danger-fg"
-                  >
-                    <li v-for="error in testResult.errors" :key="error">{{ error }}</li>
-                  </ul>
-                  <article
-                    v-for="preview in testResult.previews"
-                    :key="preview.delivery_id"
-                    class="rounded border border-border p-3"
-                  >
-                    <div class="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <strong>{{ preview.event_type }}</strong>
-                        <p class="text-xs text-fg-muted">
-                          {{ preview.scope }}/{{ preview.correlation_key }}
-                        </p>
-                      </div>
-                      <span class="rounded bg-surface-subtle px-2 py-1 text-xs">{{
-                        preview.lifecycle
-                      }}</span>
-                    </div>
-                    <ul
-                      v-if="preview.validation_errors.length"
-                      class="mt-3 rounded bg-warning-bg p-2 text-xs text-warning-fg"
-                    >
-                      <li v-for="error in preview.validation_errors" :key="error">{{ error }}</li>
-                    </ul>
-                    <div
-                      v-for="match in preview.pipeline_matches"
-                      :key="match.pipeline_id"
-                      class="mt-3 rounded bg-surface-subtle p-3 text-sm"
-                    >
-                      <div class="flex flex-wrap justify-between gap-2">
-                        <strong>{{ match.pipeline_name }}</strong
-                        ><span class="text-xs text-fg-muted">{{
-                          match.managed ? "managed" : "unmanaged"
-                        }}</span>
-                      </div>
-                      <p class="mt-2 text-xs text-fg-muted">
-                        Matched actions: {{ match.routes.map((route) => route.action).join(", ") }}
+                  <div class="adapter-config-grid">
+                    <article class="adapter-config-card">
+                      <h4>Connection settings</h4>
+                      <dl v-if="currentConfigurationEntries.length">
+                        <div v-for="[key, value] in currentConfigurationEntries" :key="key">
+                          <dt>{{ humanizeKey(key) }}</dt>
+                          <dd>{{ formatConfigValue(value) }}</dd>
+                        </div>
+                      </dl>
+                      <p v-else class="text-sm text-fg-muted">No connection settings recorded.</p>
+                    </article>
+                    <article class="adapter-config-card">
+                      <h4>Identity extraction</h4>
+                      <dl v-if="currentIdentityEntries.length">
+                        <div v-for="[key, value] in currentIdentityEntries" :key="key">
+                          <dt>{{ humanizeKey(key) }}</dt>
+                          <dd>{{ formatConfigValue(value) }}</dd>
+                        </div>
+                      </dl>
+                      <p v-else class="text-sm text-fg-muted">No identity rules recorded.</p>
+                    </article>
+                    <article class="adapter-config-card">
+                      <h4>Secret bindings</h4>
+                      <dl v-if="currentSecretBindingEntries.length">
+                        <div v-for="[key, value] in currentSecretBindingEntries" :key="key">
+                          <dt>{{ humanizeKey(key) }}</dt>
+                          <dd>{{ value }}</dd>
+                        </div>
+                      </dl>
+                      <p v-else class="text-sm text-fg-muted">
+                        This revision has no secret bindings.
                       </p>
-                      <p class="mt-1 text-xs">
-                        Candidate intents: {{ match.candidate_intents.join(", ") || "none" }}
-                      </p>
-                      <p v-if="match.winner" class="mt-1 text-xs">
-                        <strong>Winner:</strong> {{ match.winner
-                        }}<template v-if="match.suppressed_intents.length">
-                          · suppressed {{ match.suppressed_intents.join(", ") }}</template
-                        >
-                      </p>
-                      <details class="mt-2">
-                        <summary class="cursor-pointer text-xs text-fg-muted">
-                          Matched route details
-                        </summary>
-                        <pre class="mt-2 overflow-auto text-xs">{{ pretty(match.routes) }}</pre>
-                      </details>
-                    </div>
-                  </article>
-                  <details>
-                    <summary class="cursor-pointer text-xs text-fg-muted">
-                      Raw normalized response
-                    </summary>
-                    <pre class="mt-2 overflow-auto rounded bg-surface-subtle p-3 text-xs">{{
-                      pretty(testResult)
-                    }}</pre>
+                    </article>
+                  </div>
+                  <details class="adapter-raw-details">
+                    <summary>View raw revision data</summary>
+                    <pre>{{ pretty(currentAdapterRevision) }}</pre>
                   </details>
                 </section>
-              </div>
+
+                <section v-else-if="activeAdapterTab === 'Revisions'" class="adapter-tab-panel">
+                  <div class="adapter-tab-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Revision history</p>
+                      <h3>Immutable configuration timeline</h3>
+                    </div>
+                    <span class="text-xs text-fg-muted">
+                      {{ store.adapterRevisions.length }} revision{{
+                        store.adapterRevisions.length === 1 ? "" : "s"
+                      }}
+                    </span>
+                  </div>
+                  <div class="adapter-revision-list">
+                    <article
+                      v-for="revision in store.adapterRevisions"
+                      :key="revision.id"
+                      class="adapter-revision-card"
+                      :class="{
+                        'is-current': revision.revision === store.selectedAdapter.current_revision,
+                      }"
+                    >
+                      <div class="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <h4>Revision {{ revision.revision }}</h4>
+                            <span
+                              v-if="revision.revision === store.selectedAdapter.current_revision"
+                              class="badge status-succeeded"
+                            >
+                              Current
+                            </span>
+                          </div>
+                          <p>
+                            {{
+                              revision.transport === "webhook"
+                                ? "Webhook delivery"
+                                : "Polling delivery"
+                            }}
+                            · provider v{{ revision.kind_version }}
+                          </p>
+                        </div>
+                        <span class="text-xs text-fg-muted">{{
+                          formatTimestamp(revision.created_at)
+                        }}</span>
+                      </div>
+                      <div class="adapter-revision-meta">
+                        <span
+                          >{{ Object.keys(jsonObject(revision.configuration)).length }} connection
+                          settings</span
+                        >
+                        <span
+                          >{{ Object.keys(revision.secret_bindings).length }} secret bindings</span
+                        >
+                        <span>{{ revision.actor_id || "System" }}</span>
+                      </div>
+                      <details class="adapter-raw-details">
+                        <summary>View revision data</summary>
+                        <pre>{{ pretty(revision) }}</pre>
+                      </details>
+                    </article>
+                  </div>
+                </section>
+
+                <section v-else class="adapter-tab-panel">
+                  <div class="adapter-tab-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Dry run</p>
+                      <h3>Test an incoming delivery</h3>
+                    </div>
+                    <span class="text-xs text-fg-muted">No event is persisted or routed.</span>
+                  </div>
+                  <div class="adapter-test-inputs">
+                    <label>
+                      <span>Request headers</span>
+                      <small>JSON object with string values</small>
+                      <textarea v-model="testHeaders" class="min-h-28" spellcheck="false" />
+                    </label>
+                    <label>
+                      <span>Request body</span>
+                      <small>Paste the provider payload exactly as received</small>
+                      <textarea v-model="testBody" class="min-h-48" spellcheck="false" />
+                    </label>
+                  </div>
+                  <button class="btn btn-primary" type="button" @click="runTest">
+                    <Icon name="play" :size="16" />
+                    Verify and preview routing
+                  </button>
+                  <section v-if="testResult" class="adapter-test-results">
+                    <div
+                      class="adapter-test-summary"
+                      :class="testResult.verified ? 'is-verified' : 'is-rejected'"
+                    >
+                      <Icon :name="testResult.verified ? 'check' : 'alert'" :size="18" />
+                      <div>
+                        <strong>{{
+                          testResult.verified ? "Delivery verified" : "Delivery rejected"
+                        }}</strong>
+                        <p>{{ testResult.events.length }} normalized event(s) ready for preview</p>
+                      </div>
+                    </div>
+                    <ul v-if="testResult.errors.length" class="adapter-test-errors">
+                      <li v-for="error in testResult.errors" :key="error">{{ error }}</li>
+                    </ul>
+                    <article
+                      v-for="preview in testResult.previews"
+                      :key="preview.delivery_id"
+                      class="adapter-preview-card"
+                    >
+                      <div class="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p class="adapter-eyebrow">{{ preview.lifecycle }} lifecycle</p>
+                          <h4>{{ preview.event_type }}</h4>
+                          <p>{{ preview.scope }}/{{ preview.correlation_key }}</p>
+                        </div>
+                        <span class="badge status-muted"
+                          >{{ preview.pipeline_matches.length }} pipelines</span
+                        >
+                      </div>
+                      <ul v-if="preview.validation_errors.length" class="adapter-preview-warnings">
+                        <li v-for="error in preview.validation_errors" :key="error">{{ error }}</li>
+                      </ul>
+                      <div
+                        v-for="match in preview.pipeline_matches"
+                        :key="match.pipeline_id"
+                        class="adapter-route-preview"
+                      >
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <strong>{{ match.pipeline_name }}</strong>
+                          <span class="text-xs text-fg-muted">
+                            {{ match.managed ? "Managed pipeline" : "Unmanaged pipeline" }}
+                          </span>
+                        </div>
+                        <p>
+                          Routes:
+                          {{ match.routes.map((route) => route.action).join(", ") || "none" }}
+                        </p>
+                        <p>Candidate intents: {{ match.candidate_intents.join(", ") || "none" }}</p>
+                        <p v-if="match.winner">
+                          <strong>Selected intent:</strong> {{ match.winner }}
+                          <template v-if="match.suppressed_intents.length">
+                            · suppressed {{ match.suppressed_intents.join(", ") }}
+                          </template>
+                        </p>
+                        <details class="adapter-raw-details">
+                          <summary>View matched route details</summary>
+                          <pre>{{ pretty(match.routes) }}</pre>
+                        </details>
+                      </div>
+                    </article>
+                    <details class="adapter-raw-details">
+                      <summary>View raw normalized response</summary>
+                      <pre>{{ pretty(testResult) }}</pre>
+                    </details>
+                  </section>
+                </section>
+              </section>
             </main>
             <EmptyState v-else icon="box" title="Select an adapter">
               <button class="btn btn-primary" @click="openAdapterForm()">
@@ -953,9 +1219,11 @@ import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import Modal from "../components/shared/Modal.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
+import StatusBadge from "../components/shared/StatusBadge.vue";
 import TypedValueEditor from "../components/shared/TypedValueEditor.vue";
 import { downloadTextFile } from "../adapters/browser/files";
 
@@ -1097,6 +1365,18 @@ const currentAdapterRevision = computed<AdapterRevision | undefined>(
     ) ?? store.adapterRevisions[0],
 );
 const currentTransport = computed(() => currentAdapterRevision.value?.transport ?? "webhook");
+const transportLabel = computed(() =>
+  currentTransport.value === "webhook" ? "Webhook" : "Polling",
+);
+const currentConfigurationEntries = computed(() =>
+  Object.entries(jsonObject(currentAdapterRevision.value?.configuration)),
+);
+const currentIdentityEntries = computed(() =>
+  Object.entries(jsonObject(currentAdapterRevision.value?.identity_configuration)),
+);
+const currentSecretBindingEntries = computed(() =>
+  Object.entries(currentAdapterRevision.value?.secret_bindings ?? {}),
+);
 const webhookPath = computed(() =>
   store.selectedAdapter ? `/webhooks/orchestration/${store.selectedAdapter.endpoint_identity}` : "",
 );
@@ -1137,6 +1417,37 @@ function pretty(value: unknown): string {
 
 function formatTimestamp(value?: string | null): string {
   return value ? new Date(value).toLocaleString() : "Never";
+}
+
+function adapterMark(kind: string): string {
+  const compact = kind.replace(/[^a-z0-9]/gi, "").slice(0, 2);
+
+  return compact ? compact.toUpperCase() : "AD";
+}
+
+function humanizeKey(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
+function formatConfigValue(value: JsonValue): string {
+  if (value === null) {
+    return "Not set";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Enabled" : "Disabled";
+  }
+
+  if (typeof value === "string") {
+    return value || "Not set";
+  }
+
+  const rendered = JSON.stringify(value);
+
+  return rendered.length > 150 ? `${rendered.slice(0, 147)}…` : rendered;
 }
 
 function safeFileSegment(value: string): string {
@@ -1450,3 +1761,772 @@ watch(
 
 onMounted(refreshInstances);
 </script>
+
+<style scoped>
+.adapter-list {
+  gap: 0;
+  background: var(--surface);
+}
+
+.adapter-list-header,
+.adapter-catalog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-5);
+}
+
+.adapter-list-header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.adapter-list-icon,
+.adapter-section-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.adapter-eyebrow {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.adapter-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.adapter-list-items {
+  display: grid;
+  gap: 3px;
+  padding: var(--space-2);
+}
+
+.adapter-list-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 9px;
+  color: inherit;
+  text-align: left;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.adapter-list-item:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-hover);
+}
+
+.adapter-list-item:active {
+  transform: scale(0.99);
+}
+
+.adapter-list-item.is-selected,
+.adapter-list-item.is-selected:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.adapter-mark,
+.adapter-catalog-mark,
+.adapter-hero-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.adapter-mark {
+  width: 32px;
+  height: 32px;
+}
+
+.adapter-list-item.is-selected .adapter-mark {
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+  background: var(--surface);
+}
+
+.adapter-catalog {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: auto;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-catalog-heading {
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+
+.adapter-catalog-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 7px;
+}
+
+.adapter-catalog-item.has-error {
+  border-color: color-mix(in srgb, var(--danger-fg) 28%, var(--border));
+}
+
+.adapter-catalog-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  font-size: 9px;
+}
+
+.adapter-health-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.adapter-health-dot.is-healthy {
+  background: var(--success-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-fg) 14%, transparent);
+}
+
+.adapter-health-dot.is-error {
+  background: var(--danger-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger-fg) 14%, transparent);
+}
+
+.adapter-host-details,
+.adapter-raw-details {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.adapter-host-details summary,
+.adapter-raw-details summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.adapter-host-details summary::-webkit-details-marker,
+.adapter-raw-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.adapter-host-details summary::before,
+.adapter-raw-details summary::before {
+  display: inline-block;
+  content: "›";
+  margin-right: 5px;
+  color: var(--accent-text);
+  font-size: 15px;
+  line-height: 0.7;
+  transition: transform 150ms ease;
+}
+
+.adapter-host-details[open] summary::before,
+.adapter-raw-details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.adapter-host-details pre,
+.adapter-raw-details pre {
+  max-height: 260px;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  padding: var(--space-3);
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.adapter-detail {
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.adapter-hero {
+  display: grid;
+  gap: var(--space-4);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 42%
+    ),
+    var(--surface);
+  padding: var(--space-5);
+}
+
+.adapter-hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.adapter-hero-mark {
+  width: 42px;
+  height: 42px;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+
+.adapter-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.adapter-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.adapter-endpoint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-endpoint code {
+  font-family: var(--font-mono);
+}
+
+.adapter-poll-status {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-4);
+}
+
+.adapter-poll-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.adapter-poll-grid > div {
+  display: grid;
+  gap: 3px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface);
+  padding: var(--space-3);
+}
+
+.adapter-poll-grid span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.adapter-poll-grid strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.adapter-poll-error {
+  border: 1px solid color-mix(in srgb, var(--danger-fg) 30%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  padding: var(--space-3);
+  color: var(--danger-fg);
+  font-size: 12px;
+}
+
+.adapter-poll-error p {
+  margin: 4px 0 0;
+}
+
+.adapter-safety-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--warning-fg) 30%, var(--border));
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+  padding: var(--space-3);
+  color: var(--warning-fg);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.adapter-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.adapter-info-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-3);
+}
+
+.adapter-info-card h3,
+.adapter-tab-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.adapter-chip-list,
+.adapter-pointer-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.adapter-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  padding: 2px 7px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.adapter-pointer-list code {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adapter-setup {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.adapter-setup summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-3);
+}
+
+.adapter-setup summary::-webkit-details-marker {
+  display: none;
+}
+
+.adapter-setup strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.adapter-setup ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-3) var(--space-5) var(--space-4) 32px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.adapter-workspace {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.adapter-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  padding: 0 var(--space-2);
+}
+
+.adapter-tabs button {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px var(--space-3);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.adapter-tabs button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.adapter-tabs button::after {
+  position: absolute;
+  right: var(--space-3);
+  bottom: -1px;
+  left: var(--space-3);
+  height: 2px;
+  content: "";
+  background: transparent;
+}
+
+.adapter-tabs button.is-active {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.adapter-tabs button.is-active::after {
+  background: var(--accent);
+}
+
+.adapter-tab-panel {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.adapter-tab-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.adapter-config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.adapter-config-card {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-config-card h4,
+.adapter-revision-card h4,
+.adapter-preview-card h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.adapter-config-card dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+.adapter-config-card dl > div {
+  display: grid;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-faint);
+  padding-bottom: var(--space-2);
+}
+
+.adapter-config-card dl > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.adapter-config-card dt {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.adapter-config-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.adapter-config-card > p {
+  margin: var(--space-3) 0 0;
+}
+
+.adapter-revision-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.adapter-revision-card {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-revision-card.is-current {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+}
+
+.adapter-revision-card h4 + .badge {
+  transform: translateY(-1px);
+}
+
+.adapter-revision-card p,
+.adapter-preview-card p,
+.adapter-route-preview p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.adapter-revision-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.adapter-revision-meta span {
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  padding: 3px 7px;
+}
+
+.adapter-test-inputs {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.4fr);
+  gap: var(--space-3);
+}
+
+.adapter-test-inputs label {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.adapter-test-inputs small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.adapter-test-inputs textarea {
+  margin-top: var(--space-1);
+}
+
+.adapter-test-results {
+  display: grid;
+  gap: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-4);
+}
+
+.adapter-test-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+.adapter-test-summary.is-verified {
+  border-color: color-mix(in srgb, var(--success-fg) 30%, var(--border));
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+
+.adapter-test-summary.is-rejected {
+  border-color: color-mix(in srgb, var(--danger-fg) 30%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.adapter-test-summary strong {
+  display: block;
+  font-size: 13px;
+}
+
+.adapter-test-summary p {
+  margin: 2px 0 0;
+  color: currentColor;
+  font-size: 12px;
+  opacity: 0.86;
+}
+
+.adapter-test-errors,
+.adapter-preview-warnings {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-3) var(--space-3) 28px;
+  font-size: 12px;
+}
+
+.adapter-test-errors {
+  border: 1px solid color-mix(in srgb, var(--danger-fg) 30%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.adapter-preview-warnings {
+  margin-top: var(--space-3);
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+}
+
+.adapter-preview-card {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-route-preview {
+  border-left: 2px solid var(--accent);
+  background: var(--surface);
+  padding: var(--space-3);
+}
+
+.adapter-route-preview .adapter-raw-details {
+  margin-top: var(--space-3);
+}
+
+@media (max-width: 840px) {
+  .adapter-hero-top {
+    display: grid;
+  }
+
+  .adapter-actions {
+    justify-content: flex-start;
+  }
+
+  .adapter-overview-grid,
+  .adapter-config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .adapter-detail {
+    padding: var(--space-2);
+  }
+
+  .adapter-hero {
+    padding: var(--space-3);
+  }
+
+  .adapter-metrics,
+  .adapter-poll-grid,
+  .adapter-test-inputs {
+    grid-template-columns: 1fr;
+  }
+
+  .adapter-endpoint {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .adapter-tab-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .adapter-tabs {
+    overflow-x: auto;
+  }
+
+  .adapter-tabs button {
+    flex: 0 0 auto;
+  }
+}
+</style>

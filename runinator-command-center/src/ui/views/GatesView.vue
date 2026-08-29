@@ -13,7 +13,12 @@
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
-            <h2 class="m-0 text-base font-semibold text-fg">Gates</h2>
+            <div class="grid gap-1">
+              <h2 class="m-0 text-base font-semibold text-fg">Gates</h2>
+              <p class="m-0 text-xs text-fg-muted">
+                Select a blocking gate and verify its run before changing the outcome.
+              </p>
+            </div>
             <div class="btn-row">
               <button class="btn" :disabled="loadingGates" @click="gates.refreshGates">
                 <LoadingSpinner v-if="loadingGates" size="sm" label="Refreshing gates" />
@@ -22,7 +27,7 @@
               </button>
               <button
                 class="btn btn-primary"
-                :disabled="!gates.canResolveSelected"
+                :disabled="!gates.canResolveSelected || !reason.trim()"
                 @click="resolve('open')"
               >
                 <Icon name="approve" />
@@ -30,13 +35,13 @@
               </button>
               <button
                 class="btn btn-danger"
-                :disabled="!gates.canResolveSelected"
+                :disabled="!gates.canResolveSelected || !reason.trim()"
                 @click="resolve('close')"
               >
                 <Icon name="reject" />
                 <span>Close</span>
               </button>
-              <button class="btn" :disabled="!gates.selectedGate" @click="gates.removeSelected()">
+              <button class="btn" :disabled="!gates.selectedGate" @click="removeSelected">
                 <Icon name="trash" />
                 <span>Delete</span>
               </button>
@@ -100,9 +105,15 @@
           <MobileBackBar @back="gates.selectedGate = null" />
           <h2 class="m-0 text-base font-semibold text-fg">Gate Detail</h2>
           <label class="grid gap-1 text-xs text-fg-muted">
-            Reason (optional)
-            <input v-model="reason" placeholder="Why are you opening/closing this gate?" />
+            Reason
+            <input
+              v-model.trim="reason"
+              required
+              maxlength="240"
+              placeholder="Why are you opening or closing this gate?"
+            />
           </label>
+          <p class="hint m-0">A reason is required so the operator decision remains auditable.</p>
           <pre class="output">{{ gates.selectedGate ? pretty(gates.selectedGate) : "" }}</pre>
         </div>
       </template>
@@ -135,8 +146,28 @@ const { isLoading: loadingGates, loadingMessage: loadingGatesMessage } =
 const reason = ref("");
 
 async function resolve(action: "open" | "close") {
+  if (!gates.selectedGate || !reason.value.trim()) {
+    return;
+  }
+
+  const label = gates.selectedGate.label ?? gates.selectedGate.id ?? "selected gate";
+
+  if (!window.confirm(`${action === "open" ? "Open" : "Close"} gate “${label}”?`)) {
+    return;
+  }
+
   await gates.resolveSelected(action, reason.value);
   reason.value = "";
+}
+
+async function removeSelected() {
+  const gate = gates.selectedGate;
+
+  if (!gate || !window.confirm("Delete the selected gate record? This does not resume its run.")) {
+    return;
+  }
+
+  await gates.removeSelected();
 }
 
 async function refresh() {

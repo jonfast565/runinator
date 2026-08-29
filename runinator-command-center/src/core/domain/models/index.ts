@@ -249,6 +249,7 @@ export type {
 } from "./workflow-state";
 export {
   buildCursorMarkers,
+  buildTerminalCursorMarker,
   coerceCompensationFrame,
   coerceControlFrame,
   coerceDebugFrame,

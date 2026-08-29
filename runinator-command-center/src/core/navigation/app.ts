@@ -37,6 +37,9 @@ export interface NavItem {
   tab: AppTab;
   label: string;
   icon: IconName;
+  // short, action-oriented guidance shown below the active page title. Every page supplies this so
+  // operators never land on an unexplained surface.
+  description: string;
   endpoint?: string;
   // only available in the tauri desktop client; hidden in the hosted web app.
   desktopOnly?: boolean;

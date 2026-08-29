@@ -69,6 +69,7 @@ describe("admin settings store", () => {
       tab: "AdminSettings",
       label: "Settings",
       icon: "settings",
+      description: "Change server settings carefully and validate language/runtime paths first.",
       requires: "credentials:manage",
     });
   });

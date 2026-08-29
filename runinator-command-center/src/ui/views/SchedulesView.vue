@@ -1,7 +1,10 @@
 <template>
   <section class="pane">
     <div class="panel">
-      <PanelHeader title="Freeze windows">
+      <PanelHeader
+        title="Freeze windows"
+        description="Freeze only the scope you intend. The end must be later than the start; times are entered locally and stored in UTC."
+      >
         <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
           <input v-model="store.activeOnly" type="checkbox" class="w-auto" @change="refresh" />
           <span>Active only</span>
@@ -26,11 +29,11 @@
           </label>
           <label>
             <span>Starts</span>
-            <input v-model="startsAtLocal" type="datetime-local" required />
+            <input v-model="startsAtLocal" type="datetime-local" required :max="endsAtLocal" />
           </label>
           <label>
             <span>Ends</span>
-            <input v-model="endsAtLocal" type="datetime-local" required />
+            <input v-model="endsAtLocal" type="datetime-local" required :min="startsAtLocal" />
           </label>
           <label>
             <span>Workflow ID (blank freezes all)</span>
@@ -45,8 +48,16 @@
             <span>Enabled</span>
           </label>
         </div>
+        <p v-if="scheduleError" class="error mb-0 mt-2 text-xs" role="alert">
+          {{ scheduleError }}
+        </p>
         <div class="mt-3 flex gap-2">
-          <Button variant="primary" type="submit" :loading="loading">
+          <Button
+            variant="primary"
+            type="submit"
+            :loading="loading"
+            :disabled="Boolean(scheduleError)"
+          >
             <span>{{ editingId ? "Save window" : "Create window" }}</span>
           </Button>
           <button class="btn" type="button" @click="cancelEdit">Cancel</button>
@@ -212,6 +223,21 @@ const draftReason = computed({
   },
 });
 
+const scheduleError = computed(() => {
+  if (!draft.value) {
+    return "";
+  }
+
+  const startsAt = Date.parse(draft.value.starts_at);
+  const endsAt = Date.parse(draft.value.ends_at);
+
+  if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) {
+    return "Choose both a valid start and end time.";
+  }
+
+  return endsAt > startsAt ? "" : "End time must be later than start time.";
+});
+
 function startCreate() {
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -256,7 +282,7 @@ async function refresh() {
 }
 
 async function save() {
-  if (!draft.value) {
+  if (!draft.value || scheduleError.value) {
     return;
   }
 
@@ -274,6 +300,12 @@ async function save() {
 }
 
 async function remove(windowId: string) {
+  const freezeWindow = store.freezeWindows.find((candidate) => candidate.id === windowId);
+
+  if (!freezeWindow || !window.confirm(`Delete freeze window “${freezeWindow.name}”?`)) {
+    return;
+  }
+
   loading.value = true;
 
   try {

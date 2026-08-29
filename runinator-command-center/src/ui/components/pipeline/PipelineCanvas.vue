@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick } from "vue";
+import { computed, nextTick, watch } from "vue";
 import {
   VueFlow,
   useVueFlow,
@@ -33,6 +33,7 @@ import {
   type NodeMouseEvent,
 } from "@vue-flow/core";
 import { usePipelineStore } from "../../adapters/pinia/pipeline";
+import { useAppStore } from "../../adapters/pinia/app";
 import PipelineNode from "./PipelineNode.vue";
 import type { PipelineRunDetail } from "../../../core/domain/models";
 import type { PipelineEdgeModel, PipelineNodeData, PipelineNodeModel } from "../../../core/workflow/pipeline-graph";
@@ -45,6 +46,7 @@ const readonly = computed(() => props.readonly || props.detail != null);
 const emit = defineEmits<(event: "open-workflow" | "open-run", id: string) => void>();
 
 const pipeline = usePipelineStore();
+const app = useAppStore();
 const { fitView, onPaneReady } = useVueFlow();
 
 const latestAttempts = computed(() => {
@@ -153,6 +155,20 @@ async function recenter() {
 onPaneReady(() => {
   void recenter();
 });
+
+// Selecting a pipeline reloads its member graph asynchronously. Fit after that graph is rendered,
+// and whenever this tab is reached, so navigation always starts with the whole pipeline visible.
+watch(
+  () => [app.activeTab, pipeline.loading] as const,
+  ([tab, loading], [previousTab, wasLoading]) => {
+    const becameVisible = tab === "Pipelines" && previousTab !== "Pipelines";
+    const graphFinishedLoading = tab === "Pipelines" && !loading && wasLoading;
+
+    if (becameVisible || graphFinishedLoading) {
+      void recenter();
+    }
+  },
+);
 </script>
 
 <style scoped>

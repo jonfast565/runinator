@@ -5,7 +5,39 @@
       <span>Manage correlated executions for this pipeline</span>
     </label>
 
-    <template v-if="enabled">
+    <section
+      v-if="!enabled"
+      class="grid gap-4 rounded border border-border bg-surface-subtle p-4 text-sm"
+    >
+      <div class="grid gap-1">
+        <h3 class="m-0 text-base font-semibold text-fg">Set up correlated execution</h3>
+        <p class="m-0 text-fg-muted">
+          Connect external events to this pipeline, decide how a live execution responds, and
+          retain the evidence and workspace settings each phase needs.
+        </p>
+      </div>
+      <ol class="grid gap-2 text-fg-muted md:grid-cols-3">
+        <li class="rounded border border-border bg-surface p-3">
+          <strong class="block text-fg">1. Admit events</strong>
+          Match provider events to a correlation scope and lifecycle.
+        </li>
+        <li class="rounded border border-border bg-surface p-3">
+          <strong class="block text-fg">2. Define intents</strong>
+          Choose whether an update observes, pauses, restarts, or signals a run.
+        </li>
+        <li class="rounded border border-border bg-surface p-3">
+          <strong class="block text-fg">3. Map phase state</strong>
+          Keep result, evidence, and workspace details with each pipeline phase.
+        </li>
+      </ol>
+      <div>
+        <button type="button" class="btn btn-primary" @click="enableConfiguration">
+          Enable orchestration editor
+        </button>
+      </div>
+    </section>
+
+    <template v-else>
       <nav class="flex flex-wrap gap-1 border-b border-border">
         <button
           v-for="item in tabs"
@@ -21,6 +53,13 @@
 
       <div v-if="tab === 'Admission Routes'" class="grid gap-3">
         <label class="grid gap-1 text-sm"><span>Correlation scope</span><input v-model="scope" required /></label>
+        <section
+          v-if="routes.length === 0"
+          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+        >
+          <strong class="block text-fg">No admission routes yet</strong>
+          Add a provider event that should start, record, or control a correlated pipeline run.
+        </section>
         <article v-for="(route, routeIndex) in routes" :key="route.id" class="grid gap-2 rounded border border-border p-3">
           <div class="grid gap-2 md:grid-cols-5">
             <label class="grid gap-1 text-xs"><span>Event</span><input v-model="route.event_type" list="orchestration-events" /></label>
@@ -41,6 +80,13 @@
       </div>
 
       <div v-else-if="tab === 'Intents'" class="grid gap-3">
+        <section
+          v-if="intents.length === 0"
+          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+        >
+          <strong class="block text-fg">No intents yet</strong>
+          Add an intent before routing active events to dispatch, pause, restart, or signal a run.
+        </section>
         <article v-for="(intent, index) in intents" :key="intent.id" class="grid gap-2 rounded border border-border p-3 md:grid-cols-4">
           <label class="grid gap-1 text-xs"><span>Name</span><input v-model="intent.name" /></label>
           <label class="grid gap-1 text-xs"><span>Effect</span><select v-model="intent.effect"><option v-for="effect in effects" :key="effect" :value="effect">{{ effect }}</option></select></label>
@@ -58,6 +104,13 @@
       </div>
 
       <div v-else-if="tab === 'Budgets'" class="grid gap-3">
+        <section
+          v-if="budgets.length === 0"
+          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+        >
+          <strong class="block text-fg">No retry budgets yet</strong>
+          Add a budget only when a failure class needs bounded retries or a recovery handoff.
+        </section>
         <article v-for="(budget, index) in budgets" :key="budget.id" class="grid gap-2 rounded border border-border p-3 md:grid-cols-[1fr_10rem_12rem_1fr_auto]">
           <input v-model="budget.name" placeholder="failure class" />
           <input v-model.number="budget.attempts" type="number" min="1" />
@@ -69,6 +122,12 @@
       </div>
 
       <div v-else-if="tab === 'Phase Mappings'" class="grid gap-3">
+        <section
+          v-if="phases.length === 0"
+          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+        >
+          Add a workflow to this pipeline before configuring phase result mappings.
+        </section>
         <article v-for="phase in phases" :key="phase.member" class="grid gap-2 rounded border border-border p-3 md:grid-cols-2">
           <strong class="md:col-span-2">{{ phase.member }}</strong>
           <label v-for="pointer in resultPointers" :key="pointer.key" class="grid gap-1 text-xs"><span>{{ pointer.label }}</span><input v-model="phase[pointer.key]" list="orchestration-pointers" placeholder="/result/path" /></label>
@@ -76,6 +135,12 @@
       </div>
 
       <div v-else-if="tab === 'Workspaces'" class="grid gap-3">
+        <section
+          v-if="phases.length === 0"
+          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+        >
+          Add a workflow to this pipeline before configuring phase workspace leases.
+        </section>
         <article v-for="phase in phases" :key="phase.member" class="grid gap-2 rounded border border-border p-3 md:grid-cols-3">
           <label class="flex items-center gap-2 text-sm md:col-span-3"><input v-model="phase.workspace_enabled" type="checkbox" /><strong>{{ phase.member }}</strong></label>
           <template v-if="phase.workspace_enabled">
@@ -181,6 +246,11 @@ function addPredicate(route: RouteDraft): void { route.predicates.push({ id: cry
 function addIntent(): void { intents.push({ id: crypto.randomUUID(), name: `intent_${String(intents.length + 1)}`, effect: "observe", priority: 10 - intents.length, coalesce_seconds: 0, stop: "cancel", restart_kind: "entry", restart_member: "", subject_revision_pointer: "", signal_name: "", allow_self_originated: false }); }
 
 function addBudget(): void { budgets.push({ id: crypto.randomUUID(), name: `failure_${String(budgets.length + 1)}`, attempts: 1, exhausted: "pause", handoff: "" }); }
+
+function enableConfiguration(): void {
+  enabled.value = true;
+  tab.value = "Admission Routes";
+}
 
 function parseJson(text: string): JsonValue { return JSON.parse(text) as JsonValue; }
 

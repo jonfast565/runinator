@@ -127,11 +127,7 @@
                     @change="onAddWorkflow"
                   >
                     <option value="" disabled>+ Add workflow…</option>
-                    <option
-                      v-for="wf in pipeline.availableWorkflows"
-                      :key="wf.id"
-                      :value="wf.id"
-                    >
+                    <option v-for="wf in pipeline.availableWorkflows" :key="wf.id" :value="wf.id">
                       {{ wf.name }}
                     </option>
                   </select>
@@ -193,7 +189,13 @@
                     <span>Downstream input mapping</span>
                     <JsonEditor v-model="edgeParametersText" title="Link mapping" />
                     <p v-if="mappingError" class="error m-0 text-xs">{{ mappingError }}</p>
-                    <button class="btn btn-sm" :disabled="Boolean(mappingError)" @click="saveEdgeMapping">Save mapping</button>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="Boolean(mappingError)"
+                      @click="saveEdgeMapping"
+                    >
+                      Save mapping
+                    </button>
                   </div>
                   <button class="btn btn-danger" @click="pipeline.deleteSelected">
                     <Icon name="trash" />
@@ -206,7 +208,9 @@
                     <span>On failure</span>
                     <select
                       :value="memberFailureModeValue"
-                      @change="onMemberFailureModeChange(($event.target as HTMLSelectElement).value)"
+                      @change="
+                        onMemberFailureModeChange(($event.target as HTMLSelectElement).value)
+                      "
                     >
                       <option value="">Pipeline default ({{ defaultFailureModeLabel }})</option>
                       <option value="stop">Stop</option>
@@ -220,18 +224,28 @@
                     <strong>{{ selectedNode.data.name }}</strong> fails. Mirrors PowerShell's
                     $ErrorActionPreference.
                   </p>
-                  <div v-if="selectedNodeJoin" class="grid gap-2 border-t border-border-subtle pt-3">
+                  <div
+                    v-if="selectedNodeJoin"
+                    class="grid gap-2 border-t border-border-subtle pt-3"
+                  >
                     <h4 class="m-0 text-sm font-semibold text-fg">Join</h4>
                     <label class="flex flex-col gap-1 text-sm">
                       <span>Readiness</span>
                       <select v-model="joinMode">
-                        <option value="all">All inputs</option><option value="any">Any input</option>
+                        <option value="all">All inputs</option>
+                        <option value="any">Any input</option>
                         <option value="first_success">First success</option>
                       </select>
                     </label>
                     <JsonEditor v-model="joinParametersText" title="Join mapping" />
                     <p v-if="joinMappingError" class="error m-0 text-xs">{{ joinMappingError }}</p>
-                    <button class="btn btn-sm" :disabled="Boolean(joinMappingError)" @click="saveJoin">Save join</button>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="Boolean(joinMappingError)"
+                      @click="saveJoin"
+                    >
+                      Save join
+                    </button>
                   </div>
                 </template>
                 <div v-else />
@@ -279,23 +293,56 @@
     </SplitPane>
 
     <Modal v-if="nameModal.open" :title="nameModal.title" width="480px" @close="closeNameModal">
-      <form class="flex flex-col gap-3" @submit.prevent="submitNameModal">
+      <form
+        id="pipeline-identity-form"
+        class="flex flex-col gap-3"
+        @submit.prevent="submitNameModal"
+      >
         <label class="flex flex-col gap-1 text-sm">
           <span>Name</span>
-          <input v-model="nameModal.name" type="text" placeholder="Release pipeline" autofocus />
+          <input
+            v-model.trim="nameModal.name"
+            type="text"
+            required
+            maxlength="100"
+            placeholder="Release pipeline"
+            autofocus
+          />
         </label>
         <label class="flex flex-col gap-1 text-sm">
           <span>Namespace</span>
-          <input v-model="nameModal.namespace" type="text" placeholder="acme.delivery" />
+          <input
+            v-model.trim="nameModal.namespace"
+            type="text"
+            required
+            pattern="[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*"
+            title="Use dot-separated identifiers, for example acme.delivery."
+            placeholder="acme.delivery"
+          />
         </label>
         <label class="flex flex-col gap-1 text-sm">
           <span>Stable key</span>
-          <input v-model="nameModal.key" type="text" placeholder="release_train" />
+          <input
+            v-model.trim="nameModal.key"
+            type="text"
+            required
+            pattern="[A-Za-z_][A-Za-z0-9_]*"
+            title="Start with a letter or underscore and use only letters, numbers, and underscores."
+            placeholder="release_train"
+          />
         </label>
         <label class="flex flex-col gap-1 text-sm">
           <span>Description</span>
-          <input v-model="nameModal.description" type="text" placeholder="Optional" />
+          <input
+            v-model="nameModal.description"
+            type="text"
+            maxlength="240"
+            placeholder="Optional"
+          />
         </label>
+        <p v-if="pipelineIdentityError" class="error m-0 text-xs" role="alert">
+          {{ pipelineIdentityError }}
+        </p>
       </form>
 
       <div
@@ -318,8 +365,13 @@
       </div>
 
       <template #actions>
-        <button class="btn" @click="closeNameModal">Cancel</button>
-        <button class="btn btn-primary" :disabled="!validPipelineIdentity" @click="submitNameModal">
+        <button class="btn" type="button" @click="closeNameModal">Cancel</button>
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="pipeline-identity-form"
+          :disabled="!validPipelineIdentity"
+        >
           {{ nameModal.mode === "create" ? "Create" : "Save" }}
         </button>
       </template>
@@ -397,8 +449,10 @@ const selectedPipeline = computed(() => pipeline.selectedPipeline);
 const selectedEdge = computed(() => pipeline.selectedEdge);
 const selectedNode = computed(() => pipeline.selectedNode);
 const selectedNodeJoin = computed(() => {
-  const member = selectedPipeline.value?.graph.members.find((item) => item.workflow_id === selectedNode.value?.data.workflowId);
-  return member ? selectedPipeline.value?.graph.joins[member.key] ?? null : null;
+  const member = selectedPipeline.value?.graph.members.find(
+    (item) => item.workflow_id === selectedNode.value?.data.workflowId,
+  );
+  return member ? (selectedPipeline.value?.graph.joins[member.key] ?? null) : null;
 });
 const edgeParametersText = ref("{}");
 const mappingError = ref<string | null>(null);
@@ -406,32 +460,70 @@ const joinMode = ref<PipelineJoinMode>("all");
 const joinParametersText = ref("{}");
 const joinMappingError = ref<string | null>(null);
 
-watch(selectedEdge, (edge) => { edgeParametersText.value = JSON.stringify(edge?.data.parameters ?? {}, null, 2); mappingError.value = null; }, { immediate: true });
-watch(selectedNodeJoin, (join) => { joinMode.value = join?.mode ?? "all"; joinParametersText.value = JSON.stringify(join?.parameters ?? {}, null, 2); joinMappingError.value = null; }, { immediate: true });
+watch(
+  selectedEdge,
+  (edge) => {
+    edgeParametersText.value = JSON.stringify(edge?.data.parameters ?? {}, null, 2);
+    mappingError.value = null;
+  },
+  { immediate: true },
+);
+watch(
+  selectedNodeJoin,
+  (join) => {
+    joinMode.value = join?.mode ?? "all";
+    joinParametersText.value = JSON.stringify(join?.parameters ?? {}, null, 2);
+    joinMappingError.value = null;
+  },
+  { immediate: true },
+);
 
-function parseMapping(text: string, setError: (message: string | null) => void): Record<string, unknown> | null {
+function parseMapping(
+  text: string,
+  setError: (message: string | null) => void,
+): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text || "{}") as unknown;
-    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {throw new Error("Mapping must be a JSON object.");}
-    setError(null); return parsed as Record<string, unknown>;
-  } catch (error) { setError(error instanceof Error ? error.message : String(error)); return null; }
+
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Mapping must be a JSON object.");
+    }
+
+    setError(null);
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    setError(error instanceof Error ? error.message : String(error));
+    return null;
+  }
 }
 
 function saveEdgeMapping() {
-  const parameters = parseMapping(edgeParametersText.value, (message) => { mappingError.value = message; });
-  if (parameters) {void pipeline.updateSelected({ parameters });}
+  const parameters = parseMapping(edgeParametersText.value, (message) => {
+    mappingError.value = message;
+  });
+
+  if (parameters) {
+    void pipeline.updateSelected({ parameters });
+  }
 }
 
 function saveJoin() {
   const join = selectedNodeJoin.value;
-  const parameters = parseMapping(joinParametersText.value, (message) => { joinMappingError.value = message; });
-  if (join && parameters) {void pipeline.updateJoin(join.target, joinMode.value, parameters);}
+  const parameters = parseMapping(joinParametersText.value, (message) => {
+    joinMappingError.value = message;
+  });
+
+  if (join && parameters) {
+    void pipeline.updateJoin(join.target, joinMode.value, parameters);
+  }
 }
 
 // "" means no per-member override (the pipeline default applies).
 const memberFailureModeValue = computed(() => {
   const node = selectedNode.value;
-  const member = selectedPipeline.value?.graph.members.find((item) => item.workflow_id === node?.data.workflowId);
+  const member = selectedPipeline.value?.graph.members.find(
+    (item) => item.workflow_id === node?.data.workflowId,
+  );
   return member?.failure_mode ?? "";
 });
 
@@ -479,7 +571,12 @@ const scopedPipelines = computed(() => {
 });
 
 const memberWorkflowCount = computed(
-  () => new Set(scopedPipelines.value.flatMap((item) => item.graph.members.map((member) => member.workflow_id))).size,
+  () =>
+    new Set(
+      scopedPipelines.value.flatMap((item) =>
+        item.graph.members.map((member) => member.workflow_id),
+      ),
+    ).size,
 );
 const selectedPipelineLabel = computed(() =>
   selectedPipeline.value ? pipelinePath(selectedPipeline.value) : "None",
@@ -498,14 +595,31 @@ const nameModal = reactive({
   description: "",
 });
 const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const validPipelineIdentity = computed(() =>
-  Boolean(nameModal.name.trim()) &&
-  identifier.test(nameModal.key.trim()) &&
-  nameModal.namespace
-    .trim()
-    .split(".")
-    .every((segment) => identifier.test(segment)),
-);
+const pipelineIdentityError = computed(() => {
+  if (!nameModal.name.trim()) {
+    return "Name is required.";
+  }
+
+  if (!nameModal.namespace.trim()) {
+    return "Namespace is required; use dot-separated identifiers such as acme.delivery.";
+  }
+
+  if (
+    !nameModal.namespace
+      .trim()
+      .split(".")
+      .every((segment) => identifier.test(segment))
+  ) {
+    return "Each namespace segment must start with a letter or underscore and contain only letters, numbers, or underscores.";
+  }
+
+  if (!identifier.test(nameModal.key.trim())) {
+    return "Stable key must start with a letter or underscore and contain only letters, numbers, or underscores.";
+  }
+
+  return "";
+});
+const validPipelineIdentity = computed(() => !pipelineIdentityError.value);
 const defaultsModalOpen = ref(false);
 const orchestrationModalOpen = ref(false);
 const adapterKinds = shallowRef<AdapterKindMetadata[]>([]);

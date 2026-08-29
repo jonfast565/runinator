@@ -3,7 +3,12 @@
     <div class="flex h-full min-h-0 flex-col gap-2.5 overflow-auto">
       <div class="panel shrink-0">
         <div class="panel-toolbar">
-          <h2 class="m-0 text-base font-semibold text-fg">Organizations</h2>
+          <div class="grid gap-1">
+            <h2 class="m-0 text-base font-semibold text-fg">Organizations</h2>
+            <p class="m-0 text-xs text-fg-muted">
+              Select the organization you intend to change before managing members or teams.
+            </p>
+          </div>
           <button class="btn" :disabled="loadingOrgData" @click="refresh">
             <LoadingSpinner v-if="loadingOrgData" size="sm" label="Refreshing organizations" />
             <Icon v-else name="refresh" />
@@ -37,7 +42,13 @@
             @submit.prevent="createOrg"
           >
             <label class="text-xs tracking-wide text-fg-muted uppercase">Create organization</label>
-            <input v-model="newOrgName" placeholder="Acme Inc." />
+            <input
+              v-model.trim="newOrgName"
+              required
+              minlength="2"
+              maxlength="100"
+              placeholder="Acme Inc."
+            />
             <button
               class="btn btn-primary"
               type="submit"
@@ -69,13 +80,20 @@
           title="No organization selected"
           :loading="loadingOrgData"
           loading-message="Loading organizations…"
+          description="Choose an organization above before adding members or teams."
         />
         <LoadingPanel
           v-else-if="loadingOrgData && !members.length"
           compact
           :message="loadingOrgDataMessage || 'Loading members…'"
         />
-        <EmptyState v-else-if="!members.length" compact icon="shield" title="No members yet" />
+        <EmptyState
+          v-else-if="!members.length"
+          compact
+          icon="shield"
+          title="No members yet"
+          description="Add an existing user's UUID below and start with the member role unless they need administration access."
+        />
         <DataTable v-else>
           <table>
             <thead>
@@ -130,13 +148,20 @@
           class="flex flex-wrap gap-2"
           @submit.prevent="addMember"
         >
-          <input v-model="newMemberId" class="min-w-40 flex-1" placeholder="User id (uuid)" />
+          <input
+            v-model.trim="newMemberId"
+            class="min-w-40 flex-1"
+            required
+            :pattern="UUID_PATTERN"
+            title="Enter a UUID such as 550e8400-e29b-41d4-a716-446655440000."
+            placeholder="User id (uuid)"
+          />
           <select v-model="newMemberRole" class="w-auto min-w-32">
             <option value="member">member</option>
             <option value="admin">admin</option>
             <option value="owner">owner</option>
           </select>
-          <button class="btn" type="submit" :disabled="!newMemberId.trim()">Add member</button>
+          <button class="btn" type="submit" :disabled="!validMemberId">Add member</button>
         </form>
       </div>
 
@@ -172,7 +197,14 @@
               />
             </button>
             <form class="mt-1 flex flex-wrap gap-2" @submit.prevent="onCreateTeam">
-              <input v-model="newTeamName" class="min-w-40 flex-1" placeholder="New team name" />
+              <input
+                v-model.trim="newTeamName"
+                class="min-w-40 flex-1"
+                required
+                minlength="2"
+                maxlength="100"
+                placeholder="New team name"
+              />
               <button class="btn" type="submit" :disabled="!newTeamName.trim()">Create</button>
             </form>
           </div>
@@ -183,6 +215,11 @@
               compact
               icon="list"
               :title="teams.length ? 'Pick a team' : 'No teams yet'"
+              :description="
+                teams.length
+                  ? 'Select a team to review its members.'
+                  : 'Create a team to group users before assigning shared permissions.'
+              "
             />
             <template v-else>
               <h3 class="m-0 mb-2 text-sm font-semibold text-fg">
@@ -198,6 +235,7 @@
                 compact
                 icon="shield"
                 title="No members yet"
+                description="Add an organization member below; users must belong to the organization before joining a team."
               />
               <ul v-else class="m-0 flex list-none flex-col gap-1 p-0">
                 <li
@@ -277,6 +315,11 @@ const selectedTeamId = ref<string | null>(null);
 const teamMembers = ref<User[]>([]);
 const newTeamName = ref("");
 const newTeamMemberId = ref("");
+const UUID_PATTERN =
+  "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}";
+const validMemberId = computed(() =>
+  new RegExp(`^${UUID_PATTERN}$`).test(newMemberId.value.trim()),
+);
 
 const selectedTeamName = computed(
   () => teams.value.find((team) => team.id === selectedTeamId.value)?.name ?? "",
@@ -372,7 +415,11 @@ async function removeFromTeam(user: User) {
   const teamId = selectedTeamId.value;
   const userId = user.id;
 
-  if (!teamId || !userId) {
+  if (
+    !teamId ||
+    !userId ||
+    !window.confirm(`Remove ${user.username} from ${selectedTeamName.value}?`)
+  ) {
     return;
   }
 
@@ -433,7 +480,7 @@ async function createOrg() {
 async function addMember() {
   const orgId = orgs.activeOrgId;
 
-  if (!orgId || !newMemberId.value.trim()) {
+  if (!orgId || !validMemberId.value) {
     return;
   }
 
@@ -457,7 +504,7 @@ async function changeRole(userId: string, event: Event) {
 async function removeMember(userId: string) {
   const orgId = orgs.activeOrgId;
 
-  if (!orgId) {
+  if (!orgId || !window.confirm(`Remove ${userLabel(userId)} from this organization?`)) {
     return;
   }
 

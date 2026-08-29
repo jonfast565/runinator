@@ -161,7 +161,14 @@
             </label>
             <label class="grid gap-1 text-xs text-fg-muted">
               <span>Desired nodes</span>
-              <input v-model.number="scaleDesired" class="w-[90px]" type="number" min="0" />
+              <input
+                v-model.number="scaleDesired"
+                class="w-[90px]"
+                type="number"
+                min="0"
+                step="1"
+                required
+              />
             </label>
             <button class="btn btn-primary" type="submit" :disabled="scaling">
               <LoadingSpinner v-if="scaling" size="sm" label="Scaling org nodes" />

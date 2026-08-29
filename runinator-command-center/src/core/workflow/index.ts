@@ -118,6 +118,7 @@ export function buildGraphNodeModels(
     }),
   );
   const passedWithoutHistory = inferredLinearPassedNodes(workflow, detail, runByNode);
+  const terminalEndpointId = terminalEndpointIdForRun(nodes, detail);
   const debug = coerceDebugFrame(detail?.execution_state?.debug);
   const breakpointSet = new Set<string>(debug?.breakpoints ?? []);
   // one lookup built once, so a node carrying two cursors draws two markers rather than the
@@ -139,6 +140,14 @@ export function buildGraphNodeModels(
       ? layoutPosition
       : { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
     const run = runByNode.get(id);
+    const cursors = markersByNode.get(id) ?? [];
+    // A continuation sits on the instruction it is executing before the corresponding mutable
+    // effect/node-run projection necessarily changes from `queued` to `running`. Treat that live
+    // cursor as the source of truth for the in-flight visual, but never promote a debugger-paused,
+    // interrupt-suspended, or unarmed speculative cursor into real execution.
+    const cursorIsExecuting = cursors.some(
+      (cursor) => !cursor.paused && !cursor.suspended && (!cursor.speculative || cursor.armed),
+    );
     const currentEffectId = typeof run?.state?.effect_id === "string" ? run.state.effect_id : null;
     const currentEffectIsRetrying =
       currentEffectId != null && retryingEffectIds.has(currentEffectId);
@@ -146,23 +155,23 @@ export function buildGraphNodeModels(
       inferredNodeStatus(node, id, detail) ??
       (passedWithoutHistory.has(id) ? "succeeded" : undefined);
     const terminalEndpointStatus =
-      detail &&
-      isTerminalWorkflowRunStatus(detail.run.status) &&
-      typeof node.kind === "string" &&
-      ["end", "fail"].includes(node.kind)
-        ? inferredStatus
-        : undefined;
+      detail && terminalEndpointId === id ? detail.run.status : undefined;
     // The run row advances before a node-run row necessarily exists (or before its queued row has
     // been refreshed). While the run is live, its active-node status is the authoritative signal
     // for the yellow in-progress state.
-    const status =
-      detail &&
-      !isTerminalWorkflowRunStatus(detail.run.status) &&
-      detail.run.active_node_id === id
+    const projectedStatus =
+      detail && !isTerminalWorkflowRunStatus(detail.run.status) && detail.run.active_node_id === id
         ? currentEffectIsRetrying
           ? "retrying"
           : (inferredStatus ?? run?.status)
         : (terminalEndpointStatus ?? run?.status ?? inferredStatus);
+    // Queued is the durable handoff state. Once a live cursor is already standing on the node, it
+    // is executing now even if the row update has not arrived yet. Other explicit states (waiting,
+    // paused, terminal) retain their own meaning and therefore win over the cursor's position.
+    const status =
+      cursorIsExecuting && (projectedStatus === undefined || projectedStatus === "queued")
+        ? "running"
+        : projectedStatus;
     const kind = workflowNodeKind(node.kind);
     const interruptRegion = regions.get(id) ?? null;
     return {
@@ -189,7 +198,7 @@ export function buildGraphNodeModels(
         locked: kind === "start" || kind === "end" || kind === "fail" || node.locked === true,
         skipped: node.skipped === true,
         debugBreakpoint: breakpointSet.has(id),
-        cursors: markersByNode.get(id) ?? [],
+        cursors,
         interruptRegion,
         interruptEntry: interruptRegion?.handler === id,
       },
@@ -2052,6 +2061,40 @@ function inferredNodeStatus(
   }
 
   return undefined;
+}
+
+/**
+ * Completion events can precede the refreshed VM cursor and node-run rows. Select the matching
+ * terminal directly from the frozen workflow so the graph has an endpoint to paint immediately.
+ */
+function terminalEndpointIdForRun(
+  nodes: JsonRecord[],
+  detail: WorkflowRunDetail | null,
+): string | null {
+  const kind =
+    detail?.run.status === "succeeded" ? "end" : detail?.run.status === "failed" ? "fail" : null;
+
+  if (!kind) {
+    return null;
+  }
+
+  const activeNodeId = detail?.run.active_node_id;
+  const activeEndpoint = nodes.find((node) => node.id === activeNodeId && node.kind === kind);
+
+  if (typeof activeEndpoint?.id === "string") {
+    return activeEndpoint.id;
+  }
+
+  const cursorEndpoint = coerceRunCursors(detail?.execution_state?.cursors)
+    .map((cursor) => cursor.node_id)
+    .find((nodeId) => nodes.some((node) => node.id === nodeId && node.kind === kind));
+
+  if (cursorEndpoint) {
+    return cursorEndpoint;
+  }
+
+  const fallback = nodes.find((node) => node.kind === kind);
+  return typeof fallback?.id === "string" ? fallback.id : null;
 }
 
 function isWorkflowRunDisplayStatus(status: string | undefined): status is string {

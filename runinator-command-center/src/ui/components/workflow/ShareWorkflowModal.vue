@@ -13,9 +13,15 @@
         </thead>
         <tbody>
           <tr v-for="grant in grants" :key="String(grant.id)">
-            <td class="mono border-b border-border-subtle px-2 py-1.5 text-left">{{ grant.principal_id }}</td>
-            <td class="border-b border-border-subtle px-2 py-1.5 text-left">{{ grant.principal_type }}</td>
-            <td class="border-b border-border-subtle px-2 py-1.5 text-left">{{ grant.permission }}</td>
+            <td class="mono border-b border-border-subtle px-2 py-1.5 text-left">
+              {{ grant.principal_id }}
+            </td>
+            <td class="border-b border-border-subtle px-2 py-1.5 text-left">
+              {{ grant.principal_type }}
+            </td>
+            <td class="border-b border-border-subtle px-2 py-1.5 text-left">
+              {{ grant.permission }}
+            </td>
             <td>
               <Button size="sm" variant="ghost" @click="revoke(String(grant.id))">Remove</Button>
             </td>
@@ -39,7 +45,13 @@
         </label>
         <label class="grid gap-1 text-xs text-fg-subtle">
           Principal ID (UUID)
-          <input v-model="principalId" placeholder="user or team id" />
+          <input
+            v-model.trim="principalId"
+            required
+            pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
+            title="Enter the complete user or team UUID."
+            placeholder="user or team id"
+          />
         </label>
         <label class="grid gap-1 text-xs text-fg-subtle">
           Permission
@@ -50,7 +62,7 @@
             <option value="own">own</option>
           </select>
         </label>
-        <Button variant="primary" type="submit" :loading="busy" :disabled="!principalId"
+        <Button variant="primary" type="submit" :loading="busy" :disabled="!validPrincipalId"
           >Add</Button
         >
       </form>
@@ -60,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { workflowSharingService } from "../../../core/services";
 import Modal from "../shared/Modal.vue";
 import Button from "../shared/Button.vue";
@@ -75,6 +87,11 @@ const principalId = ref("");
 const permission = ref<"view" | "run" | "edit" | "own">("view");
 const error = ref("");
 const busy = ref(false);
+const validPrincipalId = computed(() =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    principalId.value.trim(),
+  ),
+);
 
 async function refresh() {
   error.value = "";
@@ -87,6 +104,10 @@ async function refresh() {
 }
 
 async function add() {
+  if (!validPrincipalId.value) {
+    return;
+  }
+
   busy.value = true;
   error.value = "";
 
@@ -107,6 +128,15 @@ async function add() {
 }
 
 async function revoke(grantId: string) {
+  const grant = grants.value.find((candidate) => String(candidate.id) === grantId);
+
+  if (
+    !grant ||
+    !window.confirm(`Remove ${String(grant.permission)} access for ${String(grant.principal_id)}?`)
+  ) {
+    return;
+  }
+
   try {
     await workflowSharingService.revokeGrant(props.workflowId, grantId);
     await refresh();

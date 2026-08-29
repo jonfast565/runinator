@@ -1,7 +1,10 @@
 <template>
   <section class="pane">
     <div class="panel flex min-h-0 flex-col">
-      <PanelHeader title="Audit Log">
+      <PanelHeader
+        title="Audit Log"
+        description="Filter by an exact action such as auth.login, then inspect actor, outcome, resource, and detail together."
+      >
         <input
           v-model="action"
           class="input"

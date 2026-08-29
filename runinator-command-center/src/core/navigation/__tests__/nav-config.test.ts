@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { Action } from "../../domain/models";
-import { visibleNavSections } from "../nav-config";
+import { navSections, visibleNavSections } from "../nav-config";
 
 function labels(sections: ReturnType<typeof visibleNavSections>): string[] {
   return sections.flatMap((section) => section.items.map((item) => item.tab));
 }
 
 describe("visibleNavSections", () => {
+  it("gives every page prescriptive guidance", () => {
+    for (const item of navSections.flatMap((section) => section.items)) {
+      expect(item.description.trim(), item.tab).not.toBe("");
+    }
+  });
+
   it("hides action-gated tabs when the action is absent", () => {
     const tabs = labels(visibleNavSections({ can: () => false, isDesktop: true }));
 
@@ -24,9 +30,7 @@ describe("visibleNavSections", () => {
 
   it("shows a tab exactly when its required action is held", () => {
     const held = new Set<Action>(["audit:read"]);
-    const tabs = labels(
-      visibleNavSections({ can: (action) => held.has(action), isDesktop: true }),
-    );
+    const tabs = labels(visibleNavSections({ can: (action) => held.has(action), isDesktop: true }));
 
     expect(tabs).toContain("AuditLog");
     expect(tabs).not.toContain("Permissions");

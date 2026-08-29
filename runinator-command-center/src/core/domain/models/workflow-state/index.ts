@@ -10,6 +10,7 @@ export type { CursorMarker, RunCursor, SpeculativeFrame } from "./run-cursor";
 export {
   CURSOR_PALETTE,
   buildCursorMarkers,
+  buildTerminalCursorMarker,
   cursorColor,
   cursorDebug,
   cursorLabel,

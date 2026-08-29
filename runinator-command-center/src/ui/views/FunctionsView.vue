@@ -27,7 +27,7 @@
               <button
                 class="btn btn-danger"
                 :disabled="!functions.selectedPackage || !canManage"
-                @click="functions.removeSelected()"
+                @click="removeSelected"
               >
                 <Icon name="trash" />
                 <span>Delete</span>
@@ -132,7 +132,7 @@
                       <button
                         class="btn btn-sm"
                         :disabled="!canManage"
-                        @click="functions.removeAlias(alias.name)"
+                        @click="removeAlias(alias.name)"
                       >
                         <Icon name="trash" />
                       </button>
@@ -145,7 +145,14 @@
             <div class="btn-row items-end">
               <label class="grid gap-1 text-xs text-fg-muted">
                 Alias
-                <input v-model="promoteAlias" placeholder="production" />
+                <input
+                  v-model.trim="promoteAlias"
+                  required
+                  maxlength="64"
+                  pattern="[A-Za-z][A-Za-z0-9_-]*"
+                  title="Start with a letter and use only letters, numbers, underscores, and hyphens."
+                  placeholder="production"
+                />
               </label>
               <label class="grid gap-1 text-xs text-fg-muted">
                 Version
@@ -160,6 +167,7 @@
                 <span>Move alias</span>
               </button>
             </div>
+            <p v-if="aliasError" class="error m-0 text-xs" role="alert">{{ aliasError }}</p>
 
             <h3 class="m-0 mt-2 text-sm font-semibold text-fg">Exports</h3>
             <p class="hint m-0">
@@ -255,11 +263,47 @@ const promoteVersion = ref<number | null>(null);
 
 const aliases = computed(() => functions.selectedPackage?.aliases ?? []);
 const versions = computed(() =>
-  [...(functions.selectedPackage?.versions ?? [])].sort((left, right) => right.version - left.version),
+  [...(functions.selectedPackage?.versions ?? [])].sort(
+    (left, right) => right.version - left.version,
+  ),
 );
+const aliasError = computed(() => {
+  const value = promoteAlias.value.trim();
+
+  if (!value) {
+    return "Alias is required.";
+  }
+
+  return /^[A-Za-z][A-Za-z0-9_-]*$/.test(value)
+    ? ""
+    : "Alias must start with a letter and contain only letters, numbers, underscores, and hyphens.";
+});
 const canPromote = computed(
-  () => canManage.value && !!promoteAlias.value.trim() && promoteVersion.value !== null,
+  () => canManage.value && !aliasError.value && promoteVersion.value !== null,
 );
+
+async function removeSelected() {
+  const selected = functions.selectedPackage;
+
+  if (
+    !selected ||
+    !window.confirm(`Delete function package “${qualifiedPackageName(selected)}”?`)
+  ) {
+    return;
+  }
+
+  await functions.removeSelected();
+}
+
+async function removeAlias(name: string) {
+  if (
+    !window.confirm(`Remove alias “${name}”? Already compiled calls keep their pinned version.`)
+  ) {
+    return;
+  }
+
+  await functions.removeAlias(name);
+}
 
 // default the version picker to the newest, which is what a promotion almost always means.
 watch(versions, (list) => {

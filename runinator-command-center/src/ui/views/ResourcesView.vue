@@ -13,7 +13,10 @@
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
-            <h2 class="m-0 text-base font-semibold text-fg">{{ title }}</h2>
+            <div class="grid gap-1">
+              <h2 class="m-0 text-base font-semibold text-fg">{{ title }}</h2>
+              <p class="m-0 text-xs text-fg-muted">{{ paneDescription }}</p>
+            </div>
             <div class="btn-row">
               <button class="btn" :disabled="loadingResources" @click="refresh">
                 <LoadingSpinner v-if="loadingResources" size="sm" label="Refreshing resources" />
@@ -28,7 +31,7 @@
                 <button
                   class="btn btn-primary"
                   :disabled="!resourcesStore.canResolveApproval"
-                  @click="resourcesStore.resolveApproval('approve')"
+                  @click="resolveApproval('approve')"
                 >
                   <Icon name="approve" />
                   <span>Approve</span>
@@ -36,7 +39,7 @@
                 <button
                   class="btn btn-danger"
                   :disabled="!resourcesStore.canResolveApproval"
-                  @click="resourcesStore.resolveApproval('reject')"
+                  @click="resolveApproval('reject')"
                 >
                   <Icon name="reject" />
                   <span>Reject</span>
@@ -46,7 +49,7 @@
                 v-if="endpoint === 'automation_events'"
                 class="btn"
                 :disabled="!resourcesStore.canDeleteSelected"
-                @click="resourcesStore.deleteSelected()"
+                @click="deleteSelected"
               >
                 <Icon name="trash" />
                 <span>Delete</span>
@@ -87,7 +90,9 @@
                       compact
                       :icon="resourcesStore.resourceRecords.length ? 'search' : 'box'"
                       :title="
-                        resourcesStore.resourceRecords.length ? 'No matches' : `No ${title.toLowerCase()} yet`
+                        resourcesStore.resourceRecords.length
+                          ? 'No matches'
+                          : `No ${title.toLowerCase()} yet`
                       "
                       :description="
                         resourcesStore.resourceRecords.length
@@ -175,6 +180,13 @@ const { isLoading: loadingResources, loadingMessage: loadingResourcesMessage } =
   useOperationLoading(["Refreshing resources", "Loading workflow approvals"]);
 
 const title = computed(() => props.title || labelFor(props.endpoint));
+const paneDescription = computed(() =>
+  props.endpoint === "approvals"
+    ? "Select a request and review its full detail before approving or rejecting it."
+    : props.endpoint === "automation_events"
+      ? "Select a record to inspect the complete payload before deleting it."
+      : "Select a record to inspect its provider-owned fields and workflow context.",
+);
 
 function labelFor(endpoint: string): string {
   return (
@@ -185,6 +197,34 @@ function labelFor(endpoint: string): string {
 async function refresh() {
   resourcesStore.clearResources();
   await resourcesStore.refreshResourcesFor(props.endpoint);
+}
+
+async function resolveApproval(action: "approve" | "reject") {
+  const record = resourcesStore.selectedResourceRecord;
+
+  if (!record) {
+    return;
+  }
+
+  const recordSummary = resourcesStore.recordSummary(record);
+  const summary = recordSummary.trim() ? recordSummary : "selected request";
+  const verb = action === "approve" ? "Approve" : "Reject";
+
+  if (!window.confirm(`${verb} “${summary}”? Review the record detail before continuing.`)) {
+    return;
+  }
+
+  await resourcesStore.resolveApproval(action);
+}
+
+async function deleteSelected() {
+  const record = resourcesStore.selectedResourceRecord;
+
+  if (!record || !window.confirm("Delete the selected automation event? This cannot be undone.")) {
+    return;
+  }
+
+  await resourcesStore.deleteSelected();
 }
 
 onMounted(refresh);
