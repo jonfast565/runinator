@@ -184,7 +184,25 @@ fn default_direct_broker_backend() -> String {
 }
 
 fn default_extra_labels() -> Vec<String> {
-    vec!["runner=desktop".to_string()]
+    Vec::new()
+}
+
+/// `runner` and `pool` identify this exclusively desktop-scoped runtime and are set by
+/// `agent::advertised_labels`, never by user configuration. Older versions allowed them in the
+/// editable list, which made the GUI display labels (such as `runner=creds-sync`) that the runtime
+/// would silently override. Drop those obsolete entries on load rather than preserving misleading
+/// UI state.
+pub(crate) fn is_reserved_identity_label(label: &str) -> bool {
+    let Some((key, _)) = label.trim().split_once('=') else {
+        return false;
+    };
+    matches!(key.trim().to_ascii_lowercase().as_str(), "runner" | "pool")
+}
+
+fn normalize_extra_labels(config: &mut AgentConfig) {
+    config
+        .extra_labels
+        .retain(|label| !is_reserved_identity_label(label));
 }
 
 fn default_gossip_bind() -> String {
@@ -238,11 +256,13 @@ impl Default for AgentConfig {
 
 /// load the last-saved config, falling back to defaults on any error (no file yet, bad json, ...).
 pub fn load() -> AgentConfig {
-    runinator_platform::app_data::app_data_path(CONFIG_FILE_NAME)
+    let mut config = runinator_platform::app_data::app_data_path(CONFIG_FILE_NAME)
         .ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    normalize_extra_labels(&mut config);
+    config
 }
 
 /// best-effort save; a failure here should never block the caller (e.g. starting the agent).
@@ -263,18 +283,34 @@ mod tests {
     use super::AgentConfig;
 
     #[test]
-    fn defaults_to_the_desktop_runner_label() {
-        assert_eq!(AgentConfig::default().extra_labels, ["runner=desktop"]);
+    fn defaults_have_no_editable_identity_labels() {
+        assert!(AgentConfig::default().extra_labels.is_empty());
     }
 
     #[test]
-    fn missing_labels_receive_the_desktop_runner_label() {
+    fn missing_labels_have_no_editable_identity_labels() {
         let config: AgentConfig = serde_json::from_value(serde_json::json!({
             "service_url": "http://127.0.0.1:8080/",
             "sandbox_root": ""
         }))
         .unwrap();
 
-        assert_eq!(config.extra_labels, ["runner=desktop"]);
+        assert!(config.extra_labels.is_empty());
+    }
+
+    #[test]
+    fn legacy_identity_labels_are_removed_without_touching_custom_labels() {
+        let mut config = AgentConfig {
+            extra_labels: vec![
+                "runner=creds-sync".to_string(),
+                "pool=remote".to_string(),
+                "zone=home".to_string(),
+            ],
+            ..AgentConfig::default()
+        };
+
+        super::normalize_extra_labels(&mut config);
+
+        assert_eq!(config.extra_labels, ["zone=home"]);
     }
 }

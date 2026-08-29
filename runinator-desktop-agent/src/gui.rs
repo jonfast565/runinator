@@ -15,9 +15,10 @@ use crate::logging;
 use crate::tray::{AgentTray, TrayAction, TrayColor};
 use runinator_worker::ActionOutcome;
 
-// presets offered by the label type-ahead. not exhaustive — any `key=value` text the operator types
-// is accepted; this just surfaces labels a pack in this repo is already known to route on.
-const LABEL_SUGGESTIONS: &[&str] = &["runner=desktop", "pool=desktop"];
+// presets offered by the optional-label type-ahead. `pool=desktop` and `runner=desktop` are shown
+// separately as fixed identity labels, so suggestions only cover user-configurable routing facts.
+const LABEL_SUGGESTIONS: &[&str] = &["zone=home", "capability=desktop"];
+const REQUIRED_LABELS: &[&str] = &["pool=desktop", "runner=desktop"];
 
 /// a per-frame copy of the shared agent state the GUI renders from, taken under one short lock.
 struct Snapshot {
@@ -212,6 +213,26 @@ impl DesktopAgentApp {
     /// `shared` is the same state handle the tracing bridge writes log lines into (see `main`), and
     /// `draft` the config already loaded there.
     pub fn new(cc: &eframe::CreationContext<'_>, shared: SharedHandle, draft: AgentConfig) -> Self {
+        // The window now has room for an at-a-glance dashboard, so favor comfortably readable
+        // desktop text over the compact defaults intended for small embedded panels.
+        let mut style = (*cc.egui_ctx.style()).clone();
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, egui::FontId::proportional(23.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Small, egui::FontId::proportional(14.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(15.0));
+        cc.egui_ctx.set_style(style);
+
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -377,15 +398,27 @@ impl DesktopAgentApp {
         }
     }
 
-    // a tag-input for `draft.extra_labels`: existing labels render as removable chips, a text field
-    // takes the next `key=value` (committed on Enter or by picking a type-ahead suggestion below it).
+    // a tag-input for `draft.extra_labels`: fixed desktop identity labels are visible but cannot be
+    // changed, while custom labels render as removable chips and accept the next `key=value` text.
     fn label_editor(&mut self, ui: &mut egui::Ui) {
         ui.label(
-            egui::RichText::new("Route work to this machine with a matching .runner(\"...\").")
-                .small()
-                .weak(),
+            egui::RichText::new(
+                "Required labels identify this exclusive desktop worker. Add optional labels for \
+                 more specific routing.",
+            )
+            .small()
+            .weak(),
         );
         ui.horizontal_wrapped(|ui| {
+            for label in REQUIRED_LABELS {
+                egui::Frame::default()
+                    .fill(ui.visuals().selection.bg_fill)
+                    .rounding(4.0)
+                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.label(format!("{label} (required)"));
+                    });
+            }
             let mut remove: Option<usize> = None;
             for (index, label) in self.draft.extra_labels.iter().enumerate() {
                 egui::Frame::default()
@@ -440,15 +473,17 @@ impl DesktopAgentApp {
         }
     }
 
-    // parse `label_input` as a single `key=value` pair and, if valid and not a duplicate, push it
-    // onto `draft.extra_labels` and clear the input. invalid or duplicate text is left in the field
-    // uncommitted rather than silently dropped, so the operator can see and fix it.
+    // Parse `label_input` as a single custom `key=value` pair. Identity labels are installed by the
+    // runtime and intentionally cannot be duplicated or overridden here.
     fn commit_label_input(&mut self) {
         let parsed = runinator_worker::parse_labels(Some(&self.label_input));
         let Some((key, value)) = parsed.into_iter().next() else {
             return;
         };
         let normalized = format!("{key}={value}");
+        if config::is_reserved_identity_label(&normalized) {
+            return;
+        }
         if self.draft.extra_labels.contains(&normalized) {
             return;
         }
@@ -543,25 +578,32 @@ impl DesktopAgentApp {
                     dashboard.agent_activity,
                     display_duration(dashboard.agent_activity_age)
                 ));
-                ui.label(
-                    egui::RichText::new(format!(
-                        "service {}\nbroker {}\n{} · sandbox {}",
-                        dashboard.service_url,
-                        dashboard
-                            .status
-                            .broker_connection
-                            .as_deref()
-                            .unwrap_or("broker not connected"),
-                        dashboard
+                egui::Grid::new("runtime-agent-details")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        detail_row(ui, "Service", dashboard.service_url);
+                        detail_row(
+                            ui,
+                            "Broker",
+                            dashboard
+                                .status
+                                .broker_connection
+                                .as_deref()
+                                .unwrap_or("not connected"),
+                        );
+                        let replica = dashboard
                             .status
                             .replica_id
-                            .map(|id| format!("replica {id}"))
-                            .unwrap_or_else(|| "not registered".to_string()),
-                        dashboard.status.root.as_deref().unwrap_or("not configured"),
-                    ))
-                    .small()
-                    .weak(),
-                );
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "not registered".to_string());
+                        detail_row(ui, "Replica", &replica);
+                        detail_row(
+                            ui,
+                            "Sandbox",
+                            dashboard.status.root.as_deref().unwrap_or("not configured"),
+                        );
+                    });
             });
             lifecycle.add_space(4.0);
             lifecycle.group(|ui| {
@@ -571,17 +613,21 @@ impl DesktopAgentApp {
                     dashboard.worker_activity,
                     display_duration(dashboard.worker_activity_age)
                 ));
-                ui.label(
-                    egui::RichText::new(format!(
-                        "exclusive pool=desktop · capacity {} · {} available",
-                        dashboard.capacity,
-                        dashboard
-                            .capacity
-                            .saturating_sub(dashboard.metrics.in_flight as usize)
-                    ))
-                    .small()
-                    .weak(),
-                );
+                egui::Grid::new("runtime-worker-details")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        detail_row(ui, "Pool", "desktop (exclusive)");
+                        detail_row(ui, "Action capacity", &dashboard.capacity.to_string());
+                        detail_row(
+                            ui,
+                            "Available slots",
+                            &dashboard
+                                .capacity
+                                .saturating_sub(dashboard.metrics.in_flight as usize)
+                                .to_string(),
+                        );
+                    });
                 Self::activity_panel(ui, dashboard.metrics);
             });
 
@@ -1033,6 +1079,12 @@ impl DesktopAgentApp {
     }
 }
 
+fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.label(egui::RichText::new(label).strong());
+    ui.label(value);
+    ui.end_row();
+}
+
 fn resource_chart(
     ui: &mut egui::Ui,
     title: &str,
@@ -1156,7 +1208,7 @@ impl eframe::App for DesktopAgentApp {
         // ordering) so it stays put while the config/status area above it scrolls.
         egui::TopBottomPanel::bottom("log-panel")
             .resizable(true)
-            .default_height(200.0)
+            .default_height(280.0)
             .show(ctx, |ui| {
                 self.log_panel(ui);
             });

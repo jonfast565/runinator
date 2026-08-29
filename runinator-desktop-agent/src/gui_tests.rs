@@ -109,3 +109,10 @@ fn dashboard_duration_and_byte_values_stay_compact() {
     );
     assert_eq!(format_bytes(1_536.0), "1.5 KB");
 }
+
+#[test]
+fn required_identity_labels_are_not_editable_configuration() {
+    assert!(config::is_reserved_identity_label("runner=creds-sync"));
+    assert!(config::is_reserved_identity_label("pool=remote"));
+    assert!(!config::is_reserved_identity_label("zone=home"));
+}
