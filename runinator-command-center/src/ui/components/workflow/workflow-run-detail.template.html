@@ -1,24 +1,8 @@
 <div class="inspector-section">
-  <div class="detail-header">
-    <h2 class="run-detail-heading">
+  <div class="detail-header run-detail-header">
+    <div class="run-detail-heading">
       <template v-if="!renaming">
-        <span>{{ runHeadingLabel }}</span>
-        <button
-          v-if="!managedBindingId"
-          class="btn btn-danger btn-sm"
-          @click="deleteRun"
-          title="Permanently delete run"
-        >
-          Delete
-        </button>
-        <button
-          v-if="workflows.workflowRunDetail"
-          class="btn btn-icon btn-ghost btn-sm"
-          title="Rename run"
-          @click="startRename"
-        >
-          <Icon name="edit" :size="14" />
-        </button>
+        <h2>{{ runHeadingLabel }}</h2>
       </template>
       <template v-else>
         <input
@@ -31,8 +15,32 @@
           @blur="commitRename"
         />
       </template>
-    </h2>
-    <StatusBadge :status="workflows.workflowRunDetail?.run.status" />
+      <div v-if="workflows.workflowRunDetail" class="run-detail-guid">
+        <span>Workflow run GUID</span>
+        <code :title="workflows.workflowRunDetail.run.id"
+          >{{ workflows.workflowRunDetail.run.id }}</code
+        >
+      </div>
+    </div>
+    <div class="run-detail-actions">
+      <StatusBadge :status="workflows.workflowRunDetail?.run.status" />
+      <button
+        v-if="!managedBindingId"
+        class="btn btn-danger btn-sm"
+        @click="deleteRun"
+        title="Permanently delete run"
+      >
+        Delete
+      </button>
+      <button
+        v-if="workflows.workflowRunDetail"
+        class="btn btn-icon btn-ghost btn-sm"
+        title="Rename run"
+        @click="startRename"
+      >
+        <Icon name="edit" :size="14" />
+      </button>
+    </div>
   </div>
 
   <div v-if="workflows.workflowRunDetail" class="workflow-run-meta">
@@ -42,7 +50,7 @@
     </div>
   </div>
 
-  <div v-if="managedBindingId" class="run-summary-card">
+  <div v-if="managedBindingId" class="run-detail-section run-summary-card">
     <div class="summary-row">
       <span class="summary-label">Managed by orchestration</span>
       <span>{{ managedBindingId }}</span>
@@ -61,11 +69,11 @@
     </div>
     <div v-if="managedWorkspaces.length" class="summary-row">
       <span class="summary-label">Workspace affinity</span>
-      <span>{{ managedWorkspaces.map((workspace) => `${workspace.scope}:${workspace.status}`).join(', ') }}</span>
+      <span>{{ managedWorkspaces.map((workspace) => `${workspace.scope}:${workspace.status}`).join(", ") }}</span>
     </div>
     <div v-if="managedOperations.length" class="summary-row">
       <span class="summary-label">External operations</span>
-      <span>{{ managedOperations.map((operation) => `${operation.provider}.${operation.action}:${operation.status}`).join(', ') }}</span>
+      <span>{{ managedOperations.map((operation) => `${operation.provider}.${operation.action}:${operation.status}`).join(", ") }}</span>
     </div>
     <div class="summary-row">
       <span class="text-xs text-fg-muted"
@@ -118,7 +126,10 @@
     </div>
   </div>
 
-  <div v-if="isTerminalRun && workflows.workflowRunDetail" class="run-summary-card">
+  <div
+    v-if="isTerminalRun && workflows.workflowRunDetail"
+    class="run-detail-section run-summary-card"
+  >
     <div class="summary-row">
       <span class="summary-label">Final status</span>
       <StatusBadge :status="workflows.workflowRunDetail.run.status" />
@@ -151,9 +162,12 @@
     </div>
   </div>
 
-  <RunControlBar v-if="!managedBindingId && !isTerminalRun && workflows.workflowRunDetail" />
+  <RunControlBar
+    v-if="!managedBindingId && !isTerminalRun && workflows.workflowRunDetail"
+    class="run-detail-section"
+  />
 
-  <div v-if="debugState?.enabled && !isTerminalRun" class="debug-panel">
+  <div v-if="debugState?.enabled && !isTerminalRun" class="run-detail-section debug-panel">
     <div class="debug-panel-header">
       <div>
         <h3>Debugger</h3>
@@ -188,7 +202,7 @@
     </details>
   </div>
 
-  <details v-if="hasNodeTiming" class="run-gantt-group" open>
+  <details v-if="hasNodeTiming" class="run-detail-section run-gantt-group" open>
     <summary>Timeline</summary>
     <RunGantt
       class="run-detail-gantt"
@@ -198,28 +212,30 @@
     />
   </details>
 
-  <h3 class="run-detail-section-title">Steps</h3>
-  <RunTimeline
-    class="run-detail-timeline"
-    :detail="workflows.workflowRunDetail"
-    :selected-node-id="workflows.selectedWorkflowRunNodeId"
-    auto-expand-failed
-    filterable
-    @select="workflows.selectWorkflowRunNode"
-  >
-    <template #node-actions="{ node }">
-      <RunNodeActions
-        v-if="workflows.workflowRunDetail"
-        :node="node"
-        :run="workflows.workflowRunDetail.run"
-        show-editor-actions
-        :runtime-actions="!managedBindingId"
-        @action="onNodeAction"
-      />
-    </template>
-  </RunTimeline>
+  <section class="run-detail-section">
+    <h3 class="run-detail-section-title">Steps</h3>
+    <RunTimeline
+      class="run-detail-timeline"
+      :detail="workflows.workflowRunDetail"
+      :selected-node-id="workflows.selectedWorkflowRunNodeId"
+      auto-expand-failed
+      filterable
+      @select="workflows.selectWorkflowRunNode"
+    >
+      <template #node-actions="{ node }">
+        <RunNodeActions
+          v-if="workflows.workflowRunDetail"
+          :node="node"
+          :run="workflows.workflowRunDetail.run"
+          show-editor-actions
+          :runtime-actions="!managedBindingId"
+          @action="onNodeAction"
+        />
+      </template>
+    </RunTimeline>
+  </section>
 
-  <details v-if="flatSteps.length" class="flat-steps-group">
+  <details v-if="flatSteps.length" class="run-detail-section flat-steps-group">
     <summary>Flat step log (debug) · {{ flatSteps.length }} step(s)</summary>
     <div class="my-1 flex justify-end">
       <HelpBubble
@@ -267,7 +283,7 @@
     </DataTable>
   </details>
 
-  <details v-if="runTransitions.length" class="transitions-group">
+  <details v-if="runTransitions.length" class="run-detail-section transitions-group">
     <summary>Transition path · {{ runTransitions.length }} edge(s)</summary>
     <div class="my-1 flex justify-end">
       <HelpBubble
@@ -292,7 +308,17 @@
     </ol>
   </details>
 
-  <div v-if="workflows.selectedWorkflowRunNodeId" class="node-logs-section">
+  <div v-if="workflows.selectedWorkflowRunNodeId" class="run-detail-section node-logs-section">
+    <div v-if="selectedNode" class="run-step-identity">
+      <div class="run-step-identity-item">
+        <span class="run-step-identity-label">Run number</span>
+        <strong>#{{ selectedStepNumber ?? "—" }}</strong>
+      </div>
+      <div class="run-step-identity-item run-step-guid">
+        <span class="run-step-identity-label">Run GUID</span>
+        <code :title="selectedNode.id">{{ selectedNode.id }}</code>
+      </div>
+    </div>
     <h3 class="run-detail-section-title">Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
     <div v-if="selectedNodeOutput && resultFields.length" class="result-fields">
       <div v-for="field in resultFields" :key="field.name" class="result-field-row">

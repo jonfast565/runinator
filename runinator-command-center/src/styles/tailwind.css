@@ -2196,6 +2196,62 @@
     flex: 0 0 auto;
     min-height: 0;
   }
+  .run-detail-section {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 16px;
+    padding-top: 16px;
+  }
+  .run-detail-section.run-summary-card,
+  .run-detail-section.debug-panel,
+  .run-detail-section.run-gantt-group,
+  .run-detail-section.flat-steps-group,
+  .run-detail-section.transitions-group {
+    margin-bottom: 0;
+  }
+  .run-step-identity {
+    display: grid;
+    grid-template-columns: minmax(128px, 0.35fr) minmax(0, 1fr);
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--border);
+    margin-bottom: 14px;
+  }
+  .run-step-identity-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: var(--surface-subtle);
+  }
+  .run-step-identity-label {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .run-step-identity-item strong {
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+  }
+  .run-step-guid {
+    background: var(--surface);
+  }
+  .run-step-guid code {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 640px) {
+    .run-step-identity {
+      grid-template-columns: 1fr;
+    }
+  }
   .debug-panel {
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -2296,9 +2352,51 @@
   }
 
   .run-detail-heading {
-    display: inline-flex;
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+  }
+  .run-detail-heading h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+  .run-detail-guid {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    min-width: 0;
+  }
+  .run-detail-guid span {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .run-detail-guid code {
+    color: var(--text-subtle);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .run-detail-actions {
+    display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 640px) {
+    .run-detail-actions {
+      justify-content: flex-start;
+      width: 100%;
+    }
   }
 
   .rename-input {

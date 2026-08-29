@@ -47,14 +47,24 @@ const auth = useAuthStore();
 const isPlatformAdmin = computed(() => auth.user?.platform_role === "admin");
 const managedOverrideReason = ref("");
 const managedOverrideBusy = ref(false);
-interface ManagedWorkspaceSummary { scope: string; status: string }
-interface ManagedOperationSummary { workflow_run_id?: string | null; provider: string; action: string; status: string }
+interface ManagedWorkspaceSummary {
+  scope: string;
+  status: string;
+}
+interface ManagedOperationSummary {
+  workflow_run_id?: string | null;
+  provider: string;
+  action: string;
+  status: string;
+}
 const orchestrationRuntime = orchestrations as unknown as {
   workspaces: ManagedWorkspaceSummary[];
   operations: ManagedOperationSummary[];
 };
 
-const parentPipelineRunId = computed(() => workflows.workflowRunDetail?.run.pipeline_run_id ?? null);
+const parentPipelineRunId = computed(
+  () => workflows.workflowRunDetail?.run.pipeline_run_id ?? null,
+);
 const parentPipelineRun = computed(() =>
   pipelineRuns.detail?.run.id === parentPipelineRunId.value ? pipelineRuns.detail.run : null,
 );
@@ -74,9 +84,7 @@ const managedBinding = computed<{
     : null;
 });
 const managedWorkspaces = computed<ManagedWorkspaceSummary[]>(() =>
-  orchestrations.selectedId === managedBindingId.value
-    ? orchestrationRuntime.workspaces
-    : [],
+  orchestrations.selectedId === managedBindingId.value ? orchestrationRuntime.workspaces : [],
 );
 const managedOperations = computed<ManagedOperationSummary[]>(() => {
   const runId = workflows.workflowRunDetail?.run.id;
@@ -87,16 +95,27 @@ const managedOperations = computed<ManagedOperationSummary[]>(() => {
 });
 
 async function openOrchestration(): Promise<void> {
-  if (!managedBindingId.value) {return;}
+  if (!managedBindingId.value) {
+    return;
+  }
+
   await orchestrations.select(managedBindingId.value);
   app.activeTab = "Orchestrations";
 }
 
-async function forceManagedControl(action: "cancel" | "pause" | "resume" | "replay"): Promise<void> {
+async function forceManagedControl(
+  action: "cancel" | "pause" | "resume" | "replay",
+): Promise<void> {
   const reason = managedOverrideReason.value.trim();
 
-  if (!managedBindingId.value || !reason || !isPlatformAdmin.value || managedOverrideBusy.value) {return;}
-  if (!window.confirm(`Force ${action} this managed workflow run outside orchestration control?`)) {return;}
+  if (!managedBindingId.value || !reason || !isPlatformAdmin.value || managedOverrideBusy.value) {
+    return;
+  }
+
+  if (!window.confirm(`Force ${action} this managed workflow run outside orchestration control?`)) {
+    return;
+  }
+
   managedOverrideBusy.value = true;
 
   try {
@@ -112,19 +131,27 @@ async function forceManagedControl(action: "cancel" | "pause" | "resume" | "repl
   }
 }
 
-watch(parentPipelineRunId, (pipelineRunId) => {
-  if (pipelineRunId) {
-    void pipelineRuns.selectRun(pipelineRunId);
-  }
-}, { immediate: true });
+watch(
+  parentPipelineRunId,
+  (pipelineRunId) => {
+    if (pipelineRunId) {
+      void pipelineRuns.selectRun(pipelineRunId);
+    }
+  },
+  { immediate: true },
+);
 
-watch(managedBindingId, (bindingId) => {
-  managedOverrideReason.value = "";
+watch(
+  managedBindingId,
+  (bindingId) => {
+    managedOverrideReason.value = "";
 
-  if (bindingId) {
-    void orchestrations.select(bindingId);
-  }
-}, { immediate: true });
+    if (bindingId) {
+      void orchestrations.select(bindingId);
+    }
+  },
+  { immediate: true },
+);
 
 const renaming = ref(false);
 const renameDraft = ref("");
@@ -138,7 +165,7 @@ const runHeadingLabel = computed(() => {
   }
 
   const trimmed = run.name?.trim();
-  return trimmed ? `${trimmed} (#${run.id})` : `Workflow Run #${run.id}`;
+  return trimmed ?? "Workflow Run";
 });
 
 async function startRename() {
@@ -254,11 +281,27 @@ function openProviderForNode(nodeId: string) {
   app.activeTab = "Providers";
 }
 
-const selectedNodeOutput = computed<Record<string, unknown> | null>(() => {
-  const node = workflows.workflowRunDetail?.nodes.find(
-    (item) => item.node_id === workflows.selectedWorkflowRunNodeId,
+const selectedNode = computed<WorkflowNodeRun | null>(() => {
+  return (
+    workflows.workflowRunDetail?.nodes.find(
+      (item) => item.node_id === workflows.selectedWorkflowRunNodeId,
+    ) ?? null
   );
-  const output = node?.output_json;
+});
+
+const selectedStepNumber = computed<number | null>(() => {
+  const selected = selectedNode.value;
+
+  if (!selected) {
+    return null;
+  }
+
+  const index = flatSteps.value.findIndex((node) => node.id === selected.id);
+  return index >= 0 ? index + 1 : null;
+});
+
+const selectedNodeOutput = computed<Record<string, unknown> | null>(() => {
+  const output = selectedNode.value?.output_json;
 
   if (output && typeof output === "object" && !Array.isArray(output)) {
     return output;
