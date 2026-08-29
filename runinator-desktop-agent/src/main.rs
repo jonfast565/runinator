@@ -93,7 +93,8 @@ fn run_gui(draft: AgentConfig) -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 560.0])
+            .with_inner_size([960.0, 720.0])
+            .with_min_inner_size([720.0, 520.0])
             .with_visible(true),
         ..Default::default()
     };
