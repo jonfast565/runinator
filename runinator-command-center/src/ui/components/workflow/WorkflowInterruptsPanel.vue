@@ -13,21 +13,6 @@
       </div>
     </header>
 
-    <section v-if="issues.length" class="detail-section validation-section">
-      <h3>Interrupt validation</h3>
-      <div class="detail-rows">
-        <div
-          v-for="issue in issues"
-          :key="`${issue.severity}-${issue.nodeId}-${issue.message}`"
-          class="detail-row"
-          :class="`issue-${issue.severity}`"
-        >
-          <span>{{ issue.severity }}</span>
-          <strong>{{ issue.message }}</strong>
-        </div>
-      </div>
-    </section>
-
     <p v-if="!catalogMetadata.loaded" class="hint catalog-loading-hint">
       <LoadingSpinner size="sm" label="Loading node types" />
       Loading node types…
@@ -38,7 +23,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useCatalogMetadataStore } from "../../adapters/pinia/catalogMetadata";
 import HeaderInterruptsSection from "./HeaderInterruptsSection.vue";
@@ -47,13 +31,4 @@ import LoadingSpinner from "../shared/LoadingSpinner.vue";
 
 const workflows = useWorkflowsStore();
 const catalogMetadata = useCatalogMetadataStore();
-
-// re-derive whenever the draft or the graph changes: a region's validity depends on nodes this
-// panel does not own, so a canvas edit can make a declaration valid or broken.
-const issues = computed(() => {
-  void workflows.headerDraft;
-  void workflows.workflowLayoutVersion;
-  void workflows.workflowJson;
-  return workflows.getInterruptIssues();
-});
 </script>
