@@ -763,6 +763,12 @@
   gap: 14px;
 }
 
+.step-detail-titles .interrupt-workflow-name {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
 .interrupt-manager > * {
   min-width: 0;
 }

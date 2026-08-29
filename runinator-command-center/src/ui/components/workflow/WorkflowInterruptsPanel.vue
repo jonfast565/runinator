@@ -4,7 +4,9 @@
       <div class="step-detail-titles">
         <span class="node-kind">interrupts</span>
         <div class="flex items-center gap-1">
-          <h2>{{ workflows.workflowDraft.name || "Untitled workflow" }}</h2>
+          <h2 class="interrupt-workflow-name">
+            {{ workflows.workflowDraft.name || "Untitled workflow" }}
+          </h2>
           <HelpBubble
             text="An interrupt suspends one thread of control, runs a handler region beside it, and hands control back at a resume. Adding a handler creates the complete region and opens its first editable step; extend that mini-flow on the canvas like any other sequence."
             label="About workflow interrupts"
