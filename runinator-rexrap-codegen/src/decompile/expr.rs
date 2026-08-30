@@ -355,6 +355,18 @@ impl Decompiler<'_> {
                 .and_then(Value::as_str)
                 .ok_or_else(|| RexRapError::Decompile("invalid let ref".into()))?;
             let rest: Vec<Value> = segs.cloned().collect();
+            if let Some((node_id, slot)) = head.rsplit_once('.')
+                && let Some(vars) = self.control_vars.get(node_id)
+            {
+                if slot == "item" {
+                    return Ok(self.append_path(&vars.item, &rest));
+                }
+                if slot == "index"
+                    && let Some(index) = vars.index.as_deref()
+                {
+                    return Ok(self.append_path(index, &rest));
+                }
+            }
             return Ok(self.append_path(head, &rest));
         }
         if let (Some(node), Some(output)) = (object.get("node"), object.get("output")) {

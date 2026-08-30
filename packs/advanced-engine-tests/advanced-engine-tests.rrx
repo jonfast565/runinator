@@ -1,0 +1,216 @@
+language rexrap-1
+
+package {
+  {
+    "item_type": "rexrap_pack",
+    "name": "Advanced Engine Test Suite",
+    "version": 1
+  }
+}
+
+namespace runinator.tests.advanced {
+
+workflow "Advanced VM Fanout" v1 {
+    params {
+        items: string[]
+        lock_name: string
+    }
+    key vm_fanout
+
+    do {
+        map item in params.items concurrency 2 {
+            console.run(command: "printf 'map-%s\\n' '" ++ string(item) ++ "'")
+        }
+
+        parallel {
+            branch "timer" {
+                @lock
+                @deadline(5s)
+                wait 1s
+            }
+            branch "compute" {
+                compute {
+                    return "parallel-compute"
+                }
+            }
+        } join ["timer", "compute"] all
+
+        race winner first_success {
+            branch "fast" {
+                compute {
+                    return "fast"
+                }
+            }
+            branch "slow" {
+                wait 2s
+                compute {
+                    return "slow"
+                }
+            }
+        }
+
+        mutex "advanced-engine-tests" hold 10s {
+            let protected = console.run(command: "printf 'mutex-protected\\n'")
+        }
+
+        compute {
+            return {
+                item_count: std.collections.len(params.items),
+                lock: params.lock_name
+            }
+        }
+    }
+}
+
+workflow "Advanced Retry Recovery" v1 {
+    params { retry_marker: string }
+    key retry_recovery
+
+    do {
+        @timeout(10s)
+        @retry(3, backoff: 1s, max: 2s, jitter: false, on: failure)
+        @idempotent(key: params.retry_marker)
+        console.run(
+            command: "if [ ! -f '" ++ params.retry_marker ++ "' ]; then : > '" ++ params.retry_marker ++ "'; exit 17; fi; printf 'retry-recovered\\n'"
+        )
+
+        compute {
+            return { recovered: true }
+        }
+    }
+}
+
+workflow "Advanced Saga Probe" v1 {
+    params { saga_log: string }
+    key saga_probe
+
+    do {
+        try {
+            let forward = console.run(
+                command: "printf 'forward\\n' >> '" ++ params.saga_log ++ "'"
+            )
+                compensate @timeout(10s)
+                    console.run(
+                        command: "printf 'compensated\\n' >> '" ++ params.saga_log ++ "'"
+                    )
+
+            console.run(command: "exit 23")
+        } catch {
+            console.run(
+                command: "grep -q '^compensated$' '" ++ params.saga_log ++ "'"
+            )
+        } finally {
+            console.run(
+                command: "printf 'finally\\n' >> '" ++ params.saga_log ++ "'"
+            )
+        }
+
+        compute {
+            return { saga: "completed" }
+        }
+    }
+}
+
+workflow "Pipeline Left Producer" v1 {
+    params {
+        value: int
+        expected: int
+    }
+    key pipeline_left
+
+    do {
+        wait 1s
+        compute {
+            return { side: "left", value: params.value * 2 }
+        }
+    }
+}
+
+workflow "Pipeline Right Producer" v1 {
+    params {
+        value: int
+        expected: int
+    }
+    key pipeline_right
+
+    do {
+        compute {
+            return { side: "right", value: params.value * 3 }
+        }
+    }
+}
+
+workflow "Pipeline Fanin Verifier" v1 {
+    params {
+        value: int
+        left: int
+        right: int
+        expected: int
+    }
+    key pipeline_fanin
+
+    do {
+        assert {
+            "mapped fan-in values": params.left + params.right == params.expected
+        }
+        compute {
+            return { total: params.left + params.right, verified: true }
+        }
+    }
+}
+
+workflow "Pipeline Expected Failure" v1 {
+    params { cleanup_marker: string }
+    key pipeline_failure
+
+    do {
+        console.run(command: "exit 31")
+    }
+}
+
+workflow "Pipeline Failure Cleanup" v1 {
+    params { cleanup_marker: string }
+    key pipeline_cleanup
+
+    do {
+        console.run(
+            command: "printf 'cleanup-after-failure\\n' > '" ++ params.cleanup_marker ++ "'"
+        )
+        compute {
+            return { cleaned: true }
+        }
+    }
+}
+
+}
+
+pipeline "Advanced Mapped Fanin" {
+    key mapped_fanin
+    namespace runinator.tests.advanced
+    description "Runs two entry members concurrently and verifies an all-join parameter mapping."
+    concurrency 2 on_conflict queue
+
+    workflow "runinator.tests.advanced.pipeline_left"
+    workflow "runinator.tests.advanced.pipeline_right"
+    workflow "runinator.tests.advanced.pipeline_fanin"
+
+    "runinator.tests.advanced.pipeline_left" -> "runinator.tests.advanced.pipeline_fanin" on success
+    "runinator.tests.advanced.pipeline_right" -> "runinator.tests.advanced.pipeline_fanin" on success
+    join "runinator.tests.advanced.pipeline_fanin" all with {
+        left: members["runinator.tests.advanced.pipeline_left"].result.value,
+        right: members["runinator.tests.advanced.pipeline_right"].result.value,
+        expected: params.expected
+    }
+}
+
+pipeline "Advanced Failure Continuation" {
+    key failure_continuation
+    namespace runinator.tests.advanced
+    description "Verifies silently-continued member failure and complete-edge cleanup."
+    on_failure continue
+
+    workflow "runinator.tests.advanced.pipeline_failure" on_failure silently_continue
+    workflow "runinator.tests.advanced.pipeline_cleanup"
+
+    "runinator.tests.advanced.pipeline_failure" -> "runinator.tests.advanced.pipeline_cleanup" on complete
+}

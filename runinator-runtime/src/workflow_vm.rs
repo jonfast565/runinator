@@ -290,13 +290,7 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
             WorkflowInstruction::Branch { branches, default } => {
                 // Conditions are evaluated against the continuation's frozen local context. A
                 // richer expression failure is a deterministic VM failure, never a host callback.
-                let context = Value::Object(
-                    continuation
-                        .locals
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect(),
-                );
+                let context = local_context(&continuation);
                 let target = branches.iter().find_map(|branch| {
                     runinator_compute::evaluate_workflow_condition(&branch.condition, &context)
                         .ok()
@@ -311,13 +305,7 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
             WorkflowInstruction::Evaluate {
                 module: invocation_module,
             } => {
-                let context = Value::Object(
-                    continuation
-                        .locals
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect(),
-                );
+                let context = local_context(&continuation);
                 match runinator_compute::evaluate_module_pure(
                     invocation_module,
                     &context,
@@ -1324,13 +1312,16 @@ fn stable_id(namespace: uuid::Uuid, name: &str) -> uuid::Uuid {
 }
 
 fn local_context(continuation: &WorkflowContinuation) -> Value {
-    Value::Object(
-        continuation
-            .locals
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-    )
+    let locals = continuation
+        .locals
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<runinator_models::value::Map>();
+    let mut context = locals.clone();
+    // Compute bytecode reads `let` references with `LoadLocal`. The invocation VM seeds its entry
+    // frame from this namespace so loop/map body values survive when effect arguments are frozen.
+    context.insert("let".into(), Value::Object(locals));
+    Value::Object(context)
 }
 
 /// Evaluate selectors that were deliberately kept explicit in bytecode so their ordering and
@@ -1812,6 +1803,43 @@ mod tests {
         };
         assert_eq!(input, runinator_models::json!({ "customer": "acme" }));
         assert_eq!(idempotency_key, Some(Value::String("request-7".into())));
+    }
+
+    #[test]
+    fn freezes_loop_and_map_locals_in_action_inputs() {
+        let module = WorkflowModule::new(vec![WorkflowInstruction::Effect {
+            request: WorkflowEffectRequest::Action {
+                provider: "test".into(),
+                function: "run".into(),
+                input: runinator_models::json!({
+                    "item": { "$ref": { "let": ["map_7.item"] } },
+                    "rendered": { "$to_string": { "$ref": { "let": ["map_7.item"] } } }
+                }),
+                timeout_seconds: Some(10),
+                retry: Default::default(),
+                tags: Vec::new(),
+                required_labels: Default::default(),
+                workspace_affinity: None,
+                idempotency_key: None,
+                function_binding: None,
+            },
+        }]);
+        let mut continuation = continuation();
+        continuation
+            .locals
+            .insert("map_7.item".into(), Value::String("alpha".into()));
+
+        let result = step(&module, continuation);
+        let WorkflowVmStep::Yield { request, .. } = result else {
+            panic!("action must yield, got {result:?}");
+        };
+        let WorkflowEffectRequest::Action { input, .. } = request else {
+            panic!("expected action request");
+        };
+        assert_eq!(
+            input,
+            runinator_models::json!({ "item": "alpha", "rendered": "alpha" })
+        );
     }
 
     #[test]

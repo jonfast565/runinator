@@ -8,6 +8,7 @@ use std::{
 
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
+use runinator_models::pipelines::{PipelineMemberAttemptStatus, PipelineRunDetail};
 use runinator_models::value::Value;
 use runinator_models::workflow_vm::{WorkflowEffect, WorkflowEffectOutput, WorkflowEffectStatus};
 use runinator_models::workflows::{WorkflowRun, WorkflowStatus};
@@ -109,6 +110,106 @@ async fn durable_agent_result_outbox_smoke() -> E2eResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e advanced_engine_pack_exercises_runtime_and_pipelines -- --ignored"]
+async fn advanced_engine_pack_exercises_runtime_and_pipelines() -> E2eResult<()> {
+    if std::env::var("RUNINATOR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("set RUNINATOR_E2E=1 to run local-stack e2e tests");
+        return Ok(());
+    }
+
+    let workspace = workspace_dir();
+    build_service_binaries(&workspace)?;
+    let harness = StackHarness::start(&workspace, Ports::allocate()?).await?;
+    let api = harness.api_client()?;
+    harness.import_workflows(&workspace.join("packs/advanced-engine-tests"))?;
+
+    let retry_marker = harness.run_dir.join("advanced-retry.marker");
+    let retry = api
+        .fetch_workflow_by_name("Advanced Retry Recovery")
+        .await?;
+    let (retry_run, retry_effects) = run_workflow_by_id(
+        &api,
+        retry.id.ok_or("advanced retry workflow has no id")?,
+        json!({
+            "retry_marker": retry_marker.to_string_lossy()
+        }),
+    )
+    .await?;
+    assert_eq!(retry_run.status, WorkflowStatus::Succeeded);
+    assert!(retry_marker.exists(), "first retry attempt did not run");
+    assert!(
+        retry_effects
+            .iter()
+            .any(|effect| effect.node_id.as_deref() == Some("action_1")
+                && effect.status == WorkflowEffectStatus::Succeeded),
+        "retried action never settled successfully"
+    );
+
+    let pipelines = api.fetch_pipelines().await?;
+    let mapped = pipelines
+        .iter()
+        .find(|pipeline| {
+            pipeline.artifact_path().qualified() == "runinator.tests.advanced.mapped_fanin"
+        })
+        .ok_or("advanced mapped fan-in pipeline was not imported")?;
+    let mapped_run = api
+        .create_pipeline_run(
+            mapped.id.ok_or("mapped fan-in pipeline has no id")?,
+            json!({ "value": 5, "expected": 25 }),
+        )
+        .await?;
+    let mapped_detail = poll_pipeline(&api, mapped_run.id).await?;
+    assert_eq!(mapped_detail.run.status, WorkflowStatus::Succeeded);
+    assert_eq!(mapped_detail.attempts.len(), 3);
+    let fanin_attempt = mapped_detail
+        .attempts
+        .iter()
+        .find(|attempt| attempt.member_key == "runinator.tests.advanced.pipeline_fanin")
+        .ok_or("mapped fan-in verifier did not run")?;
+    assert_eq!(fanin_attempt.status, PipelineMemberAttemptStatus::Succeeded);
+    assert_eq!(fanin_attempt.parameters.get("left"), Some(&Value::from(10)));
+    assert_eq!(
+        fanin_attempt.parameters.get("right"),
+        Some(&Value::from(15))
+    );
+    assert_eq!(
+        fanin_attempt.parameters.get("expected"),
+        Some(&Value::from(25))
+    );
+
+    let cleanup_marker = harness.run_dir.join("advanced-pipeline-cleanup.marker");
+    let failure_continuation = pipelines
+        .iter()
+        .find(|pipeline| {
+            pipeline.artifact_path().qualified() == "runinator.tests.advanced.failure_continuation"
+        })
+        .ok_or("advanced failure-continuation pipeline was not imported")?;
+    let failure_run = api
+        .create_pipeline_run(
+            failure_continuation
+                .id
+                .ok_or("failure-continuation pipeline has no id")?,
+            json!({ "cleanup_marker": cleanup_marker.to_string_lossy() }),
+        )
+        .await?;
+    let failure_detail = poll_pipeline(&api, failure_run.id).await?;
+    assert_eq!(failure_detail.run.status, WorkflowStatus::Succeeded);
+    assert!(failure_detail.attempts.iter().any(|attempt| {
+        attempt.member_key == "runinator.tests.advanced.pipeline_failure"
+            && attempt.status == PipelineMemberAttemptStatus::Failed
+    }));
+    assert!(failure_detail.attempts.iter().any(|attempt| {
+        attempt.member_key == "runinator.tests.advanced.pipeline_cleanup"
+            && attempt.status == PipelineMemberAttemptStatus::Succeeded
+    }));
+    assert_eq!(
+        fs::read_to_string(cleanup_marker)?,
+        "cleanup-after-failure\n"
+    );
+    Ok(())
+}
+
 /// Wait until the effect compiled from `node_id` reaches `expected`.
 ///
 /// The node is found through the run's frozen module source map, which is how a graph node id maps
@@ -160,6 +261,17 @@ async fn poll_workflow(
         sleep(Duration::from_secs(2)).await;
     }
     Err(format!("workflow run {workflow_run_id} did not finish in time").into())
+}
+
+async fn poll_pipeline(api: &ApiClient, pipeline_run_id: Uuid) -> E2eResult<PipelineRunDetail> {
+    for _ in 0..90 {
+        let detail = api.fetch_pipeline_run(pipeline_run_id).await?;
+        if detail.run.status.is_terminal() {
+            return Ok(detail);
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
+    Err(format!("pipeline run {pipeline_run_id} did not finish in time").into())
 }
 
 /// The newest effect the given graph node produced. `node_id` is the server-side source-map

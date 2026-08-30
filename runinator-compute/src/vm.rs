@@ -85,7 +85,16 @@ pub fn start(module: &InvocationModule, env: &VmEnv<'_>) -> InvocationStep {
             ),
         };
     }
-    let continuation = InvocationContinuation::start();
+    let mut continuation = InvocationContinuation::start();
+    if let Some(locals) = env.context.get("let").and_then(Value::as_object)
+        && let Some(frame) = continuation.frames.last_mut()
+    {
+        frame.locals.extend(
+            locals
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
+    }
     run(module, continuation, env)
 }
 

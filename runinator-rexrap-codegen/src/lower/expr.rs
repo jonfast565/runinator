@@ -266,11 +266,19 @@ impl Lowerer {
             return Ok(single_key("$ref", Value::Object(inner)));
         }
 
-        // loop/map variables remap to the controlling node's `item` output.
+        // Loop/map variables live in continuation-local slots (`<control-id>.item` / `.index`).
+        // They are not graph-node outputs: forked map children and loop iterations populate these
+        // locals directly before entering the body.
         if let Some(binding) = self.scope.iter().rev().find(|b| b.name == head) {
-            let mut path = binding.base.clone();
+            let Some((PathSeg::Key(slot), tail)) = binding.base.split_first() else {
+                return Err(RexRapError::lower(
+                    "control binding must start with an item or index slot",
+                ));
+            };
+            let mut path = vec![PathSeg::Key(format!("{}.{}", binding.node_id, slot))];
+            path.extend_from_slice(tail);
             path.extend_from_slice(rest);
-            return Ok(node_ref_expr(&binding.node_id, &path));
+            return Ok(scoped_ref("let", &path));
         }
 
         match head.as_str() {

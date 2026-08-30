@@ -105,7 +105,19 @@ fn map_keeps_its_authored_variable_name() {
             }
         }
     "#;
-    let decompiled = decompile(&compile(src)).expect("decompile");
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let action = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["kind"] == "action")
+        .expect("map body action");
+    assert_eq!(
+        action["action"]["configuration"]["command"]["$ref"]["let"][0], "map_1.item",
+        "map variables must read the continuation-local slot populated by the VM"
+    );
+    let decompiled = decompile(&definition).expect("decompile");
     assert!(decompiled.contains("map ticket in params.tickets"));
     assert_round_trips(src);
 }

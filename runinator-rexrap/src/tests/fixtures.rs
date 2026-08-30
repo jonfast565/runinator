@@ -190,14 +190,14 @@ fn compiles_and_validates_sdlc() {
         .expect("subflow node");
     let run_name = subflow.pointer("/subflow/run_name/$concat").unwrap();
     assert!(run_name.as_array().is_some());
-    let ticket_ref = run_name.pointer("/1/$ref/node").and_then(|v| v.as_str());
-    assert_eq!(
-        ticket_ref,
-        subflow
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|_| ticket_ref.unwrap())
-    );
+    let ticket_ref = run_name
+        .pointer("/1/$ref/let/0")
+        .and_then(|value| value.as_str());
+    let loop_id = loop_node
+        .get("id")
+        .and_then(|value| value.as_str())
+        .unwrap();
+    assert_eq!(ticket_ref, Some(format!("{loop_id}.item").as_str()));
 }
 #[test]
 fn compiles_control_flow() {
