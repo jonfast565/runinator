@@ -791,6 +791,162 @@
   min-width: 0;
 }
 
+.interrupt-request-explainer {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  color: var(--accent-text);
+}
+
+.interrupt-request-explainer > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.interrupt-request-explainer strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.interrupt-request-explainer span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.interrupt-request-section {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.interrupt-request-section legend {
+  padding: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.interrupt-request-section > p,
+.interrupt-request-payload > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.interrupt-request-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.modal label.interrupt-request-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  cursor: pointer;
+}
+
+.modal label.interrupt-request-option:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.modal label.interrupt-request-option.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+
+.interrupt-request-option > input {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.interrupt-request-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.interrupt-request-option strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.interrupt-request-option span span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.interrupt-request-option code {
+  color: var(--text-faint);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.interrupt-request-payload {
+  display: grid;
+  gap: 7px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.interrupt-request-payload summary {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.interrupt-request-payload summary span {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.interrupt-request-payload .editor-shell--tall {
+  min-height: 150px;
+}
+
+.interrupt-request-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--success-bg);
+  color: var(--success-fg);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.interrupt-request-summary strong {
+  font-weight: 750;
+}
+
+@media (max-width: 560px) {
+  .interrupt-request-options {
+    grid-template-columns: 1fr;
+  }
+}
+
 .interrupt-manager-heading {
   display: flex;
   align-items: flex-start;
@@ -880,11 +1036,18 @@
   font-size: 11px;
 }
 
+.interrupt-create-row > label {
+  grid-column: 1;
+}
+
 .interrupt-create-row select {
   width: 100%;
 }
 
-.interrupt-create-row > div {
+.interrupt-create-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
   display: grid;
   justify-items: end;
   gap: 4px;
@@ -893,6 +1056,27 @@
 .interrupt-create-row .hint {
   max-width: 110px;
   text-align: right;
+}
+
+.interrupt-source-preview {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 8px 9px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface);
+}
+
+.interrupt-source-preview strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.interrupt-source-preview span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .interrupt-empty-state {
@@ -1257,6 +1441,11 @@
 
   .interrupt-create-row > div {
     justify-items: stretch;
+  }
+
+  .interrupt-create-actions {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .interrupt-create-row .hint {

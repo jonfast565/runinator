@@ -32,13 +32,13 @@
       :disabled="!workflows.canRequestRunInterrupt || runControlBusy"
       :title="
         workflows.canRequestRunInterrupt
-          ? 'Ask this run to raise an interrupt on its next drive'
-          : 'This workflow declares no interrupt handlers'
+          ? 'Request one of this run’s enabled interrupt handlers at its next safe point'
+          : 'This run has no enabled handler that can be requested manually'
       "
       @click="interruptOpen = true"
     >
       <Icon name="alert" :size="14" />
-      <span>Interrupt</span>
+      <span>Request interrupt</span>
     </button>
   </div>
   <WorkflowInterruptModal v-if="interruptOpen" @close="interruptOpen = false" />

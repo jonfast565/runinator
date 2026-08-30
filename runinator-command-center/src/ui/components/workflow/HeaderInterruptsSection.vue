@@ -3,13 +3,16 @@
     <div class="interrupt-manager-heading">
       <div>
         <div class="flex items-center gap-1">
-          <h3>Handler routes</h3>
+          <h3>Interrupt handlers</h3>
           <HelpBubble label="About interrupt handler routes">
-            Each route suspends a thread, handles the interrupt on the canvas, then returns at
-            <code>resume</code>. Add steps directly on its highlighted connections.
+            When the chosen event happens, Runinator pauses the affected thread, runs this handler's
+            steps, then follows its <code>resume</code> decision. The main workflow does not
+            continue until the handler finishes.
           </HelpBubble>
         </div>
-        <p class="section-note">Choose what can interrupt this workflow and where control goes.</p>
+        <p class="section-note">
+          Choose an event, create its safe route, then add the steps that should handle it.
+        </p>
       </div>
     </div>
 
@@ -34,23 +37,27 @@
 
     <div class="interrupt-create-row">
       <label>
-        <span>New handler source</span>
+        <span>When should the handler run?</span>
         <select v-model="newSource" :disabled="undeclared.length === 0">
           <option v-for="source in undeclared" :key="source" :value="source">
             {{ labelFor(source) }}
           </option>
         </select>
       </label>
-      <div>
+      <div v-if="newSource" class="interrupt-source-preview" aria-live="polite">
+        <strong>{{ labelFor(newSource) }}</strong>
+        <span>{{ describeSource(newSource) }}</span>
+      </div>
+      <div class="interrupt-create-actions">
         <button
           type="button"
           class="btn btn-primary btn-sm"
           :disabled="!newSource || !catalogMetadata.loaded"
-          title="Create an interrupt-to-resume route and focus it on the canvas"
+          title="Create a complete interrupt-to-resume route and show it on the canvas"
           @click="scaffold"
         >
           <Icon name="plus" :size="14" />
-          Add handler
+          Create handler route
         </button>
         <span v-if="undeclared.length === 0" class="hint">All sources configured</span>
       </div>
@@ -108,7 +115,7 @@
         </header>
 
         <div class="interrupt-handler-route" aria-label="Handler route">
-          <span class="interrupt-route-node">Interrupt</span>
+          <span class="interrupt-route-node">Event</span>
           <span class="interrupt-route-line" aria-hidden="true"></span>
           <strong>{{ routeStepLabel(item.entry.handler) }}</strong>
           <span class="interrupt-route-line" aria-hidden="true"></span>
@@ -138,7 +145,7 @@
             {{ stepCount(item.entry.handler) === 0 ? "Add first step" : "Show on canvas" }}
           </button>
           <button type="button" class="btn btn-sm" @click="editEntry(item.entry.handler)">
-            Edit entry
+            Edit first step
           </button>
           <button
             type="button"
@@ -148,7 +155,7 @@
             @click="toggleConfiguration(item.entry.handler)"
           >
             <Icon name="settings" :size="13" />
-            Configure
+            Settings
           </button>
         </div>
 
@@ -158,7 +165,7 @@
           class="interrupt-handler-config"
         >
           <label class="interrupt-source-field">
-            Source
+            Interrupt type
             <select
               :value="item.entry.source"
               @change="workflows.setHeaderInterruptSource(item.index, selectValue($event))"
@@ -173,7 +180,7 @@
             </select>
           </label>
           <label v-if="item.entry.source === 'timer'" class="interrupt-source-field">
-            Every (seconds)
+            Repeat every (seconds)
             <input
               type="number"
               min="1"
@@ -188,7 +195,7 @@
               :checked="item.entry.enabled"
               @change="workflows.setHeaderInterruptEnabled(item.index, checkedValue($event))"
             />
-            Enabled
+            Handler enabled
           </label>
           <button
             type="button"
@@ -196,7 +203,7 @@
             @click="workflows.removeHeaderInterrupt(item.index)"
           >
             <Icon name="trash" :size="13" />
-            Delete handler
+            Delete handler and route
           </button>
         </div>
       </article>

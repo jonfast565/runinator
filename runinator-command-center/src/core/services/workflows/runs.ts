@@ -374,9 +374,13 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     source: string,
     payload: unknown = null,
     continuationId: string | null = null,
-  ) {
-    if (!host.state.workflowRunDetail || !host.canRequestRunInterrupt()) {
-      return;
+  ): Promise<boolean> {
+    if (
+      !host.state.workflowRunDetail ||
+      !host.canRequestRunInterrupt() ||
+      !host.getRequestableInterruptSources().includes(source)
+    ) {
+      return false;
     }
 
     const runId = host.state.workflowRunDetail.run.id;
@@ -387,7 +391,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     if (!response.success) {
       host.ctx.setError(response.message || "Failed to request interrupt");
-      return;
+      return false;
     }
 
     host.ctx.setStatus(
@@ -395,6 +399,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     );
     await fetchWorkflowRunDetail(runId, true);
     host.notify();
+    return true;
   }
 
   async function pauseSelectedWorkflowRun() {

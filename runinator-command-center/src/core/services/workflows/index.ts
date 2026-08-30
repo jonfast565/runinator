@@ -250,22 +250,30 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   /**
    * may the operator ask this run to raise an interrupt?
    *
-   * needs a live run *and* a workflow that declares at least one handler. without a handler the
-   * request is recorded and then dropped by the reducer's fail-open path, so offering the button
-   * would promise something that silently never happens.
+   * needs a live run and at least one enabled, explicitly requestable handler. requests for a
+   * disabled, undeclared, or scheduler-owned handler would be accepted and then discarded by the
+   * reducer's fail-open path, so the UI never offers them.
    */
   function canRequestRunInterrupt(): boolean {
     if (!canCancelWorkflowRun()) {
       return false;
     }
 
-    return interruptDeclarations(getWorkflowRunWorkflow()).length > 0;
+    return getRequestableInterruptSources().length > 0;
   }
 
-  /** the sources this run's workflow declares a handler for, plus the always-requestable ones. */
+  /**
+   * the enabled handlers an operator can explicitly request for this run.
+   *
+   * timer handlers are excluded because their request must carry the scheduler-owned timer id;
+   * inventing one in the UI would be accepted by the endpoint and then silently discarded. a
+   * disabled or undeclared handler is excluded for the same reason.
+   */
   function getRequestableInterruptSources(): string[] {
-    const declared = interruptDeclarations(getWorkflowRunWorkflow()).map((entry) => entry.source);
-    return [...new Set([...declared, "external"])];
+    const declared = interruptDeclarations(getWorkflowRunWorkflow())
+      .filter((entry) => entry.enabled && entry.source !== "timer")
+      .map((entry) => entry.source);
+    return [...new Set(declared)];
   }
 
   function getCurrentBreakpoints(): string[] {

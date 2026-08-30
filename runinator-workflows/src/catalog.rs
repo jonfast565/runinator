@@ -161,40 +161,40 @@ fn interrupt_source_options() -> Vec<EnumOptionMetadata> {
         .map(|source| {
             let (label, description) = match source {
                 InterruptSource::External => (
-                    "External",
-                    "Requested through POST /workflow_runs/{id}/interrupts.",
+                    "Manual request",
+                    "Runs when an operator or API client explicitly requests this interrupt. Use it for human-initiated recovery, overrides, or administrative intervention.",
                 ),
                 InterruptSource::OrphanSignal => (
-                    "Orphan signal",
-                    "A signal arrived that no node in the run was parked on.",
+                    "Unmatched signal",
+                    "Runs when a signal reaches the workflow but no active step is waiting for that signal. The handler can record, redirect, or otherwise recover the unexpected delivery.",
                 ),
                 InterruptSource::Timer => (
-                    "Timer",
-                    "A workflow-owned periodic timer elapsed. Timer handlers declare their own interval and may be repeated.",
+                    "Repeating timer",
+                    "Runs on its own repeating schedule for as long as the workflow is active. It is independent of wait steps and requires a repeat interval.",
                 ),
                 InterruptSource::Wake => (
-                    "Wake",
-                    "A parked cursor's timer elapsed, bound to a wait node's deadline.",
+                    "Wait completed",
+                    "Runs when a wait or delay finishes normally. Use it to inspect or adjust the workflow before the waiting thread continues.",
                 ),
                 InterruptSource::Timeout => (
-                    "Timeout",
-                    "The node's deadline is about to blow while its run is still in flight, so the handler runs before it gives up.",
+                    "Step timed out",
+                    "Runs when a step reaches its deadline, before the workflow commits to the timeout outcome. The handler can retry, move on, or route the thread as failed.",
                 ),
                 InterruptSource::Retry => (
-                    "Retry",
-                    "A failed node run is about to be re-dispatched by the retry policy.",
+                    "Before retry",
+                    "Runs after an attempt fails but before the retry policy dispatches the next attempt. Use it to log, repair context, or change how the thread proceeds.",
                 ),
                 InterruptSource::Failure => (
-                    "Failure",
-                    "A node run settled failed and the thread is about to take its failure route.",
+                    "Step failed",
+                    "Runs after a step has failed, just before the thread follows that step's failure route. Use it for workflow-wide failure handling or recovery.",
                 ),
                 InterruptSource::Resolved => (
-                    "Resolved",
-                    "An out-of-band park resolution landed: a signal delivered, an approval decided, an input submitted.",
+                    "Waiting step resolved",
+                    "Runs when a waiting signal, approval, or input step receives its answer, before the waiting thread continues. Ordinary polling gates do not raise this type.",
                 ),
                 InterruptSource::Child => (
-                    "Child",
-                    "A child run a subflow node is parked on reached a terminal.",
+                    "Child workflow finished",
+                    "Runs when a child workflow reaches a final state while a subflow step is waiting for it, before the parent thread continues.",
                 ),
             };
             EnumOptionMetadata::new(source.as_str(), label).with_description(description)

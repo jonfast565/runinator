@@ -73,20 +73,37 @@ describe("requesting an interrupt", () => {
   it("posts the source, payload, and continuation", async () => {
     const workflows = await selectRun();
 
-    await workflows.requestSelectedRunInterrupt("external", { why: "manual" }, "continuation-1");
+    await expect(
+      workflows.requestSelectedRunInterrupt("wake", { why: "manual" }, "continuation-1"),
+    ).resolves.toBe(true);
 
     expect(requestRunInterrupt).toHaveBeenCalledWith(
       RUN_ID,
-      "external",
+      "wake",
       { why: "manual" },
       "continuation-1",
     );
   });
 
-  it("offers the declared sources plus external", async () => {
+  it("offers only enabled, declared handlers that can be explicitly requested", async () => {
     const workflows = await selectRun();
 
-    expect(workflows.requestableInterruptSources).toEqual(["wake", "external"]);
+    expect(workflows.requestableInterruptSources).toEqual(["wake"]);
+  });
+
+  it("does not offer disabled, undeclared, or scheduler-owned timer handlers", async () => {
+    const run = detail();
+    const snapshot = run.run.workflow_snapshot as unknown as WorkflowDefinition;
+    snapshot.definition.metadata = {
+      interrupts: [
+        { on: "external", handler: "on_external", enabled: false },
+        { on: "timer", handler: "on_timer", interval_seconds: 60 },
+      ],
+    };
+    const workflows = await selectRun(run);
+
+    expect(workflows.requestableInterruptSources).toEqual([]);
+    expect(workflows.canRequestRunInterrupt).toBe(false);
   });
 
   /** without a handler the reducer records the request and then drops it, so do not offer it. */
@@ -110,11 +127,19 @@ describe("requesting an interrupt", () => {
     expect(requestRunInterrupt).not.toHaveBeenCalled();
   });
 
+  it("refuses a source without an enabled handler", async () => {
+    const workflows = await selectRun();
+
+    await expect(workflows.requestSelectedRunInterrupt("external")).resolves.toBe(false);
+
+    expect(requestRunInterrupt).not.toHaveBeenCalled();
+  });
+
   it("reports a failed request rather than claiming it was recorded", async () => {
     const workflows = await selectRun();
     vi.mocked(requestRunInterrupt).mockResolvedValue({ success: false, message: "run is done" });
 
-    await workflows.requestSelectedRunInterrupt("wake");
+    await expect(workflows.requestSelectedRunInterrupt("wake")).resolves.toBe(false);
 
     // the detail refresh only happens on success; a failure surfaces as an error toast instead.
     expect(vi.mocked(fetchWorkflowRun)).toHaveBeenCalledTimes(1);

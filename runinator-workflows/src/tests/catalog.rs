@@ -161,6 +161,20 @@ fn enum_catalog_covers_expected_enums() {
             .map(|source| source.as_str())
             .collect::<Vec<_>>()
     );
+    let interrupt_catalog = catalog
+        .iter()
+        .find(|item| item.name == "interrupt_source")
+        .unwrap();
+    for option in &interrupt_catalog.options {
+        assert!(
+            option
+                .description
+                .as_deref()
+                .is_some_and(|description| description.len() >= 60),
+            "interrupt source '{}' needs a useful plain-language description",
+            option.value
+        );
+    }
     assert_eq!(
         values("resume_mode"),
         InterruptMode::ALL
