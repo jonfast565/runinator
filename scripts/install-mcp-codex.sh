@@ -3,20 +3,19 @@
 # available as a tool. Two shapes, matching how the web service is reached:
 #
 #   --local (default)  run the built runinatorctl directly against a web service on localhost
-#   --k8s              run scripts/start-runinatorctl.sh --mcp, which brings up the port-forward,
-#                      signs in, and tears the forward down when the client disconnects
+#   --k8s              run scripts/start-runinatorctl.sh --mcp against a web service you have
+#                      already port-forwarded locally
 #
 # Usage:
 #   scripts/install-mcp-codex.sh [options] [-- extra runinatorctl mcp args...]
 #
 # Options:
 #   --local              target a web service on localhost (default)
-#   --k8s                target the kubernetes service through the port-forward launcher
+#   --k8s                target the already port-forwarded kubernetes service
 #   --name <name>        MCP server name (default runinator)
 #   --scope <scope>      project | user (default project)
 #   --url <url>          web service base URL for --local (default http://127.0.0.1:8080)
 #   --port <n>           forwarded local port for --k8s (default 8081)
-#   --namespace <ns>     kubernetes namespace for --k8s (default runinator)
 #   --release            use the release binary instead of the debug one
 #   --api-key <key>      pass RUNINATOR_API_KEY to the server through the client's env
 #   --workflow-tools     also advertise one tool per workflow (off by default)
@@ -33,7 +32,6 @@ name="runinator"
 scope="project"
 base_url="http://127.0.0.1:8080"
 local_port=8081
-namespace="runinator"
 profile="debug"
 api_key=""
 workflow_tools=0
@@ -47,7 +45,6 @@ while [[ $# -gt 0 ]]; do
     --scope)          scope="$2"; shift 2 ;;
     --url)            base_url="$2"; shift 2 ;;
     --port)           local_port="$2"; shift 2 ;;
-    --namespace)      namespace="$2"; shift 2 ;;
     --release)        profile="release"; shift ;;
     --api-key)        api_key="$2"; shift 2 ;;
     --workflow-tools) workflow_tools=1; shift ;;
@@ -83,7 +80,7 @@ esac
 # The server command itself, plus whatever the caller appended after `--`.
 server_args=()
 if [[ "$mode" == "k8s" ]]; then
-  server_args+=("${ROOT_DIR}/scripts/start-runinatorctl.sh" "--mcp" "--port" "$local_port" "--namespace" "$namespace")
+  server_args+=("${ROOT_DIR}/scripts/start-runinatorctl.sh" "--mcp" "--port" "$local_port")
   if [[ "$profile" == "release" ]]; then
     server_args+=("--release")
   fi
@@ -127,4 +124,7 @@ codex "${add_args[@]}" -- "${server_args[@]}"
 
 echo ""
 echo "Registered '${name}' (${mode}, scope ${scope})."
+if [[ "$mode" == "k8s" ]]; then
+  echo "Before using it, port-forward runinator-ws to http://127.0.0.1:${local_port}."
+fi
 echo "Verify with: codex mcp list    then /mcp inside a session."

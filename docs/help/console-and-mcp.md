@@ -188,9 +188,14 @@ would desynchronise the client. Moving a standard stream is the one per-platform
 `capture/unix.rs` and `capture/windows.rs`; everything above that line is shared. The server runs on
 Linux, macOS, and Windows alike.
 
-When the web service lives in kubernetes rather than on localhost, `scripts/start-runinatorctl.sh
---mcp` is the launcher to point the client at: it brings up the same port-forward the console uses,
-signs in if the service enforces auth, and then runs `runinatorctl mcp` against it, tearing the
-forward down when the client disconnects. Every message the script prints moves to stderr under
+When the web service lives in Kubernetes rather than on localhost, port-forward it before starting
+the MCP server, then give `scripts/start-runinatorctl.sh --mcp` the same port. For example:
+
+```bash
+bash scripts/port-forward-ws.sh --port 8081
+scripts/start-runinatorctl.sh --mcp --port 8081 --workflow-tools
+```
+
+The launcher signs in if the service enforces auth. Every message it prints moves to stderr under
 `--mcp`, since stdout carries the protocol. Arguments after the script's own flags go to the
-subcommand, so `scripts/start-runinatorctl.sh --mcp --workflow-tools` works as expected.
+subcommand.

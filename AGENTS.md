@@ -16,6 +16,16 @@ Redeploy the cluster after every change, with two exceptions:
   desktop agent runs locally; deploy the cluster only when its shared runtime dependencies or a
   cluster-owned artifact changed.
 
+## Local Cluster Debugging
+
+When debugging a Kubernetes cluster with a locally running Command Center or `runinatorctl`, first
+port-forward `runinator-ws` with `scripts/port-forward-ws.sh`. Point the local client at that exact
+forwarded port: set the Command Center service URL to it, or pass the same port to
+`scripts/start-runinatorctl.sh --port`. The CLI launcher does not create the port-forward itself.
+
+Cluster debugging uses the development-only bootstrap account `admin` / `admin`. It is never a
+production credential; production deployments must provide their own secrets.
+
 ## Git Workflow
 
 Commit every change and push it directly to `main`.
