@@ -37,7 +37,7 @@
           </label>
           <label>
             <span>Workflow ID (blank freezes all)</span>
-            <input v-model="draftWorkflowId" placeholder="all workflows" />
+            <input v-model="draftWorkflowId" data-validation="uuid" placeholder="all workflows" />
           </label>
           <label class="sm:col-span-2">
             <span>Reason</span>

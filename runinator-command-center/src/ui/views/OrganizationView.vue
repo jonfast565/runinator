@@ -150,6 +150,7 @@
             class="min-w-40 flex-1"
             required
             :pattern="UUID_PATTERN"
+            data-validation="uuid"
             title="Enter a UUID such as 550e8400-e29b-41d4-a716-446655440000."
             placeholder="User id (uuid)"
           />
@@ -257,7 +258,7 @@
                 </li>
               </ul>
               <form class="mt-3 flex flex-wrap gap-2" @submit.prevent="onAddTeamMember">
-                <select v-model="newTeamMemberId" class="min-w-40 flex-1">
+                <select v-model="newTeamMemberId" class="min-w-40 flex-1" required>
                   <option value="" disabled>Add a user…</option>
                   <option v-for="user in users" :key="user.id ?? ''" :value="user.id ?? ''">
                     {{ user.username }}

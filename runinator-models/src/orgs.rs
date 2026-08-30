@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::validation::{SHORT_TEXT_MAX, Validate, ValidationError, optional_text, required_text};
+
 /// the per-org role ladder. higher variants subsume lower ones (owner ⊇ admin ⊇ member).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -101,6 +103,48 @@ pub struct UpdateOrgMemberRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SwitchOrgRequest {
     pub org_id: Uuid,
+}
+
+impl Validate for CreateOrgRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        optional_text("slug", self.slug.as_deref(), SHORT_TEXT_MAX)?;
+        if self
+            .slug
+            .as_deref()
+            .is_some_and(|slug| slugify(slug) != slug)
+        {
+            return Err(ValidationError::new(
+                "slug",
+                "must contain lowercase letters, numbers, and single hyphens only",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for UpdateOrgRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for AddOrgMemberRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for UpdateOrgMemberRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for SwitchOrgRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }
 
 /// the active-org context returned after a switch, with a re-issued access token.

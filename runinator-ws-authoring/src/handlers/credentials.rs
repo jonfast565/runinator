@@ -23,6 +23,7 @@ use runinator_store::{
 use crate::settings::{
     decode_config_schema, decode_config_value, decode_secret, validate_and_encode_with_expiry,
 };
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     ApiResponse, CredentialPutRequest, CredentialQuery, SettingMoveRequest,
 };
@@ -203,7 +204,7 @@ pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
 pub async fn put_credential<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CredentialPutRequest>,
+    ValidatedJson(request): ValidatedJson<CredentialPutRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::SecretsWrite,
@@ -452,7 +453,7 @@ pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(setting_id): Path<uuid::Uuid>,
-    Json(request): Json<SettingMoveRequest>,
+    ValidatedJson(request): ValidatedJson<SettingMoveRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::SecretsWrite,

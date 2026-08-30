@@ -67,7 +67,7 @@ async fn org_scale_enforces_node_and_budget_quotas() {
         Extension(registry.clone()),
         Extension(admin.clone()),
         Path(org_id),
-        Json(scale(5)),
+        ValidatedJson(scale(5)),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -78,7 +78,7 @@ async fn org_scale_enforces_node_and_budget_quotas() {
         Extension(registry.clone()),
         Extension(admin.clone()),
         Path(org_id),
-        Json(scale(2)),
+        ValidatedJson(scale(2)),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -89,7 +89,7 @@ async fn org_scale_enforces_node_and_budget_quotas() {
         Extension(registry.clone()),
         Extension(admin),
         Path(org_id),
-        Json(scale(1)),
+        ValidatedJson(scale(1)),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -154,7 +154,7 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
     let (status, _) = crate::handlers::orgs::create_org::<SqliteDb>(
         Extension(db.clone()),
         Extension(alice_ctx.clone()),
-        Json(CreateOrgRequest {
+        ValidatedJson(CreateOrgRequest {
             name: "Acme Corp".into(),
             slug: None,
         }),
@@ -174,7 +174,7 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
         Extension(db.clone()),
         Extension(owner_ctx.clone()),
         Path(org_id),
-        Json(UpdateOrgRequest {
+        ValidatedJson(UpdateOrgRequest {
             name: Some("Acme Inc".into()),
             disabled: None,
         }),
@@ -208,7 +208,7 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
         Extension(db.clone()),
         Extension(owner_ctx.clone()),
         Path(org_id),
-        Json(AddOrgMemberRequest {
+        ValidatedJson(AddOrgMemberRequest {
             user_id: bob_id,
             role: OrgRole::Member,
         }),
@@ -222,7 +222,7 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
         Extension(db.clone()),
         Extension(owner_ctx),
         Path((org_id, alice_id)),
-        Json(UpdateOrgMemberRequest {
+        ValidatedJson(UpdateOrgMemberRequest {
             role: OrgRole::Member,
         }),
     )

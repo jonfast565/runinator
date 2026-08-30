@@ -14,7 +14,7 @@ async fn rexrap_evaluate_accepts_legacy_lowered_expression() {
         context: json!({ "input": { "name": "Ada" } }),
     };
 
-    let Json(value) = crate::handlers::rexrap::evaluate_expression(Json(request))
+    let Json(value) = crate::handlers::rexrap::evaluate_expression(ValidatedJson(request))
         .await
         .expect("evaluate");
 
@@ -30,7 +30,7 @@ async fn rexrap_evaluate_accepts_source_fragments() {
         context: json!({ "input": { "count": 3 } }),
     };
 
-    let Json(value) = crate::handlers::rexrap::evaluate_expression(Json(request))
+    let Json(value) = crate::handlers::rexrap::evaluate_expression(ValidatedJson(request))
         .await
         .expect("evaluate");
 
@@ -103,7 +103,7 @@ async fn rexrap_analyze_validates_source_fragments() {
     let Json(diagnostics) = crate::handlers::rexrap::analyze_rexrap(
         Extension(Arc::new(CatalogOperations::new(db.clone()))),
         Extension(Arc::new(WorkflowAuthoring::new(db, events.publisher()))),
-        Json(crate::handlers::rexrap::RexRapSourceRequest {
+        ValidatedJson(crate::handlers::rexrap::RexRapSourceRequest {
             source: "params.count >".into(),
             fragment: Some(RexRapFragmentKind::Condition),
         }),

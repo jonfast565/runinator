@@ -38,6 +38,7 @@
       <input
         v-if="anyValueKind === 'string'"
         type="text"
+        :required="required"
         :value="stringValue"
         :placeholder="placeholder"
         @input="emitValue(($event.target as HTMLInputElement).value)"
@@ -45,6 +46,7 @@
       <input
         v-else-if="anyValueKind === 'number'"
         type="number"
+        :required="required"
         step="any"
         :value="numberValue"
         @input="setAnyNumberValue(($event.target as HTMLInputElement).value)"
@@ -69,6 +71,7 @@
     <input
       v-else-if="typeKind === 'string'"
       type="text"
+      :required="required"
       :value="stringValue"
       :placeholder="placeholder"
       @input="emitValue(($event.target as HTMLInputElement).value)"
@@ -76,11 +79,13 @@
     <WorkflowFileInput
       v-else-if="typeKind === 'file'"
       :model-value="fileValue"
+      :required="required"
       @update:model-value="emitValue($event)"
     />
     <input
       v-else-if="typeKind === 'integer' || typeKind === 'number'"
       type="number"
+      :required="required"
       :step="typeKind === 'integer' ? 1 : 'any'"
       :value="numberValue"
       @input="setNumberValue(($event.target as HTMLInputElement).value)"
@@ -93,6 +98,7 @@
     />
     <textarea
       v-else-if="isStringArray"
+      :required="required"
       :value="stringArrayText"
       placeholder="one value per line"
       @input="emitValue(splitLines(($event.target as HTMLTextAreaElement).value))"
@@ -101,6 +107,7 @@
       v-else-if="isFileArray"
       :model-value="fileArrayValue"
       multiple
+      :required="required"
       @update:model-value="emitValue($event)"
     />
     <div v-else-if="typeKind === 'array' && arrayItemType" class="array-editor">
@@ -132,6 +139,7 @@
         <TypedValueEditor
           :model-value="recordValue[fieldName]"
           :ty="field.ty"
+          :required="field.required"
           :allow-expressions="expressionsAllowed"
           :force-expression="isWorkflowExpressionValue(recordValue[fieldName])"
           :expression-context="expressionContext"
@@ -254,12 +262,14 @@ const props = withDefaults(
     allowExpressions?: boolean;
     forceExpression?: boolean;
     expressionContext?: WorkflowExpressionEditorContext;
+    required?: boolean;
   }>(),
   {
     allowExpressions: true,
     forceExpression: false,
     placeholder: undefined,
     expressionContext: undefined,
+    required: false,
   },
 );
 
@@ -341,7 +351,9 @@ const fileValue = computed<FileDescriptor | null>(
 );
 const fileArrayValue = computed<FileDescriptor[]>(() =>
   Array.isArray(props.modelValue)
-    ? props.modelValue.filter((value): value is FileDescriptor => matchesType(value, { type: "file" }))
+    ? props.modelValue.filter((value): value is FileDescriptor =>
+        matchesType(value, { type: "file" }),
+      )
     : [],
 );
 const stringArrayText = computed(() => arrayValue.value.join("\n"));
@@ -517,5 +529,4 @@ function selectUnionVariant(index: number) {
 function selectEnumOption(index: number) {
   emitValue(enumOptions.value[index]);
 }
-
 </script>

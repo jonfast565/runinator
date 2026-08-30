@@ -14,6 +14,7 @@ use runinator_models::{
 };
 use runinator_store::roles::ReplicaStore;
 use runinator_ws_core::{
+    ValidatedJson,
     events::{AppEvent, AppEventKind, EventSender, emit, nudge_agent_directives},
     models::{AgentDirectiveQuery, ApiResponse, CreateAgentDirectiveRequest},
     openapi::docs::{EndpointDoc, Example, endpoint, json_body},
@@ -27,7 +28,7 @@ pub async fn create<T: ReplicaStore>(
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
-    Json(request): Json<CreateAgentDirectiveRequest>,
+    ValidatedJson(request): ValidatedJson<CreateAgentDirectiveRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let (action, scope) = required_policy(&ctx, &request.kind);
     if let Err(reply) = ctx.require_scope_action(action, scope) {

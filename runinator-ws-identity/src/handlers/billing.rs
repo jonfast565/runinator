@@ -23,6 +23,7 @@ fn org_scope(org_id: Uuid) -> runinator_models::rbac::ScopeRef {
     .unwrap()
 }
 
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request};
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -97,7 +98,7 @@ pub async fn scale_org_nodes<T: OrgStore + RuntimeStore>(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
-    Json(request): Json<ScaleOrgNodesRequest>,
+    ValidatedJson(request): ValidatedJson<ScaleOrgNodesRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::NodesOperate,
@@ -201,7 +202,7 @@ pub async fn put_org_quota<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
-    Json(request): Json<UpdateOrgQuotaRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateOrgQuotaRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::BillingManage,

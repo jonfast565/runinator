@@ -29,6 +29,7 @@ pub mod server_settings;
 pub mod settings;
 pub mod telemetry;
 pub mod types;
+pub mod validation;
 pub mod value;
 pub mod web;
 pub mod workflow_ast;

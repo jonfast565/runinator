@@ -20,6 +20,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::providers::{ActionMetadata, ParameterMetadata, ResultMetadata};
+use crate::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, identifier, optional_text,
+    required_text,
+};
 use crate::value::Value;
 
 mod alias;
@@ -253,6 +257,84 @@ pub struct NewFunctionExport {
     pub output: Vec<ResultMetadata>,
     #[serde(default)]
     pub limits: FunctionResourceLimits,
+}
+
+impl Validate for NewFunctionVersion {
+    fn validate(&self) -> Result<(), ValidationError> {
+        self.package.validate()?;
+        if !is_valid_digest(&self.artifact_digest) {
+            return Err(ValidationError::new(
+                "artifact_digest",
+                "must be a sha256: digest with 64 hexadecimal characters",
+            ));
+        }
+        identifier("runtime.runtime", &self.runtime.runtime)?;
+        optional_text("runtime.image", self.runtime.image.as_deref(), 2 * 1024)?;
+        optional_text(
+            "runtime.setup_script",
+            self.runtime.setup_script.as_deref(),
+            LONG_TEXT_MAX,
+        )?;
+        optional_text("alias", self.alias.as_deref(), SHORT_TEXT_MAX)?;
+        if self.exports.is_empty() {
+            return Err(ValidationError::new(
+                "exports",
+                "must contain at least one export",
+            ));
+        }
+        if self.exports.len() > 256 {
+            return Err(ValidationError::new(
+                "exports",
+                "must contain at most 256 exports",
+            ));
+        }
+        for (index, export) in self.exports.iter().enumerate() {
+            export.validate_at(index)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for NewFunctionPackage {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("package.name", &self.name)?;
+        if let Some(namespace) = self.namespace.as_deref() {
+            identifier("package.namespace", namespace)?;
+        }
+        optional_text(
+            "package.description",
+            self.description.as_deref(),
+            LONG_TEXT_MAX,
+        )
+    }
+}
+
+impl NewFunctionExport {
+    fn validate_at(&self, index: usize) -> Result<(), ValidationError> {
+        let path = format!("exports[{index}]");
+        identifier(&format!("{path}.name"), &self.name)?;
+        required_text(&format!("{path}.handler"), &self.handler, SHORT_TEXT_MAX)?;
+        optional_text(
+            &format!("{path}.description"),
+            self.description.as_deref(),
+            LONG_TEXT_MAX,
+        )?;
+        for (field, value, max) in [
+            ("timeout_seconds", self.limits.timeout_seconds, 86_400),
+            ("memory_mb", self.limits.memory_mb, 1_048_576),
+            ("cpu_millis", self.limits.cpu_millis, 1_000_000),
+            ("pids", self.limits.pids, 65_536),
+            ("tmp_mb", self.limits.tmp_mb, 1_048_576),
+        ] {
+            if !(1..=max).contains(&value) {
+                return Err(ValidationError::new(
+                    format!("{path}.limits.{field}"),
+                    format!("must be between 1 and {max}"),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// everything a worker needs to run one export, resolved from its id.

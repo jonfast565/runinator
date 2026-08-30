@@ -15,6 +15,7 @@ use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     console::{ConsoleSession, NewConsoleCell},
     rbac::{Action, ScopeKind, ScopeRef},
+    validation::{SHORT_TEXT_MAX, Validate, ValidationError, optional_text},
 };
 use runinator_store::{
     RuntimeStore,
@@ -27,6 +28,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_engine::services::ConsoleOperations;
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -43,6 +45,12 @@ fn selected_scope(ctx: &AuthContext) -> ScopeRef {
 pub struct ConsoleSessionRequest {
     #[serde(default)]
     pub name: Option<String>,
+}
+
+impl Validate for ConsoleSessionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)
+    }
 }
 
 fn session_name(request: &ConsoleSessionRequest) -> String {
@@ -109,7 +117,7 @@ pub async fn create_console_session<
     Extension(db): Extension<Arc<T>>,
     Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<ConsoleSessionRequest>,
+    ValidatedJson(request): ValidatedJson<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
         return reply;
@@ -178,7 +186,7 @@ pub async fn rename_console_session<
     Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
-    Json(request): Json<ConsoleSessionRequest>,
+    ValidatedJson(request): ValidatedJson<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
         return reply;
@@ -280,7 +288,7 @@ pub async fn create_console_cell<
     Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
-    Json(cell): Json<NewConsoleCell>,
+    ValidatedJson(cell): ValidatedJson<NewConsoleCell>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
         return reply;
@@ -306,7 +314,7 @@ pub async fn update_console_cell<
     Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
-    Json(request): Json<NewConsoleCell>,
+    ValidatedJson(request): ValidatedJson<NewConsoleCell>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let cell = match require_cell(
         db.as_ref(),

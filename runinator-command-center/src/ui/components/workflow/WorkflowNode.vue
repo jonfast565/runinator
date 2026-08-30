@@ -79,7 +79,13 @@
       @keydown.esc.prevent="cancelInlineEdit"
       @click.stop
     >
-      <input v-model="inlineId" aria-label="Node ID" placeholder="Step ID" />
+      <input
+        v-model="inlineId"
+        required
+        data-validation="identifier"
+        aria-label="Node ID"
+        placeholder="Step ID"
+      />
       <input v-model="inlineValue" type="text" aria-label="Node name" placeholder="Name" />
       <div class="node-inline-actions">
         <button type="submit" class="node-icon-btn">Apply</button>

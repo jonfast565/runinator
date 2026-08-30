@@ -1,5 +1,13 @@
 <template>
   <div class="grid gap-2 rounded border border-border-subtle bg-surface-raised p-2">
+    <input
+      v-if="required"
+      class="sr-only"
+      type="text"
+      :value="selected.length ? 'selected' : ''"
+      required
+      aria-label="Selected workflow file"
+    />
     <div class="flex flex-wrap gap-2">
       <label class="btn btn-sm cursor-pointer">
         <Icon name="upload" :size="13" />
@@ -26,9 +34,15 @@
       </select>
     </div>
     <div v-if="error" class="text-xs text-danger">{{ error }}</div>
-    <div v-if="uploading" class="text-xs text-fg-muted">Uploading {{ uploading }} file{{ uploading === 1 ? "" : "s" }}…</div>
+    <div v-if="uploading" class="text-xs text-fg-muted">
+      Uploading {{ uploading }} file{{ uploading === 1 ? "" : "s" }}…
+    </div>
     <ul v-if="selected.length" class="m-0 grid list-none gap-1 p-0 text-xs">
-      <li v-for="file in selected" :key="file.id" class="flex items-center justify-between gap-2 rounded bg-surface px-2 py-1">
+      <li
+        v-for="file in selected"
+        :key="file.id"
+        class="flex items-center justify-between gap-2 rounded bg-surface px-2 py-1"
+      >
         <span class="min-w-0 truncate" :title="file.path">{{ file.path }}</span>
         <span class="shrink-0 text-fg-muted">{{ formatBytes(file.size_bytes) }}</span>
         <button class="btn btn-sm shrink-0" type="button" @click="remove(file.id)">Remove</button>
@@ -43,8 +57,14 @@ import type { FileDescriptor, WorkflowFile } from "../../../core/domain/models";
 import { fetchWorkflowFiles, uploadWorkflowFile } from "../../../core/api/commandCenterApi";
 import Icon from "./Icon.vue";
 
-const props = defineProps<{ modelValue: FileDescriptor | FileDescriptor[] | null | undefined; multiple?: boolean }>();
-const emit = defineEmits<{ "update:modelValue": [value: FileDescriptor | FileDescriptor[] | null] }>();
+const props = defineProps<{
+  modelValue: FileDescriptor | FileDescriptor[] | null | undefined;
+  multiple?: boolean;
+  required?: boolean;
+}>();
+const emit = defineEmits<{
+  "update:modelValue": [value: FileDescriptor | FileDescriptor[] | null];
+}>();
 
 const libraryFiles = ref<WorkflowFile[]>([]);
 const loadingLibrary = ref(false);
@@ -62,7 +82,9 @@ function normalize(value = props.modelValue): FileDescriptor[] {
 
 watch(
   () => props.modelValue,
-  (value) => { selected.value = normalize(value); },
+  (value) => {
+    selected.value = normalize(value);
+  },
   { immediate: true, deep: true },
 );
 

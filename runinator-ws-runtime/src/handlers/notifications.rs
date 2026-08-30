@@ -15,6 +15,7 @@ use runinator_store::{RuntimeStore, roles::NotificationStore};
 use serde::Deserialize;
 
 use runinator_engine::services::NotificationOperations;
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, not_found};
@@ -54,7 +55,7 @@ pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + Notificat
 pub async fn create_notification<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(notification): Json<NewNotification>,
+    ValidatedJson(notification): ValidatedJson<NewNotification>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine]) {
         return reply;
@@ -156,7 +157,7 @@ pub async fn create_notification_policy<
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(policy): Json<NewNotificationPolicy>,
+    ValidatedJson(policy): ValidatedJson<NewNotificationPolicy>,
 ) -> Reply {
     if let Err(reply) =
         require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
@@ -179,7 +180,7 @@ pub async fn update_notification_policy<
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
-    Json(policy): Json<NewNotificationPolicy>,
+    ValidatedJson(policy): ValidatedJson<NewNotificationPolicy>,
 ) -> Reply {
     let current = match service.fetch_policy(policy_id).await {
         Ok(Some(policy)) => policy,

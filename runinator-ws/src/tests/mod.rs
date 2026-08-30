@@ -46,6 +46,7 @@ use runinator_models::{
 use runinator_rexrap::RexRapFragmentKind;
 use runinator_store::{DatabaseImpl, prelude::*};
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 use uuid::Uuid;
 

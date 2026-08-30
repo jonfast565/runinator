@@ -17,6 +17,7 @@ use runinator_models::{
         validate_correlation_alias_identity,
     },
     rbac::Action,
+    validation::{SHORT_TEXT_MAX, Validate, ValidationError, identifier, required_text},
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_store::roles::{
@@ -24,6 +25,7 @@ use runinator_store::roles::{
     WorkspaceStore,
 };
 use runinator_ws_core::{
+    ValidatedJson,
     models::{
         ApiResponse, ExternalOperationResolutionRequest, OrchestrationIntentRequest,
         OrchestrationRequeueRequest,
@@ -52,6 +54,14 @@ pub struct CorrelationAliasRequest {
     pub source: String,
     pub scope: String,
     pub correlation_key: String,
+}
+
+impl Validate for CorrelationAliasRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("source", &self.source)?;
+        identifier("scope", &self.scope)?;
+        required_text("correlation_key", &self.correlation_key, SHORT_TEXT_MAX)
+    }
 }
 
 async fn authorized_binding<T: AuthorizationStore + OrchestrationStore>(
@@ -290,7 +300,7 @@ pub async fn add_alias<T: AuthorizationStore + OrchestrationStore>(
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<CorrelationAliasRequest>,
+    ValidatedJson(request): ValidatedJson<CorrelationAliasRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = OrchestrationOperations::new(db.clone());
     let binding =
@@ -361,7 +371,7 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path((id, operation_id)): Path<(Uuid, Uuid)>,
-    Json(request): Json<ExternalOperationResolutionRequest>,
+    ValidatedJson(request): ValidatedJson<ExternalOperationResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = OrchestrationOperations::new(db.clone());
     let binding =
@@ -499,7 +509,7 @@ pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<OrchestrationIntentRequest>,
+    ValidatedJson(request): ValidatedJson<OrchestrationIntentRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = OrchestrationOperations::new(db.clone());
     let binding =
@@ -554,7 +564,7 @@ pub async fn requeue<
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<OrchestrationRequeueRequest>,
+    ValidatedJson(request): ValidatedJson<OrchestrationRequeueRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = OrchestrationOperations::new(db.clone());
     let binding =

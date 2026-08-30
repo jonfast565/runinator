@@ -22,6 +22,7 @@ use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, Sy
 use runinator_models::server_settings::{
     RuntimeSettingDefinition, ServerSettings, server_setting_catalog,
 };
+use runinator_models::validation::{Validate, ValidationError};
 use runinator_models::value::Value;
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
@@ -31,6 +32,7 @@ use runinator_store::{
 use serde::Serialize;
 use uuid::Uuid;
 
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     ApiError, ApiResponse, AuthConfigResponseSchema, LoginRequestSchema, LoginResponseSchema,
     RefreshRequestSchema,
@@ -51,6 +53,18 @@ const ORGANIZATION_MEMBERSHIP_REQUIRED: &str =
 #[derive(serde::Deserialize)]
 pub struct AuthSettingsRequest {
     pub max_refreshes: i64,
+}
+
+impl Validate for AuthSettingsRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if !(1..=100_000).contains(&self.max_refreshes) {
+            return Err(ValidationError::new(
+                "max_refreshes",
+                "must be between 1 and 100000",
+            ));
+        }
+        Ok(())
+    }
 }
 
 async fn max_refreshes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
@@ -275,7 +289,7 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgS
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(request): Json<LoginRequest>,
+    ValidatedJson(request): ValidatedJson<LoginRequest>,
 ) -> Reply {
     // bound credential brute force per client ip before doing any work.
     if let Err(retry_after) = runinator_ws_middleware::rate_limit::check_login_attempt(addr.ip()) {
@@ -391,7 +405,7 @@ async fn audit_credential_change<T: AuthStore + RbacStore + RuntimeStore>(
 pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
-    Json(request): Json<RefreshRequest>,
+    ValidatedJson(request): ValidatedJson<RefreshRequest>,
 ) -> Reply {
     let hash = hash_secret(&request.refresh_token);
     let session = match db.fetch_session_by_hash(hash).await {
@@ -462,7 +476,7 @@ pub async fn auth_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStor
 pub async fn update_auth_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<AuthSettingsRequest>,
+    ValidatedJson(request): ValidatedJson<AuthSettingsRequest>,
 ) -> Reply {
     if ctx.platform_role != Some(PlatformRole::Admin) {
         return forbidden("only a platform admin may manage refresh policy");
@@ -637,7 +651,7 @@ pub async fn server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingSt
 pub async fn update_server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(settings): Json<ServerSettings>,
+    ValidatedJson(settings): ValidatedJson<ServerSettings>,
 ) -> Reply {
     if ctx.platform_role != Some(PlatformRole::Admin) {
         return forbidden("only a platform admin may manage server settings");
@@ -667,7 +681,7 @@ pub async fn update_server_settings<T: AuthStore + RbacStore + RuntimeStore + Se
 )]
 pub async fn logout<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
-    Json(request): Json<RefreshRequest>,
+    ValidatedJson(request): ValidatedJson<RefreshRequest>,
 ) -> Reply {
     let hash = hash_secret(&request.refresh_token);
     if let Ok(Some(session)) = db.fetch_session_by_hash(hash).await
@@ -753,7 +767,7 @@ pub async fn list_users<T: AuthStore + RbacStore + RuntimeStore>(
 pub async fn create_user<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CreateUserRequest>,
+    ValidatedJson(request): ValidatedJson<CreateUserRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::MembersManage,
@@ -787,7 +801,7 @@ pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
-    Json(request): Json<UpdateUserRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateUserRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::MembersManage,
@@ -903,7 +917,7 @@ pub async fn list_api_keys<T: AuthStore + RbacStore + RuntimeStore>(
 pub async fn create_api_key<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CreateApiKeyRequest>,
+    ValidatedJson(request): ValidatedJson<CreateApiKeyRequest>,
 ) -> Reply {
     let target_scope = request
         .org_id
@@ -989,7 +1003,7 @@ pub async fn update_api_key<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
-    Json(request): Json<UpdateApiKeyRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateApiKeyRequest>,
 ) -> Reply {
     let current = match db.fetch_api_key(key_id).await {
         Ok(Some(record)) => record,
@@ -1100,7 +1114,7 @@ const ENROLLMENT_REJECTED: &str = "enrollment rejected";
 pub async fn create_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CreateAgentEnrollmentTokenRequest>,
+    ValidatedJson(request): ValidatedJson<CreateAgentEnrollmentTokenRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::AgentsEnroll,
@@ -1201,7 +1215,7 @@ pub async fn delete_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeSto
 pub async fn enroll_agent<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(request): Json<EnrollAgentRequest>,
+    ValidatedJson(request): ValidatedJson<EnrollAgentRequest>,
 ) -> Reply {
     if let Err(retry_after) =
         runinator_ws_middleware::rate_limit::check_enrollment_attempt(addr.ip())
@@ -1347,7 +1361,7 @@ pub async fn list_user_teams<T: AuthStore + RbacStore + RuntimeStore>(
 pub async fn create_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CreateTeamRequest>,
+    ValidatedJson(request): ValidatedJson<CreateTeamRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::MembersManage,
@@ -1369,7 +1383,7 @@ pub async fn update_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
-    Json(request): Json<UpdateTeamRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateTeamRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::MembersManage,
@@ -1424,7 +1438,7 @@ pub async fn add_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
-    Json(request): Json<AddTeamMemberRequest>,
+    ValidatedJson(request): ValidatedJson<AddTeamMemberRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::MembersManage,

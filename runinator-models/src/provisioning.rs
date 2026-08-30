@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::replicas::ReplicaKind;
+use crate::validation::{Validate, ValidationError, identifier};
 
 /// which provisioning backend manages a node group.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -110,4 +111,16 @@ pub struct ScaleNodesRequest {
 pub struct StopNodeRequest {
     pub backend: ProvisionBackend,
     pub node_id: String,
+}
+
+impl Validate for ScaleNodesRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for StopNodeRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("node_id", &self.node_id)
+    }
 }

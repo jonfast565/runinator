@@ -18,6 +18,7 @@ use runinator_store::{
 };
 
 use runinator_engine::services::AutomationOperations;
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     ApiResponse, AutomationRecordQuery, GateQuery, IdempotencyRequest,
 };
@@ -256,7 +257,7 @@ pub async fn put_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<IdempotencyRequest>,
+    ValidatedJson(request): ValidatedJson<IdempotencyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -279,7 +280,7 @@ pub async fn claim_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<IdempotencyClaimRequest>,
+    ValidatedJson(request): ValidatedJson<IdempotencyClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -302,7 +303,7 @@ pub async fn complete_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<IdempotencyCompleteRequest>,
+    ValidatedJson(request): ValidatedJson<IdempotencyCompleteRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -332,7 +333,7 @@ pub async fn release_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<IdempotencyReleaseRequest>,
+    ValidatedJson(request): ValidatedJson<IdempotencyReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,

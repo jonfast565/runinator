@@ -12,6 +12,14 @@
       </button>
     </header>
     <div ref="editorContainer" class="editor-shell-container"></div>
+    <input
+      v-if="!readonly"
+      class="sr-only"
+      type="text"
+      :value="parseError ? '' : 'valid'"
+      required
+      :aria-label="`${title || 'JSON'} validity`"
+    />
     <p v-if="!readonly && parseError" class="editor-shell-error" role="alert">
       <Icon name="alert" :size="12" />
       <span>{{ parseError }}</span>

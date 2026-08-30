@@ -3,6 +3,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, optional_text, required_text,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
     pub id: Uuid,
@@ -249,6 +253,40 @@ pub struct NewNotificationPolicy {
     pub managed_by: Option<String>,
     #[serde(default)]
     pub configuration: Value,
+}
+
+impl Validate for NewNotification {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("channel", &self.channel, SHORT_TEXT_MAX)?;
+        required_text("severity", &self.severity, SHORT_TEXT_MAX)?;
+        required_text("title", &self.title, SHORT_TEXT_MAX)?;
+        optional_text("body", self.body.as_deref(), LONG_TEXT_MAX)?;
+        optional_text("target", self.target.as_deref(), 2 * 1024)?;
+        optional_text("dedupe_key", self.dedupe_key.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for NewNotificationPolicy {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        optional_text("target", self.target.as_deref(), 2 * 1024)?;
+        optional_text("managed_by", self.managed_by.as_deref(), SHORT_TEXT_MAX)?;
+        if let Some(seconds) = self.threshold_seconds
+            && seconds <= 0
+        {
+            return Err(ValidationError::new(
+                "threshold_seconds",
+                "must be greater than zero",
+            ));
+        }
+        if self.event.is_duration_based() && self.threshold_seconds.is_none() {
+            return Err(ValidationError::new(
+                "threshold_seconds",
+                "is required for duration-based events",
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn default_true() -> bool {

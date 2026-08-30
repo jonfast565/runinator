@@ -407,11 +407,19 @@
                   >
                     <label class="grid gap-1 text-xs"
                       ><span>Source</span
-                      ><input v-model="aliasSource" required placeholder="github"
+                      ><input
+                        v-model="aliasSource"
+                        required
+                        data-validation="identifier"
+                        placeholder="github"
                     /></label>
                     <label class="grid gap-1 text-xs"
                       ><span>Scope</span
-                      ><input v-model="aliasScope" required placeholder="pull-requests"
+                      ><input
+                        v-model="aliasScope"
+                        required
+                        data-validation="identifier"
+                        placeholder="pull-requests"
                     /></label>
                     <label class="grid gap-1 text-xs"
                       ><span>Correlation key</span
@@ -917,7 +925,12 @@
                     <label>
                       <span>Request headers</span>
                       <small>JSON object with string values</small>
-                      <textarea v-model="testHeaders" class="min-h-28" spellcheck="false" />
+                      <textarea
+                        v-model="testHeaders"
+                        class="min-h-28"
+                        data-validation="json"
+                        spellcheck="false"
+                      />
                     </label>
                     <label>
                       <span>Request body</span>
@@ -1028,7 +1041,11 @@
         </p>
         <label>Reason<textarea v-model="reason" required class="min-h-24" /></label>
         <label
-          >Payload JSON<textarea v-model="intentPayload" class="min-h-28 font-mono text-xs" />
+          >Payload JSON<textarea
+            v-model="intentPayload"
+            data-validation="json"
+            class="min-h-28 font-mono text-xs"
+          />
         </label>
         <p v-if="intentPayloadError" class="m-0 text-sm text-danger-fg">{{ intentPayloadError }}</p>
         <p v-if="actionError" class="m-0 text-sm text-danger-fg">{{ actionError }}</p>
@@ -1083,7 +1100,11 @@
       >
         <label>Reason<textarea v-model="resolutionReason" required class="min-h-20" /></label>
         <label
-          >Receipt JSON<textarea v-model="resolutionReceipt" class="min-h-28 font-mono text-xs" />
+          >Receipt JSON<textarea
+            v-model="resolutionReceipt"
+            data-validation="json"
+            class="min-h-28 font-mono text-xs"
+          />
         </label>
         <p v-if="resolutionReceiptError" class="m-0 text-sm text-danger-fg">
           {{ resolutionReceiptError }}
@@ -1182,6 +1203,8 @@
             ><label v-if="adapterForm.kind === 'github'" class="text-sm"
               >Repositories (JSON array)<textarea
                 v-model="pollRepositories"
+                required
+                data-validation="json"
                 class="mt-1 min-h-20 w-full font-mono text-xs"
               /></label
             ><template v-if="adapterForm.kind === 'jira'"
@@ -1195,11 +1218,13 @@
                 >Jira base URL<input
                   v-model="adapterForm.configuration.base_url"
                   required
+                  type="url"
                   class="mt-1 w-full" /></label
               ><label class="text-sm"
                 >Jira account email<input
                   v-model="adapterForm.configuration.email"
                   required
+                  type="email"
                   class="mt-1 w-full" /></label
               ><label class="text-sm"
                 >JQL<input
@@ -1230,6 +1255,7 @@
                 :model-value="adapterForm.configuration[field.name]"
                 :ty="field.value_type"
                 :allow-expressions="false"
+                :required="field.required"
                 @update:model-value="updateConfigField(field.name, $event)"
               /><small v-if="field.description" class="mt-1 block text-fg-muted">{{
                 field.description
@@ -1250,6 +1276,7 @@
           ><label class="text-sm"
             >Identity extraction JSON<textarea
               v-model="identityText"
+              data-validation="json"
               class="mt-1 min-h-28 w-full font-mono text-xs"
               :disabled="identityLocked"
             />

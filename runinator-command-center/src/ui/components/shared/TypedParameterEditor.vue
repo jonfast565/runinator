@@ -17,6 +17,7 @@
         </span>
         <select
           v-if="isSecretString(parameter)"
+          :required="parameter.required"
           :value="stringValue(parameter.name)"
           @change="setValue(parameter.name, ($event.target as HTMLSelectElement).value)"
         >
@@ -48,6 +49,7 @@
           v-else
           :model-value="parameterValue(parameter.name)"
           :ty="parameter.ty"
+          :required="parameter.required"
           :placeholder="placeholder(parameter)"
           :force-expression="isWorkflowExpressionValue(parameterValue(parameter.name))"
           :expression-context="expressionContext"

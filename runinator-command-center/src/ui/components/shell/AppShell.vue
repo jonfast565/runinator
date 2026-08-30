@@ -29,11 +29,13 @@
         </div>
       </Transition>
       <main
+        ref="mainContent"
         :inert="app.interactionsDisabled"
         :aria-disabled="app.interactionsDisabled"
         @invalid.capture="onInvalid"
         @input.capture="onFormInput"
         @change.capture="onFormInput"
+        @focusout.capture="onFormInput"
       >
         <slot />
       </main>
@@ -49,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useKeyboardShortcuts } from "../../composables/useKeyboardShortcuts";
 import Icon from "../shared/Icon.vue";
@@ -57,11 +59,14 @@ import OutageBanner from "./OutageBanner.vue";
 import SidebarNav from "./SidebarNav.vue";
 import ToastHost from "./ToastHost.vue";
 import TopToolbar from "./TopToolbar.vue";
+import { applyDefaultConstraints, validateFormControl } from "../../composables/form-validation";
 
 const app = useAppStore();
 const { handleKeydown, refreshActive } = useKeyboardShortcuts();
 const validationMessage = ref("");
+const mainContent = ref<HTMLElement | null>(null);
 let invalidControl: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null = null;
+let constraintObserver: MutationObserver | null = null;
 
 function isFormControl(
   target: EventTarget | null,
@@ -103,6 +108,7 @@ function onInvalid(event: Event) {
   }
 
   const control = event.target;
+  validateFormControl(control);
   control.setAttribute("aria-invalid", "true");
 
   if (!invalidControl || invalidControl.validity.valid) {
@@ -112,7 +118,14 @@ function onInvalid(event: Event) {
 }
 
 function onFormInput(event: Event) {
-  if (!isFormControl(event.target) || !event.target.validity.valid) {
+  if (!isFormControl(event.target)) {
+    return;
+  }
+
+  applyDefaultConstraints(event.target.closest("form") ?? event.target.parentElement ?? document);
+
+  if (!validateFormControl(event.target)) {
+    event.target.setAttribute("aria-invalid", "true");
     return;
   }
 
@@ -124,6 +137,25 @@ function onFormInput(event: Event) {
   }
 }
 
+onMounted(() => {
+  if (!mainContent.value) {
+    return;
+  }
+
+  applyDefaultConstraints(mainContent.value);
+  constraintObserver = new MutationObserver(() => {
+    if (mainContent.value) {
+      applyDefaultConstraints(mainContent.value);
+    }
+  });
+  constraintObserver.observe(mainContent.value, { childList: true, subtree: true });
+});
+
+onBeforeUnmount(() => {
+  constraintObserver?.disconnect();
+  constraintObserver = null;
+});
+
 function focusInvalidField() {
   invalidControl?.focus();
   invalidControl?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -131,9 +163,14 @@ function focusInvalidField() {
 
 watch(
   () => app.activeTab,
-  () => {
+  async () => {
     invalidControl = null;
     validationMessage.value = "";
+    await nextTick();
+
+    if (mainContent.value) {
+      applyDefaultConstraints(mainContent.value);
+    }
   },
 );
 

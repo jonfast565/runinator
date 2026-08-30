@@ -4,6 +4,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::validation::{
+    SHORT_TEXT_MAX, Validate, ValidationError, identifier, optional_text, required_text,
+};
+
 use crate::{providers::ProviderMetadata, value::Value};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -208,6 +212,39 @@ pub struct ReplicaOfflineRequest {
 pub struct ReplicaProviderRegistrationRequest {
     pub runtime_id: String,
     pub provider: ProviderMetadata,
+}
+
+impl Validate for ReplicaRegistrationRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("instance_id", &self.instance_id)?;
+        identifier("runtime_id", &self.runtime_id)?;
+        optional_text("display_name", self.display_name.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("host", self.host.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("base_path", self.base_path.as_deref(), 2 * 1024)?;
+        optional_text("version", self.version.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for ReplicaHeartbeatRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("runtime_id", &self.runtime_id)?;
+        optional_text("display_name", self.display_name.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("host", self.host.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("base_path", self.base_path.as_deref(), 2 * 1024)
+    }
+}
+
+impl Validate for ReplicaOfflineRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("runtime_id", &self.runtime_id)
+    }
+}
+
+impl Validate for ReplicaProviderRegistrationRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("runtime_id", &self.runtime_id)?;
+        required_text("provider.name", &self.provider.name, SHORT_TEXT_MAX)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

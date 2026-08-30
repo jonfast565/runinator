@@ -216,6 +216,8 @@
                 <span class="text-[0.84rem] text-fg-muted">{{ definition.description }}</span>
                 <input
                   type="number"
+                  required
+                  step="1"
                   :min="definition.minimum"
                   :max="definition.maximum"
                   :value="serverValue(definition.key)"
@@ -308,6 +310,7 @@
                 <span class="text-[0.84rem] font-semibold text-fg-muted">Docker image</span>
                 <input
                   :value="activeLanguage.image"
+                  required
                   :placeholder="activeLanguage.defaultImage"
                   @input="onLanguageField('image', $event)"
                 />

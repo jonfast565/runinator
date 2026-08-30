@@ -19,6 +19,7 @@ use serde::Deserialize;
 use runinator_engine::services::{
     OrchestrationOperations, PipelineIngressError, PipelineIngressRequest, PipelineOperations,
 };
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     ApiError, ApiResponse, IngressEventRequest, IngressResponse, ManagedRunOverrideRequest,
     PipelineMemberRetryRequest, PipelineRunInquiryDecision, PipelineRunRequest,
@@ -306,7 +307,7 @@ pub async fn ingress_pipeline_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
-    Json(request): Json<IngressEventRequest>,
+    ValidatedJson(request): ValidatedJson<IngressEventRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(pipeline_id, Permission::Run)
@@ -384,7 +385,7 @@ pub async fn create_pipeline_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
-    Json(request): Json<PipelineRunRequest>,
+    ValidatedJson(request): ValidatedJson<PipelineRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(pipeline_id, Permission::Run)
@@ -414,7 +415,7 @@ pub async fn create_pipeline_trigger_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
-    Json(request): Json<PipelineRunRequest>,
+    ValidatedJson(request): ValidatedJson<PipelineRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_trigger(trigger_id, Permission::Run)
@@ -514,7 +515,7 @@ pub async fn cancel_pipeline_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
-    body: Option<Json<ManagedRunOverrideRequest>>,
+    body: Option<ValidatedJson<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -522,7 +523,7 @@ pub async fn cancel_pipeline_run<
     {
         return reply;
     }
-    let override_request = body.as_ref().map(|Json(request)| request);
+    let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_pipeline_run_control(
         db.clone(),
         service.as_ref(),
@@ -554,7 +555,7 @@ pub async fn pause_pipeline_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
-    body: Option<Json<ManagedRunOverrideRequest>>,
+    body: Option<ValidatedJson<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -562,7 +563,7 @@ pub async fn pause_pipeline_run<
     {
         return reply;
     }
-    let override_request = body.as_ref().map(|Json(request)| request);
+    let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_pipeline_run_control(
         db.clone(),
         service.as_ref(),
@@ -594,7 +595,7 @@ pub async fn resume_pipeline_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
-    body: Option<Json<ManagedRunOverrideRequest>>,
+    body: Option<ValidatedJson<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -602,7 +603,7 @@ pub async fn resume_pipeline_run<
     {
         return reply;
     }
-    let override_request = body.as_ref().map(|Json(request)| request);
+    let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_pipeline_run_control(
         db.clone(),
         service.as_ref(),
@@ -637,7 +638,7 @@ pub async fn resolve_pipeline_run<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
-    Json(request): Json<PipelineRunResolutionRequest>,
+    ValidatedJson(request): ValidatedJson<PipelineRunResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)
@@ -689,7 +690,7 @@ pub async fn retry_pipeline_member<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((pipeline_run_id, member_key)): Path<(Uuid, String)>,
-    Json(request): Json<PipelineMemberRetryRequest>,
+    ValidatedJson(request): ValidatedJson<PipelineMemberRetryRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_run(pipeline_run_id, Permission::Run)

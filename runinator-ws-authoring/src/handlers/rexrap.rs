@@ -5,6 +5,7 @@ use axum::{Extension, Json, http::StatusCode};
 use runinator_models::{
     auth::{AuthContext, Permission},
     types::RuninatorType,
+    validation::{Validate, ValidationError, bounded_text, required_text},
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
@@ -19,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::handlers::providers::provider_metadata_from_items;
 use runinator_engine::services::{CatalogOperations, WorkflowAuthoring};
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
@@ -80,6 +82,59 @@ pub struct ImportRexRapRequest {
     pub ui: Option<Value>,
 }
 
+const MAX_REXRAP_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+
+fn validate_source(path: &str, source: &str) -> Result<(), ValidationError> {
+    required_text(path, source, MAX_REXRAP_SOURCE_BYTES)?;
+    bounded_text(path, source, MAX_REXRAP_SOURCE_BYTES)
+}
+
+impl Validate for CompileRexRapRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        validate_source("source", &self.source)
+    }
+}
+
+impl Validate for RexRapSourceRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        validate_source("source", &self.source)
+    }
+}
+
+impl Validate for DecompileRexRapRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for EvaluateExpressionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(source) = self.source.as_deref() {
+            validate_source("source", source)?;
+        }
+        if self.source.is_none() && self.expression.is_none() {
+            return Err(ValidationError::new(
+                "expression",
+                "expression or source is required",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ImportRexRapRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        validate_source("source", &self.source)?;
+        if self.triggers.len() > 256 {
+            return Err(ValidationError::new(
+                "triggers",
+                "must contain at most 256 triggers",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// a rexrap diagnostic flattened for the editor linter: byte offsets plus 1-based line/column.
 #[derive(Serialize)]
 pub struct DiagnosticSummary {
@@ -101,7 +156,7 @@ pub async fn compile_rexrap<
 >(
     Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
-    Json(request): Json<CompileRexRapRequest>,
+    ValidatedJson(request): ValidatedJson<CompileRexRapRequest>,
 ) -> Result<Json<WorkflowDefinition>, (StatusCode, String)> {
     let providers = fetch_provider_metadata(&catalog)
         .await
@@ -132,7 +187,7 @@ pub async fn import_rexrap<
     Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<ImportRexRapRequest>,
+    ValidatedJson(request): ValidatedJson<ImportRexRapRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // saving over an existing workflow requires edit; a brand-new one is owned by its creator.
     let is_create = request.workflow_id.is_none();
@@ -201,7 +256,7 @@ pub async fn analyze_rexrap<
 >(
     Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
-    Json(request): Json<RexRapSourceRequest>,
+    ValidatedJson(request): ValidatedJson<RexRapSourceRequest>,
 ) -> Json<Vec<DiagnosticSummary>> {
     let source = request.source;
     let providers = fetch_provider_metadata(&catalog).await.unwrap_or_default();
@@ -309,7 +364,7 @@ fn workflow_signatures_from_definition(workflow: &WorkflowDefinition) -> Vec<Wor
 }
 
 pub async fn format_rexrap(
-    Json(request): Json<RexRapSourceRequest>,
+    ValidatedJson(request): ValidatedJson<RexRapSourceRequest>,
 ) -> Result<Json<String>, (StatusCode, String)> {
     runinator_rexrap::format_str(&request.source)
         .map(Json)
@@ -317,7 +372,7 @@ pub async fn format_rexrap(
 }
 
 pub async fn decompile_to_rexrap(
-    Json(request): Json<DecompileRexRapRequest>,
+    ValidatedJson(request): ValidatedJson<DecompileRexRapRequest>,
 ) -> Result<Json<String>, (StatusCode, String)> {
     runinator_rexrap::decompile(&request.workflow)
         .map(Json)
@@ -347,7 +402,7 @@ pub struct DecompiledRexRap {
 /// `source` in the same response: the text is regenerated on every call, so offsets from one
 /// response must never be applied to another.
 pub async fn decompile_to_rexrap_with_spans(
-    Json(request): Json<DecompileRexRapRequest>,
+    ValidatedJson(request): ValidatedJson<DecompileRexRapRequest>,
 ) -> Result<Json<DecompiledRexRap>, (StatusCode, String)> {
     runinator_rexrap::decompile_with_spans(&request.workflow)
         .map(|(source, spans)| {
@@ -371,7 +426,7 @@ pub async fn decompile_to_rexrap_with_spans(
 /// compute tier (stdlib + higher-order intrinsics) but not effectful ops, so a preview never runs
 /// side effects.
 pub async fn evaluate_expression(
-    Json(request): Json<EvaluateExpressionRequest>,
+    ValidatedJson(request): ValidatedJson<EvaluateExpressionRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     if let Some(source) = request.source {
         return runinator_rexrap::evaluate_fragment(

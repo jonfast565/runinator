@@ -19,6 +19,7 @@ fn org_scope(org_id: Uuid) -> runinator_models::rbac::ScopeRef {
     .unwrap()
 }
 
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::auth::{AuthConfig, issue_access_token};
@@ -61,7 +62,7 @@ fn require_principal(ctx: &AuthContext) -> Result<Uuid, Reply> {
 pub async fn create_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CreateOrgRequest>,
+    ValidatedJson(request): ValidatedJson<CreateOrgRequest>,
 ) -> Reply {
     let user_id = match require_principal(&ctx) {
         Ok(id) => id,
@@ -157,7 +158,7 @@ pub async fn update_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
-    Json(request): Json<UpdateOrgRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateOrgRequest>,
 ) -> Reply {
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::Own, org_scope(org_id))
@@ -213,7 +214,7 @@ pub async fn add_org_member<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
-    Json(request): Json<AddOrgMemberRequest>,
+    ValidatedJson(request): ValidatedJson<AddOrgMemberRequest>,
 ) -> Reply {
     let action = if request.role == OrgRole::Owner {
         runinator_models::rbac::Action::Own
@@ -245,7 +246,7 @@ pub async fn update_org_member<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
-    Json(request): Json<UpdateOrgMemberRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateOrgMemberRequest>,
 ) -> Reply {
     let action = if request.role == OrgRole::Owner {
         runinator_models::rbac::Action::Own
@@ -292,7 +293,7 @@ pub async fn switch_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<SwitchOrgRequest>,
+    ValidatedJson(request): ValidatedJson<SwitchOrgRequest>,
 ) -> Reply {
     let user_id = match require_principal(&ctx) {
         Ok(id) => id,

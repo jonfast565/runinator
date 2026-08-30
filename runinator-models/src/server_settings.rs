@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::validation::{Validate, ValidationError};
+
 use crate::settings::SettingKind;
 
 pub const SERVER_SETTINGS_SCOPE: &str = "server";
@@ -615,6 +617,12 @@ impl ServerSettings {
             "replicas.sample_max_points" => self.replicas.sample_max_points,
             _ => return None,
         })
+    }
+}
+
+impl Validate for ServerSettings {
+    fn validate(&self) -> Result<(), ValidationError> {
+        ServerSettings::validate(self).map_err(|message| ValidationError::new("settings", message))
     }
 }
 

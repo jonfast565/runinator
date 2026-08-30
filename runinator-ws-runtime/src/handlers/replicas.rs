@@ -16,6 +16,7 @@ use runinator_models::{
 };
 use runinator_store::{RuntimeStore, roles::ReplicaStore};
 
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{ApiResponse, ReplicaQuery, ReplicaSampleQuery};
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, REPLICA_FILTERS, endpoint, json_body,
@@ -28,7 +29,7 @@ pub async fn register_replica<T: ReplicaStore>(
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
-    Json(request): Json<ReplicaRegistrationRequest>,
+    ValidatedJson(request): ValidatedJson<ReplicaRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Agent,
@@ -59,7 +60,7 @@ pub async fn heartbeat_replica<T: ReplicaStore>(
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Path(replica_id): Path<Uuid>,
-    Json(request): Json<ReplicaHeartbeatRequest>,
+    ValidatedJson(request): ValidatedJson<ReplicaHeartbeatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Agent,
@@ -86,7 +87,7 @@ pub async fn mark_replica_offline<T: ReplicaStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
-    Json(request): Json<ReplicaOfflineRequest>,
+    ValidatedJson(request): ValidatedJson<ReplicaOfflineRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Agent,
@@ -164,7 +165,7 @@ pub async fn upsert_replica_provider<T: ReplicaStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
-    Json(request): Json<ReplicaProviderRegistrationRequest>,
+    ValidatedJson(request): ValidatedJson<ReplicaProviderRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Agent,

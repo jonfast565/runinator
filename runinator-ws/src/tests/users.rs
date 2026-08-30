@@ -48,7 +48,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         Extension(db.clone()),
         Extension(ctx.clone()),
         Path(admin_id),
-        Json(UpdateUserRequest {
+        ValidatedJson(UpdateUserRequest {
             email: None,
             password: None,
             platform_role: Some(runinator_models::rbac::PlatformRole::Member),
@@ -62,7 +62,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         Extension(db.clone()),
         Extension(ctx.clone()),
         Path(admin_id),
-        Json(UpdateUserRequest {
+        ValidatedJson(UpdateUserRequest {
             email: None,
             password: None,
             platform_role: None,
@@ -103,7 +103,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
             org_id: None,
         }),
         Path(admin_id),
-        Json(UpdateUserRequest {
+        ValidatedJson(UpdateUserRequest {
             email: None,
             password: None,
             platform_role: Some(runinator_models::rbac::PlatformRole::Member),
@@ -145,7 +145,7 @@ async fn login_requires_an_enabled_organization_membership() {
         Extension(db.clone()),
         Extension(auth_config.clone()),
         ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))),
-        Json(login()),
+        ValidatedJson(login()),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -164,7 +164,7 @@ async fn login_requires_an_enabled_organization_membership() {
         Extension(db.clone()),
         Extension(auth_config),
         ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 1))),
-        Json(login()),
+        ValidatedJson(login()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -194,7 +194,7 @@ async fn api_key_handlers_support_admin_user_keys_and_rotation() {
     let (status, _) = crate::handlers::auth::create_api_key::<SqliteDb>(
         Extension(db.clone()),
         Extension(admin_ctx.clone()),
-        Json(CreateApiKeyRequest {
+        ValidatedJson(CreateApiKeyRequest {
             name: "operator key".into(),
             principal_kind: PrincipalKind::User,
             principal_id: user_id,
@@ -216,7 +216,7 @@ async fn api_key_handlers_support_admin_user_keys_and_rotation() {
         Extension(db.clone()),
         Extension(admin_ctx.clone()),
         Path(key_id),
-        Json(UpdateApiKeyRequest {
+        ValidatedJson(UpdateApiKeyRequest {
             name: Some("renamed key".into()),
             expires_at: Some(None),
             disabled: Some(false),
@@ -265,7 +265,7 @@ async fn non_admin_api_key_creation_stays_owned_by_caller() {
             kind: PrincipalKind::User,
             org_id: None,
         }),
-        Json(CreateApiKeyRequest {
+        ValidatedJson(CreateApiKeyRequest {
             name: "attempted service key".into(),
             principal_kind: PrincipalKind::Service,
             principal_id: other_id,
@@ -333,7 +333,7 @@ async fn redeem(
     let (status, Json(body)) = crate::handlers::auth::enroll_agent::<SqliteDb>(
         Extension(db),
         ConnectInfo(SocketAddr::from((ip, 49152))),
-        Json(request),
+        ValidatedJson(request),
     )
     .await;
     (status, serde_json::to_value(body).unwrap())
@@ -475,7 +475,7 @@ async fn agent_principals_cannot_mutate_another_agents_replica_through_the_regis
         Extension(owner),
         axum::http::HeaderMap::new(),
         ConnectInfo(SocketAddr::from(([127, 12, 0, 1], 49152))),
-        Json(request),
+        ValidatedJson(request),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -502,7 +502,7 @@ async fn agent_principals_cannot_mutate_another_agents_replica_through_the_regis
         axum::http::HeaderMap::new(),
         ConnectInfo(SocketAddr::from(([127, 12, 0, 2], 49152))),
         Path(replica.replica_id),
-        Json(ReplicaHeartbeatRequest {
+        ValidatedJson(ReplicaHeartbeatRequest {
             runtime_id: "runtime-a".to_string(),
             display_name: Some("hijacked".to_string()),
             host: None,

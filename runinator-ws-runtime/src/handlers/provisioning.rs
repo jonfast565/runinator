@@ -5,6 +5,7 @@ use runinator_models::auth::AuthContext;
 use runinator_models::provisioning::{NodeBackendsResponse, ScaleNodesRequest, StopNodeRequest};
 use runinator_provisioner::ProvisionerRegistry;
 
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::api_error;
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -58,7 +59,7 @@ pub async fn get_nodes(
 pub async fn scale_nodes(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<ScaleNodesRequest>,
+    ValidatedJson(request): ValidatedJson<ScaleNodesRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::NodesOperate,
@@ -83,7 +84,7 @@ pub async fn scale_nodes(
 pub async fn stop_node(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<StopNodeRequest>,
+    ValidatedJson(request): ValidatedJson<StopNodeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::NodesOperate,

@@ -6,6 +6,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, optional_text, positive_limit,
+    required_text,
+};
+
 /// what the trigger loop does when a workflow is already at its concurrency limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -217,6 +222,20 @@ pub struct NewFreezeWindow {
     pub enabled: bool,
 }
 
+impl Validate for NewFreezeWindow {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        optional_text("reason", self.reason.as_deref(), LONG_TEXT_MAX)?;
+        if self.ends_at <= self.starts_at {
+            return Err(ValidationError::new(
+                "ends_at",
+                "must be later than starts_at",
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -297,6 +316,15 @@ pub struct BackfillRequest {
     /// when true, report the slots that would fire without creating any runs.
     #[serde(default)]
     pub dry_run: bool,
+}
+
+impl Validate for BackfillRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.to <= self.from {
+            return Err(ValidationError::new("to", "must be later than from"));
+        }
+        positive_limit("limit", self.limit, MAX_BACKFILL_LIMIT)
+    }
 }
 
 /// per-request cap on backfilled slots. a year of a minutely cron is half a million runs, so the

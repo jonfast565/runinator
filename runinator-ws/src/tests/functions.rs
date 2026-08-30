@@ -142,7 +142,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
             Extension(db.clone()),
             function_packages(&db, &blobs),
             Extension(admin_ctx()),
-            Json(request.clone()),
+            ValidatedJson(request.clone()),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -195,7 +195,7 @@ async fn a_publish_without_its_bytes_is_refused() {
         Extension(db.clone()),
         function_packages(&db, &blobs),
         Extension(admin_ctx()),
-        Json(request),
+        ValidatedJson(request),
     )
     .await;
     assert_ne!(status, StatusCode::OK);
@@ -251,7 +251,7 @@ async fn moving_an_alias_leaves_earlier_versions_where_they_are() {
             Extension(db.clone()),
             function_packages(&db, &blobs),
             Extension(admin_ctx()),
-            Json(request.clone()),
+            ValidatedJson(request.clone()),
         )
         .await;
     }
@@ -347,7 +347,7 @@ async fn publishing_generates_a_hidden_adapter_workflow_per_export() {
         Extension(db.clone()),
         function_packages(&db, &blobs),
         Extension(admin_ctx()),
-        Json(source.publish_request()),
+        ValidatedJson(source.publish_request()),
     )
     .await;
     if status != StatusCode::OK
@@ -422,7 +422,7 @@ async fn republishing_retains_an_immutable_adapter_for_each_version() {
             Extension(db.clone()),
             function_packages(&db, &blobs),
             Extension(admin_ctx()),
-            Json(source.publish_request()),
+            ValidatedJson(source.publish_request()),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -531,7 +531,7 @@ async fn published(
         Extension(db.clone()),
         function_packages(db, blobs),
         Extension(admin_ctx()),
-        Json(source.publish_request()),
+        ValidatedJson(source.publish_request()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

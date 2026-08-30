@@ -10,7 +10,9 @@ pub mod json;
 pub mod models;
 pub mod openapi;
 pub mod responses;
+pub mod validation;
 
 pub use events::{AppEvent, AppEventKind, EventBus, EventSender};
 pub use json::merge_json;
 pub use models::{ApiError, ApiResponse};
+pub use validation::ValidatedJson;

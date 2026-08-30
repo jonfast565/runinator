@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::rbac::{Action, PlatformRole, RoleAssignment, SystemRole};
+use crate::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, http_url, identifier, optional_email,
+    optional_text, required_text, string_map,
+};
 
 /// the local-password identity provider tag. future SSO providers use `"OpenID Connect (OIDC):<issuer>"`.
 pub const PROVIDER_LOCAL: &str = "local";
@@ -457,6 +461,111 @@ pub struct EnrollAgentRequest {
     pub request_body: AgentEnrollmentRequestBody,
     /// base64url-no-pad HMAC-SHA256 over the canonical JSON request body.
     pub proof: String,
+}
+
+impl Validate for CreateTeamRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for UpdateTeamRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for AddTeamMemberRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for CreateGrantRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for LoginRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("username", &self.username, SHORT_TEXT_MAX)?;
+        required_text("password", &self.password, LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for RefreshRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("refresh_token", &self.refresh_token, LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for CreateUserRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("username", &self.username)?;
+        required_text("password", &self.password, LONG_TEXT_MAX)?;
+        optional_email("email", self.email.as_deref())
+    }
+}
+
+impl Validate for UpdateUserRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_email("email", self.email.as_deref())?;
+        optional_text("password", self.password.as_deref(), LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for CreateApiKeyRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        if self.action_ceiling.len() > 128 {
+            return Err(ValidationError::new(
+                "action_ceiling",
+                "must contain at most 128 actions",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for UpdateApiKeyRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for CreateAgentEnrollmentTokenRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if !(1..=86_400).contains(&self.ttl_seconds) {
+            return Err(ValidationError::new(
+                "ttl_seconds",
+                "must be between 1 and 86400",
+            ));
+        }
+        http_url("service_url", &self.service_url)?;
+        string_map("labels", &self.labels, 64)?;
+        optional_text("spki_pin", self.spki_pin.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for AgentEnrollmentRequestBody {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("request_body.instance_id", &self.instance_id)?;
+        optional_text(
+            "request_body.display_name",
+            self.display_name.as_deref(),
+            SHORT_TEXT_MAX,
+        )?;
+        string_map("request_body.labels", &self.labels, 64)
+    }
+}
+
+impl Validate for EnrollAgentRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("token_id", &self.token_id)?;
+        self.request_body.validate()?;
+        required_text("proof", &self.proof, 1024)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

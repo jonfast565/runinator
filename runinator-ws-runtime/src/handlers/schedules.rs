@@ -17,6 +17,7 @@ use runinator_store::{
 use serde::Deserialize;
 
 use runinator_engine::services::SchedulingOperations;
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
@@ -68,7 +69,7 @@ pub async fn create_freeze_window<
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(mut window): Json<NewFreezeWindow>,
+    ValidatedJson(mut window): ValidatedJson<NewFreezeWindow>,
 ) -> Reply {
     if let Err(reply) = require_window_target(db.as_ref(), &ctx, &window, Permission::Edit).await {
         return reply;
@@ -93,7 +94,7 @@ pub async fn update_freeze_window<
     Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(window_id): Path<Uuid>,
-    Json(mut window): Json<NewFreezeWindow>,
+    ValidatedJson(mut window): ValidatedJson<NewFreezeWindow>,
 ) -> Reply {
     let current = match service.fetch_freeze_window(window_id).await {
         Ok(Some(window)) => window,
@@ -171,7 +172,7 @@ pub async fn backfill_workflow_trigger<
     Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
-    Json(request): Json<BackfillRequest>,
+    ValidatedJson(request): ValidatedJson<BackfillRequest>,
 ) -> Reply {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_trigger_workflow(trigger_id, Permission::Edit)

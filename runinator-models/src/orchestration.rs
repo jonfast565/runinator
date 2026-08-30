@@ -5,6 +5,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::validation::{
+    SHORT_TEXT_MAX, Validate, ValidationError, identifier, positive_limit, required_text,
+};
+
 /// The lifecycle state of a correlation-key admission when an ingress event arrives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1484,4 +1488,56 @@ pub struct ActionDispatchClaimRequest {
     pub lease_until: DateTime<Utc>,
     #[serde(default)]
     pub limit: Option<i64>,
+}
+
+impl Validate for IdempotencyClaimRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scope", &self.scope)?;
+        required_text("key", &self.key, SHORT_TEXT_MAX)?;
+        if !(1..=86_400).contains(&self.lease_seconds) {
+            return Err(ValidationError::new(
+                "lease_seconds",
+                "must be between 1 and 86400",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for IdempotencyReleaseRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scope", &self.scope)?;
+        required_text("key", &self.key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for IdempotencyCompleteRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scope", &self.scope)?;
+        required_text("key", &self.key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for ReadyNodeClaimRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scheduler_id", &self.scheduler_id)?;
+        positive_limit("limit", self.limit, 1000)
+    }
+}
+
+impl Validate for ReadyNodeProcessRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scheduler_id", &self.scheduler_id)?;
+        if let Some(node_id) = self.node_id.as_deref() {
+            identifier("node_id", node_id)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ActionDispatchClaimRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scheduler_id", &self.scheduler_id)?;
+        positive_limit("limit", self.limit, 1000)
+    }
 }

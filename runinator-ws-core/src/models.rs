@@ -33,6 +33,11 @@ use std::collections::BTreeMap;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use runinator_models::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, bounded_text, identifier,
+    optional_text, positive_limit, required_text,
+};
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ApiError {
     pub message: String,
@@ -599,4 +604,302 @@ pub struct CredentialPutRequest {
     /// optional RFC 3339 expiry for secrets; rejected for config values.
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Validate for CreateAgentDirectiveRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(seconds) = self.expires_in_seconds
+            && !(1..=86_400).contains(&seconds)
+        {
+            return Err(ValidationError::new(
+                "expires_in_seconds",
+                "must be between 1 and 86400",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for WorkflowRunRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)?;
+        if self.file_ids.len() > 128 {
+            return Err(ValidationError::new(
+                "file_ids",
+                "must contain at most 128 files",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for WorkflowTriggerRunRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for PipelineRunRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.revision.is_some_and(|revision| revision <= 0) {
+            return Err(ValidationError::new(
+                "revision",
+                "must be greater than zero",
+            ));
+        }
+        if let Some(member) = self.start_member.as_deref() {
+            identifier("start_member", member)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for OrchestrationIntentRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("intent", &self.intent)?;
+        required_text("reason", &self.reason, LONG_TEXT_MAX)?;
+        required_text("idempotency_key", &self.idempotency_key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for OrchestrationRequeueRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("reason", &self.reason, LONG_TEXT_MAX)?;
+        required_text("idempotency_key", &self.idempotency_key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for AdapterApplyRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        identifier("kind", &self.kind)?;
+        identifier("kind_version", &self.kind_version)?;
+        if self.expected_revision.is_some_and(|revision| revision < 0) {
+            return Err(ValidationError::new(
+                "expected_revision",
+                "must not be negative",
+            ));
+        }
+        if self.secret_bindings.len() > 128 {
+            return Err(ValidationError::new(
+                "secret_bindings",
+                "must contain at most 128 entries",
+            ));
+        }
+        for key in self.secret_bindings.keys() {
+            identifier(&format!("secret_bindings.{key}"), key)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for AdapterEnableRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for AdapterTestRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.headers.len() > 128 {
+            return Err(ValidationError::new(
+                "headers",
+                "must contain at most 128 headers",
+            ));
+        }
+        for (name, value) in &self.headers {
+            identifier(&format!("headers.{name}"), name)?;
+            if value.contains(['\r', '\n']) {
+                return Err(ValidationError::new(
+                    format!("headers.{name}"),
+                    "must not contain line breaks",
+                ));
+            }
+            bounded_text(&format!("headers.{name}"), value, 8 * 1024)?;
+        }
+        bounded_text("body_base64", &self.body_base64, 16 * 1024 * 1024)
+    }
+}
+
+impl Validate for ExternalOperationResolutionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if !matches!(self.resolution.as_str(), "succeeded" | "failed" | "retry") {
+            return Err(ValidationError::new(
+                "resolution",
+                "must be one of succeeded, failed, or retry",
+            ));
+        }
+        required_text("reason", &self.reason, LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for IngressEventRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("source", &self.source)?;
+        required_text("event_id", &self.event_id, SHORT_TEXT_MAX)?;
+        identifier("event_type", &self.event_type)?;
+        required_text("correlation_key", &self.correlation_key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for ManagedRunOverrideRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("reason", self.reason.as_deref(), LONG_TEXT_MAX)?;
+        optional_text(
+            "idempotency_key",
+            self.idempotency_key.as_deref(),
+            SHORT_TEXT_MAX,
+        )
+    }
+}
+
+impl Validate for PipelineMemberRetryRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text(
+            "override_reason",
+            self.override_reason.as_deref(),
+            LONG_TEXT_MAX,
+        )?;
+        optional_text(
+            "idempotency_key",
+            self.idempotency_key.as_deref(),
+            SHORT_TEXT_MAX,
+        )
+    }
+}
+
+impl Validate for SettingMoveRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scope", &self.scope)?;
+        identifier("name", &self.name)
+    }
+}
+
+impl Validate for PipelineRunResolutionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("resolved_by", self.resolved_by.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)?;
+        optional_text(
+            "override_reason",
+            self.override_reason.as_deref(),
+            LONG_TEXT_MAX,
+        )?;
+        optional_text(
+            "idempotency_key",
+            self.idempotency_key.as_deref(),
+            SHORT_TEXT_MAX,
+        )
+    }
+}
+
+impl Validate for WorkflowRunStatusRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text(
+            "active_node_id",
+            self.active_node_id.as_deref(),
+            SHORT_TEXT_MAX,
+        )?;
+        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for SchedulerRunClaimRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scheduler_id", &self.scheduler_id)?;
+        positive_limit("limit", self.limit, 1000)
+    }
+}
+
+impl Validate for SchedulerRunClaimRenewRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scheduler_id", &self.scheduler_id)
+    }
+}
+
+impl Validate for SchedulerRunClaimReleaseRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scheduler_id", &self.scheduler_id)
+    }
+}
+
+impl Validate for WorkflowRunRenameRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("name", self.name.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for SignalDeliveryRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("name", &self.name)
+    }
+}
+
+impl Validate for InterruptRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("source", self.source.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for EventDeliveryRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("type", self.event_type.as_deref(), SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for WebhookSignalRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("name", &self.name)?;
+        required_text("correlation_key", &self.correlation_key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for WorkflowRunReplayRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("from_step_id", self.from_step_id.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text(
+            "override_reason",
+            self.override_reason.as_deref(),
+            LONG_TEXT_MAX,
+        )?;
+        optional_text(
+            "idempotency_key",
+            self.idempotency_key.as_deref(),
+            SHORT_TEXT_MAX,
+        )
+    }
+}
+
+impl Validate for ApprovalResolutionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("resolved_by", self.resolved_by.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for GateResolutionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_text("resolved_by", self.resolved_by.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("reason", self.reason.as_deref(), LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for IdempotencyRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scope", &self.scope)?;
+        required_text("key", &self.key, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for CredentialPutRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("scope", &self.scope)?;
+        identifier("name", &self.name)?;
+        if self.kind == SettingKind::Config && self.expires_at.is_some() {
+            return Err(ValidationError::new(
+                "expires_at",
+                "is only valid for secrets",
+            ));
+        }
+        Ok(())
+    }
 }

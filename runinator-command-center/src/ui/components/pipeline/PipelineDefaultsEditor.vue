@@ -11,14 +11,16 @@
     <div class="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3">
       <label class="flex flex-col gap-1 text-[13px]">
         <span>Max concurrent pipeline runs</span>
-        <input v-model.number="maxConcurrentRuns" type="number" min="0" />
+        <input v-model.number="maxConcurrentRuns" type="number" min="0" step="1" required />
         <small class="text-fg-muted">0 means unlimited.</small>
       </label>
       <label class="flex flex-col gap-1 text-[13px]">
         <span>At capacity</span>
         <select v-model="onConflict">
-          <option value="allow">Allow</option><option value="skip">Skip</option>
-          <option value="queue">Queue</option><option value="cancel_previous">Cancel previous</option>
+          <option value="allow">Allow</option>
+          <option value="skip">Skip</option>
+          <option value="queue">Queue</option>
+          <option value="cancel_previous">Cancel previous</option>
         </select>
       </label>
     </div>
@@ -46,12 +48,7 @@
 
     <label class="flex flex-col gap-1 text-[13px]">
       <span>Max chain depth</span>
-      <input
-        v-model="maxChainDepth"
-        type="number"
-        min="1"
-        placeholder="default (32)"
-      />
+      <input v-model="maxChainDepth" type="number" min="1" step="1" placeholder="default (32)" />
     </label>
 
     <div class="flex flex-col gap-1 text-[13px]">
@@ -81,7 +78,10 @@ import type {
 import JsonEditor from "../shared/JsonEditor.vue";
 
 const props = defineProps<{ defaults: PipelineDefaults; concurrency: PipelineConcurrency }>();
-const emit = defineEmits<{ save: [defaults: PipelineDefaults, concurrency: PipelineConcurrency]; cancel: [] }>();
+const emit = defineEmits<{
+  save: [defaults: PipelineDefaults, concurrency: PipelineConcurrency];
+  cancel: [];
+}>();
 
 const onStepFailure = ref<PipelineFailurePolicy>(props.defaults.on_step_failure);
 const linksEnabled = ref<boolean>(props.defaults.links_enabled_by_default);
@@ -89,9 +89,7 @@ const defaultFailureMode = ref<PipelineMemberFailureMode>(props.defaults.default
 const maxChainDepth = ref<string>(
   props.defaults.max_chain_depth != null ? String(props.defaults.max_chain_depth) : "",
 );
-const parametersText = ref<string>(
-  JSON.stringify(props.defaults.default_parameters, null, 2),
-);
+const parametersText = ref<string>(JSON.stringify(props.defaults.default_parameters, null, 2));
 const parametersError = ref<string | null>(null);
 const maxConcurrentRuns = ref(props.concurrency.max_concurrent_runs);
 const onConflict = ref<PipelineConcurrency["on_conflict"]>(props.concurrency.on_conflict);
@@ -129,12 +127,19 @@ function save() {
   const depth = maxChainDepth.value.trim();
   const parsedDepth = depth ? Number.parseInt(depth, 10) : Number.NaN;
 
-  emit("save", {
-    on_step_failure: onStepFailure.value,
-    links_enabled_by_default: linksEnabled.value,
-    default_parameters: parameters,
-    max_chain_depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
-    default_failure_mode: defaultFailureMode.value,
-  }, { max_concurrent_runs: Math.max(0, Math.trunc(maxConcurrentRuns.value || 0)), on_conflict: onConflict.value });
+  emit(
+    "save",
+    {
+      on_step_failure: onStepFailure.value,
+      links_enabled_by_default: linksEnabled.value,
+      default_parameters: parameters,
+      max_chain_depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
+      default_failure_mode: defaultFailureMode.value,
+    },
+    {
+      max_concurrent_runs: Math.max(0, Math.trunc(maxConcurrentRuns.value || 0)),
+      on_conflict: onConflict.value,
+    },
+  );
 }
 </script>

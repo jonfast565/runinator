@@ -18,6 +18,7 @@ use runinator_engine::services::WorkflowFiles;
 use runinator_models::{
     auth::{AuthContext, Permission},
     runs::ProviderTerminalControl,
+    validation::{LONG_TEXT_MAX, Validate, ValidationError, optional_text},
     value::Value,
     web::TaskResponse,
     workflow_vm::WorkflowVmCursor,
@@ -31,6 +32,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_ws_core::{
+    ValidatedJson,
     events::{EventSender, emit_workflow_run},
     models::ApiResponse,
     openapi::docs::{EndpointDoc, Example, endpoint},
@@ -490,6 +492,15 @@ pub struct SettleEffectRequest {
     pub message: Option<String>,
 }
 
+impl Validate for SettleEffectRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if !self.status.is_terminal() {
+            return Err(ValidationError::new("status", "must be terminal"));
+        }
+        optional_text("message", self.message.as_deref(), LONG_TEXT_MAX)
+    }
+}
+
 /// Resolve an approval/input/signal/gate/event wait by its durable effect identity. Provider
 /// effects use the broker result path; accepting them here would bypass worker attempt ownership.
 pub async fn settle_effect<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
@@ -497,7 +508,7 @@ pub async fn settle_effect<T: AuthorizationStore + RuntimeStore + WorkflowVmStor
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(effect_id): Path<Uuid>,
-    Json(request): Json<SettleEffectRequest>,
+    ValidatedJson(request): ValidatedJson<SettleEffectRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let effect = match db.fetch_workflow_effect(effect_id).await {
         Ok(Some(effect)) => effect,

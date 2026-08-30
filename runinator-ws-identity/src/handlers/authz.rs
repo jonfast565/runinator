@@ -11,9 +11,11 @@ use runinator_models::{
     },
     orgs::OrgRole,
     rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, TeamRole},
+    validation::{SHORT_TEXT_MAX, Validate, ValidationError, required_text},
     value::Value,
 };
 use runinator_ws_core::{
+    ValidatedJson,
     models::{ApiError, ApiResponse},
     openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body},
     responses::{api_error, bad_request, not_found, task_response_success},
@@ -64,6 +66,30 @@ pub struct CreateServiceAccountRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateServiceAccountRequest {
     pub disabled: bool,
+}
+
+impl Validate for SetRoleRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for TransferOwnerRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for CreateServiceAccountRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for UpdateServiceAccountRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -261,7 +287,7 @@ pub async fn set_assignment<T: AuthorizationStore>(
         String,
         Uuid,
     )>,
-    Json(request): Json<SetRoleRequest>,
+    ValidatedJson(request): ValidatedJson<SetRoleRequest>,
 ) -> Reply {
     let scope = match parse_scope(&scope_kind, &scope_id) {
         Ok(scope) => scope,
@@ -401,7 +427,7 @@ pub async fn create_resource_grant<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, resource_id)): Path<(String, Uuid)>,
-    Json(request): Json<CreateGrantRequest>,
+    ValidatedJson(request): ValidatedJson<CreateGrantRequest>,
 ) -> Reply {
     let Some(resource_type) = ResourceType::from_str_lossy(&kind) else {
         return bad_request("unknown resource type");
@@ -500,7 +526,7 @@ pub async fn transfer_resource<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, resource_id)): Path<(String, Uuid)>,
-    Json(request): Json<TransferOwnerRequest>,
+    ValidatedJson(request): ValidatedJson<TransferOwnerRequest>,
 ) -> Reply {
     let Some(resource_type) = ResourceType::from_str_lossy(&kind) else {
         return bad_request("unknown resource type");
@@ -603,7 +629,7 @@ pub async fn list_service_accounts<T: AuthorizationStore>(
 pub async fn create_service_account<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<CreateServiceAccountRequest>,
+    ValidatedJson(request): ValidatedJson<CreateServiceAccountRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ScopeRef::PLATFORM) {
         return reply;
@@ -635,7 +661,7 @@ pub async fn update_service_account<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<UpdateServiceAccountRequest>,
+    ValidatedJson(request): ValidatedJson<UpdateServiceAccountRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ScopeRef::PLATFORM) {
         return reply;

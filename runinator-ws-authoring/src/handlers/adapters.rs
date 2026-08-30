@@ -27,6 +27,7 @@ use runinator_store::{
     },
 };
 use runinator_ws_core::{
+    ValidatedJson,
     models::{
         AdapterApplyRequest, AdapterEnableRequest, AdapterTestRequest, ApiResponse,
         IngressEventRequest,
@@ -354,7 +355,7 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<AdapterApplyRequest>,
+    ValidatedJson(request): ValidatedJson<AdapterApplyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let org_id = match require_scope(&ctx, Action::Edit) {
         Ok(value) => value,
@@ -412,7 +413,7 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<AdapterApplyRequest>,
+    ValidatedJson(request): ValidatedJson<AdapterApplyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
     let adapter = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
@@ -499,7 +500,7 @@ pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<AdapterEnableRequest>,
+    ValidatedJson(request): ValidatedJson<AdapterEnableRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
     let authorized = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
@@ -557,7 +558,7 @@ pub async fn test<
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<AdapterTestRequest>,
+    ValidatedJson(request): ValidatedJson<AdapterTestRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
     let adapter = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {

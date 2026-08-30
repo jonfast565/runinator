@@ -9,6 +9,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, optional_text, required_text,
+};
+
 use crate::value::Value;
 
 /// one notebook.
@@ -190,6 +194,17 @@ pub struct NewConsoleCell {
     /// append when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
+}
+
+impl Validate for NewConsoleCell {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("source", &self.source, LONG_TEXT_MAX)?;
+        optional_text("label", self.label.as_deref(), SHORT_TEXT_MAX)?;
+        if self.position.is_some_and(|position| position < 0) {
+            return Err(ValidationError::new("position", "must not be negative"));
+        }
+        Ok(())
+    }
 }
 
 /// the reserved workflow-name prefix a console scratch workflow carries.

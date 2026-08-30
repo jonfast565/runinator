@@ -25,6 +25,7 @@ use runinator_models::{
         is_valid_digest,
     },
     rbac::{Action, ScopeKind, ScopeRef},
+    validation::{Validate, ValidationError, identifier},
 };
 use runinator_store::{
     RuntimeStore,
@@ -34,6 +35,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_engine::services::FunctionPackages;
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -124,7 +126,7 @@ pub async fn publish_function<
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(mut request): Json<NewFunctionVersion>,
+    ValidatedJson(mut request): ValidatedJson<NewFunctionVersion>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
         return reply;
@@ -302,6 +304,35 @@ pub struct MoveFunctionPackageRequest {
     pub name: String,
 }
 
+impl Validate for SetFunctionAliasRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("alias", &self.alias)?;
+        if self.version.is_some_and(|version| version <= 0) {
+            return Err(ValidationError::new("version", "must be greater than zero"));
+        }
+        if let Some(alias) = self.from_alias.as_deref() {
+            identifier("from_alias", alias)?;
+        }
+        if self.version.is_some() && self.from_alias.is_some() {
+            return Err(ValidationError::new(
+                "from_alias",
+                "cannot be combined with version",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for MoveFunctionPackageRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        identifier("name", &self.name)?;
+        if let Some(namespace) = self.namespace.as_deref() {
+            identifier("namespace", namespace)?;
+        }
+        Ok(())
+    }
+}
+
 pub async fn move_function_package<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
@@ -309,7 +340,7 @@ pub async fn move_function_package<
     Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package_id): Path<Uuid>,
-    Json(request): Json<MoveFunctionPackageRequest>,
+    ValidatedJson(request): ValidatedJson<MoveFunctionPackageRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if request.name.trim().is_empty()
         || request
@@ -360,7 +391,7 @@ pub async fn set_function_alias<
     Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
-    Json(request): Json<SetFunctionAliasRequest>,
+    ValidatedJson(request): ValidatedJson<SetFunctionAliasRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let found = match resolve_package(&service, &ctx, &package).await {
         Ok(Some(found)) => found,

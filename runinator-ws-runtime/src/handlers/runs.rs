@@ -23,6 +23,7 @@ use runinator_store::{
 };
 
 use runinator_engine::services::{IngressOperations, OrchestrationOperations, RunOperations};
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     self, ApiError, ApiResponse, IngressAdmissionQuery, IngressEventRequest, IngressResponse,
     ManagedRunOverrideRequest, SchedulerRunClaimReleaseRequest, SchedulerRunClaimRenewRequest,
@@ -70,7 +71,7 @@ pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
     _headers: HeaderMap,
     _connect: ConnectInfo<SocketAddr>,
     Path(trigger_id): Path<Uuid>,
-    Json(request): Json<WorkflowTriggerRunRequest>,
+    ValidatedJson(request): ValidatedJson<WorkflowTriggerRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_trigger_workflow(trigger_id, runinator_models::auth::Permission::Run)
@@ -106,7 +107,7 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Path(workflow_id): Path<Uuid>,
-    Json(request): Json<WorkflowRunRequest>,
+    ValidatedJson(request): ValidatedJson<WorkflowRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_workflow(workflow_id, runinator_models::auth::Permission::Run)
@@ -152,7 +153,7 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Path(workflow_id): Path<Uuid>,
-    Json(request): Json<IngressEventRequest>,
+    ValidatedJson(request): ValidatedJson<IngressEventRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_workflow(workflow_id, runinator_models::auth::Permission::Run)
@@ -549,7 +550,7 @@ fn request_actor_display_name() -> String {
 pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Json(request): Json<SchedulerRunClaimRequest>,
+    ValidatedJson(request): ValidatedJson<SchedulerRunClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -589,7 +590,7 @@ pub async fn renew_workflow_run_claim<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(request): Json<SchedulerRunClaimRenewRequest>,
+    ValidatedJson(request): ValidatedJson<SchedulerRunClaimRenewRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -620,7 +621,7 @@ pub async fn release_workflow_run_claim<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(request): Json<SchedulerRunClaimReleaseRequest>,
+    ValidatedJson(request): ValidatedJson<SchedulerRunClaimReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -663,7 +664,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    body: Option<Json<ManagedRunOverrideRequest>>,
+    body: Option<ValidatedJson<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -671,7 +672,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    let override_request = body.as_ref().map(|Json(request)| request);
+    let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
         db.clone(),
         operations.as_ref(),
@@ -707,7 +708,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    body: Option<Json<ManagedRunOverrideRequest>>,
+    body: Option<ValidatedJson<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -715,7 +716,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    let override_request = body.as_ref().map(|Json(request)| request);
+    let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
         db.clone(),
         operations.as_ref(),
@@ -751,7 +752,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    body: Option<Json<ManagedRunOverrideRequest>>,
+    body: Option<ValidatedJson<ManagedRunOverrideRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -759,7 +760,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    let override_request = body.as_ref().map(|Json(request)| request);
+    let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
         db.clone(),
         operations.as_ref(),
@@ -795,7 +796,7 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    body: Option<Json<runinator_ws_core::models::WorkflowRunReplayRequest>>,
+    body: Option<ValidatedJson<runinator_ws_core::models::WorkflowRunReplayRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -803,7 +804,9 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let request = body
+        .map(|ValidatedJson(request)| request)
+        .unwrap_or_default();
     let override_request = ManagedRunOverrideRequest {
         reason: request.override_reason.clone(),
         idempotency_key: request.idempotency_key.clone(),
@@ -914,7 +917,7 @@ pub async fn deliver_run_event<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path((workflow_run_id, node_id)): Path<(Uuid, String)>,
-    Json(request): Json<runinator_ws_core::models::EventDeliveryRequest>,
+    ValidatedJson(request): ValidatedJson<runinator_ws_core::models::EventDeliveryRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -942,7 +945,7 @@ pub async fn deliver_signal<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(request): Json<runinator_ws_core::models::SignalDeliveryRequest>,
+    ValidatedJson(request): ValidatedJson<runinator_ws_core::models::SignalDeliveryRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -969,7 +972,7 @@ pub async fn request_interrupt<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(request): Json<runinator_ws_core::models::InterruptRequest>,
+    ValidatedJson(request): ValidatedJson<runinator_ws_core::models::InterruptRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
@@ -1020,7 +1023,7 @@ pub async fn rename_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(request): Json<runinator_ws_core::models::WorkflowRunRenameRequest>,
+    ValidatedJson(request): ValidatedJson<runinator_ws_core::models::WorkflowRunRenameRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Edit)
@@ -1115,7 +1118,7 @@ pub async fn update_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(request): Json<WorkflowRunStatusRequest>,
+    ValidatedJson(request): ValidatedJson<WorkflowRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,

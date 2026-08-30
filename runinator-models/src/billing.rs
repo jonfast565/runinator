@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::provisioning::ProvisionBackend;
 use crate::replicas::ReplicaKind;
+use crate::validation::{Validate, ValidationError, identifier};
 
 /// one price line: what a single node of `kind` on `backend` costs per hour, in cents.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,4 +141,25 @@ pub struct UpdateOrgQuotaRequest {
     pub max_nodes_per_kind: BTreeMap<String, u32>,
     #[serde(default)]
     pub max_monthly_cents: u32,
+}
+
+impl Validate for ScaleOrgNodesRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for UpdateOrgQuotaRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.max_nodes_per_kind.len() > 32 {
+            return Err(ValidationError::new(
+                "max_nodes_per_kind",
+                "must contain at most 32 replica kinds",
+            ));
+        }
+        for key in self.max_nodes_per_kind.keys() {
+            identifier(&format!("max_nodes_per_kind.{key}"), key)?;
+        }
+        Ok(())
+    }
 }

@@ -17,6 +17,14 @@
       </button>
     </header>
     <div ref="editorContainer" class="editor-shell-container"></div>
+    <input
+      v-if="!readonly"
+      class="sr-only"
+      type="text"
+      :value="parseError ? '' : 'valid'"
+      required
+      :aria-label="`${title} validity`"
+    />
     <ReferencePicker
       v-if="showPicker && !readonly"
       :groups="referenceGroups"
@@ -53,7 +61,10 @@ import {
 import { rexrap } from "../../../ui/adapters/codemirror/codemirror-lang-rexrap";
 import { osCodeMirrorTheme } from "../../../ui/adapters/codemirror/codemirror-theme";
 import { pretty } from "../../../core/utils/format";
-import { expressionJsonToRexRap, parseRexRapExpression } from "../../../core/utils/rexrap-expression";
+import {
+  expressionJsonToRexRap,
+  parseRexRapExpression,
+} from "../../../core/utils/rexrap-expression";
 import { expressionService } from "../../../core/services";
 import ReferencePicker from "./ReferencePicker.vue";
 
