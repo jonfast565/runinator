@@ -294,6 +294,8 @@ fn is_parked(status: WorkflowStatus) -> bool {
     matches!(
         status,
         WorkflowStatus::Waiting
+            | WorkflowStatus::Parked
+            | WorkflowStatus::Sleeping
             | WorkflowStatus::ApprovalRequired
             | WorkflowStatus::InputRequired
             | WorkflowStatus::Blocked

@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { statusBadgeClass } from "../../../core/utils/status";
+import { statusBadgeClass, statusBadgeLabel } from "../../../core/utils/status";
 
 const props = defineProps<{
   status?: string | boolean | null;
@@ -17,7 +17,7 @@ const label = computed(() => {
     return props.status ? (props.trueLabel ?? "Enabled") : (props.falseLabel ?? "Disabled");
   }
 
-  return props.status ?? "-";
+  return statusBadgeLabel(props.status);
 });
 const badgeClass = computed(() => {
   if (typeof props.status === "boolean") {

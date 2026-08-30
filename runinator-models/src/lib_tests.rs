@@ -116,6 +116,8 @@ fn workflow_status_terminal_and_active() {
     assert!(WorkflowStatus::Running.is_active());
     assert!(WorkflowStatus::DebugPaused.is_active());
     assert!(WorkflowStatus::Waiting.is_active());
+    assert!(WorkflowStatus::Parked.is_active());
+    assert!(WorkflowStatus::Sleeping.is_active());
     assert!(WorkflowStatus::ApprovalRequired.is_active());
 
     assert!(!WorkflowStatus::Blocked.is_terminal());

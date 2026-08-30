@@ -24,6 +24,10 @@ export function countActiveRuns(runs: { status: string }[]): number {
   return runs.filter((run) => isActiveRunStatus(run.status)).length;
 }
 
+export function statusBadgeLabel(status?: string | null): string {
+  return status?.replaceAll("_", " ") ?? "-";
+}
+
 // a node whose current run has settled: succeeded, failed, or otherwise not
 // still doing work. used to freeze the flow animation on the completed trail.
 // a node not in this set (running/waiting/queued/pending or not yet reached)
@@ -62,6 +66,8 @@ export function statusBadgeClass(status?: string) {
     [
       "queued",
       "waiting",
+      "parked",
+      "sleeping",
       "approval_required",
       "input_required",
       "debug_paused",

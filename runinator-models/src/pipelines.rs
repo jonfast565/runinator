@@ -507,8 +507,8 @@ impl crate::validation::Validate for PipelineTrigger {
 
 /// a first-class pipeline execution. an orchestration envelope over the member workflow runs it
 /// starts: each member run is stamped with this run's id, and the run settles when the reachable
-/// member graph reaches terminal. status reuses [`WorkflowStatus`] (only queued/running/waiting and
-/// the terminal states are meaningful for a pipeline run).
+/// member graph reaches terminal. status reuses [`WorkflowStatus`] (queued, running, parked,
+/// sleeping, and the terminal states are meaningful for a pipeline run).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineRun {
     pub id: Uuid,

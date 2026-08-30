@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isTerminalWorkflowRunStatus, statusBadgeClass, statusClassForNode } from "../status";
+import {
+  isTerminalWorkflowRunStatus,
+  statusBadgeClass,
+  statusBadgeLabel,
+  statusClassForNode,
+} from "../status";
 
 describe("status utils", () => {
   it("maps terminal failures", () => {
@@ -14,6 +19,12 @@ describe("status utils", () => {
     expect(statusClassForNode("waiting")).toBe("node-waiting");
     expect(statusClassForNode("approval_required")).toBe("node-waiting");
     expect(statusClassForNode("debug_paused")).toBe("node-warning");
+  });
+
+  it("labels a suspended run as parked", () => {
+    expect(statusBadgeLabel("parked")).toBe("parked");
+    expect(statusBadgeLabel("approval_required")).toBe("approval required");
+    expect(statusBadgeLabel("running")).toBe("running");
   });
 
   it("identifies terminal workflow run statuses", () => {

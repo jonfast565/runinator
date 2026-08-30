@@ -158,8 +158,8 @@ async fn drain_ready_nodes(db: &SqliteDb) {
         }
         for outcome in outcomes {
             let settled_run_id = match outcome {
-                runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id }
-                | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id } => {
+                runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id, .. }
+                | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id, .. } => {
                     settled_run_id
                 }
                 _ => None,

@@ -26,7 +26,10 @@ const OPEN_STATUSES = [
   "paused",
   "debug_paused",
   "waiting",
+  "parked",
+  "sleeping",
   "approval_required",
+  "input_required",
   "blocked",
 ];
 

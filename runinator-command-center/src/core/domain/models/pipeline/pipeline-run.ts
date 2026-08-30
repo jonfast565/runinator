@@ -2,7 +2,8 @@ import type { JsonRecord } from "../../json";
 import type { Pipeline } from "./pipeline";
 
 // a first-class pipeline execution: an orchestration envelope over the member workflow runs it
-// started. `status` reuses the workflow-run status vocabulary (queued/running/waiting/terminal).
+// started. `status` reuses the workflow-run status vocabulary
+// (queued/running/parked/sleeping/terminal).
 export interface PipelineRun {
   id: string;
   pipeline_id: string;

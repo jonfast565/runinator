@@ -767,6 +767,8 @@ fn attempt_status(status: WorkflowStatus) -> PipelineMemberAttemptStatus {
         WorkflowStatus::Failed => PipelineMemberAttemptStatus::Failed,
         WorkflowStatus::ApprovalRequired => PipelineMemberAttemptStatus::ApprovalRequired,
         WorkflowStatus::Waiting
+        | WorkflowStatus::Parked
+        | WorkflowStatus::Sleeping
         | WorkflowStatus::InputRequired
         | WorkflowStatus::Paused
         | WorkflowStatus::DebugPaused => PipelineMemberAttemptStatus::Waiting,

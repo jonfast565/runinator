@@ -26,6 +26,8 @@ pub enum WorkflowStatus {
     Paused,
     DebugPaused,
     Waiting,
+    Parked,
+    Sleeping,
     ApprovalRequired,
     InputRequired,
     Blocked,
@@ -43,6 +45,8 @@ impl WorkflowStatus {
             WorkflowStatus::Paused => "paused",
             WorkflowStatus::DebugPaused => "debug_paused",
             WorkflowStatus::Waiting => "waiting",
+            WorkflowStatus::Parked => "parked",
+            WorkflowStatus::Sleeping => "sleeping",
             WorkflowStatus::ApprovalRequired => "approval_required",
             WorkflowStatus::InputRequired => "input_required",
             WorkflowStatus::Blocked => "blocked",
@@ -73,6 +77,8 @@ impl WorkflowStatus {
                 | WorkflowStatus::Running
                 | WorkflowStatus::DebugPaused
                 | WorkflowStatus::Waiting
+                | WorkflowStatus::Parked
+                | WorkflowStatus::Sleeping
                 | WorkflowStatus::ApprovalRequired
                 | WorkflowStatus::InputRequired
                 | WorkflowStatus::Blocked
@@ -90,6 +96,8 @@ impl TryFrom<&str> for WorkflowStatus {
             "paused" => Ok(WorkflowStatus::Paused),
             "debug_paused" => Ok(WorkflowStatus::DebugPaused),
             "waiting" => Ok(WorkflowStatus::Waiting),
+            "parked" => Ok(WorkflowStatus::Parked),
+            "sleeping" => Ok(WorkflowStatus::Sleeping),
             "approval_required" => Ok(WorkflowStatus::ApprovalRequired),
             "input_required" => Ok(WorkflowStatus::InputRequired),
             "blocked" => Ok(WorkflowStatus::Blocked),

@@ -197,6 +197,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         pool.clone(),
         instance.clone(),
         local_signals.workflow_vm_notifier(),
+        publisher.clone(),
         server_settings.clone(),
         shutdown.clone(),
     ));

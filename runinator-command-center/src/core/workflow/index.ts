@@ -241,7 +241,10 @@ function workflowRunExecutionCounts(nodes: WorkflowRunDetail["nodes"]): Map<stri
     if (effects.size > 0) {
       // VM effect attempts are zero-based. Retry-history rows repeat the same effect id, so taking
       // the maximum per effect avoids counting attempt ordinals (1 + 2 + 3) as executions.
-      counts.set(nodeId, [...effects.values()].reduce((total, attempt) => total + attempt + 1, 0));
+      counts.set(
+        nodeId,
+        [...effects.values()].reduce((total, attempt) => total + attempt + 1, 0),
+      );
       continue;
     }
 
@@ -2101,9 +2104,13 @@ function isWorkflowRunDisplayStatus(status: string | undefined): status is strin
   return [
     "queued",
     "running",
+    "paused",
     "debug_paused",
     "waiting",
+    "parked",
+    "sleeping",
     "approval_required",
+    "input_required",
     "blocked",
     "succeeded",
     "failed",
@@ -2568,7 +2575,6 @@ function controlFlowTargetValues(
 export function nodeRef(target: string): JsonRecord {
   return { $node: target };
 }
-
 
 function nodeRefArray(value: unknown): string[] {
   return Array.isArray(value)

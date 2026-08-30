@@ -197,6 +197,7 @@ async fn terminal_vm_run_surfaces_the_continuation_failure() {
     assert_eq!(
         outcomes,
         vec![runinator_runtime::WorkflowVmDriveOutcome::Failed {
+            workflow_run_id: run.id,
             settled_run_id: Some(run.id),
         }]
     );
@@ -363,6 +364,9 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         .await
         .unwrap();
     assert_eq!(claimed.len(), 1);
+    let running = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
+    assert_eq!(running.status, WorkflowStatus::Running);
+    assert!(running.started_at.is_some());
     let runinator_runtime::WorkflowVmStep::Yield {
         continuation,
         effect_id,
@@ -410,6 +414,10 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         .suspend_on_effect(continuation.clone(), effect.clone(), command.clone())
         .await
         .unwrap();
+    assert_eq!(
+        db.fetch_workflow_run(run.id).await.unwrap().unwrap().status,
+        WorkflowStatus::Sleeping
+    );
     let duplicate = db
         .suspend_on_effect(continuation.clone(), effect, command)
         .await
@@ -548,6 +556,10 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
     assert!(resumed.operator_paused);
     assert_eq!(resumed.revision, continuation.revision + 3);
     assert_eq!(db.resume_workflow_vm_run(run.id, false).await.unwrap(), 1);
+    assert_eq!(
+        db.fetch_workflow_run(run.id).await.unwrap().unwrap().status,
+        WorkflowStatus::Running
+    );
     assert_eq!(db.fetch_workflow_effects(run.id).await.unwrap().len(), 1);
     // boot, node entry, effect suspension, operator pause, effect settlement, operator resume
     assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 6);

@@ -565,6 +565,8 @@ pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
             runinator_models::workflows::WorkflowStatus::Running,
             runinator_models::workflows::WorkflowStatus::DebugPaused,
             runinator_models::workflows::WorkflowStatus::Waiting,
+            runinator_models::workflows::WorkflowStatus::Parked,
+            runinator_models::workflows::WorkflowStatus::Sleeping,
             runinator_models::workflows::WorkflowStatus::ApprovalRequired,
             runinator_models::workflows::WorkflowStatus::InputRequired,
             runinator_models::workflows::WorkflowStatus::Blocked,

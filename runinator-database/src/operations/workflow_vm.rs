@@ -5,8 +5,9 @@ use runinator_comm::{EffectCommand, EffectDispatchRecord};
 use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_vm::{
     WORKFLOW_JOURNAL_VERSION, WorkflowContinuation, WorkflowContinuationStatus, WorkflowEffect,
-    WorkflowEffectOutputEvent, WorkflowEffectStatus, WorkflowFrame, WorkflowInterruptOutcome,
-    WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule, WorkflowPendingInterrupt,
+    WorkflowEffectOutputEvent, WorkflowEffectRequest, WorkflowEffectStatus, WorkflowFrame,
+    WorkflowInterruptOutcome, WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule,
+    WorkflowPendingInterrupt,
 };
 use runinator_store::roles::{NewWorkflowVmRun, WorkflowTimerInterrupt};
 
@@ -17,6 +18,153 @@ const JOURNAL_COLUMNS: &str =
 
 fn wire_name<T: serde::Serialize>(value: &T) -> Result<String, SendableError> {
     Ok(serde_json::to_string(value)?.trim_matches('"').to_string())
+}
+
+fn suspended_workflow_run_status(requests: &[WorkflowEffectRequest]) -> WorkflowStatus {
+    if requests
+        .iter()
+        .any(|request| matches!(request, WorkflowEffectRequest::Action { .. }))
+    {
+        WorkflowStatus::Running
+    } else if requests
+        .iter()
+        .any(|request| matches!(request, WorkflowEffectRequest::Approval { .. }))
+    {
+        WorkflowStatus::ApprovalRequired
+    } else if requests
+        .iter()
+        .any(|request| matches!(request, WorkflowEffectRequest::Input { .. }))
+    {
+        WorkflowStatus::InputRequired
+    } else if requests.iter().any(|request| {
+        matches!(
+            request,
+            WorkflowEffectRequest::Timer { .. } | WorkflowEffectRequest::TimerDelay { .. }
+        )
+    }) {
+        WorkflowStatus::Sleeping
+    } else {
+        WorkflowStatus::Parked
+    }
+}
+
+/// Reconcile the coarse run-row status from the VM records mutated in the current transaction.
+/// `queued` is reserved for a continuation that has never been claimed. Once execution starts, an
+/// outstanding provider action remains `running`; a run whose live continuations are all waiting
+/// on infrastructure is `parked` (or `sleeping` for a timer), with approval/input retaining their
+/// more specific statuses.
+async fn refresh_workflow_run_activity<B>(
+    store: &SqlStore<B>,
+    tx: &mut sqlx::Transaction<'_, B::Db>,
+    workflow_run_id: Uuid,
+    now: i64,
+) -> Result<(), SendableError>
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
+    for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    let continuation_statuses = sqlx::query(&store.render(
+        "SELECT status FROM workflow_continuations WHERE workflow_run_id = ? AND status NOT IN ('succeeded', 'failed', 'canceled')",
+    ))
+    .bind(workflow_run_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .iter()
+    .map(|row| row.try_get::<String, _>("status"))
+    .collect::<Result<Vec<_>, _>>()?;
+
+    let status = if continuation_statuses
+        .iter()
+        .any(|status| status == "runnable")
+    {
+        WorkflowStatus::Running
+    } else if continuation_statuses
+        .iter()
+        .any(|status| status == "paused")
+    {
+        WorkflowStatus::Paused
+    } else {
+        let requests = sqlx::query(&store.render(
+            "SELECT request_json FROM workflow_effects WHERE workflow_run_id = ? AND status IN ('requested', 'running')",
+        ))
+        .bind(workflow_run_id)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(|row| row.try_get::<String, _>("request_json"))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|json| serde_json::from_str::<WorkflowEffectRequest>(&json))
+        .collect::<Result<Vec<_>, _>>()?;
+
+        suspended_workflow_run_status(&requests)
+    };
+
+    sqlx::query(&store.render(
+        "UPDATE workflow_runs SET status = ?, started_at = COALESCE(started_at, ?) WHERE id = ? AND status NOT IN ('paused', 'debug_paused', 'succeeded', 'failed', 'timed_out', 'canceled')",
+    ))
+    .bind(status.as_str().to_string())
+    .bind(now)
+    .bind(workflow_run_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod activity_status_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn suspended_effects_keep_provider_work_running_and_classify_true_parks() {
+        let action = WorkflowEffectRequest::Action {
+            provider: "test".into(),
+            function: "run".into(),
+            input: Value::Null,
+            timeout_seconds: None,
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        };
+        assert_eq!(
+            suspended_workflow_run_status(&[action]),
+            WorkflowStatus::Running
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[WorkflowEffectRequest::TimerDelay { seconds: 1 }]),
+            WorkflowStatus::Sleeping
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[WorkflowEffectRequest::MutexAcquire {
+                key: "critical".into(),
+            }]),
+            WorkflowStatus::Parked
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[WorkflowEffectRequest::Approval {
+                prompt: Value::Null,
+                expires_at: None,
+            }]),
+            WorkflowStatus::ApprovalRequired
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[WorkflowEffectRequest::Input {
+                prompt: None,
+                schema: Value::Null,
+            }]),
+            WorkflowStatus::InputRequired
+        );
+    }
 }
 
 /// Release every named mutex held by one run. Called from the same transaction that settles or
@@ -697,6 +845,8 @@ where
         .bind(effect.updated_at)
         .execute(&mut *tx)
         .await?;
+        refresh_workflow_run_activity(self, &mut tx, effect.workflow_run_id, effect.updated_at)
+            .await?;
         tx.commit().await?;
         Ok(effect)
     }
@@ -1516,6 +1666,7 @@ where
         .bind(now)
         .execute(&mut *tx)
         .await?;
+        refresh_workflow_run_activity(self, &mut tx, effect.workflow_run_id, now).await?;
         tx.commit().await?;
         Ok(true)
     }
@@ -1786,6 +1937,7 @@ where
             .map(|row| row.try_get::<Uuid, _>("id"))
             .collect::<Result<Vec<_>, _>>()?;
         let mut claimed = Vec::with_capacity(ids.len());
+        let mut claimed_run_ids = std::collections::BTreeSet::new();
         for id in ids {
             sqlx::query(&self.render(
                 "UPDATE workflow_continuations SET claimed_by = ?, claimed_until = ? WHERE id = ?",
@@ -1801,7 +1953,12 @@ where
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
-            claimed.push(mappers::row_to_workflow_continuation(&row)?);
+            let continuation = mappers::row_to_workflow_continuation(&row)?;
+            claimed_run_ids.insert(continuation.workflow_run_id);
+            claimed.push(continuation);
+        }
+        for workflow_run_id in claimed_run_ids {
+            refresh_workflow_run_activity(self, &mut tx, workflow_run_id, now.timestamp()).await?;
         }
         tx.commit().await?;
         Ok(claimed)

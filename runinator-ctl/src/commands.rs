@@ -215,14 +215,17 @@ fn parse_workflow_status(value: &str) -> Result<WorkflowStatus> {
     WorkflowStatus::try_from(value).map_err(err)
 }
 
-fn non_terminal_statuses() -> [WorkflowStatus; 7] {
+fn non_terminal_statuses() -> [WorkflowStatus; 10] {
     [
         WorkflowStatus::Queued,
         WorkflowStatus::Running,
         WorkflowStatus::Paused,
         WorkflowStatus::DebugPaused,
         WorkflowStatus::Waiting,
+        WorkflowStatus::Parked,
+        WorkflowStatus::Sleeping,
         WorkflowStatus::ApprovalRequired,
+        WorkflowStatus::InputRequired,
         WorkflowStatus::Blocked,
     ]
 }

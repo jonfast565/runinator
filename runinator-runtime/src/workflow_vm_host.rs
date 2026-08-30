@@ -27,13 +27,50 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowVmDriveOutcome {
-    Yielded,
-    Forked,
-    Joined,
-    Completed { settled_run_id: Option<Uuid> },
-    Failed { settled_run_id: Option<Uuid> },
-    Interrupted,
-    InterruptResolved { settled_run_id: Option<Uuid> },
+    Yielded {
+        workflow_run_id: Uuid,
+    },
+    Forked {
+        workflow_run_id: Uuid,
+    },
+    Joined {
+        workflow_run_id: Uuid,
+    },
+    Completed {
+        workflow_run_id: Uuid,
+        settled_run_id: Option<Uuid>,
+    },
+    Failed {
+        workflow_run_id: Uuid,
+        settled_run_id: Option<Uuid>,
+    },
+    Interrupted {
+        workflow_run_id: Uuid,
+    },
+    InterruptResolved {
+        workflow_run_id: Uuid,
+        settled_run_id: Option<Uuid>,
+    },
+}
+
+impl WorkflowVmDriveOutcome {
+    pub fn workflow_run_id(&self) -> Uuid {
+        match self {
+            Self::Yielded { workflow_run_id }
+            | Self::Forked { workflow_run_id }
+            | Self::Joined { workflow_run_id }
+            | Self::Completed {
+                workflow_run_id, ..
+            }
+            | Self::Failed {
+                workflow_run_id, ..
+            }
+            | Self::Interrupted { workflow_run_id }
+            | Self::InterruptResolved {
+                workflow_run_id, ..
+            } => *workflow_run_id,
+        }
+    }
 }
 
 /// Drives continuations leased by a scheduler through their snapshotted workflow modules.
@@ -125,6 +162,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 sequence,
                 request,
             } => {
+                let workflow_run_id = continuation.workflow_run_id;
                 let now = Utc::now().timestamp();
                 let target = effect_target(&request)?;
                 let executor = if matches!(
@@ -171,19 +209,21 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 self.store
                     .suspend_on_effect(continuation, effect, command)
                     .await?;
-                Ok(WorkflowVmDriveOutcome::Yielded)
+                Ok(WorkflowVmDriveOutcome::Yielded { workflow_run_id })
             }
             WorkflowVmStep::Fork {
                 parent,
                 children,
                 join_key,
             } => {
+                let workflow_run_id = parent.workflow_run_id;
                 self.store
                     .fork_workflow_continuation(parent, children, join_key)
                     .await?;
-                Ok(WorkflowVmDriveOutcome::Forked)
+                Ok(WorkflowVmDriveOutcome::Forked { workflow_run_id })
             }
             WorkflowVmStep::Joined { continuation, .. } => {
+                let workflow_run_id = continuation.workflow_run_id;
                 let journal = WorkflowJournalEntry::Transitioned {
                     continuation_id: continuation.id,
                     instruction_pointer: continuation.instruction_pointer,
@@ -191,7 +231,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 self.store
                     .commit_workflow_continuation(continuation, journal)
                     .await?;
-                Ok(WorkflowVmDriveOutcome::Joined)
+                Ok(WorkflowVmDriveOutcome::Joined { workflow_run_id })
             }
             WorkflowVmStep::Complete {
                 continuation,
@@ -208,7 +248,10 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     )
                     .await?;
                 let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
-                Ok(WorkflowVmDriveOutcome::Completed { settled_run_id })
+                Ok(WorkflowVmDriveOutcome::Completed {
+                    workflow_run_id: run_id,
+                    settled_run_id,
+                })
             }
             WorkflowVmStep::Failed {
                 continuation,
@@ -227,13 +270,17 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     )
                     .await?;
                 let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
-                Ok(WorkflowVmDriveOutcome::Failed { settled_run_id })
+                Ok(WorkflowVmDriveOutcome::Failed {
+                    workflow_run_id: run_id,
+                    settled_run_id,
+                })
             }
             WorkflowVmStep::Interrupted {
                 suspended,
                 handler,
                 source,
             } => {
+                let workflow_run_id = suspended.workflow_run_id;
                 let journal = WorkflowJournalEntry::Interrupted {
                     continuation_id: suspended.id,
                     handler_continuation_id: handler.id,
@@ -242,7 +289,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 self.store
                     .raise_workflow_interrupt(suspended, handler, journal)
                     .await?;
-                Ok(WorkflowVmDriveOutcome::Interrupted)
+                Ok(WorkflowVmDriveOutcome::Interrupted { workflow_run_id })
             }
             WorkflowVmStep::InterruptResolved {
                 handler,
@@ -264,7 +311,10 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     )
                     .await?;
                 let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
-                Ok(WorkflowVmDriveOutcome::InterruptResolved { settled_run_id })
+                Ok(WorkflowVmDriveOutcome::InterruptResolved {
+                    workflow_run_id: run_id,
+                    settled_run_id,
+                })
             }
         }
     }

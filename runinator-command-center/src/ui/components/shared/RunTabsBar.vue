@@ -76,7 +76,13 @@ function statusClass(runId: string): string {
     return "bg-warn";
   }
 
-  if (status === "running" || status === "queued" || status === "debug_paused") {
+  if (
+    status === "running" ||
+    status === "queued" ||
+    status === "parked" ||
+    status === "sleeping" ||
+    status === "debug_paused"
+  ) {
     return "bg-accent shadow-[0_0_0_2px_rgba(37,99,235,0.18)]";
   }
 

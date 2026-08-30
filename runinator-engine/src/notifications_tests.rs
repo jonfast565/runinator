@@ -115,6 +115,8 @@ fn a_scoped_policy_covers_only_its_workflow() {
 #[test]
 fn parked_covers_the_blocked_states_only() {
     assert!(is_parked(WorkflowStatus::Waiting));
+    assert!(is_parked(WorkflowStatus::Parked));
+    assert!(is_parked(WorkflowStatus::Sleeping));
     assert!(is_parked(WorkflowStatus::ApprovalRequired));
     assert!(is_parked(WorkflowStatus::InputRequired));
     assert!(is_parked(WorkflowStatus::Blocked));

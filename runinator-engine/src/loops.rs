@@ -1084,7 +1084,10 @@ use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 use crate::{
-    events::{AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflow_run},
+    events::{
+        AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflow_run,
+        emit_workflow_run_resolved,
+    },
     repository,
     services::{ReplicaRegistry, WorkspaceOperations, WorkspaceRecovery},
     settings::ServerSettingsHandle,
@@ -1108,6 +1111,7 @@ pub async fn run_workflow_vm_driver<
     db: Arc<T>,
     instance: String,
     ready_nudge: Arc<Notify>,
+    events: EventSender,
     settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
@@ -1121,22 +1125,32 @@ pub async fn run_workflow_vm_driver<
         match host.drive_runnable(instance.clone(), claim_limit).await {
             Ok(outcomes) => {
                 for outcome in outcomes {
+                    let workflow_run_id = outcome.workflow_run_id();
                     stability::vm_continuation_driven(match outcome {
-                        runinator_runtime::WorkflowVmDriveOutcome::Yielded => "yielded",
-                        runinator_runtime::WorkflowVmDriveOutcome::Forked => "forked",
-                        runinator_runtime::WorkflowVmDriveOutcome::Joined => "joined",
+                        runinator_runtime::WorkflowVmDriveOutcome::Yielded { .. } => "yielded",
+                        runinator_runtime::WorkflowVmDriveOutcome::Forked { .. } => "forked",
+                        runinator_runtime::WorkflowVmDriveOutcome::Joined { .. } => "joined",
                         runinator_runtime::WorkflowVmDriveOutcome::Completed { .. } => "completed",
                         runinator_runtime::WorkflowVmDriveOutcome::Failed { .. } => "failed",
-                        runinator_runtime::WorkflowVmDriveOutcome::Interrupted => "interrupted",
+                        runinator_runtime::WorkflowVmDriveOutcome::Interrupted { .. } => {
+                            "interrupted"
+                        }
                         runinator_runtime::WorkflowVmDriveOutcome::InterruptResolved { .. } => {
                             "interrupt_resolved"
                         }
                     });
                     let settled_run_id = match outcome {
-                        runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id }
-                        | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id }
+                        runinator_runtime::WorkflowVmDriveOutcome::Completed {
+                            settled_run_id,
+                            ..
+                        }
+                        | runinator_runtime::WorkflowVmDriveOutcome::Failed {
+                            settled_run_id,
+                            ..
+                        }
                         | runinator_runtime::WorkflowVmDriveOutcome::InterruptResolved {
                             settled_run_id,
+                            ..
                         } => settled_run_id,
                         _ => None,
                     };
@@ -1204,6 +1218,7 @@ pub async fn run_workflow_vm_driver<
                             }
                         }
                     }
+                    emit_workflow_run_resolved(db.as_ref(), &events, workflow_run_id).await;
                 }
             }
             Err(err) => {
