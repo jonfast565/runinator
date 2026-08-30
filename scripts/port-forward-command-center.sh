@@ -7,10 +7,14 @@
 # Usage:
 #   scripts/port-forward-command-center.sh [--port 8080] [--no-open]
 #                                          [--namespace runinator] [--context <kubectl-ctx>]
+#                                          [--reconnect-delay 30]
 #
 # The command center is opened in a browser unless --no-open is passed.
 
 set -euo pipefail
+
+# shellcheck source=lib/port-forward.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/port-forward.sh"
 
 local_port=8080
 namespace="runinator"
@@ -18,6 +22,7 @@ context=""
 service="runinator-command-center"
 remote_port=80
 open_ui=1
+reconnect_delay="${RUNINATOR_PORT_FORWARD_RECONNECT_DELAY:-30}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,6 +32,7 @@ while [[ $# -gt 0 ]]; do
     --context)     context="$2"; shift 2 ;;
     --service)     service="$2"; shift 2 ;;
     --remote-port) remote_port="$2"; shift 2 ;;
+    --reconnect-delay) reconnect_delay="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,11p' "$0"
       exit 0
@@ -37,6 +43,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+port_forward_validate_reconnect_delay "$reconnect_delay"
 
 ctx_args=()
 if [[ -n "$context" ]]; then
@@ -49,7 +57,7 @@ if ! kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" get svc "$service" 
 fi
 
 echo "Command center: http://localhost:${local_port}"
-echo "Forwarding ${local_port}:${remote_port} -> ${namespace}/svc/${service}. Ctrl+C to stop."
+echo "Forwarding ${local_port}:${remote_port} -> ${namespace}/svc/${service}. Reconnects every ${reconnect_delay}s after a disconnect; Ctrl+C to stop."
 
 # open the command center once the forward is actually accepting connections.
 if [[ "$open_ui" -eq 1 ]]; then
@@ -69,4 +77,4 @@ if [[ "$open_ui" -eq 1 ]]; then
   fi
 fi
 
-exec kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" port-forward "svc/${service}" "${local_port}:${remote_port}"
+port_forward_forever "$reconnect_delay" kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" port-forward "svc/${service}" "${local_port}:${remote_port}"

@@ -8,6 +8,7 @@ CONTEXT="${RUNINATOR_K8S_CONTEXT:-}"
 WS_SERVICE="${RUNINATOR_K8S_WS_SERVICE:-runinator-ws}"
 LOCAL_PORT="${RUNINATOR_K8S_UI_PORT:-}"
 REMOTE_PORT="${RUNINATOR_K8S_WS_PORT:-8080}"
+RECONNECT_DELAY="${RUNINATOR_K8S_PORT_FORWARD_RECONNECT_DELAY:-${RUNINATOR_PORT_FORWARD_RECONNECT_DELAY:-30}}"
 PORT_FORWARD_LOG="${TMPDIR:-/tmp}/runinator-k8s-ui-port-forward-$$.log"
 
 if [[ $# -gt 0 ]]; then
@@ -16,7 +17,7 @@ fi
 
 usage() {
   cat >&2 <<MSG
-usage: bash scripts/run-k8s.sh ui [--namespace NAME] [--context NAME] [--port PORT] [--service NAME] [--remote-port PORT]
+usage: bash scripts/run-k8s.sh ui [--namespace NAME] [--context NAME] [--port PORT] [--service NAME] [--remote-port PORT] [--reconnect-delay SECONDS]
 
 Runs the Tauri command center against a deployed Kubernetes stack.
 MSG
@@ -44,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       REMOTE_PORT="${2:?--remote-port requires a value}"
       shift 2
       ;;
+    --reconnect-delay)
+      RECONNECT_DELAY="${2:?--reconnect-delay requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -57,6 +62,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$ROOT_DIR"
+
+# shellcheck source=lib/port-forward.sh
+source "$ROOT_DIR/scripts/lib/port-forward.sh"
+port_forward_validate_reconnect_delay "$RECONNECT_DELAY"
 
 kubectl_args=()
 if [[ -n "$CONTEXT" ]]; then
@@ -142,7 +151,7 @@ run_ui() {
   fi
 
   : > "$PORT_FORWARD_LOG"
-  kubectl ${kubectl_args[@]+"${kubectl_args[@]}"} -n "$NAMESPACE" port-forward "svc/${WS_SERVICE}" "${LOCAL_PORT}:${REMOTE_PORT}" >"$PORT_FORWARD_LOG" 2>&1 &
+  port_forward_forever "$RECONNECT_DELAY" kubectl ${kubectl_args[@]+"${kubectl_args[@]}"} -n "$NAMESPACE" port-forward "svc/${WS_SERVICE}" "${LOCAL_PORT}:${REMOTE_PORT}" >"$PORT_FORWARD_LOG" 2>&1 &
   port_forward_pid="$!"
 
   cleanup() {
@@ -154,7 +163,7 @@ run_ui() {
   trap cleanup EXIT INT TERM
 
   local service_url="http://127.0.0.1:${LOCAL_PORT}/"
-  echo "Forwarding ${service_url} -> ${NAMESPACE}/svc/${WS_SERVICE}:${REMOTE_PORT}"
+  echo "Forwarding ${service_url} -> ${NAMESPACE}/svc/${WS_SERVICE}:${REMOTE_PORT} (reconnects every ${RECONNECT_DELAY}s after a disconnect)"
   wait_for_api "$service_url"
   echo "Starting command center against ${service_url}"
 

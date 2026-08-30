@@ -6,6 +6,7 @@
 # Usage:
 #   bash scripts/port-forward-rabbitmq.sh [--management-port 15672] [--port 5672] [--no-open]
 #                                         [--namespace runinator] [--context <kubectl-ctx>]
+#                                         [--reconnect-delay 30]
 #
 # Then, e.g.:
 #   open http://localhost:<management-port>   # queues, exchanges, message rates
@@ -13,6 +14,9 @@
 #     cargo test -p runinator-broker --features rabbitmq --test rabbitmq -- --ignored
 
 set -euo pipefail
+
+# shellcheck source=lib/port-forward.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/port-forward.sh"
 
 local_port=5672
 management_port=15672
@@ -22,6 +26,7 @@ service="runinator-rabbitmq"
 remote_port=5672
 remote_management_port=15672
 open_ui=1
+reconnect_delay="${RUNINATOR_PORT_FORWARD_RECONNECT_DELAY:-30}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --context)          context="$2"; shift 2 ;;
     --service)          service="$2"; shift 2 ;;
     --remote-port)      remote_port="$2"; shift 2 ;;
+    --reconnect-delay)  reconnect_delay="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,13p' "$0"
       exit 0
@@ -42,6 +48,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+port_forward_validate_reconnect_delay "$reconnect_delay"
 
 ctx_args=()
 if [[ -n "$context" ]]; then
@@ -68,7 +76,7 @@ fi
 
 echo "Admin UI:  http://localhost:${management_port}  (login ${user} / ${pass})"
 echo "AMQP URI:  amqp://${user}:${pass}@127.0.0.1:${local_port}/%2f"
-echo "Forwarding ${management_port}:${remote_management_port} (management) and ${local_port}:${remote_port} (amqp) -> ${namespace}/svc/${service}. Ctrl+C to stop."
+echo "Forwarding ${management_port}:${remote_management_port} (management) and ${local_port}:${remote_port} (amqp) -> ${namespace}/svc/${service}. Reconnects every ${reconnect_delay}s after a disconnect; Ctrl+C to stop."
 
 # Open the admin UI once the forward accepts connections.
 if [[ "$open_ui" -eq 1 ]]; then
@@ -88,6 +96,6 @@ if [[ "$open_ui" -eq 1 ]]; then
   fi
 fi
 
-exec kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" port-forward "svc/${service}" \
+port_forward_forever "$reconnect_delay" kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" port-forward "svc/${service}" \
   "${local_port}:${remote_port}" \
   "${management_port}:${remote_management_port}"
