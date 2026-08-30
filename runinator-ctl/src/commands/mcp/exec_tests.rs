@@ -17,6 +17,7 @@ fn the_interactive_and_watching_verbs_are_refused() {
         vec!["logout"],
         vec!["workflows", "dev"],
         vec!["runs", "watch"],
+        vec!["pipelines", "run-watch"],
     ] {
         assert!(
             blocked_for(&tokens(&refused)).is_some(),

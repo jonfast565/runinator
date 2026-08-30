@@ -44,6 +44,11 @@ fn usage_names_the_arguments_a_command_takes() {
 fn a_short_closed_set_is_spelled_out_in_the_usage() {
     assert!(entry("rexrap check").usage.contains("strict|permissive"));
     assert!(entry("runs timeline").usage.contains("table|graph|json"));
+    assert!(
+        entry("pipelines run-watch")
+            .usage
+            .contains("table|graph|json")
+    );
 }
 
 #[test]

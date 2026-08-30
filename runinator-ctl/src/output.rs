@@ -1,3 +1,5 @@
+use std::io::{self, IsTerminal, Write};
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -92,4 +94,39 @@ pub fn truncate(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     out.push_str("...");
     out
+}
+
+/// Controls repeated command output. Human-facing watches redraw in place on a terminal and emit
+/// separated snapshots when redirected; JSON is always an append-only stream of documents.
+pub struct LiveDisplay {
+    first: bool,
+    in_place: bool,
+    machine_output: bool,
+}
+
+impl LiveDisplay {
+    pub fn new(machine_output: bool) -> Self {
+        Self {
+            first: true,
+            in_place: !machine_output && io::stdout().is_terminal(),
+            machine_output,
+        }
+    }
+
+    pub fn begin_frame(&mut self) {
+        if !self.first {
+            if self.in_place {
+                // Clear the previous frame and return to the top-left. Keeping the first frame in
+                // normal scrollback avoids erasing the command that launched the watch.
+                print!("\x1b[2J\x1b[H");
+            } else if !self.machine_output {
+                println!();
+            }
+        }
+        self.first = false;
+    }
+
+    pub fn flush(&self) -> io::Result<()> {
+        io::stdout().flush()
+    }
 }

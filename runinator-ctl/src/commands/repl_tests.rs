@@ -112,6 +112,40 @@ fn parses_workflow_and_pipeline_timeline_formats() {
 }
 
 #[test]
+fn parses_workflow_and_pipeline_live_views() {
+    let run_id = "00000000-0000-0000-0000-000000000001";
+    let parsed = parse(&tokens(&format!(
+        "runs watch {run_id} --format graph --interval-seconds 5"
+    )))
+    .expect("workflow watch parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Runs {
+            command: RunCommands::Watch {
+                interval_seconds: 5,
+                format: CliTimelineFormat::Graph,
+                ..
+            }
+        }
+    ));
+
+    let parsed = parse(&tokens(&format!(
+        "pipelines run-watch {run_id} --format table --interval-seconds 3"
+    )))
+    .expect("pipeline watch parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Pipelines {
+            command: PipelineCommands::RunWatch {
+                interval_seconds: 3,
+                format: CliTimelineFormat::Table,
+                ..
+            }
+        }
+    ));
+}
+
+#[test]
 fn pipeline_runs_accept_open_and_status_filters() {
     let parsed = parse(&tokens("pipelines runs --open --status running")).expect("parses");
     assert!(matches!(
@@ -266,6 +300,10 @@ fn completes_only_command_lines() {
 
     let formats = complete(":runs timeline 00000000-0000-0000-0000-000000000001 --format ").options;
     assert_eq!(formats, vec!["graph", "json", "table"]);
+
+    let watch_formats =
+        complete(":pipelines run-watch 00000000-0000-0000-0000-000000000001 --format ").options;
+    assert_eq!(watch_formats, vec!["graph", "json", "table"]);
 }
 
 #[test]

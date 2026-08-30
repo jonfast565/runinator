@@ -99,6 +99,18 @@ runinatorctl pipelines run-timeline <pipeline-run-id> --format graph
 runinatorctl pipelines run-timeline <pipeline-run-id> --format json
 ```
 
+For a live view, `watch` refreshes the same timeline until the run settles. On a terminal it redraws
+the current frame in place; redirected human output is emitted as separated snapshots, while JSON
+is an append-only stream of complete documents suitable for a log consumer:
+
+```text
+runinatorctl runs watch <workflow-run-id> --format graph
+runinatorctl runs watch <workflow-run-id> --format table --interval-seconds 5
+
+runinatorctl pipelines run-watch <pipeline-run-id> --format graph
+runinatorctl pipelines run-watch <pipeline-run-id> --format json --interval-seconds 5
+```
+
 The global `--json` flag also selects JSON regardless of the timeline format. Workflow JSON includes
 the run, journal, effects, continuations, and transition projection. Pipeline JSON includes the run,
 member workflow runs, every member attempt, edge and join state, and its frozen pipeline snapshot.

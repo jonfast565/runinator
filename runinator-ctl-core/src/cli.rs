@@ -724,6 +724,9 @@ pub enum RunCommands {
         /// How often to refresh.
         #[arg(long, default_value_t = 2)]
         interval_seconds: u64,
+        /// Render each refresh as a chronological table, an ASCII graph, or JSON.
+        #[arg(long, value_enum, default_value_t = CliTimelineFormat::Table)]
+        format: CliTimelineFormat,
     },
     /// Print log chunks for a workflow effect.
     Logs { effect_id: Uuid },
@@ -914,6 +917,16 @@ pub enum PipelineCommands {
     RunTimeline {
         run_id: Uuid,
         /// Render a chronological table, an ASCII execution graph, or the complete JSON record.
+        #[arg(long, value_enum, default_value_t = CliTimelineFormat::Table)]
+        format: CliTimelineFormat,
+    },
+    /// Refresh a pipeline run timeline until it reaches a terminal status.
+    RunWatch {
+        run_id: Uuid,
+        /// How often to refresh.
+        #[arg(long, default_value_t = 2)]
+        interval_seconds: u64,
+        /// Render each refresh as a chronological table, an ASCII graph, or JSON.
         #[arg(long, value_enum, default_value_t = CliTimelineFormat::Table)]
         format: CliTimelineFormat,
     },

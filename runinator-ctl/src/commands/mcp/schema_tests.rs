@@ -70,6 +70,7 @@ fn blocked_verbs_are_not_advertised() {
         "runinator_logout",
         "runinator_workflows_dev",
         "runinator_runs_watch",
+        "runinator_pipelines_run_watch",
     ] {
         assert!(find(refused).is_none(), "{refused} should not be a tool");
     }

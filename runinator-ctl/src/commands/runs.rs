@@ -2,6 +2,8 @@ use super::*;
 
 use runinator_ctl_core::cli::CliTimelineFormat;
 
+const WATCH_INTERVAL_MINIMUM: u64 = 1;
+
 pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bool) -> Result<()> {
     match command {
         RunCommands::List {
@@ -34,57 +36,28 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             println!("journal entries\t{}", journal.len());
         }
         RunCommands::Timeline { id, format } => {
-            let run = client.fetch_workflow_run(*id).await?;
-            let journal = client.fetch_workflow_journal(*id).await?;
-            let effects = client.fetch_workflow_effects(*id).await?;
-            if json_output || matches!(format, CliTimelineFormat::Json) {
-                let continuations = client.fetch_workflow_continuations(*id).await?;
-                let transitions = client.fetch_workflow_run_transitions(*id).await?;
-                return output::json(&json!({
-                    "run": run,
-                    "journal": journal,
-                    "effects": effects,
-                    "continuations": continuations,
-                    "transitions": transitions,
-                }));
-            }
-            match format {
-                CliTimelineFormat::Table => {
-                    print!("{}", timeline::workflow_table(&run, &journal, &effects))
-                }
-                CliTimelineFormat::Graph => {
-                    print!("{}", timeline::workflow_graph(&run, &journal, &effects))
-                }
-                CliTimelineFormat::Json => unreachable!("json handled above"),
-            }
+            print_workflow_timeline(client, *id, *format, json_output).await?;
         }
         RunCommands::Watch {
             id,
             interval_seconds,
-        } => loop {
-            let run = client.fetch_workflow_run(*id).await?;
-            let continuations = client.fetch_workflow_continuations(*id).await?;
-            let effects = client.fetch_workflow_effects(*id).await?;
-            if json_output {
-                output::json(
-                    &json!({ "run": run, "continuations": continuations, "effects": effects }),
-                )?;
-            } else {
-                print_run_summary(&run);
-                println!(
-                    "continuations\t{}\teffects\t{}",
-                    continuations.len(),
-                    effects.len()
-                );
+            format,
+        } => {
+            let machine_output = json_output || matches!(format, CliTimelineFormat::Json);
+            let mut display = output::LiveDisplay::new(machine_output);
+            loop {
+                display.begin_frame();
+                let run = print_workflow_timeline(client, *id, *format, json_output).await?;
+                display.flush()?;
+                if run.status.is_terminal() {
+                    break;
+                }
+                time::sleep(Duration::from_secs(
+                    (*interval_seconds).max(WATCH_INTERVAL_MINIMUM),
+                ))
+                .await;
             }
-            if run.status.is_terminal() {
-                break;
-            }
-            time::sleep(Duration::from_secs(*interval_seconds)).await;
-            if !json_output {
-                println!();
-            }
-        },
+        }
         RunCommands::Logs { effect_id } => {
             let chunks = client.fetch_workflow_effect_output(*effect_id).await?;
             if json_output {
@@ -170,4 +143,37 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
         }
     }
     Ok(())
+}
+
+async fn print_workflow_timeline(
+    client: &Client,
+    id: Uuid,
+    format: CliTimelineFormat,
+    json_output: bool,
+) -> Result<WorkflowRun> {
+    let run = client.fetch_workflow_run(id).await?;
+    let journal = client.fetch_workflow_journal(id).await?;
+    let effects = client.fetch_workflow_effects(id).await?;
+    if json_output || matches!(format, CliTimelineFormat::Json) {
+        let continuations = client.fetch_workflow_continuations(id).await?;
+        let transitions = client.fetch_workflow_run_transitions(id).await?;
+        output::json(&json!({
+            "run": run.clone(),
+            "journal": journal,
+            "effects": effects,
+            "continuations": continuations,
+            "transitions": transitions,
+        }))?;
+    } else {
+        match format {
+            CliTimelineFormat::Table => {
+                print!("{}", timeline::workflow_table(&run, &journal, &effects))
+            }
+            CliTimelineFormat::Graph => {
+                print!("{}", timeline::workflow_graph(&run, &journal, &effects))
+            }
+            CliTimelineFormat::Json => unreachable!("json handled above"),
+        }
+    }
+    Ok(run)
 }

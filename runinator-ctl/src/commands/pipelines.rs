@@ -6,6 +6,7 @@ use runinator_ctl_core::cli::{CliTimelineFormat, PipelineCommands};
 
 /// how often a followed pipeline run is re-read.
 const FOLLOW_INTERVAL: Duration = Duration::from_secs(2);
+const WATCH_INTERVAL_MINIMUM: u64 = 1;
 
 pub(super) async fn pipelines(
     client: &Client,
@@ -156,14 +157,27 @@ pub(super) async fn pipelines(
             Ok(())
         }
         PipelineCommands::RunTimeline { run_id, format } => {
-            let detail = client.fetch_pipeline_run(*run_id).await?;
-            if json_output || matches!(format, CliTimelineFormat::Json) {
-                return output::json(&detail);
-            }
-            match format {
-                CliTimelineFormat::Table => print!("{}", timeline::pipeline_table(&detail)),
-                CliTimelineFormat::Graph => print!("{}", timeline::pipeline_graph(&detail)),
-                CliTimelineFormat::Json => unreachable!("json handled above"),
+            print_pipeline_timeline(client, *run_id, *format, json_output).await?;
+            Ok(())
+        }
+        PipelineCommands::RunWatch {
+            run_id,
+            interval_seconds,
+            format,
+        } => {
+            let machine_output = json_output || matches!(format, CliTimelineFormat::Json);
+            let mut display = output::LiveDisplay::new(machine_output);
+            loop {
+                display.begin_frame();
+                let run = print_pipeline_timeline(client, *run_id, *format, json_output).await?;
+                display.flush()?;
+                if run.status.is_terminal() {
+                    break;
+                }
+                time::sleep(Duration::from_secs(
+                    (*interval_seconds).max(WATCH_INTERVAL_MINIMUM),
+                ))
+                .await;
             }
             Ok(())
         }
@@ -256,6 +270,25 @@ pub(super) async fn pipelines(
             Ok(())
         }
     }
+}
+
+async fn print_pipeline_timeline(
+    client: &Client,
+    run_id: Uuid,
+    format: CliTimelineFormat,
+    json_output: bool,
+) -> Result<PipelineRun> {
+    let detail = client.fetch_pipeline_run(run_id).await?;
+    if json_output || matches!(format, CliTimelineFormat::Json) {
+        output::json(&detail)?;
+    } else {
+        match format {
+            CliTimelineFormat::Table => print!("{}", timeline::pipeline_table(&detail)),
+            CliTimelineFormat::Graph => print!("{}", timeline::pipeline_graph(&detail)),
+            CliTimelineFormat::Json => unreachable!("json handled above"),
+        }
+    }
+    Ok(detail.run)
 }
 
 /// Resolve a pipeline by UUID or its canonical `namespace.key` path. Display-name and bare-key

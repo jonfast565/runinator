@@ -53,6 +53,10 @@ const BLOCKED: &[Blocked] = &[
         reason: "`runs watch` refreshes until interrupted. use `runs show`, or poll it.",
     },
     Blocked {
+        path: &["pipelines", "run-watch"],
+        reason: "`pipelines run-watch` refreshes until the run settles. use `pipelines run-timeline`, or poll it.",
+    },
+    Blocked {
         path: &["orchestrations", "watch"],
         reason: "`orchestrations watch` refreshes until the instance settles. use `orchestrations show`, or poll it.",
     },
