@@ -519,6 +519,10 @@ interface ValidationIssue {
   tab: Tab;
   message: string;
 }
+type IngressRouteWire = Omit<IngressPolicy["routes"][number], "predicates"> & {
+  // serde omits empty Vec fields, even though the in-memory Rust model always has the collection.
+  predicates?: IngressPolicy["routes"][number]["predicates"];
+};
 interface PredicateDraft {
   id: string;
   pointer: string;
@@ -569,7 +573,9 @@ interface PhaseDraft {
 }
 
 const metadata = props.pipeline.metadata;
-const existingIngress = metadata.ingress as IngressPolicy | undefined;
+const existingIngress = metadata.ingress as
+  | (Omit<IngressPolicy, "routes"> & { routes: IngressRouteWire[] })
+  | undefined;
 const existingPolicy = metadata.orchestration as OrchestrationPolicy | undefined;
 const enabled = ref(Boolean(existingPolicy));
 const disableConfirmOpen = ref(false);
@@ -592,7 +598,7 @@ const routes = reactive<RouteDraft[]>(
     lifecycle: route.lifecycle,
     action: route.action,
     intent: route.intent ?? "",
-    predicates: route.predicates.map((predicate) => ({
+    predicates: (route.predicates ?? []).map((predicate) => ({
       id: createUuid(),
       pointer: predicate.pointer,
       operator: predicate.operator,
