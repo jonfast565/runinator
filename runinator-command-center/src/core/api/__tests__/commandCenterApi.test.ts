@@ -132,6 +132,16 @@ describe("command center catalog metadata API", () => {
             entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "publish" },
             created_at: 1,
           },
+          {
+            version: 1,
+            id: "journal-requested",
+            workflow_run_id: "run-1",
+            sequence: 3,
+            continuation_id: "continuation-1",
+            effect_id: "effect-1",
+            entry: { type: "effect_requested", effect_id: "effect-1", instruction_pointer: 7 },
+            created_at: 1,
+          },
         ],
         // The continuation has moved to end. This used to overwrite the effect's true node.
         fetch_workflow_vm_cursors: [
@@ -151,9 +161,18 @@ describe("command center catalog metadata API", () => {
     expect(detail.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ node_id: "config", status: "succeeded" }),
-        expect.objectContaining({ node_id: "publish", status: "succeeded" }),
+        expect.objectContaining({
+          id: "effect-1",
+          node_id: "publish",
+          status: "succeeded",
+          state: expect.objectContaining({
+            node_entered_journal_id: "journal-2",
+            effect_receipt_id: "effect-1",
+          }),
+        }),
       ]),
     );
+    expect(detail.nodes.filter((node) => node.node_id === "publish")).toHaveLength(1);
   });
 
   it("keeps the server's materialized steps when VM history is unavailable", async () => {
@@ -446,9 +465,17 @@ describe("command center catalog metadata API", () => {
 
     const detail = await fetchWorkflowRun("run-1");
 
-    expect(detail.nodes).toContainEqual(
-      expect.objectContaining({ id: "effect-1", node_id: "greeting", status: "succeeded" }),
-    );
+    expect(detail.nodes.filter((node) => node.node_id === "greeting")).toEqual([
+      expect.objectContaining({
+        id: "effect-1",
+        node_id: "greeting",
+        status: "succeeded",
+        state: expect.objectContaining({
+          node_entered_journal_id: "entered-greeting",
+          effect_receipt_id: "effect-1",
+        }),
+      }),
+    ]);
   });
 
   it("marks an inline node failed when its journaled evaluation fails", async () => {

@@ -91,6 +91,35 @@ export function timelineDotClass(status: string): string {
   return `${base} bg-border-strong`;
 }
 
+export interface TimelineProvenanceTag {
+  id: "entered" | "effect_receipt";
+  label: string;
+  title: string;
+}
+
+/** Durable records represented by one projected timeline row. */
+export function timelineProvenanceTags(node: WorkflowNodeRun): TimelineProvenanceTag[] {
+  const tags: TimelineProvenanceTag[] = [];
+
+  if (typeof node.state?.node_entered_journal_id === "string") {
+    tags.push({
+      id: "entered",
+      label: "entered",
+      title: "The workflow journal recorded this node entry.",
+    });
+  }
+
+  if (typeof node.state?.effect_receipt_id === "string") {
+    tags.push({
+      id: "effect_receipt",
+      label: "effect receipt",
+      title: "A durable effect receipt recorded this execution and its result.",
+    });
+  }
+
+  return tags;
+}
+
 export function previewOf(node: WorkflowNodeRun): string {
   const output = node.output_json;
 

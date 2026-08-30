@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { WorkflowNodeRun } from "../../../../core/domain/models";
-import { compareStepsAscending, stepTimestamp } from "../run-timeline-format";
+import {
+  compareStepsAscending,
+  stepTimestamp,
+  timelineProvenanceTags,
+} from "../run-timeline-format";
 
 function node(
   id: string,
@@ -56,5 +60,19 @@ describe("run timeline formatting", () => {
   it("formats valid timestamps locally and ignores malformed source values", () => {
     expect(stepTimestamp(node("valid", { created_at: "2026-08-29T03:05:31Z" }))).not.toBe("");
     expect(stepTimestamp(node("invalid", { created_at: "not-a-date" }))).toBe("");
+  });
+
+  it("labels a merged journal entry and effect receipt without implying two executions", () => {
+    const merged = node("greeting", { created_at: "2026-08-29T03:05:31Z" });
+    merged.state = {
+      node_entered_journal_id: "journal-entered",
+      effect_id: "effect-1",
+      effect_receipt_id: "effect-1",
+    };
+
+    expect(timelineProvenanceTags(merged).map((tag) => tag.label)).toEqual([
+      "entered",
+      "effect receipt",
+    ]);
   });
 });

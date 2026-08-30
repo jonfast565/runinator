@@ -933,10 +933,17 @@ export async function fetchWorkflowRuns(workflowId?: string) {
  * live: a continuation cursor moves on after an effect settles, so it cannot describe the node
  * that issued a historical effect.
  */
-function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, string> {
-  const lastNodeByContinuation = new Map<string, string>();
+interface JournalEffectNode {
+  nodeId: string;
+  journalEntryId: string;
+  sequence: number;
+  createdAt: number;
+}
+
+function journalEffectNodes(journal: WorkflowJournalRecord[]): Map<string, JournalEffectNode> {
+  const lastNodeByContinuation = new Map<string, JournalEffectNode>();
   const pendingEffectByContinuation = new Map<string, string>();
-  const nodeByEffect = new Map<string, string>();
+  const nodeByEffect = new Map<string, JournalEffectNode>();
 
   for (const record of [...journal].sort((left, right) => left.sequence - right.sequence)) {
     const entry = asJsonRecord(record.entry);
@@ -945,7 +952,13 @@ function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, str
       (typeof entry.continuation_id === "string" ? entry.continuation_id : null);
 
     if (entry.type === "node_entered" && continuationId && typeof entry.node_id === "string") {
-      lastNodeByContinuation.set(continuationId, entry.node_id);
+      const node = {
+        nodeId: entry.node_id,
+        journalEntryId: record.id,
+        sequence: record.sequence,
+        createdAt: record.created_at,
+      };
+      lastNodeByContinuation.set(continuationId, node);
       // `suspend_on_effect` persists its durable EffectRequested boundary before it appends the
       // node entries collected while interpreting that boundary.  Associate each of those later
       // entries with the outstanding effect; the final one is the node that issued it.  Keeping
@@ -954,7 +967,7 @@ function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, str
       const pendingEffectId = pendingEffectByContinuation.get(continuationId);
 
       if (pendingEffectId) {
-        nodeByEffect.set(pendingEffectId, entry.node_id);
+        nodeByEffect.set(pendingEffectId, node);
       }
 
       continue;
@@ -1033,11 +1046,11 @@ function mergeTimestamp(
 function projectedEffectNodeId(
   effect: WorkflowEffect,
   cursorByContinuation: Map<string, WorkflowVmCursor>,
-  journalNodesByEffect: Map<string, string>,
+  journalNodesByEffect: Map<string, JournalEffectNode>,
 ): string | null {
   return (
     effect.node_id ??
-    journalNodesByEffect.get(effect.id) ??
+    journalNodesByEffect.get(effect.id)?.nodeId ??
     (["requested", "running"].includes(effect.status)
       ? cursorByContinuation.get(effect.continuation_id)?.node_id
       : null) ??
@@ -1150,8 +1163,31 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   const cursorByContinuation = new Map(
     vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
   );
-  const journalNodesByEffect = journalEffectNodeIds(journal);
+  const journalNodesByEffect = journalEffectNodes(journal);
   const journalSequencesByEffect = journalEffectSequences(journal);
+  const journalNodeByEffect = new Map<string, JournalEffectNode>();
+  const effectJournalEntryIds = new Set<string>();
+
+  for (const effect of [...effects].sort(
+    (left, right) =>
+      (journalSequencesByEffect.get(left.id) ?? left.sequence) -
+      (journalSequencesByEffect.get(right.id) ?? right.sequence),
+  )) {
+    const nodeId = projectedEffectNodeId(effect, cursorByContinuation, journalNodesByEffect);
+    const journalNode = journalNodesByEffect.get(effect.id);
+
+    if (
+      !nodeId ||
+      journalNode?.nodeId !== nodeId ||
+      effectJournalEntryIds.has(journalNode.journalEntryId)
+    ) {
+      continue;
+    }
+
+    journalNodeByEffect.set(effect.id, journalNode);
+    effectJournalEntryIds.add(journalNode.journalEntryId);
+  }
+
   const failedNodeIds = new Set(
     journal.flatMap((record) => {
       const entry = asJsonRecord(record.entry);
@@ -1161,7 +1197,11 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   const enteredNodes: WorkflowNodeRun[] = journal.flatMap((record) => {
     const entry = asJsonRecord(record.entry);
 
-    if (entry.type !== "node_entered" || typeof entry.node_id !== "string") {
+    if (
+      entry.type !== "node_entered" ||
+      typeof entry.node_id !== "string" ||
+      effectJournalEntryIds.has(record.id)
+    ) {
       return [];
     }
 
@@ -1174,7 +1214,11 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
         attempt: 0,
         parameters: {},
-        state: { journal_entry_id: record.id, timeline_sequence: record.sequence },
+        state: {
+          journal_entry_id: record.id,
+          node_entered_journal_id: record.id,
+          timeline_sequence: record.sequence,
+        },
         cursor_id: record.continuation_id ?? null,
         created_at: timestamp,
         started_at: timestamp,
@@ -1249,6 +1293,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     }
 
     const request = workflowEffectRequest(effect);
+    const journalNode = journalNodeByEffect.get(effect.id);
     const requestType = typeof request.type === "string" ? request.type : "";
     const status =
       effect.status === "requested" || effect.status === "running"
@@ -1268,13 +1313,18 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         parameters: request,
         output_json: effect.result ?? null,
         state: {
-          effect_id: effect.id,
-          timeline_sequence: journalSequencesByEffect.get(effect.id) ?? effect.sequence,
           ...request,
+          effect_id: effect.id,
+          effect_receipt_id: effect.id,
+          ...(journalNode ? { node_entered_journal_id: journalNode.journalEntryId } : {}),
+          timeline_sequence: Math.min(
+            journalNode?.sequence ?? Number.POSITIVE_INFINITY,
+            journalSequencesByEffect.get(effect.id) ?? effect.sequence,
+          ),
         },
         cursor_id: effect.continuation_id,
-        created_at: new Date(effect.created_at * 1000).toISOString(),
-        started_at: new Date(effect.created_at * 1000).toISOString(),
+        created_at: new Date((journalNode?.createdAt ?? effect.created_at) * 1000).toISOString(),
+        started_at: new Date((journalNode?.createdAt ?? effect.created_at) * 1000).toISOString(),
         finished_at: effect.finished_at ? new Date(effect.finished_at * 1000).toISOString() : null,
         message: effect.message ?? null,
       },

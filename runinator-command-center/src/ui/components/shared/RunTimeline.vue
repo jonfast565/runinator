@@ -87,6 +87,13 @@
               node.node_id
             }}</span>
             <span
+              v-for="tag in timelineProvenanceTags(node)"
+              :key="tag.id"
+              class="rounded-pill border border-border-subtle bg-surface-subtle px-1.5 py-px text-[9px] leading-[14px] font-semibold tracking-wide whitespace-nowrap text-fg-faint uppercase"
+              :title="tag.title"
+              >{{ tag.label }}</span
+            >
+            <span
               v-if="executionOrdinal(node) > 1"
               class="inline-grid size-[18px] min-w-[18px] items-center justify-center rounded-full border border-border-strong bg-surface text-[11px] leading-none font-bold font-tabular text-fg-subtle"
               :title="`Execution ${executionOrdinal(node)}`"
@@ -106,7 +113,9 @@
             <span
               v-if="stepTimestamp(node)"
               class="max-w-[210px] overflow-hidden text-[11px] font-tabular text-ellipsis whitespace-nowrap text-fg-faint"
-              :title="node.started_at ? 'Started ' + stepTimestamp(node) : 'Queued ' + stepTimestamp(node)"
+              :title="
+                node.started_at ? 'Started ' + stepTimestamp(node) : 'Queued ' + stepTimestamp(node)
+              "
               >{{ stepTimestamp(node) }}</span
             >
             <span class="flex-1"></span>
@@ -192,6 +201,7 @@ import {
   compareStepsAscending,
   stepTimestamp,
   timelineDotClass,
+  timelineProvenanceTags,
 } from "./run-timeline-format";
 
 const props = defineProps<{
