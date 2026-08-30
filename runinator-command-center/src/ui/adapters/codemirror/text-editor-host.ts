@@ -180,19 +180,19 @@ function createRexRapHost(options: CodeMirrorHostOptions): TextEditorHost {
             ".rexrap-hover": {
               maxWidth: "420px",
               padding: "8px 10px",
-              fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+              fontFamily: "var(--font-sans)",
               fontSize: "12px",
               lineHeight: "1.35",
               color: "var(--text)",
             },
             ".rexrap-hover-title": {
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontFamily: "var(--font-mono)",
               fontWeight: "700",
               color: "var(--text)",
             },
             ".rexrap-hover-meta": {
               marginTop: "3px",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontFamily: "var(--font-mono)",
               color: "var(--text-muted)",
             },
             ".rexrap-hover-docs": {

@@ -27,6 +27,9 @@ let fit: FitAddon | null = null;
 let observer: ResizeObserver | null = null;
 let rendered = "";
 
+const terminalFontFamily =
+  "'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace";
+
 function render(content: string) {
   const instance = terminal;
 
@@ -62,7 +65,15 @@ async function focus() {
   terminal?.focus();
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // xterm draws to a canvas and measures its glyphs when opened. Wait for the bundled face so it
+  // never locks its grid to the fallback metrics while the font is still downloading.
+  try {
+    await document.fonts.load('12px "JetBrains Mono"');
+  } catch {
+    // A browser may decline a local webfont; xterm's explicit fallback stack remains usable.
+  }
+
   if (!host.value) {
     return;
   }
@@ -73,7 +84,7 @@ onMounted(() => {
     cursorBlink: !props.readonly,
     cursorStyle: "block",
     disableStdin: props.readonly,
-    fontFamily: "var(--font-mono)",
+    fontFamily: terminalFontFamily,
     fontSize: 12,
     lineHeight: 1.25,
     scrollback: 10_000,

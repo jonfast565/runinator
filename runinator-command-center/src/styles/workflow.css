@@ -318,7 +318,7 @@
 }
 
 .workflow-issue-node-cell {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   color: var(--text-subtle);
   white-space: nowrap;
 }
@@ -1325,7 +1325,7 @@
 
 .interrupt-route-node {
   color: var(--text-muted);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.025em;

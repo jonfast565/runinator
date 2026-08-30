@@ -1111,7 +1111,7 @@
     display: inline-flex;
     align-items: center;
     color: var(--text-muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
   }
 
@@ -1318,7 +1318,7 @@
   .watch-table {
     width: 100%;
     border-collapse: collapse;
-    font-family: "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .watch-table th,
   .watch-table td {
@@ -1428,7 +1428,7 @@
   .log-output {
     flex: 1;
     font-size: 11px;
-    font-family: "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     /* fixed dark terminal surface; stays dark in both themes. */
     background: var(--surface-inverse);
     color: var(--text-inverse);
@@ -1474,7 +1474,7 @@
   }
   .log-context-title .log-context-action {
     color: var(--accent-text);
-    font-family: "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .log-context-title .log-context-status {
     margin-left: auto;
@@ -1482,7 +1482,7 @@
   }
   .log-context-meta {
     color: var(--text-faint);
-    font-family: "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .log-context-message {
     max-height: 96px;
@@ -2121,12 +2121,7 @@
     padding: 12px 0 0;
     resize: none;
     background: transparent;
-    font:
-      12px/1.5 ui-monospace,
-      SFMono-Regular,
-      Menlo,
-      Consolas,
-      monospace;
+    font: 12px/1.5 var(--font-mono);
   }
 
   .dev-run-summary {
@@ -2493,7 +2488,7 @@
     display: flex;
     align-items: center;
     padding: 5px 10px;
-    font-family: "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text);
     word-break: break-all;
@@ -2728,7 +2723,7 @@
   .step-detail-titles h2 {
     margin: 0;
     font-size: 17px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2894,7 +2889,7 @@
   }
 
   .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   .detail-rows {
@@ -2956,7 +2951,7 @@
 
   .param-name {
     color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
   }
@@ -2966,7 +2961,7 @@
     background: var(--accent-soft);
     border-radius: 4px;
     padding: 0 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
   }
 
@@ -2996,7 +2991,7 @@
 
   .param-value {
     color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.45;
     word-break: break-word;
