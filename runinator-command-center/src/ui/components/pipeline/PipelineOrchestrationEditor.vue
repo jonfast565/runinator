@@ -485,6 +485,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { createUuid } from "../../../core/utils/uuid";
 import HelpBubble from "../shared/HelpBubble.vue";
 import Icon from "../shared/Icon.vue";
 import type {
@@ -586,13 +587,13 @@ const resultPointers = [
 
 const routes = reactive<RouteDraft[]>(
   (existingIngress?.routes ?? []).map((route) => ({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     event_type: route.event_type,
     lifecycle: route.lifecycle,
     action: route.action,
     intent: route.intent ?? "",
     predicates: route.predicates.map((predicate) => ({
-      id: crypto.randomUUID(),
+      id: createUuid(),
       pointer: predicate.pointer,
       operator: predicate.operator,
       valueText: predicate.value === undefined ? "null" : JSON.stringify(predicate.value),
@@ -601,7 +602,7 @@ const routes = reactive<RouteDraft[]>(
 );
 const intents = reactive<IntentDraft[]>(
   Object.entries(existingPolicy?.intents ?? {}).map(([name, intent]) => ({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     name,
     effect: intent.effect,
     priority: intent.priority,
@@ -616,7 +617,7 @@ const intents = reactive<IntentDraft[]>(
 );
 const budgets = reactive<BudgetDraft[]>(
   Object.entries(existingPolicy?.budgets ?? {}).map(([name, budget]) => ({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     name,
     attempts: budget.attempts,
     exhausted: budget.exhausted,
@@ -677,7 +678,7 @@ function normalizeRoute(route: RouteDraft): void {
 function addRoute(): void {
   const hasIntent = intents.length > 0;
   routes.push({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     event_type: canonicalEvents.value[0] ?? "updated",
     lifecycle: hasIntent ? "active" : "unbound",
     action: hasIntent ? "dispatch" : "start",
@@ -688,7 +689,7 @@ function addRoute(): void {
 
 function addPredicate(route: RouteDraft): void {
   route.predicates.push({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     pointer: canonicalPointers.value[0] ?? "/",
     operator: "equal",
     valueText: "null",
@@ -697,7 +698,7 @@ function addPredicate(route: RouteDraft): void {
 
 function addIntent(): void {
   intents.push({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     name: `intent_${String(intents.length + 1)}`,
     effect: "observe",
     priority: 10 - intents.length,
@@ -713,7 +714,7 @@ function addIntent(): void {
 
 function addBudget(): void {
   budgets.push({
-    id: crypto.randomUUID(),
+    id: createUuid(),
     name: `failure_${String(budgets.length + 1)}`,
     attempts: 1,
     exhausted: "pause",
