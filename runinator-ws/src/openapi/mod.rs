@@ -501,8 +501,13 @@ pub(crate) async fn openapi_json() -> Json<Value> {
 }
 
 pub(crate) fn openapi_document() -> Value {
-    let mut document = serde_json::to_value(ApiDoc::openapi())
-        .expect("generated openapi document serializes to json");
+    let mut document = match serde_json::to_value(ApiDoc::openapi()) {
+        Ok(document) => document,
+        Err(error) => {
+            tracing::error!(%error, "failed to serialize generated OpenAPI document");
+            return Value::Object(Map::new());
+        }
+    };
     enrich_openapi_document(&mut document);
     document
 }
@@ -545,7 +550,9 @@ fn enrich_openapi_document(document: &mut Value) {
         let path_item = paths
             .entry(doc.path.to_string())
             .or_insert_with(|| Value::Object(Map::new()));
-        let path_item = path_item.as_object_mut().expect("path item is an object");
+        let Some(path_item) = ensure_object(path_item) else {
+            continue;
+        };
         let operation = path_item
             .entry(doc.method.to_string())
             .or_insert_with(|| Value::Object(Map::new()));
@@ -554,14 +561,16 @@ fn enrich_openapi_document(document: &mut Value) {
     for (method, path, policy) in MINIMAL_ENDPOINTS {
         let path_item = paths
             .entry((*path).to_string())
-            .or_insert_with(|| Value::Object(Map::new()))
-            .as_object_mut()
-            .expect("path item is an object");
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Some(path_item) = ensure_object(path_item) else {
+            continue;
+        };
         let operation = path_item
             .entry((*method).to_string())
-            .or_insert_with(|| Value::Object(Map::new()))
-            .as_object_mut()
-            .expect("operation is an object");
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Some(operation) = ensure_object(operation) else {
+            continue;
+        };
         operation
             .entry("summary")
             .or_insert_with(|| json!(format!("{} {path}", method.to_uppercase())));
@@ -579,7 +588,9 @@ fn enrich_openapi_document(document: &mut Value) {
 }
 
 fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
-    let operation = operation.as_object_mut().expect("operation is an object");
+    let Some(operation) = ensure_object(operation) else {
+        return;
+    };
     operation.insert("tags".into(), json!([doc.tag]));
     operation.insert("summary".into(), json!(doc.summary));
     operation.insert("description".into(), json!(doc.description));
@@ -644,16 +655,17 @@ fn enrich_request_body(operation: &mut Map<String, Value>, request: RequestDoc) 
     let request_body = operation
         .entry("requestBody")
         .or_insert_with(|| json!({ "content": {} }));
-    let request_body = request_body
-        .as_object_mut()
-        .expect("request body is an object");
+    let Some(request_body) = ensure_object(request_body) else {
+        return;
+    };
     request_body.insert("description".into(), json!(request.description));
     request_body.entry("required").or_insert(json!(true));
     let content = request_body
         .entry("content")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .expect("request content is an object");
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(content) = ensure_object(content) else {
+        return;
+    };
     if content.is_empty() {
         content.insert(
             request.content_type.into(),
@@ -664,7 +676,9 @@ fn enrich_request_body(operation: &mut Map<String, Value>, request: RequestDoc) 
         if content_type != request.content_type && request.content_type != "application/zip" {
             continue;
         }
-        let media = media.as_object_mut().expect("media type is an object");
+        let Some(media) = ensure_object(media) else {
+            continue;
+        };
         media
             .entry("schema")
             .or_insert_with(|| json!({ "type": "object" }));
@@ -677,14 +691,17 @@ fn enrich_request_body(operation: &mut Map<String, Value>, request: RequestDoc) 
 fn enrich_success_response(operation: &mut Map<String, Value>, doc: &EndpointDoc) {
     let responses = operation
         .entry("responses")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .expect("responses is an object");
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(responses) = ensure_object(responses) else {
+        return;
+    };
     let status = doc.success_status.to_string();
     let response = responses
         .entry(status)
         .or_insert_with(|| json!({ "description": doc.success_description }));
-    let response = response.as_object_mut().expect("response is an object");
+    let Some(response) = ensure_object(response) else {
+        return;
+    };
     response.insert("description".into(), json!(doc.success_description));
     if matches!(doc.success_status, 101) {
         return;
@@ -694,14 +711,16 @@ fn enrich_success_response(operation: &mut Map<String, Value>, doc: &EndpointDoc
     };
     let content = response
         .entry("content")
-        .or_insert_with(|| json!({ "application/json": { "schema": { "type": "object" } } }))
-        .as_object_mut()
-        .expect("response content is an object");
+        .or_insert_with(|| json!({ "application/json": { "schema": { "type": "object" } } }));
+    let Some(content) = ensure_object(content) else {
+        return;
+    };
     let media = content
         .entry("application/json")
-        .or_insert_with(|| json!({ "schema": { "type": "object" } }))
-        .as_object_mut()
-        .expect("json response media is an object");
+        .or_insert_with(|| json!({ "schema": { "type": "object" } }));
+    let Some(media) = ensure_object(media) else {
+        return;
+    };
     media
         .entry("schema")
         .or_insert_with(|| json!({ "type": "object" }));
@@ -762,7 +781,21 @@ fn endpoint_policy_json(policy: docs::EndpointPolicy) -> Value {
 }
 
 fn compact_json(value: Value) -> String {
-    serde_json::to_string(&value).expect("example serializes")
+    serde_json::to_string(&value).unwrap_or_else(|error| {
+        tracing::warn!(%error, "failed to serialize OpenAPI curl example");
+        "{}".to_string()
+    })
+}
+
+/// Normalize a generated OpenAPI fragment before enriching it with Runinator metadata.
+///
+/// OpenAPI generation and the route documentation live in separate crates. A malformed generated
+/// fragment must not make a documentation request crash the web-service process.
+fn ensure_object(value: &mut Value) -> Option<&mut Map<String, Value>> {
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    value.as_object_mut()
 }
 
 /// the self-describing API surface: the raw document and the reference UI.
@@ -854,5 +887,15 @@ mod policy_tests {
             missing.is_empty(),
             "missing authorization metadata: {missing:?}"
         );
+    }
+
+    #[test]
+    fn malformed_generated_fragments_are_replaced_before_enrichment() {
+        let mut operation = Value::String("not an operation".to_string());
+
+        enrich_operation(&mut operation, &DOCS[0]);
+
+        assert_eq!(operation["summary"], json!(DOCS[0].summary));
+        assert!(operation["x-runinator-authorization"].is_object());
     }
 }

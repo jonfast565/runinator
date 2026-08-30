@@ -355,9 +355,14 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 - **Verified 2026-08-04:** **0 test files across 21 components** in `runinator-command-center/src/ui/components/workflow/` (canvas, node, step editor — the most complex, highest-LOC components). Core utilities and Pinia adapters remain well covered; presentation components are not.
 
 ### 2.3 / 3.3 Panic hardening — narrowed
-- **Verified 2026-08-04:** `runinator-rexrap/src/parser.rs` is now **clean (0 `expect(` calls)** — that half is done. The remaining cluster is `runinator-ws/src/openapi.rs` (11 calls, e.g. `:114`, `:2407-2572`). These are document-generation paths over structures the file itself just built, so the residual risk is low — convert opportunistically per the error-dictionary convention rather than as a project.
+- **Shipped 2026-08-30:** `runinator-rexrap/src/parser.rs` remains **clean (0 `expect(` calls)**, and the production cluster in `runinator-ws/src/openapi/mod.rs` now uses defensive object normalization and fallible serialization. A malformed generated fragment no longer panics the web service while serving documentation.
 
 ### 2.1 Remaining backend test gaps
+- **Further closed 2026-08-30:** the local-stack `wake_ingress_drive_smoke` test starts the broker,
+  web service/embedded engine, and waker, then proves a `wait` is armed, relayed over
+  `wake → ingress`, and driven to a successful run. Prometheus now alerts when the 5th-percentile
+  `wake_lead_ms` falls below -30 seconds for two minutes, catching a sustained population of late
+  wakes rather than relying only on the dashboard panel.
 - **Verified 2026-08-22, partially closed:** `runinator-waker` now has eight tests (including the
   head-of-line `due_wake_is_not_blocked_by_a_not_yet_due_wake` regression and a broker-only
   process test) and metrics (`runinator_waker_wakes_received/driven/requeued_total`,
@@ -365,7 +370,8 @@ These are unbounded-effort quality work rather than discrete features. None bloc
   `runinator_waker_broker_heartbeat_failures_total`, `runinator_waker_wake_lead_ms`).
   `runinator-supervisor` has one test file. Still at zero: `runinator-bootstrap` and
   `runinator-provider-aws`.
-- **Residual:** no end-to-end `wake → ingress → drive` integration test crossing the crate boundary, and no alert wired to the `wake_lead_ms` histogram. Both are small and worth doing — but this is no longer the "highest residual risk" it was in the 2026-06-29 survey.
+- **Residual:** `runinator-bootstrap` and `runinator-provider-aws` still have no dedicated test
+  files. The timer path now has both a process-boundary regression test and a late-wake alert.
 
 ---
 

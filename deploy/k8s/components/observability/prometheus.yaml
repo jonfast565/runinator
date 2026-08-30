@@ -56,6 +56,12 @@ data:
             labels: { severity: warning }
             annotations:
               summary: "Runinator {{ $labels.kind }} heartbeat is stale"
+          - alert: RuninatorWakerWakesLate
+            expr: histogram_quantile(0.05, sum by (le) (rate({__name__=~"runinator_waker_wake_lead_ms.*_bucket"}[5m]))) < -30000
+            for: 2m
+            labels: { severity: warning }
+            annotations:
+              summary: "Runinator waker receives at least 5% of wakes more than 30 seconds late"
           - alert: RuninatorHttpErrorsHigh
             expr: sum(rate({__name__=~"runinator_ws_http_requests.*",status_class="5xx"}[5m])) / clamp_min(sum(rate({__name__=~"runinator_ws_http_requests.*"}[5m])), 0.001) > 0.05
             for: 5m

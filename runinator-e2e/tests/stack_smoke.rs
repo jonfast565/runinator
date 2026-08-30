@@ -66,6 +66,55 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
     Ok(())
 }
 
+/// Proves the durable timer path across independently-running engine, waker, and broker processes.
+///
+/// The wait is armed by the engine, relayed by the waker over `wake → ingress`, then driven by the
+/// engine before the run can finish. Unit tests in either runtime cannot cover this process boundary.
+#[tokio::test]
+#[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e wake_ingress_drive_smoke -- --ignored"]
+async fn wake_ingress_drive_smoke() -> E2eResult<()> {
+    if std::env::var("RUNINATOR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("set RUNINATOR_E2E=1 to run local-stack e2e tests");
+        return Ok(());
+    }
+
+    let workspace = workspace_dir();
+    build_service_binaries(&workspace)?;
+    let harness = StackHarness::start(&workspace, Ports::allocate()?).await?;
+    let api = harness.api_client()?;
+    let workflow_file = harness.run_dir.join("wake-ingress-drive.rrx");
+    fs::write(
+        &workflow_file,
+        r#"language rexrap-1
+
+namespace runinator.tests.e2e {
+    workflow "Wake Ingress Drive Smoke" v1 {
+        key wake_ingress_drive_smoke
+
+        do {
+            @id("wake") wait 1s
+        }
+    }
+}
+"#,
+    )?;
+    harness.import_workflows(&workflow_file)?;
+    let workflow = api
+        .fetch_workflow_by_name("Wake Ingress Drive Smoke")
+        .await?;
+    let (run, effects) = run_workflow_by_id(
+        &api,
+        workflow.id.ok_or("timer smoke workflow has no id")?,
+        json!({}),
+    )
+    .await?;
+
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let wait = latest_effect(&api, &effects, "wake").await?;
+    assert_eq!(wait.status, WorkflowEffectStatus::Succeeded);
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e durable_agent_result_outbox_smoke -- --ignored"]
 async fn durable_agent_result_outbox_smoke() -> E2eResult<()> {
