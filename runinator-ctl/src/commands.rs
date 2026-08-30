@@ -161,6 +161,7 @@ mod repl_completer;
 mod replicas;
 mod runs;
 mod settings;
+mod timeline;
 mod triggers;
 
 async fn fetch_workflow_ref(client: &Client, workflow: &str) -> Result<WorkflowDefinition> {

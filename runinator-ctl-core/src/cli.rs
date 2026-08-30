@@ -53,6 +53,18 @@ pub enum CliTyping {
     Permissive,
 }
 
+/// Presentation used by workflow and pipeline execution timelines.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliTimelineFormat {
+    /// Chronological terminal table.
+    #[default]
+    Table,
+    /// Compact ASCII execution graph.
+    Graph,
+    /// Complete machine-readable execution record.
+    Json,
+}
+
 impl From<CliTyping> for TypePolicy {
     fn from(policy: CliTyping) -> Self {
         match policy {
@@ -699,6 +711,13 @@ pub enum RunCommands {
     },
     /// Show a workflow run and its VM execution records.
     Show { id: Uuid },
+    /// Show the author-facing execution timeline for a workflow run.
+    Timeline {
+        id: Uuid,
+        /// Render a chronological table, an ASCII execution graph, or the complete JSON record.
+        #[arg(long, value_enum, default_value_t = CliTimelineFormat::Table)]
+        format: CliTimelineFormat,
+    },
     /// Refresh a workflow run until interrupted or terminal.
     Watch {
         id: Uuid,
@@ -882,9 +901,22 @@ pub enum PipelineCommands {
         /// Only runs of one pipeline, by UUID or canonical namespace.key.
         #[arg(long)]
         pipeline: Option<String>,
+        /// Only runs in this status, such as running, waiting, or failed.
+        #[arg(long)]
+        status: Option<String>,
+        /// Only runs that have not reached a terminal status.
+        #[arg(long)]
+        open: bool,
     },
     /// Show a pipeline run and the member workflow runs it started.
     RunShow { run_id: Uuid },
+    /// Show member attempts and graph progress for a pipeline run.
+    RunTimeline {
+        run_id: Uuid,
+        /// Render a chronological table, an ASCII execution graph, or the complete JSON record.
+        #[arg(long, value_enum, default_value_t = CliTimelineFormat::Table)]
+        format: CliTimelineFormat,
+    },
     /// Cancel a pipeline run.
     Cancel { run_id: Uuid },
     /// Permanently delete a pipeline run and its member workflow history.

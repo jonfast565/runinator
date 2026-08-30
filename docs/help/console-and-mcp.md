@@ -73,6 +73,36 @@ same vocabulary over the HTTP API; the handful of commands that read or write a 
 (`workflows apply`, `functions publish`, `settings import`, `artifacts download`) stay listed in
 `:help` and say to run them with `runinatorctl`.
 
+### Run status and timelines
+
+Workflow and pipeline run listings include both active and completed executions. Filter workflow
+runs with `runs list --open` or `runs list --status <status>`; pipeline runs accept the same filters:
+
+```text
+runinatorctl runs list --open
+runinatorctl runs list --status succeeded
+runinatorctl pipelines runs --open
+runinatorctl pipelines runs --status failed
+```
+
+Use the timeline commands when a summary row is not enough. The default table is chronological,
+`graph` renders the observed workflow continuation lanes or the frozen pipeline graph with member
+statuses, and `json` emits the complete durable execution record:
+
+```text
+runinatorctl runs timeline <workflow-run-id>
+runinatorctl runs timeline <workflow-run-id> --format graph
+runinatorctl runs timeline <workflow-run-id> --format json
+
+runinatorctl pipelines run-timeline <pipeline-run-id>
+runinatorctl pipelines run-timeline <pipeline-run-id> --format graph
+runinatorctl pipelines run-timeline <pipeline-run-id> --format json
+```
+
+The global `--json` flag also selects JSON regardless of the timeline format. Workflow JSON includes
+the run, journal, effects, continuations, and transition projection. Pipeline JSON includes the run,
+member workflow runs, every member attempt, edge and join state, and its frozen pipeline snapshot.
+
 `:help` prints one table of every command against what it does, and `:help <command>` narrows to a
 prefix or expands one command into its call shape and each argument. The list is *derived* — the
 terminal console walks the same clap tree the process parses with, so a verb added to the CLI is

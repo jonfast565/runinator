@@ -2,7 +2,7 @@ use super::*;
 
 use runinator_models::pipelines::{Pipeline, PipelineRun};
 
-use runinator_ctl_core::cli::PipelineCommands;
+use runinator_ctl_core::cli::{CliTimelineFormat, PipelineCommands};
 
 /// how often a followed pipeline run is re-read.
 const FOLLOW_INTERVAL: Duration = Duration::from_secs(2);
@@ -100,13 +100,24 @@ pub(super) async fn pipelines(
             println!("graph: {}", serde_json::to_string_pretty(&found.graph)?);
             Ok(())
         }
-        PipelineCommands::Runs { pipeline } => {
+        PipelineCommands::Runs {
+            pipeline,
+            status,
+            open,
+        } => {
             let pipeline_id = match pipeline {
                 Some(pipeline) => Some(pipeline_id(&resolve_pipeline(client, pipeline).await?)?),
                 None => None,
             };
             let mut runs = client.fetch_pipeline_runs(pipeline_id).await?;
-            runs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+            if let Some(status) = status {
+                let status = parse_workflow_status(status)?;
+                runs.retain(|run| run.status == status);
+            }
+            if *open {
+                runs.retain(|run| !run.status.is_terminal());
+            }
+            runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
             if json_output {
                 return output::json(&runs);
             }
@@ -142,6 +153,18 @@ pub(super) async fn pipelines(
                 "{}",
                 output::table(&["MEMBER RUN", "WORKFLOW", "STATUS", "CREATED"], &rows)
             );
+            Ok(())
+        }
+        PipelineCommands::RunTimeline { run_id, format } => {
+            let detail = client.fetch_pipeline_run(*run_id).await?;
+            if json_output || matches!(format, CliTimelineFormat::Json) {
+                return output::json(&detail);
+            }
+            match format {
+                CliTimelineFormat::Table => print!("{}", timeline::pipeline_table(&detail)),
+                CliTimelineFormat::Graph => print!("{}", timeline::pipeline_graph(&detail)),
+                CliTimelineFormat::Json => unreachable!("json handled above"),
+            }
             Ok(())
         }
         PipelineCommands::Cancel { run_id } => {

@@ -2,7 +2,9 @@
 
 use super::*;
 
-use runinator_ctl_core::cli::{Commands, RunCommands, WorkflowCommands};
+use runinator_ctl_core::cli::{
+    CliTimelineFormat, Commands, PipelineCommands, RunCommands, WorkflowCommands,
+};
 
 fn tokens(line: &str) -> Vec<String> {
     tokenize(line).expect("line tokenizes")
@@ -80,6 +82,51 @@ fn accepts_json_after_the_subcommand() {
 }
 
 #[test]
+fn parses_workflow_and_pipeline_timeline_formats() {
+    let run_id = "00000000-0000-0000-0000-000000000001";
+    let parsed = parse(&tokens(&format!("runs timeline {run_id} --format graph")))
+        .expect("workflow timeline parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Runs {
+            command: RunCommands::Timeline {
+                format: CliTimelineFormat::Graph,
+                ..
+            }
+        }
+    ));
+
+    let parsed = parse(&tokens(&format!(
+        "pipelines run-timeline {run_id} --format json"
+    )))
+    .expect("pipeline timeline parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Pipelines {
+            command: PipelineCommands::RunTimeline {
+                format: CliTimelineFormat::Json,
+                ..
+            }
+        }
+    ));
+}
+
+#[test]
+fn pipeline_runs_accept_open_and_status_filters() {
+    let parsed = parse(&tokens("pipelines runs --open --status running")).expect("parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Pipelines {
+            command: PipelineCommands::Runs {
+                open: true,
+                status: Some(ref status),
+                ..
+            }
+        } if status == "running"
+    ));
+}
+
+#[test]
 fn reports_an_unknown_verb() {
     let error = parse(&tokens("nonsense")).expect_err("unknown verb is rejected");
     assert!(error.to_string().contains("nonsense"));
@@ -103,6 +150,7 @@ fn help_for_a_prefix_lists_every_command_under_it() {
     assert!(text.contains("usage"));
     assert!(text.contains("runs watch"));
     assert!(text.contains("runs cancel"));
+    assert!(text.contains("runs timeline"));
 }
 
 #[test]
@@ -215,6 +263,9 @@ fn completes_only_command_lines() {
 
     let flags = complete(":runs list --").options;
     assert!(flags.contains(&"--status".to_string()));
+
+    let formats = complete(":runs timeline 00000000-0000-0000-0000-000000000001 --format ").options;
+    assert_eq!(formats, vec!["graph", "json", "table"]);
 }
 
 #[test]
