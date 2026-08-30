@@ -830,6 +830,12 @@ pub enum DebugVerb {
     },
 }
 
+impl runinator_models::validation::Validate for DebugVerb {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        Ok(())
+    }
+}
+
 /// a [`DebugVerb`] addressed to a specific workflow run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugCommand {

@@ -339,6 +339,49 @@ impl Pipeline {
     }
 }
 
+impl crate::validation::Validate for Pipeline {
+    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
+        use crate::validation::{
+            LONG_TEXT_MAX, SHORT_TEXT_MAX, ValidationError, identifier, optional_text,
+            required_text, serialized,
+        };
+
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        if let Some(key) = self.key.as_deref() {
+            identifier("key", key)?;
+        }
+        optional_text("namespace", self.namespace.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("description", self.description.as_deref(), LONG_TEXT_MAX)?;
+        if self.concurrency.max_concurrent_runs < 0 {
+            return Err(ValidationError::new(
+                "concurrency.max_concurrent_runs",
+                "must not be negative",
+            ));
+        }
+        for (index, member) in self.graph.members.iter().enumerate() {
+            required_text(
+                &format!("graph.members[{index}].key"),
+                &member.key,
+                SHORT_TEXT_MAX,
+            )?;
+        }
+        for (index, link) in self.graph.links.iter().enumerate() {
+            required_text(
+                &format!("graph.links[{index}].from"),
+                &link.from,
+                SHORT_TEXT_MAX,
+            )?;
+            required_text(
+                &format!("graph.links[{index}].to"),
+                &link.to,
+                SHORT_TEXT_MAX,
+            )?;
+        }
+        serialized("pipeline", self)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineMemberAttemptStatus {
@@ -451,6 +494,15 @@ pub struct PipelineTrigger {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl crate::validation::Validate for PipelineTrigger {
+    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
+        crate::workflows::validate_trigger_window(self.blackout_start, self.blackout_end)?;
+        crate::validation::dynamic_value("configuration", &self.configuration)?;
+        crate::validation::dynamic_value("metadata", &self.metadata)?;
+        Ok(())
+    }
 }
 
 /// a first-class pipeline execution. an orchestration envelope over the member workflow runs it

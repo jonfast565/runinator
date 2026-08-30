@@ -573,7 +573,7 @@ async fn an_http_invocation_starts_a_run_of_the_adapter_workflow() {
             )]),
             Path((PACKAGE_PATH.to_string(), "resize".to_string())),
             axum::extract::Query(Default::default()),
-            Json(json!({ "source": "a.png", "width": 320 })),
+            ValidatedJson(json!({ "source": "a.png", "width": 320 })),
         )
         .await;
 
@@ -621,7 +621,7 @@ async fn an_idempotency_key_replays_the_run_it_already_started() {
             headers,
             Path((PACKAGE_PATH.to_string(), "resize".to_string())),
             axum::extract::Query(Default::default()),
-            Json(json!({ "source": "a.png" })),
+            ValidatedJson(json!({ "source": "a.png" })),
         )
         .await
     };
@@ -666,7 +666,7 @@ async fn invoking_an_unknown_export_is_not_found() {
             axum::http::HeaderMap::new(),
             Path((PACKAGE_PATH.to_string(), "crop".to_string())),
             axum::extract::Query(Default::default()),
-            Json(json!({})),
+            ValidatedJson(json!({})),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -728,7 +728,7 @@ async fn invoking_is_gated_separately_from_publishing() {
             axum::http::HeaderMap::new(),
             Path((PACKAGE_PATH.to_string(), "resize".to_string())),
             axum::extract::Query(Default::default()),
-            Json(json!({ "source": "a.png" })),
+            ValidatedJson(json!({ "source": "a.png" })),
         )
         .await;
     // An inaccessible ID-addressed resource is deliberately concealed as not found.

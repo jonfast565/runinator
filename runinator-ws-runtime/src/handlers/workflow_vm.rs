@@ -365,7 +365,7 @@ pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + Work
     Extension(broker): Extension<Arc<dyn Broker>>,
     Extension(ctx): Extension<AuthContext>,
     Path(effect_id): Path<Uuid>,
-    Json(control): Json<ProviderTerminalControl>,
+    ValidatedJson(control): ValidatedJson<ProviderTerminalControl>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let effect = match db.fetch_workflow_effect(effect_id).await {
         Ok(Some(effect)) => effect,
@@ -392,11 +392,6 @@ pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + Work
     if !interactive_action {
         return runinator_ws_core::responses::bad_request(
             "terminal control is only available for interactive provider effects",
-        );
-    }
-    if matches!(&control, ProviderTerminalControl::Input { data } if data.len() > 65_536) {
-        return runinator_ws_core::responses::bad_request(
-            "terminal input chunks may not exceed 64 KiB",
         );
     }
     if effect.status != WorkflowEffectStatus::Running {

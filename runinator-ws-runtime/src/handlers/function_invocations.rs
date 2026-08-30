@@ -35,9 +35,12 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_engine::services::FunctionInvocations;
-use runinator_ws_core::models::{self, ApiResponse};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
+use runinator_ws_core::{
+    ValidatedJson,
+    models::{self, ApiResponse},
+};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 /// the header a caller sends to skip the wait entirely.
@@ -71,7 +74,7 @@ pub async fn create_function_invocation<
     headers: HeaderMap,
     Path((package, export)): Path<(String, String)>,
     Query(query): Query<InvocationQuery>,
-    Json(input): Json<Value>,
+    ValidatedJson(input): ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let (namespace, name) = split_qualified(&package);
     let package_detail = match service

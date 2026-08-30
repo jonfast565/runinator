@@ -18,3 +18,38 @@ pub use completion::{
     RexRapCompletionItem, RexRapCompletionRequest, RexRapCompletionResponse, complete_source,
 };
 pub use hover::{RexRapHoverRequest, RexRapHoverResponse, hover_source};
+
+fn validate_ide_payload(
+    source: &str,
+    cursor_byte: usize,
+    providers: &[runinator_models::providers::ProviderMetadata],
+    payload: &impl serde::Serialize,
+) -> Result<(), runinator_models::validation::ValidationError> {
+    use runinator_models::validation::{Validate, ValidationError, bounded_text, serialized};
+
+    bounded_text("source", source, 2 * 1024 * 1024)?;
+    if cursor_byte > source.len() || !source.is_char_boundary(cursor_byte) {
+        return Err(ValidationError::new(
+            "cursor_byte",
+            "must identify a UTF-8 character boundary within source",
+        ));
+    }
+    for (index, provider) in providers.iter().enumerate() {
+        provider.validate().map_err(|error| {
+            ValidationError::new(format!("providers[{index}].{}", error.path), error.message)
+        })?;
+    }
+    serialized("ide_request", payload)
+}
+
+impl runinator_models::validation::Validate for RexRapCompletionRequest {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        validate_ide_payload(&self.source, self.cursor_byte, &self.providers, self)
+    }
+}
+
+impl runinator_models::validation::Validate for RexRapHoverRequest {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        validate_ide_payload(&self.source, self.cursor_byte, &self.providers, self)
+    }
+}

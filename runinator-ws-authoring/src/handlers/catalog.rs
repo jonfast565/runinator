@@ -8,11 +8,14 @@ use runinator_store::roles::DefinitionStore;
 
 use crate::handlers::providers::provider_catalog_item;
 use runinator_engine::services::CatalogOperations;
-use runinator_ws_core::models::{ApiResponse, CatalogQuery};
 use runinator_ws_core::openapi::docs::{
     CATALOG_FILTERS, EndpointDoc, Example, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_core::{
+    ValidatedJson,
+    models::{ApiResponse, CatalogQuery},
+};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn get_catalog_items<T: DefinitionStore>(
@@ -36,7 +39,7 @@ pub async fn get_catalog_items<T: DefinitionStore>(
 pub async fn upsert_catalog_item<T: DefinitionStore>(
     Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(item): Json<Value>,
+    ValidatedJson(item): ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::CatalogManage,

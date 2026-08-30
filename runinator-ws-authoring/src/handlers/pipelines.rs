@@ -138,7 +138,7 @@ pub async fn create_pipeline<
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(mut pipeline): Json<Pipeline>,
+    ValidatedJson(mut pipeline): ValidatedJson<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // a create always mints a fresh id and is owned by the creator's active org (None = global).
     pipeline.id = None;
@@ -166,7 +166,7 @@ pub async fn update_pipeline<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
-    Json(pipeline): Json<Pipeline>,
+    ValidatedJson(pipeline): ValidatedJson<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(pipeline_id, Permission::Edit)
@@ -233,7 +233,7 @@ pub async fn upsert_pipeline_trigger<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
-    Json(mut trigger): Json<PipelineTrigger>,
+    ValidatedJson(mut trigger): ValidatedJson<PipelineTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(pipeline_id, Permission::Edit)
@@ -255,7 +255,7 @@ pub async fn update_pipeline_trigger<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
-    Json(mut trigger): Json<PipelineTrigger>,
+    ValidatedJson(mut trigger): ValidatedJson<PipelineTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline_trigger(trigger_id, Permission::Edit)

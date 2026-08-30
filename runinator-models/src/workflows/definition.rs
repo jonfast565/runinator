@@ -193,5 +193,29 @@ pub struct WorkflowBundle {
     pub triggers: Vec<WorkflowTrigger>,
 }
 
+impl crate::validation::Validate for WorkflowDefinition {
+    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
+        use crate::validation::{
+            SHORT_TEXT_MAX, identifier, optional_text, required_text, serialized,
+        };
+
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        if let Some(key) = self.key.as_deref() {
+            identifier("key", key)?;
+        }
+        optional_text("namespace", self.namespace.as_deref(), SHORT_TEXT_MAX)?;
+        serialized("workflow", self)?;
+        Ok(())
+    }
+}
+
+impl crate::validation::Validate for WorkflowSimulateRequest {
+    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
+        crate::validation::Validate::validate(&self.workflow)?;
+        crate::validation::dynamic_value("inputs", &self.inputs)?;
+        Ok(())
+    }
+}
+
 // note: raw json workflow bundles use an explicit client method because the server requires
 // a risk-acknowledgment header before accepting them.

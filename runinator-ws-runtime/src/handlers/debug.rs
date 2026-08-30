@@ -4,13 +4,13 @@ use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_comm::DebugVerb;
 use runinator_models::auth::{AuthContext, Permission};
 use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use runinator_engine::services::DebugOperations;
-use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::bad_request;
+use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 /// Unified VM debugger entrypoint. The VM supports continuation-scoped Step and Continue only;
@@ -20,7 +20,7 @@ pub async fn debug_command<T: AuthorizationStore + RuntimeStore + WorkflowVmStor
     Extension(debug): Extension<Arc<DebugOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    Json(verb): Json<DebugVerb>,
+    ValidatedJson(verb): ValidatedJson<DebugVerb>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, Permission::Run)
@@ -36,14 +36,20 @@ pub async fn debug_command<T: AuthorizationStore + RuntimeStore + WorkflowVmStor
 
 /// Body of the continuation-scoped debugger verbs. Omitting it targets every operator-paused
 /// continuation in the run.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Serialize, Default)]
 pub struct CursorRequest {
     #[serde(default)]
     pub cursor: Option<Uuid>,
 }
 
-fn cursor_of(body: &Option<Json<CursorRequest>>) -> Option<Uuid> {
-    body.as_ref().and_then(|Json(req)| req.cursor)
+impl runinator_models::validation::Validate for CursorRequest {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        Ok(())
+    }
+}
+
+fn cursor_of(body: &Option<ValidatedJson<CursorRequest>>) -> Option<Uuid> {
+    body.as_ref().and_then(|ValidatedJson(req)| req.cursor)
 }
 
 pub async fn step_debug_workflow_run<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
@@ -51,7 +57,7 @@ pub async fn step_debug_workflow_run<T: AuthorizationStore + RuntimeStore + Work
     Extension(debug): Extension<Arc<DebugOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    body: Option<Json<CursorRequest>>,
+    body: Option<ValidatedJson<CursorRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, Permission::Run)
@@ -70,7 +76,7 @@ pub async fn continue_debug_workflow_run<T: AuthorizationStore + RuntimeStore + 
     Extension(debug): Extension<Arc<DebugOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
-    body: Option<Json<CursorRequest>>,
+    body: Option<ValidatedJson<CursorRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_run_workflow(workflow_run_id, Permission::Run)

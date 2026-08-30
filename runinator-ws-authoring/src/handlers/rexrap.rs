@@ -27,13 +27,13 @@ use runinator_ws_core::responses::{api_error, bad_request};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 pub async fn complete_rexrap(
-    Json(request): Json<runinator_rexrap_ide::RexRapCompletionRequest>,
+    ValidatedJson(request): ValidatedJson<runinator_rexrap_ide::RexRapCompletionRequest>,
 ) -> Json<runinator_rexrap_ide::RexRapCompletionResponse> {
     Json(runinator_rexrap_ide::complete_source(request))
 }
 
 pub async fn hover_rexrap(
-    Json(request): Json<runinator_rexrap_ide::RexRapHoverRequest>,
+    ValidatedJson(request): ValidatedJson<runinator_rexrap_ide::RexRapHoverRequest>,
 ) -> Json<Option<runinator_rexrap_ide::RexRapHoverResponse>> {
     Json(runinator_rexrap_ide::hover_source(request))
 }
@@ -103,7 +103,7 @@ impl Validate for RexRapSourceRequest {
 
 impl Validate for DecompileRexRapRequest {
     fn validate(&self) -> Result<(), ValidationError> {
-        Ok(())
+        self.workflow.validate()
     }
 }
 
@@ -130,6 +130,11 @@ impl Validate for ImportRexRapRequest {
                 "triggers",
                 "must contain at most 256 triggers",
             ));
+        }
+        for (index, trigger) in self.triggers.iter().enumerate() {
+            trigger.validate().map_err(|error| {
+                ValidationError::new(format!("triggers[{index}].{}", error.path), error.message)
+            })?;
         }
         Ok(())
     }

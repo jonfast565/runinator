@@ -10,9 +10,9 @@ use runinator_models::{
 use runinator_store::roles::DefinitionStore;
 
 use runinator_engine::services::CatalogOperations;
-use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
+use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 /// list registered task providers and their action metadata.
@@ -40,7 +40,7 @@ pub async fn get_providers<T: DefinitionStore>(
 pub async fn upsert_provider<T: DefinitionStore>(
     Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(provider): Json<ProviderMetadata>,
+    ValidatedJson(provider): ValidatedJson<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Worker,
@@ -66,7 +66,7 @@ pub async fn upsert_provider<T: DefinitionStore>(
 pub async fn import_provider_bundle<T: DefinitionStore>(
     Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(bundle): Json<ProviderBundle>,
+    ValidatedJson(bundle): ValidatedJson<ProviderBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Worker,

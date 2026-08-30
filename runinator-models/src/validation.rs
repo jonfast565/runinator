@@ -7,6 +7,9 @@
 
 use std::{collections::BTreeMap, error::Error, fmt};
 
+use crate::value::Value;
+use serde::Serialize;
+
 /// A stable, field-addressable input error suitable for HTTP and UI error surfaces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -43,6 +46,8 @@ pub trait Validate {
 pub const SHORT_TEXT_MAX: usize = 256;
 pub const LONG_TEXT_MAX: usize = 16 * 1024;
 pub const URL_MAX: usize = 2 * 1024;
+pub const DYNAMIC_VALUE_MAX_DEPTH: usize = 64;
+pub const DYNAMIC_VALUE_MAX_NODES: usize = 100_000;
 
 pub fn required_text(path: &str, value: &str, max: usize) -> Result<(), ValidationError> {
     let trimmed = value.trim();
@@ -159,6 +164,58 @@ pub fn positive_limit(path: &str, value: Option<i64>, max: i64) -> Result<(), Va
     Ok(())
 }
 
+/// Bound arbitrary JSON-shaped input even when its domain intentionally accepts any value.
+///
+/// The HTTP body limit bounds bytes. These limits independently prevent a small but extremely
+/// nested document, or a document with an excessive number of tiny values, from becoming durable
+/// state and imposing disproportionate traversal costs on the runtime.
+pub fn dynamic_value(path: &str, value: &Value) -> Result<(), ValidationError> {
+    let mut stack = vec![(value, 1_usize)];
+    let mut nodes = 0_usize;
+    while let Some((value, depth)) = stack.pop() {
+        nodes += 1;
+        if nodes > DYNAMIC_VALUE_MAX_NODES {
+            return Err(ValidationError::new(
+                path,
+                format!("must contain at most {DYNAMIC_VALUE_MAX_NODES} values"),
+            ));
+        }
+        if depth > DYNAMIC_VALUE_MAX_DEPTH {
+            return Err(ValidationError::new(
+                path,
+                format!("must be nested at most {DYNAMIC_VALUE_MAX_DEPTH} levels"),
+            ));
+        }
+        match value {
+            Value::Array(values) => {
+                stack.extend(values.iter().map(|value| (value, depth + 1)));
+            }
+            Value::Object(values) => {
+                for (key, value) in values {
+                    bounded_text(path, key, SHORT_TEXT_MAX)?;
+                    stack.push((value, depth + 1));
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+    Ok(())
+}
+
+impl Validate for Value {
+    fn validate(&self) -> Result<(), ValidationError> {
+        dynamic_value("payload", self)
+    }
+}
+
+/// Apply the dynamic JSON bounds to any serializable request type.
+pub fn serialized(path: &str, value: &impl Serialize) -> Result<(), ValidationError> {
+    let value = serde_json::to_value(value)
+        .map(Value::from)
+        .map_err(|error| ValidationError::new(path, format!("could not be inspected: {error}")))?;
+    dynamic_value(path, &value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +249,17 @@ mod tests {
         assert!(email("email", "operator@runinator.example").is_ok());
         assert!(email("email", "operator").is_err());
         assert!(email("email", "operator@@runinator.example").is_err());
+    }
+
+    #[test]
+    fn dynamic_values_reject_excessive_nesting() {
+        let mut value = Value::Null;
+        for _ in 0..DYNAMIC_VALUE_MAX_DEPTH {
+            value = Value::Array(vec![value]);
+        }
+        assert_eq!(
+            value.validate().unwrap_err().to_string(),
+            "payload: must be nested at most 64 levels"
+        );
     }
 }

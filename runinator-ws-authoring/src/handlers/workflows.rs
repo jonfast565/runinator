@@ -18,11 +18,11 @@ use runinator_store::{
 use serde::Deserialize;
 
 use runinator_engine::services::WorkflowAuthoring;
-use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, WORKFLOW_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found, validation_error};
+use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
@@ -38,7 +38,7 @@ pub async fn upsert_workflow<
     Extension(db): Extension<Arc<T>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(mut workflow): Json<WorkflowDefinition>,
+    ValidatedJson(mut workflow): ValidatedJson<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // updating an existing workflow requires edit; creating one stamps the creator as owner.
     let is_update = workflow.id.is_some();
@@ -82,7 +82,7 @@ pub async fn validate_workflow<
         + WorkflowVmStore,
 >(
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
-    Json(workflow): Json<WorkflowDefinition>,
+    ValidatedJson(workflow): ValidatedJson<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match authoring.validate(&workflow).await {
         Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
@@ -105,7 +105,7 @@ pub async fn simulate_workflow<
     Extension(db): Extension<Arc<T>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<WorkflowSimulateRequest>,
+    ValidatedJson(request): ValidatedJson<WorkflowSimulateRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Some(id) = request.workflow.id
         && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)

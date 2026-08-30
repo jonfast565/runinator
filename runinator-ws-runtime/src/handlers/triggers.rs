@@ -12,11 +12,11 @@ use runinator_store::{
 };
 
 use runinator_engine::services::SchedulingOperations;
-use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, WORKFLOW_TRIGGER_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
@@ -27,7 +27,7 @@ pub async fn upsert_workflow_trigger<
     Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
-    Json(mut trigger): Json<WorkflowTrigger>,
+    ValidatedJson(mut trigger): ValidatedJson<WorkflowTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_workflow(workflow_id, Permission::Edit)
@@ -49,7 +49,7 @@ pub async fn update_workflow_trigger<
     Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
-    Json(mut trigger): Json<WorkflowTrigger>,
+    ValidatedJson(mut trigger): ValidatedJson<WorkflowTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_trigger_workflow(trigger_id, Permission::Edit)

@@ -58,3 +58,29 @@ pub struct WorkflowTrigger {
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
 }
+
+impl crate::validation::Validate for WorkflowTrigger {
+    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
+        validate_trigger_window(self.blackout_start, self.blackout_end)?;
+        crate::validation::dynamic_value("configuration", &self.configuration)?;
+        crate::validation::dynamic_value("metadata", &self.metadata)?;
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_trigger_window(
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+) -> Result<(), crate::validation::ValidationError> {
+    match (start, end) {
+        (Some(start), Some(end)) if start >= end => Err(crate::validation::ValidationError::new(
+            "blackout_end",
+            "must be after blackout_start",
+        )),
+        (Some(_), None) | (None, Some(_)) => Err(crate::validation::ValidationError::new(
+            "blackout_start",
+            "blackout_start and blackout_end must be provided together",
+        )),
+        _ => Ok(()),
+    }
+}

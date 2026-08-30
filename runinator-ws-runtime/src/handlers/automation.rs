@@ -52,7 +52,7 @@ async fn create_record<T: AuthorizationStore + RuntimeStore + AutomationStore + 
     service: &AutomationOperations<T>,
     ctx: &AuthContext,
     record_type: &'static str,
-    Json(record): Json<Value>,
+    ValidatedJson(record): ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -83,7 +83,7 @@ pub async fn create_external_item<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    json: Json<Value>,
+    json: ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(&service, &ctx, "external_items", json).await
 }
@@ -128,7 +128,7 @@ pub async fn get_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + D
 pub async fn create_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    Json(record): Json<Value>,
+    ValidatedJson(record): ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -178,7 +178,7 @@ pub async fn create_automation_event<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    json: Json<Value>,
+    json: ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(&service, &ctx, "automation_events", json).await
 }
@@ -220,7 +220,7 @@ pub async fn create_approval<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    json: Json<Value>,
+    json: ValidatedJson<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(&service, &ctx, "approval_requests", json).await
 }

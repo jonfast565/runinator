@@ -159,6 +159,28 @@ pub enum ProviderTerminalControl {
     Eof,
 }
 
+impl crate::validation::Validate for ProviderTerminalControl {
+    fn validate(&self) -> Result<(), crate::validation::ValidationError> {
+        match self {
+            Self::Input { data } if data.len() > 65_536 => {
+                Err(crate::validation::ValidationError::new(
+                    "data",
+                    "terminal input chunks may not exceed 64 KiB",
+                ))
+            }
+            Self::Resize { cols: 0, .. } => Err(crate::validation::ValidationError::new(
+                "cols",
+                "must be greater than zero",
+            )),
+            Self::Resize { rows: 0, .. } => Err(crate::validation::ValidationError::new(
+                "rows",
+                "must be greater than zero",
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
 impl From<ProviderExecutionEvent> for Option<NewRunChunk> {
     fn from(event: ProviderExecutionEvent) -> Self {
         match event {
