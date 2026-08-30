@@ -149,6 +149,10 @@ struct K8sDeployArgs {
     /// shorthand for --image-repository pointing at a registry mirrored to the local cluster.
     #[arg(long)]
     local_registry: Option<String>,
+    /// number of timestamped Runinator releases to retain in --local-registry after a push; zero
+    /// disables registry cleanup.
+    #[arg(long, default_value_t = 5)]
+    registry_retention: usize,
     /// kubectl context to use; defaults to the current context.
     #[arg(long)]
     kube_context: Option<String>,
@@ -297,8 +301,25 @@ fn resolve_image_repository(
     }
 }
 
+fn effective_local_registry<'a>(
+    image_repository: &Option<String>,
+    local_registry: &'a Option<String>,
+) -> Option<&'a str> {
+    if image_repository
+        .as_deref()
+        .is_some_and(|repository| !repository.trim().is_empty())
+    {
+        return None;
+    }
+    local_registry
+        .as_deref()
+        .map(str::trim)
+        .filter(|registry| !registry.is_empty())
+}
+
 fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> anyhow::Result<()> {
     let image_repository = resolve_image_repository(&args.image_repository, &args.local_registry);
+    let local_registry = effective_local_registry(&args.image_repository, &args.local_registry);
     let image_tag = k8s::images::versioned_image_tag(&args.image_tag);
 
     let manifest_path = if args.manifest.is_absolute() {
@@ -316,7 +337,7 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
             .then_some(vec!["runinator-command-center"]);
 
         println!("==> Building container images (tag: {image_tag})");
-        Some(k8s::images::build_container_images(
+        let built = k8s::images::build_container_images(
             workspace_root,
             image_repository.as_deref(),
             &image_tag,
@@ -325,7 +346,23 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
             should_push,
             &args.database_backend,
             &args.broker_backend,
-        )?)
+        )?;
+
+        if let Some(registry) = local_registry
+            && args.registry_retention > 0
+        {
+            println!(
+                "==> Pruning local registry to the newest {} release versions",
+                args.registry_retention
+            );
+            k8s::registry::prune_release_images(
+                registry,
+                built.keys().map(String::as_str),
+                args.registry_retention,
+            )?;
+        }
+
+        Some(built)
     };
 
     println!("==> Deploying Runinator to the Kubernetes cluster");

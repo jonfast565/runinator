@@ -66,6 +66,10 @@ registry reachable from the cluster:
 cargo run -p xtask -- k8s deploy --local-registry localhost:5000
 ```
 
+Local-registry deploys retain the newest five timestamped Runinator releases per
+image. Set a different limit with `--registry-retention <N>`; zero disables the
+cleanup. Manifest deletion must be enabled in the registry.
+
 To refresh only the command-center web interface, use:
 
 ```sh

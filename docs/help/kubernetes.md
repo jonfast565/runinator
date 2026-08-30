@@ -228,7 +228,16 @@ cargo run -p xtask -- k8s deploy --pack-import-timeout-secs 900
 The local overlay includes development-only Postgres, RabbitMQ, and app
 Secrets. For k3d/kind clusters that do not share Docker Desktop's image store,
 configure a local registry and pass it as `--local-registry localhost:5000` (or
-use `--image-repository` for any registry reachable by the cluster).
+use `--image-repository` for any registry reachable by the cluster). The default
+deploy does not push to a registry; Docker Desktop Kubernetes can consume the
+host daemon's local image store directly.
+
+After a successful local-registry push, xtask deletes timestamped Runinator
+manifests (including legacy `kube-<timestamp>` tags) older than the newest five
+releases for each image. Custom tags are left alone. Change the limit with
+`--registry-retention <N>`, or pass `--registry-retention 0` to disable cleanup.
+The registry must allow manifest deletion; its own garbage-collection policy
+controls when unreferenced blobs are reclaimed from disk.
 
 Re-running `k8s deploy` against a cluster that already has the stack up
 preserves the existing `runinator-postgres` and `runinator-rabbitmq`
