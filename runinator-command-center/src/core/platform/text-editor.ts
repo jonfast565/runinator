@@ -5,6 +5,8 @@ export type TextEditorLanguage =
   | "python"
   | "javascript"
   | "bash"
+  | "commonlisp"
+  | "cobol"
   | "ruby"
   | "perl"
   | "php"

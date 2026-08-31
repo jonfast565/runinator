@@ -136,6 +136,17 @@ impl Lowerer {
         let mut config = Map::new();
         config.insert("language".into(), Value::String(foreign.language.clone()));
         config.insert("source".into(), Value::String(foreign.source.clone()));
+        if let Some((_, hint)) = self
+            .declared_type_hints
+            .iter()
+            .rev()
+            .find(|(node_id, _)| node_id == id)
+        {
+            // Unlike the old graph reducer, the continuation VM does not re-read mutable workflow
+            // metadata while dispatching an effect. Freeze the declared result contract beside the
+            // source so `std.code` can validate the returned JSON on every attempt.
+            config.insert("expected_output_type".into(), hint.clone());
+        }
 
         let mut action_obj = Map::new();
         action_obj.insert("provider".into(), Value::String("std".into()));

@@ -20,14 +20,43 @@ export interface ForeignLanguageSetting {
   label: string;
   aliases: string[];
   defaultImage: string;
+  defaultSetupScript?: string;
   image: string;
   setup_script: string;
 }
 
-const LANGUAGE_DEFINITIONS = [
+const COMMON_LISP_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cl-alexandria cl-trivial-gray-streams cl-yason
+rm -rf /var/lib/apt/lists/*`;
+
+const COBOL_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnucobol
+rm -rf /var/lib/apt/lists/*`;
+
+const LANGUAGE_DEFINITIONS: readonly {
+  language: string;
+  label: string;
+  aliases: readonly string[];
+  defaultImage: string;
+  defaultSetupScript?: string;
+}[] = [
   { language: "python", label: "Python", aliases: ["py"], defaultImage: "python:3.12" },
   { language: "javascript", label: "JavaScript", aliases: ["js", "node"], defaultImage: "node:22" },
   { language: "bash", label: "Bash", aliases: ["sh"], defaultImage: "bash:5.2" },
+  {
+    language: "commonlisp",
+    label: "Common Lisp",
+    aliases: ["common-lisp", "common_lisp", "lisp", "cl", "sbcl"],
+    defaultImage: "clfoundation/sbcl:2.6.1-bookworm",
+    defaultSetupScript: COMMON_LISP_SETUP,
+  },
+  {
+    language: "cobol",
+    label: "COBOL",
+    aliases: ["cob", "gnucobol"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: COBOL_SETUP,
+  },
   { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3" },
   { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40" },
   { language: "php", label: "PHP", aliases: [], defaultImage: "php:8.3-cli" },
@@ -64,7 +93,7 @@ export function createLanguageSettings(): ForeignLanguageSetting[] {
     ...definition,
     aliases: [...definition.aliases],
     image: definition.defaultImage,
-    setup_script: "",
+    setup_script: definition.defaultSetupScript ?? "",
   }));
 }
 
@@ -125,7 +154,10 @@ export function createAdminSettingsService(app: AppService) {
             typeof value.image === "string" && value.image.trim()
               ? value.image
               : runtime.defaultImage;
-          runtime.setup_script = typeof value.setup_script === "string" ? value.setup_script : "";
+          runtime.setup_script =
+            typeof value.setup_script === "string"
+              ? value.setup_script
+              : (runtime.defaultSetupScript ?? "");
         }
       }
 
@@ -211,7 +243,9 @@ export function createAdminSettingsService(app: AppService) {
         serverCatalog: saved.catalog,
         maxRefreshes: Number(saved.values.authentication.max_refreshes),
       }));
-      app.setStatus("Server settings saved; engine and archiver replicas will refresh them shortly");
+      app.setStatus(
+        "Server settings saved; engine and archiver replicas will refresh them shortly",
+      );
     },
     async saveLanguage(language: string) {
       const runtime = store.getState().languages.find((entry) => entry.language === language);

@@ -992,18 +992,26 @@ fn resolve_effect_request(
             workspace_affinity,
             idempotency_key,
             function_binding,
-        } => WorkflowEffectRequest::Action {
-            provider,
-            function,
-            input: resolve(input)?,
-            timeout_seconds,
-            retry,
-            tags,
-            required_labels,
-            workspace_affinity: workspace_affinity.map(resolve).transpose()?,
-            idempotency_key: idempotency_key.map(resolve).transpose()?,
-            function_binding,
-        },
+        } => {
+            let input = resolve(input)?;
+            let input = if provider == "std" && function == "code" {
+                enrich_foreign_code_input(input, &context)?
+            } else {
+                input
+            };
+            WorkflowEffectRequest::Action {
+                provider,
+                function,
+                input,
+                timeout_seconds,
+                retry,
+                tags,
+                required_labels,
+                workspace_affinity: workspace_affinity.map(resolve).transpose()?,
+                idempotency_key: idempotency_key.map(resolve).transpose()?,
+                function_binding,
+            }
+        }
         WorkflowEffectRequest::Approval { prompt, expires_at } => WorkflowEffectRequest::Approval {
             prompt: resolve(prompt)?,
             expires_at,
@@ -1084,6 +1092,93 @@ fn resolve_effect_request(
         | WorkflowEffectRequest::TimerDelay { .. }
         | WorkflowEffectRequest::MutexAcquire { .. }) => request,
     })
+}
+
+const COMMON_LISP_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cl-alexandria cl-trivial-gray-streams cl-yason
+rm -rf /var/lib/apt/lists/*"#;
+
+const COBOL_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnucobol
+rm -rf /var/lib/apt/lists/*"#;
+
+struct ForeignLanguageRuntime {
+    canonical: &'static str,
+    image: &'static str,
+    setup_script: &'static str,
+}
+
+fn foreign_language_runtime(language: &str) -> Option<ForeignLanguageRuntime> {
+    let (canonical, image, setup_script) = match language {
+        "python" | "py" => ("python", "python:3.12", ""),
+        "javascript" | "js" | "node" => ("javascript", "node:22", ""),
+        "bash" | "sh" => ("bash", "bash:5.2", ""),
+        "commonlisp" | "common-lisp" | "common_lisp" | "lisp" | "cl" | "sbcl" => (
+            "commonlisp",
+            "clfoundation/sbcl:2.6.1-bookworm",
+            COMMON_LISP_SETUP,
+        ),
+        "cobol" | "cob" | "gnucobol" => ("cobol", "debian:bookworm-slim", COBOL_SETUP),
+        "ruby" | "rb" => ("ruby", "ruby:3.3", ""),
+        "perl" | "pl" => ("perl", "perl:5.40", ""),
+        "php" => ("php", "php:8.3-cli", ""),
+        "go" | "golang" => ("go", "golang:1.26", ""),
+        "swift" => ("swift", "swift:6.3", ""),
+        "powershell" | "pwsh" | "ps1" => ("powershell", "mcr.microsoft.com/dotnet/sdk:8.0", ""),
+        "csharp" | "c#" | "cs" => ("csharp", "mcr.microsoft.com/dotnet/sdk:10.0", ""),
+        "fsharp" | "f#" | "fs" => ("fsharp", "mcr.microsoft.com/dotnet/sdk:10.0", ""),
+        "vbnet" | "vb.net" | "visualbasic" | "vb" => {
+            ("vbnet", "mcr.microsoft.com/dotnet/sdk:10.0", "")
+        }
+        _ => return None,
+    };
+    Some(ForeignLanguageRuntime {
+        canonical,
+        image,
+        setup_script,
+    })
+}
+
+/// Complete the authoring-time `std.code` payload at the durable effect boundary. The runtime and
+/// context are run inputs, not authored source: both are frozen into the effect so a retry cannot
+/// observe a later settings edit or a later continuation state.
+fn enrich_foreign_code_input(mut input: Value, context: &Value) -> Result<Value, String> {
+    let object = input
+        .as_object_mut()
+        .ok_or_else(|| "foreign compute configuration must be an object".to_string())?;
+    let language = object
+        .get("language")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let runtime = foreign_language_runtime(language).ok_or_else(|| {
+        format!(
+            "unsupported foreign language '{language}'; supported languages: python, javascript, bash, commonlisp, cobol, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
+        )
+    })?;
+    let configured = context
+        .get("config")
+        .and_then(|config| config.get("foreign_languages"))
+        .and_then(|languages| languages.get(runtime.canonical))
+        .cloned();
+    let runtime_object = configured.unwrap_or_else(|| {
+        runinator_models::json!({
+            "image": runtime.image,
+            "setup_script": runtime.setup_script,
+        })
+    });
+    if !runtime_object.is_object() {
+        return Err(format!(
+            "config.foreign_languages.{} must be a runtime object",
+            runtime.canonical
+        ));
+    }
+    object.insert(
+        "language".into(),
+        Value::String(runtime.canonical.to_string()),
+    );
+    object.insert("context".into(), context.clone());
+    object.insert("runtime".into(), runtime_object);
+    Ok(input)
 }
 
 /// Freeze `continuation` and start a handler continuation beside it.
@@ -1803,6 +1898,92 @@ mod tests {
         };
         assert_eq!(input, runinator_models::json!({ "customer": "acme" }));
         assert_eq!(idempotency_key, Some(Value::String("request-7".into())));
+    }
+
+    #[test]
+    fn foreign_code_effect_freezes_default_runtime_object_and_context() {
+        let request = WorkflowEffectRequest::Action {
+            provider: "std".into(),
+            function: "code".into(),
+            input: runinator_models::json!({
+                "language": "gnucobol",
+                "source": "identification division."
+            }),
+            timeout_seconds: Some(30),
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: Default::default(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        };
+        let mut continuation = continuation();
+        continuation
+            .locals
+            .insert("input".into(), runinator_models::json!({ "value": 41 }));
+        continuation
+            .locals
+            .insert("config".into(), runinator_models::json!({}));
+
+        let WorkflowEffectRequest::Action { input, .. } =
+            resolve_effect_request(request, &continuation).unwrap()
+        else {
+            panic!("expected action request");
+        };
+        assert_eq!(input["language"], "cobol");
+        assert_eq!(input["runtime"]["image"], "debian:bookworm-slim");
+        assert!(
+            input["runtime"]["setup_script"]
+                .as_str()
+                .unwrap()
+                .contains("gnucobol")
+        );
+        assert_eq!(input["context"]["input"]["value"], 41);
+    }
+
+    #[test]
+    fn foreign_code_effect_uses_snapshotted_runtime_override() {
+        let request = WorkflowEffectRequest::Action {
+            provider: "std".into(),
+            function: "code".into(),
+            input: runinator_models::json!({
+                "language": "cl",
+                "source": "(defun main (context) context)"
+            }),
+            timeout_seconds: Some(30),
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: Default::default(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        };
+        let mut continuation = continuation();
+        continuation.locals.insert(
+            "config".into(),
+            runinator_models::json!({
+                "foreign_languages": {
+                    "commonlisp": {
+                        "image": "registry.example/runinator-sbcl:stable",
+                        "setup_script": ""
+                    }
+                }
+            }),
+        );
+
+        let WorkflowEffectRequest::Action { input, .. } =
+            resolve_effect_request(request, &continuation).unwrap()
+        else {
+            panic!("expected action request");
+        };
+        assert_eq!(input["language"], "commonlisp");
+        assert_eq!(
+            input["runtime"],
+            runinator_models::json!({
+                "image": "registry.example/runinator-sbcl:stable",
+                "setup_script": ""
+            })
+        );
     }
 
     #[test]

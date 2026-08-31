@@ -18,6 +18,24 @@ const ASYNC_PYTHON_RETURN_SOURCE: &str = r#"async def main(context):
     return {"answer": context["input"]["value"] + 1}
 "#;
 
+const COMMON_LISP_RETURN_SOURCE: &str = r#"(defun main (context)
+  (let* ((input (gethash "input" context))
+         (result (make-hash-table :test #'equal)))
+    (setf (gethash "answer" result) (1+ (gethash "value" input)))
+    result))
+"#;
+
+const COBOL_RETURN_SOURCE: &str = r#"identification division.
+program-id. runinator-compute.
+data division.
+working-storage section.
+01 context-json pic x(4096).
+procedure division.
+    accept context-json
+    display '{"answer":42}'
+    stop run.
+"#;
+
 fn request_for(
     action_function: &str,
     parameters: runinator_models::value::Value,
@@ -132,6 +150,36 @@ fn code_language_specs_support_restored_languages_and_aliases() {
             "bash /work/runinator_runner.sh",
         ),
         ("sh", "bash", "foreign.sh", "bash /work/runinator_runner.sh"),
+        (
+            "commonlisp",
+            "commonlisp",
+            "foreign.lisp",
+            "sbcl --noinform --disable-debugger --script /work/runinator_runner.lisp",
+        ),
+        (
+            "common-lisp",
+            "commonlisp",
+            "foreign.lisp",
+            "sbcl --noinform --disable-debugger --script /work/runinator_runner.lisp",
+        ),
+        (
+            "lisp",
+            "commonlisp",
+            "foreign.lisp",
+            "sbcl --noinform --disable-debugger --script /work/runinator_runner.lisp",
+        ),
+        (
+            "cobol",
+            "cobol",
+            "foreign.cob",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "gnucobol",
+            "cobol",
+            "foreign.cob",
+            "bash /work/runinator_runner.sh",
+        ),
         (
             "ruby",
             "ruby",
@@ -404,6 +452,29 @@ Public Module Foreign
 End Module
 "#,
         ),
+        (
+            "cobol",
+            "cobc",
+            "--version",
+            r#"identification division.
+program-id. runinator-test.
+
+data division.
+working-storage section.
+01 context-json pic x(4096).
+01 match-count pic 9 value 0.
+
+procedure division.
+    accept context-json
+    inspect context-json tallying match-count for all '"value":41'
+    if match-count = 0
+        display "context JSON was not provided on stdin" upon syserr
+        stop run returning 1
+    end-if
+    display '{"answer":42}'
+    stop run.
+"#,
+        ),
     ];
 
     for (language, executable, version_arg, source) in cases {
@@ -416,6 +487,30 @@ End Module
             "{language}"
         );
     }
+}
+
+#[test]
+fn installed_common_lisp_runner_returns_json_when_yason_is_available() {
+    if Command::new("sbcl").arg("--version").output().is_err() {
+        return;
+    }
+    let yason = Command::new("sbcl")
+        .args([
+            "--noinform",
+            "--non-interactive",
+            "--eval",
+            "(require :asdf)",
+            "--eval",
+            "(asdf:load-system :yason)",
+        ])
+        .output();
+    if !yason.is_ok_and(|output| output.status.success()) {
+        return;
+    }
+    assert_eq!(
+        run_command_language_contract("commonlisp", COMMON_LISP_RETURN_SOURCE),
+        json!({ "answer": 42 })
+    );
 }
 
 fn run_command_language_contract(language: &str, source: &str) -> runinator_models::value::Value {
@@ -542,6 +637,52 @@ fn python_foreign_compute_returns_output() {
             CancellationToken::new(),
         )
         .expect("python foreign compute");
+
+    assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and the Common Lisp runtime image"]
+fn common_lisp_foreign_compute_returns_output() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "commonlisp",
+        "source": COMMON_LISP_RETURN_SOURCE,
+        "runtime": {
+            "image": "clfoundation/sbcl:2.6.1-bookworm",
+            "setup_script": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cl-alexandria cl-trivial-gray-streams cl-yason"
+        },
+        "context": { "input": { "value": 41 } }
+    });
+    let mut request = request_for("code", parameters);
+    request.timeout_secs = 180;
+
+    let result = provider
+        .execute_service(request, None, CancellationToken::new())
+        .expect("Common Lisp foreign compute");
+
+    assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and the GnuCOBOL runtime image"]
+fn cobol_foreign_compute_returns_output() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "cobol",
+        "source": COBOL_RETURN_SOURCE,
+        "runtime": {
+            "image": "debian:bookworm-slim",
+            "setup_script": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnucobol"
+        },
+        "context": { "input": { "value": 41 } }
+    });
+    let mut request = request_for("code", parameters);
+    request.timeout_secs = 180;
+
+    let result = provider
+        .execute_service(request, None, CancellationToken::new())
+        .expect("COBOL foreign compute");
 
     assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
 }

@@ -47,6 +47,10 @@ def main(context):
     assert_eq!(node["action"]["timeout_seconds"], 45);
     assert_eq!(node["action"]["configuration"]["language"], "python");
     assert_eq!(
+        node["action"]["configuration"]["expected_output_type"]["fields"]["total"]["ty"]["type"],
+        "integer"
+    );
+    assert_eq!(
         value["metadata"]["rexrap"]["type_hints"]["result"]["fields"]["total"]["ty"]["type"],
         "integer"
     );

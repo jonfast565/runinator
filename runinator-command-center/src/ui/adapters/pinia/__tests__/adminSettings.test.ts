@@ -83,6 +83,8 @@ describe("admin settings store", () => {
       ["python", "python:3.12"],
       ["javascript", "node:22"],
       ["bash", "bash:5.2"],
+      ["commonlisp", "clfoundation/sbcl:2.6.1-bookworm"],
+      ["cobol", "debian:bookworm-slim"],
       ["ruby", "ruby:3.3"],
       ["perl", "perl:5.40"],
       ["php", "php:8.3-cli"],
@@ -93,6 +95,12 @@ describe("admin settings store", () => {
       ["fsharp", "mcr.microsoft.com/dotnet/sdk:10.0"],
       ["vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"],
     ]);
+    expect(
+      settings.languages.find((runtime) => runtime.language === "commonlisp")?.setup_script,
+    ).toContain("cl-yason");
+    expect(
+      settings.languages.find((runtime) => runtime.language === "cobol")?.setup_script,
+    ).toContain("gnucobol");
     expect(fetchForeignLanguageRuntime).not.toHaveBeenCalled();
   });
 

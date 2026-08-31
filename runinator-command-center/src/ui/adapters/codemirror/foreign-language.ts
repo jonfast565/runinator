@@ -7,6 +7,13 @@ const aliases: Record<string, TextEditorLanguage> = {
   js: "javascript",
   node: "javascript",
   sh: "bash",
+  "common-lisp": "commonlisp",
+  common_lisp: "commonlisp",
+  lisp: "commonlisp",
+  cl: "commonlisp",
+  sbcl: "commonlisp",
+  cob: "cobol",
+  gnucobol: "cobol",
   rb: "ruby",
   pl: "perl",
   golang: "go",
@@ -25,6 +32,8 @@ const supported = new Set<TextEditorLanguage>([
   "python",
   "javascript",
   "bash",
+  "commonlisp",
+  "cobol",
   "ruby",
   "perl",
   "php",
@@ -59,6 +68,16 @@ export async function loadForeignLanguageExtension(
     case "bash": {
       const { shell } = await import("@codemirror/legacy-modes/mode/shell");
       return StreamLanguage.define(shell);
+    }
+
+    case "commonlisp": {
+      const { commonLisp } = await import("@codemirror/legacy-modes/mode/commonlisp");
+      return StreamLanguage.define(commonLisp);
+    }
+
+    case "cobol": {
+      const { cobol } = await import("@codemirror/legacy-modes/mode/cobol");
+      return StreamLanguage.define(cobol);
     }
 
     case "ruby": {

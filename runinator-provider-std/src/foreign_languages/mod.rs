@@ -1,4 +1,6 @@
 mod bash;
+mod cobol;
+mod common_lisp;
 mod csharp;
 mod fsharp;
 mod go;
@@ -33,6 +35,10 @@ pub(crate) fn adapter_for(
         "python" | "py" => Ok(&python::PYTHON),
         "javascript" | "js" | "node" => Ok(&javascript::JAVASCRIPT),
         "bash" | "sh" => Ok(&bash::BASH),
+        "commonlisp" | "common-lisp" | "common_lisp" | "lisp" | "cl" | "sbcl" => {
+            Ok(&common_lisp::COMMON_LISP)
+        }
+        "cobol" | "cob" | "gnucobol" => Ok(&cobol::COBOL),
         "ruby" | "rb" => Ok(&ruby::RUBY),
         "perl" | "pl" => Ok(&perl::PERL),
         "php" => Ok(&php::PHP),
@@ -43,7 +49,7 @@ pub(crate) fn adapter_for(
         "fsharp" | "f#" | "fs" => Ok(&fsharp::FSHARP),
         "vbnet" | "vb.net" | "visualbasic" | "vb" => Ok(&vbnet::VBNET),
         other => Err(INVALID_CODE.error(format!(
-            "unsupported foreign language '{other}'; supported languages: python, javascript, bash, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
+            "unsupported foreign language '{other}'; supported languages: python, javascript, bash, commonlisp, cobol, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
         ))),
     }
 }
