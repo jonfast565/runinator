@@ -41,7 +41,7 @@
         <td>{{ runLabel(run) }}</td>
         <td v-if="showWorkflow">{{ workflowLabel(run) }}</td>
         <td><StatusBadge :status="run.status" /></td>
-        <td v-if="!compact" class="col-low">{{ run.trigger ?? "" }}</td>
+        <td v-if="!compact" class="col-low">{{ run.trigger_source_kind ?? "" }}</td>
         <td class="col-low">{{ formatDate(run.created_at) }}</td>
         <td class="col-low">{{ formatDate(run.started_at) }}</td>
         <td>{{ formatDate(run.finished_at) }}</td>

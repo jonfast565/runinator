@@ -1529,6 +1529,20 @@ describe("workflow graph utils", () => {
     ).toContain(SEARCH_WORKFLOW_ID);
   });
 
+  it("includes the workflow run trigger source in search text", () => {
+    expect(
+      workflowRunSearchText({
+        id: SEARCH_RUN_ID,
+        workflow_id: SEARCH_WORKFLOW_ID,
+        status: "failed",
+        trigger_source_kind: "cron",
+        created_at: "",
+        started_at: null,
+        finished_at: null,
+      }),
+    ).toContain("cron");
+  });
+
   it("marks the active terminal workflow node from the run status", () => {
     const nodes = buildGraphNodes(workflow, {
       run: {

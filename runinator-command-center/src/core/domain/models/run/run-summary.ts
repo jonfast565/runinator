@@ -8,7 +8,8 @@ export interface RunSummary {
   parameters?: JsonRecord;
   output_json?: JsonValue;
   message?: string | null;
-  trigger?: string;
+  /** How this run was started, as returned by the workflow-run API (for example `cron` or `api`). */
+  trigger_source_kind?: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

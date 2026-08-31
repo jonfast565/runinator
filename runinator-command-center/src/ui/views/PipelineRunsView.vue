@@ -532,7 +532,7 @@ const runRows = computed<RunSummary[]>(() =>
     id: run.id,
     workflow_id: run.pipeline_id,
     status: run.status,
-    trigger: run.trigger_source_kind ?? undefined,
+    trigger_source_kind: run.trigger_source_kind,
     created_at: run.created_at,
     started_at: run.started_at,
     finished_at: run.finished_at,

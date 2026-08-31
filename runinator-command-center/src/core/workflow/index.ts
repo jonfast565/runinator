@@ -211,7 +211,7 @@ export function buildGraphNodeModels(
 }
 
 export function workflowRunSearchText(run: RunSummary, workflowName = ""): string {
-  return [run.id, run.workflow_id ?? "", workflowName, run.status, run.trigger ?? ""]
+  return [run.id, run.workflow_id ?? "", workflowName, run.status, run.trigger_source_kind ?? ""]
     .join(" ")
     .toLowerCase();
 }
