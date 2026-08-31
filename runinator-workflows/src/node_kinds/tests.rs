@@ -7,6 +7,7 @@
 //! advertising an edge the graph walkers never see.
 
 use runinator_models::catalog_metadata::{EdgeTaxonomy, LocationBase, NodeEdgeSlot};
+use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
@@ -274,6 +275,29 @@ fn terminal_metadata_matches_the_graph_role() {
             "{kind:?} disagrees with itself about whether it settles the run"
         );
     }
+}
+
+/// author-entered integer fields in the current node catalog are all counts, limits, or positive
+/// durations. Keep their positive range in metadata so every frontend can render a bounded number
+/// control and reject zero/negative values before a workflow reaches validation.
+#[test]
+fn positive_numeric_fields_publish_bounded_types() {
+    let mut unconstrained = Vec::new();
+    for kind in WorkflowNodeKind::ALL {
+        for field in spec_for(&kind).metadata().fields {
+            if matches!(
+                field.field.param.ty,
+                RuninatorType::Integer | RuninatorType::Number
+            ) {
+                unconstrained.push(format!("{kind:?}.{}", field.field.param.name));
+            }
+        }
+    }
+    assert!(
+        unconstrained.is_empty(),
+        "positive numeric catalog fields must use a range: {}",
+        unconstrained.join(", ")
+    );
 }
 
 /// only `start`, `end`, and `fail` are barred from being a branch or body target.

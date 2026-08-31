@@ -88,8 +88,15 @@ impl Provider for GitHubProvider {
                         repo_owner_param(),
                         repo_param(),
                         ParameterMetadata::required("pull_number", RuninatorType::String),
-                        ParameterMetadata::optional("merge_method", RuninatorType::String)
-                            .with_default(json!("squash")),
+                        ParameterMetadata::optional(
+                            "merge_method",
+                            RuninatorType::Enum(vec![
+                                json!("merge").into(),
+                                json!("squash").into(),
+                                json!("rebase").into(),
+                            ]),
+                        )
+                        .with_default(json!("squash")),
                         ParameterMetadata::optional("commit_title", RuninatorType::String),
                         ParameterMetadata::optional("commit_message", RuninatorType::String),
                         ParameterMetadata::optional("sha", RuninatorType::String),

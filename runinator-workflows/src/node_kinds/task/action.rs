@@ -6,7 +6,7 @@ use runinator_models::providers::RuninatorType;
 use runinator_models::types::RuninatorType as WorkflowType;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::node_kinds::builders::{base, field, opt, req};
+use crate::node_kinds::builders::{base, field, opt, positive_duration, req};
 use crate::node_kinds::{ActionCatalog, GraphRole, NodeKindSpec};
 use runinator_compute::WorkflowValidationError;
 
@@ -64,7 +64,7 @@ impl NodeKindSpec for Action {
                     Some("action_function"),
                 ),
                 field(
-                    opt("timeout_seconds", RuninatorType::Integer),
+                    opt("timeout_seconds", positive_duration()),
                     FieldLocation::action(&["timeout_seconds"]),
                     None,
                 ),

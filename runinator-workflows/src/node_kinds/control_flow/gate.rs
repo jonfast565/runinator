@@ -5,7 +5,7 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, enum_ty, field, opt, req};
+use crate::node_kinds::builders::{base, end_ref, enum_ty, field, opt, positive_duration, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Gate;
@@ -33,12 +33,12 @@ impl NodeKindSpec for Gate {
                     Some("json"),
                 ),
                 field(
-                    opt("poll_interval", RuninatorType::Integer),
+                    opt("poll_interval", positive_duration()),
                     FieldLocation::parameters(&["poll_interval"]),
                     None,
                 ),
                 field(
-                    opt("timeout", RuninatorType::Integer),
+                    opt("timeout", positive_duration()),
                     FieldLocation::parameters(&["timeout"]),
                     None,
                 ),

@@ -5,7 +5,7 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, field, opt, req};
+use crate::node_kinds::builders::{base, end_ref, field, opt, positive_duration, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Mutex;
@@ -28,7 +28,7 @@ impl NodeKindSpec for Mutex {
                     None,
                 ),
                 field(
-                    opt("poll_interval_seconds", RuninatorType::Integer),
+                    opt("poll_interval_seconds", positive_duration()),
                     FieldLocation::parameters(&["poll_interval_seconds"]),
                     None,
                 ),
@@ -38,7 +38,7 @@ impl NodeKindSpec for Mutex {
                     None,
                 ),
                 field(
-                    opt("hold_timeout_seconds", RuninatorType::Integer),
+                    opt("hold_timeout_seconds", positive_duration()),
                     FieldLocation::parameters(&["hold_timeout_seconds"]),
                     None,
                 ),

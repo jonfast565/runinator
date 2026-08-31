@@ -26,6 +26,22 @@ pub(crate) fn enum_ty(values: &[&str]) -> RuninatorType {
     )
 }
 
+pub(crate) fn positive_integer() -> RuninatorType {
+    RuninatorType::Range {
+        base: Box::new(RuninatorType::Integer),
+        min: Some(Value::from(1)),
+        max: None,
+    }
+}
+
+pub(crate) fn positive_duration() -> RuninatorType {
+    RuninatorType::Range {
+        base: Box::new(RuninatorType::Duration),
+        min: Some(Value::from(1)),
+        max: None,
+    }
+}
+
 /// a field bound to a node-json location, with an optional widget hint.
 pub(crate) fn field(
     param: ParameterMetadata,

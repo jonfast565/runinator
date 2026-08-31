@@ -5,7 +5,9 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, field, opt, req};
+use crate::node_kinds::builders::{
+    base, end_ref, field, opt, positive_duration, positive_integer, req,
+};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Throttle;
@@ -28,17 +30,17 @@ impl NodeKindSpec for Throttle {
                     None,
                 ),
                 field(
-                    opt("max_per_window", RuninatorType::Integer),
+                    opt("max_per_window", positive_integer()),
                     FieldLocation::parameters(&["max_per_window"]),
                     None,
                 ),
                 field(
-                    opt("window_seconds", RuninatorType::Integer),
+                    opt("window_seconds", positive_duration()),
                     FieldLocation::parameters(&["window_seconds"]),
                     None,
                 ),
                 field(
-                    opt("poll_interval_seconds", RuninatorType::Integer),
+                    opt("poll_interval_seconds", positive_duration()),
                     FieldLocation::parameters(&["poll_interval_seconds"]),
                     None,
                 ),

@@ -5,7 +5,7 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, field, opt, req};
+use crate::node_kinds::builders::{base, end_ref, field, opt, positive_integer, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Collect;
@@ -28,7 +28,7 @@ impl NodeKindSpec for Collect {
                     None,
                 ),
                 field(
-                    opt("max", RuninatorType::Integer),
+                    opt("max", positive_integer()),
                     FieldLocation::parameters(&["max"]),
                     None,
                 ),

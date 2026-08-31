@@ -172,4 +172,25 @@ fn metadata_advertises_orchestration_safe_actions() {
             .unwrap_or_else(|| panic!("{name} action is advertised"));
         assert_eq!(action.delivery_semantics, DeliverySemantics::AtLeastOnce);
     }
+
+    let merge_method = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "merge_pr")
+        .and_then(|action| {
+            action
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == "merge_method")
+        })
+        .expect("merge_pr merge_method metadata");
+    assert!(matches!(
+        merge_method.ty,
+        RuninatorType::Enum(ref values)
+            if values == &vec![
+                runinator_models::value::Value::from("merge"),
+                runinator_models::value::Value::from("squash"),
+                runinator_models::value::Value::from("rebase"),
+            ]
+    ));
 }

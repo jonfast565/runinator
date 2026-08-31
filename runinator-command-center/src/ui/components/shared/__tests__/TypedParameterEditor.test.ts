@@ -17,7 +17,7 @@ describe("TypedParameterEditor", () => {
             source: "public static class Foreign {}",
           },
           parameters: [
-            stringParameter("language", "Language"),
+            enumParameter("language", "Language", ["python", "csharp"]),
             stringParameter("source", "Source"),
           ],
         }),
@@ -27,6 +27,7 @@ describe("TypedParameterEditor", () => {
     const html = await renderToString(app);
 
     expect(html).toContain("editor-shell--tall");
+    expect(html).toContain("enum-editor");
     expect(html).toContain("csharp");
     expect(html).not.toContain('value="public static class Foreign {}"');
   });
@@ -115,7 +116,30 @@ describe("TypedParameterEditor", () => {
     const html = await renderToString(app);
 
     expect(html).toContain("enum-editor");
+    expect(html).toContain("Select value");
     expect(html).toContain("first_success");
+    expect(html).not.toContain("json-editor-shell");
+  });
+
+  it("renders numeric ranges as bounded number inputs, not JSON editors", async () => {
+    const app = createSSRApp({
+      render: () =>
+        h(TypedValueEditor, {
+          modelValue: 512,
+          ty: {
+            type: "range",
+            base: { type: "integer" },
+            min: 1,
+            max: 4096,
+          },
+        }),
+    });
+
+    const html = await renderToString(app);
+
+    expect(html).toContain('type="number"');
+    expect(html).toContain('min="1"');
+    expect(html).toContain('max="4096"');
     expect(html).not.toContain("json-editor-shell");
   });
 
@@ -156,6 +180,21 @@ function stringParameter(name: string, label: string): ActionParameterMetadata {
     required: true,
     secret: false,
     ty: { type: "string" },
+  };
+}
+
+function enumParameter(
+  name: string,
+  label: string,
+  values: string[],
+): ActionParameterMetadata {
+  return {
+    name,
+    label,
+    description: null,
+    required: true,
+    secret: false,
+    ty: { type: "enum", values },
   };
 }
 

@@ -6,7 +6,7 @@ use runinator_models::providers::RuninatorType;
 use runinator_models::types::RuninatorField;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::node_kinds::builders::{base, control, end_ref, field, opt};
+use crate::node_kinds::builders::{base, control, end_ref, field, opt, positive_integer};
 use crate::node_kinds::{GraphRole, NodeKindSpec, TargetSlot};
 use crate::parameters::parse_map_parameters;
 use runinator_compute::WorkflowValidationError;
@@ -65,7 +65,7 @@ impl NodeKindSpec for Map {
                     Some("expression"),
                 ),
                 field(
-                    opt("concurrency", RuninatorType::Integer),
+                    opt("concurrency", positive_integer()),
                     FieldLocation::parameters(&["concurrency"]),
                     None,
                 ),

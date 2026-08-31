@@ -6,7 +6,7 @@ use runinator_models::providers::RuninatorType;
 use runinator_models::types::RuninatorField;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::node_kinds::builders::{base, direct, field, opt};
+use crate::node_kinds::builders::{base, direct, field, opt, positive_integer};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 use runinator_compute::WorkflowValidationError;
 
@@ -66,7 +66,7 @@ impl NodeKindSpec for Loop {
                     Some("expression"),
                 ),
                 field(
-                    opt("max_iterations", RuninatorType::Integer),
+                    opt("max_iterations", positive_integer()),
                     FieldLocation::top_level("max_iterations"),
                     None,
                 ),

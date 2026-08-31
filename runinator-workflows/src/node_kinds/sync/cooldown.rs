@@ -5,7 +5,7 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, field, opt, req};
+use crate::node_kinds::builders::{base, end_ref, field, opt, positive_duration, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Cooldown;
@@ -29,7 +29,7 @@ impl NodeKindSpec for Cooldown {
                     None,
                 ),
                 field(
-                    opt("window_seconds", RuninatorType::Integer),
+                    opt("window_seconds", positive_duration()),
                     FieldLocation::parameters(&["window_seconds"]),
                     None,
                 ),

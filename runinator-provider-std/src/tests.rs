@@ -1163,9 +1163,28 @@ fn metadata_advertises_code() {
             .iter()
             .any(|parameter| parameter.name == "context" && !parameter.required)
     );
-    assert!(
-        code.parameters
-            .iter()
-            .any(|parameter| parameter.name == "runtime" && !parameter.required)
-    );
+    let language = code
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "language")
+        .expect("code language parameter");
+    let RuninatorType::Enum(languages) = &language.ty else {
+        panic!("code language must be a closed enum");
+    };
+    assert!(languages.contains(&json!("python")));
+    assert!(languages.contains(&json!("vbnet")));
+
+    let runtime = code
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "runtime")
+        .expect("code runtime parameter");
+    assert!(runtime.required);
+    let RuninatorType::Struct { fields, .. } = &runtime.ty else {
+        panic!("code runtime must expose structured fields");
+    };
+    assert!(fields.get("image").is_some_and(|field| field.required));
+    assert!(fields.contains_key("environment"));
+    assert!(fields.contains_key("toolchain"));
+    assert!(fields.contains_key("limits"));
 }

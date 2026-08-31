@@ -5,7 +5,9 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, field, opt, req};
+use crate::node_kinds::builders::{
+    base, end_ref, field, opt, positive_duration, positive_integer, req,
+};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct CircuitBreaker;
@@ -28,17 +30,17 @@ impl NodeKindSpec for CircuitBreaker {
                     None,
                 ),
                 field(
-                    opt("threshold", RuninatorType::Integer),
+                    opt("threshold", positive_integer()),
                     FieldLocation::parameters(&["threshold"]),
                     None,
                 ),
                 field(
-                    opt("window_seconds", RuninatorType::Integer),
+                    opt("window_seconds", positive_duration()),
                     FieldLocation::parameters(&["window_seconds"]),
                     None,
                 ),
                 field(
-                    opt("cooldown_seconds", RuninatorType::Integer),
+                    opt("cooldown_seconds", positive_duration()),
                     FieldLocation::parameters(&["cooldown_seconds"]),
                     None,
                 ),

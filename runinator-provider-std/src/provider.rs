@@ -3,9 +3,11 @@ use std::sync::Arc;
 use runinator_compute::{PureIntrinsics, WorkflowValidationError, effectful_signatures};
 use runinator_models::{
     errors::SendableError,
+    foreign_languages::ForeignLanguage,
     providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
-    types::RuninatorType,
+    types::{RuninatorField, RuninatorType},
+    value::Value,
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
@@ -41,11 +43,20 @@ impl Provider for StdProvider {
         let mut actions = vec![
             ActionMetadata::new("code", "execute foreign compute code in a docker container")
                 .with_parameters(vec![
-                    ParameterMetadata::required(LANGUAGE_KEY, RuninatorType::String),
-                    ParameterMetadata::required(SOURCE_KEY, RuninatorType::String),
-                    ParameterMetadata::optional(RUNTIME_KEY, RuninatorType::Any),
-                    ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any),
-                    ParameterMetadata::optional(EXPECTED_OUTPUT_TYPE_KEY, RuninatorType::Any),
+                    ParameterMetadata::required(LANGUAGE_KEY, foreign_language_type())
+                        .with_description("Language used to compile or run the source code."),
+                    ParameterMetadata::required(SOURCE_KEY, RuninatorType::String)
+                        .with_description("Source code executed inside the configured container."),
+                    ParameterMetadata::required(RUNTIME_KEY, code_runtime_type()).with_description(
+                        "Container image, optional toolchain overrides, environment, and limits.",
+                    ),
+                    ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any).with_description(
+                        "JSON value exposed to the foreign program as its input context.",
+                    ),
+                    ParameterMetadata::optional(EXPECTED_OUTPUT_TYPE_KEY, RuninatorType::Any)
+                        .with_description(
+                            "Optional Runinator type used to validate the returned JSON value.",
+                        ),
                 ]),
         ];
         actions.extend(PureIntrinsics::signatures());
@@ -88,6 +99,67 @@ impl Provider for StdProvider {
             .unwrap_or_default();
         execute_intrinsic(&request, &declared, token)
     }
+}
+
+fn foreign_language_type() -> RuninatorType {
+    RuninatorType::Enum(
+        ForeignLanguage::ALL
+            .iter()
+            .map(|language| Value::from(language.canonical()))
+            .collect(),
+    )
+}
+
+fn positive_integer() -> RuninatorType {
+    RuninatorType::Range {
+        base: Box::new(RuninatorType::Integer),
+        min: Some(Value::from(1)),
+        max: None,
+    }
+}
+
+fn code_runtime_type() -> RuninatorType {
+    RuninatorType::typed_structure([
+        ("image", RuninatorField::required(RuninatorType::String)),
+        (
+            "setup_script",
+            RuninatorField::optional(RuninatorType::String),
+        ),
+        (
+            "environment",
+            RuninatorField::optional(RuninatorType::map(RuninatorType::String)),
+        ),
+        (
+            "toolchain",
+            RuninatorField::optional(RuninatorType::typed_structure([
+                (
+                    "executable",
+                    RuninatorField::optional(RuninatorType::String),
+                ),
+                (
+                    "build_args",
+                    RuninatorField::optional(RuninatorType::array(RuninatorType::String)),
+                ),
+                (
+                    "run_args",
+                    RuninatorField::optional(RuninatorType::array(RuninatorType::String)),
+                ),
+            ])),
+        ),
+        (
+            "limits",
+            RuninatorField::optional(RuninatorType::typed_structure([
+                ("memory_mb", RuninatorField::optional(positive_integer())),
+                ("cpu_millis", RuninatorField::optional(positive_integer())),
+                ("pids", RuninatorField::optional(positive_integer())),
+                ("tmpfs_mb", RuninatorField::optional(positive_integer())),
+                (
+                    "max_output_bytes",
+                    RuninatorField::optional(positive_integer()),
+                ),
+            ])),
+        ),
+    ])
 }
 
 /// run one named intrinsic against the arguments an invocation call carried.

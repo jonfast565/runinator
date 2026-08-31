@@ -5,7 +5,7 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::WorkflowNodeKind;
 
-use crate::node_kinds::builders::{base, end_ref, field, opt, req};
+use crate::node_kinds::builders::{base, end_ref, field, opt, positive_duration, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Debounce;
@@ -28,7 +28,7 @@ impl NodeKindSpec for Debounce {
                     None,
                 ),
                 field(
-                    opt("delay_seconds", RuninatorType::Integer),
+                    opt("delay_seconds", positive_duration()),
                     FieldLocation::parameters(&["delay_seconds"]),
                     None,
                 ),

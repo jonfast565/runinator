@@ -31,15 +31,24 @@ impl Provider for AwsProvider {
                         ParameterMetadata::required("table_name", RuninatorType::String),
                         ParameterMetadata::required("dump_folder", RuninatorType::String),
                         ParameterMetadata::optional("region", RuninatorType::String),
-                        ParameterMetadata::optional("query_type", RuninatorType::String)
-                            .with_default(json!("query")),
+                        ParameterMetadata::optional(
+                            "query_type",
+                            RuninatorType::Enum(vec![
+                                json!("query").into(),
+                                json!("partiql").into(),
+                            ]),
+                        )
+                        .with_default(json!("query")),
                         ParameterMetadata::optional(
                             "key_condition_expression",
                             RuninatorType::String,
                         ),
                         ParameterMetadata::optional("partiql_statement", RuninatorType::String),
-                        ParameterMetadata::optional("format", RuninatorType::String)
-                            .with_default(json!("excel")),
+                        ParameterMetadata::optional(
+                            "format",
+                            RuninatorType::Enum(vec![json!("excel").into(), json!("csv").into()]),
+                        )
+                        .with_default(json!("excel")),
                     ])
                     .with_results(vec![
                         ResultMetadata::new("provider", RuninatorType::String),
@@ -101,4 +110,34 @@ fn artifact_type() -> RuninatorType {
         ("uri", RuninatorType::String),
         ("metadata", RuninatorType::map(RuninatorType::Any)),
     ])
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn dynamo_choices_are_published_as_enums() {
+        let metadata = AwsProvider.metadata();
+        let action = metadata
+            .actions
+            .iter()
+            .find(|action| action.function_name == "dynamo_dump")
+            .expect("dynamo_dump action metadata");
+
+        for (name, expected) in [
+            (
+                "query_type",
+                vec![json!("query").into(), json!("partiql").into()],
+            ),
+            ("format", vec![json!("excel").into(), json!("csv").into()]),
+        ] {
+            let parameter = action
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == name)
+                .unwrap_or_else(|| panic!("{name} parameter metadata"));
+            assert_eq!(parameter.ty, RuninatorType::Enum(expected));
+        }
+    }
 }

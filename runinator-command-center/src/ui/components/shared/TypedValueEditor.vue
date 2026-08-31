@@ -83,10 +83,12 @@
       @update:model-value="emitValue($event)"
     />
     <input
-      v-else-if="typeKind === 'integer' || typeKind === 'number'"
+      v-else-if="typeKind === 'integer' || typeKind === 'number' || typeKind === 'duration'"
       type="number"
       :required="required"
-      :step="typeKind === 'integer' ? 1 : 'any'"
+      :step="typeKind === 'number' ? 'any' : 1"
+      :min="numericMin"
+      :max="numericMax"
       :value="numberValue"
       @input="setNumberValue(($event.target as HTMLInputElement).value)"
     />
@@ -193,6 +195,7 @@
       :value="enumSelectedIndex"
       @change="selectEnumOption(Number(($event.target as HTMLSelectElement).value))"
     >
+      <option value="-1" disabled>Select value</option>
       <option v-for="(option, index) in enumOptions" :key="index" :value="index">
         {{ enumOptionLabel(option) }}
       </option>
@@ -277,7 +280,12 @@ const emit = defineEmits<{
   "update:modelValue": [value: unknown];
 }>();
 
-const typeKind = computed(() => props.ty.type);
+const valueType = computed<RuninatorType>(() =>
+  props.ty.type === "range" ? props.ty.base : props.ty,
+);
+const typeKind = computed(() => valueType.value.type);
+const numericMin = computed(() => (props.ty.type === "range" ? props.ty.min : undefined));
+const numericMax = computed(() => (props.ty.type === "range" ? props.ty.max : undefined));
 const stringValue = computed(() => (typeof props.modelValue === "string" ? props.modelValue : ""));
 const numberValue = computed(() => (typeof props.modelValue === "number" ? props.modelValue : ""));
 const anyValueKind = computed(() => {
@@ -324,10 +332,9 @@ const additionalStructEntries = computed(() =>
 );
 const enumOptions = computed<JsonValue[]>(() => (props.ty.type === "enum" ? props.ty.values : []));
 const enumSelectedIndex = computed(() => {
-  const match = enumOptions.value.findIndex(
+  return enumOptions.value.findIndex(
     (option) => JSON.stringify(option) === JSON.stringify(props.modelValue),
   );
-  return match >= 0 ? match : 0;
 });
 const unionVariants = computed(() => (props.ty.type === "union" ? props.ty.variants : []));
 const unionVariantIndex = computed(() =>
@@ -527,6 +534,8 @@ function selectUnionVariant(index: number) {
 }
 
 function selectEnumOption(index: number) {
-  emitValue(enumOptions.value[index]);
+  if (index >= 0) {
+    emitValue(enumOptions.value[index]);
+  }
 }
 </script>
