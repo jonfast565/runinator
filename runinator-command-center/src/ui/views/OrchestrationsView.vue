@@ -26,58 +26,72 @@
         {{ store.error }}
       </p>
 
-      <div v-if="mode === 'Instances'" class="flex flex-wrap items-end gap-2">
-        <label class="grid gap-1 text-xs text-fg-muted"
-          ><span>Status</span
-          ><select v-model="filters.status" class="w-auto min-w-40" @change="refreshInstances">
-            <option value="">All statuses</option>
-            <option v-for="item in statuses" :key="item" :value="item">{{ item }}</option>
-          </select></label
-        >
-        <label class="grid gap-1 text-xs text-fg-muted"
-          ><span>Scope</span
-          ><input
-            v-model="filters.scope"
-            class="w-auto min-w-40"
-            placeholder="Any scope"
-            @keyup.enter="refreshInstances"
-        /></label>
-        <label class="grid gap-1 text-xs text-fg-muted"
-          ><span>Correlation key</span
-          ><input
-            v-model="filters.correlation_key"
-            class="w-auto min-w-56"
-            placeholder="octo/repo#42"
-            @keyup.enter="refreshInstances"
-        /></label>
-        <label class="grid gap-1 text-xs text-fg-muted"
-          ><span>Pipeline ID</span
-          ><input
-            v-model="filters.pipeline_id"
-            class="w-auto min-w-56"
-            @keyup.enter="refreshInstances"
-        /></label>
-        <label class="grid gap-1 text-xs text-fg-muted"
-          ><span>Adapter ID</span
-          ><input
-            v-model="filters.adapter_id"
-            class="w-auto min-w-56"
-            @keyup.enter="refreshInstances"
-        /></label>
-        <button class="btn btn-primary" :disabled="store.loading" @click="refreshInstances">
-          <LoadingSpinner v-if="store.loading" size="sm" label="Applying filters" />
-          <Icon v-else name="search" />
-          <span>Apply filters</span>
-        </button>
-        <button
-          v-if="activeFilterCount"
-          class="btn"
-          :disabled="store.loading"
-          @click="clearFilters"
-        >
-          Clear {{ activeFilterCount }}
-        </button>
-        <span class="pb-2 text-xs text-fg-muted">
+      <div v-if="mode === 'Instances'" class="orchestration-toolbar">
+        <div class="orchestration-filters">
+          <label class="orchestration-filter orchestration-filter-primary"
+            ><span>Find an orchestration</span>
+            <div class="orchestration-search">
+              <Icon name="search" :size="16" />
+              <input
+                v-model="filters.correlation_key"
+                placeholder="Search by correlation key"
+                @keyup.enter="refreshInstances"
+              /></div
+          ></label>
+          <label class="orchestration-filter"
+            ><span>Status</span
+            ><select v-model="filters.status" @change="refreshInstances">
+              <option value="">All statuses</option>
+              <option v-for="item in statuses" :key="item" :value="item">{{ item }}</option>
+            </select></label
+          >
+          <button class="btn btn-primary" :disabled="store.loading" @click="refreshInstances">
+            <LoadingSpinner v-if="store.loading" size="sm" label="Applying filters" />
+            <Icon v-else name="search" />
+            <span>Search</span>
+          </button>
+          <button
+            v-if="activeFilterCount"
+            class="btn"
+            :disabled="store.loading"
+            @click="clearFilters"
+          >
+            Clear {{ activeFilterCount }}
+          </button>
+        </div>
+        <details class="orchestration-advanced-filters">
+          <summary>
+            <Icon name="settings" :size="14" />
+            More filters
+            <span v-if="technicalFilterCount" class="adapter-count">{{
+              technicalFilterCount
+            }}</span>
+          </summary>
+          <div class="orchestration-advanced-grid">
+            <label class="orchestration-filter"
+              ><span>Scope</span
+              ><input
+                v-model="filters.scope"
+                placeholder="Any scope"
+                @keyup.enter="refreshInstances"
+            /></label>
+            <label class="orchestration-filter"
+              ><span>Pipeline ID</span
+              ><input
+                v-model="filters.pipeline_id"
+                placeholder="Exact pipeline ID"
+                @keyup.enter="refreshInstances"
+            /></label>
+            <label class="orchestration-filter"
+              ><span>Adapter ID</span
+              ><input
+                v-model="filters.adapter_id"
+                placeholder="Exact adapter ID"
+                @keyup.enter="refreshInstances"
+            /></label>
+          </div>
+        </details>
+        <span class="orchestration-result-count">
           {{ store.bindings.length }} result{{ store.bindings.length === 1 ? "" : "s" }}
         </span>
       </div>
@@ -118,25 +132,40 @@
         :mobile-detail-active="!!store.selected && !showInstanceList"
       >
         <template #first>
-          <aside class="panel overflow-auto p-0">
-            <button
-              v-for="binding in store.bindings"
-              :key="binding.id"
-              class="block w-full border-b border-border p-3 text-left hover:bg-surface-hover"
-              :class="{ 'bg-surface-muted': binding.id === store.selectedId }"
-              @click="openBinding(binding.id)"
-            >
-              <div class="flex items-center justify-between gap-2">
-                <span class="truncate font-medium text-fg">{{ binding.correlation_key }}</span
-                ><span class="rounded bg-surface-subtle px-2 py-0.5 text-xs text-fg-muted">{{
-                  binding.status
-                }}</span>
+          <aside class="orchestration-list panel overflow-auto p-0">
+            <div class="orchestration-list-heading">
+              <div>
+                <p class="adapter-eyebrow">Correlated execution</p>
+                <h3>Instances</h3>
               </div>
-              <div class="mt-1 truncate text-xs text-fg-muted">
-                {{ binding.scope }} · generation {{ binding.generation }} · epoch
-                {{ binding.current_epoch }}
-              </div>
-            </button>
+              <span class="adapter-count">{{ store.bindings.length }}</span>
+            </div>
+            <div class="orchestration-list-items">
+              <button
+                v-for="binding in store.bindings"
+                :key="binding.id"
+                type="button"
+                class="orchestration-list-item"
+                :class="{ 'is-selected': binding.id === store.selectedId }"
+                @click="openBinding(binding.id)"
+              >
+                <span class="orchestration-state-mark" :class="`is-${binding.status}`">
+                  <Icon :name="statusIcon(binding.status)" :size="15" />
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="flex items-start justify-between gap-2">
+                    <span class="truncate font-medium text-fg">{{ binding.correlation_key }}</span>
+                    <StatusBadge :status="binding.status" />
+                  </span>
+                  <span class="mt-1 block truncate text-xs text-fg-muted">{{ binding.scope }}</span>
+                  <span class="mt-2 flex gap-2 text-[11px] text-fg-muted">
+                    <span>Generation {{ binding.generation }}</span>
+                    <span>Epoch {{ binding.current_epoch }}</span>
+                    <span v-if="binding.current_phase">{{ binding.current_phase }}</span>
+                  </span>
+                </span>
+              </button>
+            </div>
             <EmptyState
               v-if="!store.loading && store.bindings.length === 0"
               compact
@@ -147,75 +176,138 @@
         </template>
 
         <template #second>
-          <div class="panel details overflow-auto">
+          <div class="panel details orchestration-detail overflow-auto">
             <MobileBackBar label="Back to orchestrations" @back="showInstanceList = true" />
             <div v-if="store.detailLoading" class="grid min-h-52 place-items-center">
               <LoadingSpinner label="Loading orchestration details" />
             </div>
-            <main v-else-if="store.selected">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 class="text-lg font-semibold text-fg">
-                    {{ store.selected.correlation_key }}
-                  </h2>
-                  <div class="mt-2 flex flex-wrap gap-2 text-xs text-fg-muted">
-                    <span
-                      v-for="chip in instanceChips"
-                      :key="chip"
-                      class="rounded bg-surface-subtle px-2 py-1"
-                      >{{ chip }}</span
+            <main v-else-if="store.selected" class="grid gap-4">
+              <section class="orchestration-hero">
+                <div class="orchestration-hero-top">
+                  <div class="flex min-w-0 items-start gap-3">
+                    <span class="orchestration-hero-mark" :class="`is-${store.selected.status}`">
+                      <Icon :name="statusIcon(store.selected.status)" :size="20" />
+                    </span>
+                    <div class="min-w-0">
+                      <p class="adapter-eyebrow">{{ store.selected.scope }}</p>
+                      <div class="mt-1 flex flex-wrap items-center gap-2">
+                        <h2 class="m-0 truncate text-xl font-semibold text-fg">
+                          {{ store.selected.correlation_key }}
+                        </h2>
+                        <StatusBadge :status="store.selected.status" />
+                      </div>
+                      <p class="mt-1 mb-0 text-sm text-fg-muted">{{ orchestrationSummary }}</p>
+                    </div>
+                  </div>
+                  <div class="orchestration-actions">
+                    <button
+                      v-for="(intent, name) in store.selected.policy.intents"
+                      :key="name"
+                      class="btn"
+                      :class="
+                        intent.effect === 'terminate' || intent.effect === 'supersede'
+                          ? 'btn-danger'
+                          : ''
+                      "
+                      :title="intentButtonHint(String(name))"
+                      @click="openIntent(String(name))"
                     >
+                      {{ name }}</button
+                    ><button v-if="isSelectedTerminal" class="btn" @click="openRequeue">
+                      Requeue generation
+                    </button>
                   </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    v-for="(intent, name) in store.selected.policy.intents"
-                    :key="name"
-                    class="btn"
-                    :class="
-                      intent.effect === 'terminate' || intent.effect === 'supersede'
-                        ? 'btn-danger'
-                        : ''
-                    "
-                    :title="intentButtonHint(String(name))"
-                    @click="openIntent(String(name))"
-                  >
-                    {{ name }}</button
-                  ><button v-if="isSelectedTerminal" class="btn" @click="openRequeue">
-                    Requeue generation
-                  </button>
+                <div class="orchestration-metrics">
+                  <MetricCard label="Generation" :value="String(store.selected.generation)" />
+                  <MetricCard label="Current epoch" :value="String(store.selected.current_epoch)" />
+                  <MetricCard
+                    label="Phase"
+                    :value="store.selected.current_phase || 'Not started'"
+                  />
+                  <MetricCard
+                    label="Last activity"
+                    :value="relativeTimestamp(store.selected.updated_at)"
+                  />
                 </div>
-              </div>
-              <nav class="mt-5 flex flex-wrap gap-1 border-b border-border">
+              </section>
+              <nav class="orchestration-tabs" aria-label="Orchestration details" role="tablist">
                 <button
                   v-for="tab in instanceTabs"
                   :key="tab"
-                  class="px-3 py-2 text-sm"
-                  :class="
-                    tab === activeInstanceTab ? 'border-b-2 border-accent text-fg' : 'text-fg-muted'
-                  "
+                  type="button"
+                  role="tab"
+                  :aria-selected="tab === activeInstanceTab"
+                  :class="{ 'is-active': tab === activeInstanceTab }"
                   @click="activeInstanceTab = tab"
                 >
-                  {{ tab }}
+                  <span>{{ tab }}</span>
+                  <span v-if="instanceTabCount(tab) !== null" class="orchestration-tab-count">{{
+                    instanceTabCount(tab)
+                  }}</span>
                 </button>
               </nav>
-              <div class="mt-4">
-                <div v-if="activeInstanceTab === 'Timeline'" class="space-y-2">
-                  <article
-                    v-for="event in store.events"
-                    :key="event.id"
-                    class="rounded border border-border p-3 text-sm"
-                  >
-                    <div class="flex justify-between gap-3">
-                      <strong>#{{ event.sequence }} {{ event.winner || "observed" }}</strong
-                      ><span class="text-fg-muted">{{ event.disposition }}</span>
+              <section class="orchestration-workspace">
+                <div v-if="activeInstanceTab === 'Timeline'" class="orchestration-tab-panel">
+                  <div class="orchestration-section-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Decision history</p>
+                      <h3>Event timeline</h3>
+                      <p>
+                        See which signals matched, won, or were suppressed without reading the
+                        reducer payload.
+                      </p>
                     </div>
-                    <p class="mt-1 text-xs text-fg-muted">
-                      matched: {{ event.matched_intents.join(", ") || "none" }} · suppressed:
-                      {{ event.suppressed_intents.join(", ") || "none" }}
-                    </p>
-                    <pre class="mt-2 overflow-auto text-xs">{{ pretty(event.detail) }}</pre>
-                  </article>
+                  </div>
+                  <div class="orchestration-timeline">
+                    <article
+                      v-for="event in store.events"
+                      :key="event.id"
+                      class="orchestration-event"
+                    >
+                      <span class="orchestration-event-node"
+                        ><Icon :name="event.winner ? 'bolt' : 'circle'" :size="14"
+                      /></span>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p class="adapter-eyebrow">Event {{ event.sequence }}</p>
+                            <strong>{{
+                              event.winner ? humanizeKey(event.winner) : "Observed event"
+                            }}</strong>
+                          </div>
+                          <StatusBadge :status="event.disposition" />
+                        </div>
+                        <div class="orchestration-event-summary">
+                          <span
+                            ><strong>{{ event.matched_intents.length }}</strong> matched</span
+                          >
+                          <span
+                            ><strong>{{ event.suppressed_intents.length }}</strong> suppressed</span
+                          >
+                          <span>{{ formatTimestamp(event.created_at) }}</span>
+                        </div>
+                        <div v-if="event.matched_intents.length" class="adapter-chip-list">
+                          <span
+                            v-for="intent in event.matched_intents"
+                            :key="intent"
+                            class="adapter-chip"
+                            >{{ intent }}</span
+                          >
+                        </div>
+                        <details class="adapter-raw-details">
+                          <summary>View reducer details</summary>
+                          <pre>{{ pretty(event.detail) }}</pre>
+                        </details>
+                      </div>
+                    </article>
+                  </div>
+                  <EmptyState
+                    v-if="!store.events.length"
+                    compact
+                    icon="clock"
+                    title="No events recorded yet"
+                  />
                 </div>
                 <div v-else-if="activeInstanceTab === 'Epochs'" class="space-y-2">
                   <section
@@ -313,15 +405,65 @@
                     No evidence has been recorded.
                   </p>
                 </div>
-                <pre v-else-if="activeInstanceTab === 'Resources'" class="overflow-auto text-xs">{{
-                  pretty(store.selected.resources)
-                }}</pre>
-                <pre v-else-if="activeInstanceTab === 'Budgets'" class="overflow-auto text-xs">{{
-                  pretty({
-                    consumed: store.selected.budgets,
-                    policy: store.selected.policy.budgets,
-                  })
-                }}</pre>
+                <div v-else-if="activeInstanceTab === 'Resources'" class="orchestration-tab-panel">
+                  <div class="orchestration-section-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Retained context</p>
+                      <h3>Resources</h3>
+                      <p>Values carried forward by the current generation.</p>
+                    </div>
+                  </div>
+                  <div v-if="resourceEntries.length" class="orchestration-data-grid">
+                    <article
+                      v-for="[name, value] in resourceEntries"
+                      :key="name"
+                      class="orchestration-data-card"
+                    >
+                      <span>{{ humanizeKey(name) }}</span>
+                      <strong>{{ formatConfigValue(value) }}</strong>
+                    </article>
+                  </div>
+                  <EmptyState v-else compact icon="box" title="No retained resources" />
+                  <details v-if="resourceEntries.length" class="adapter-raw-details">
+                    <summary>View resource JSON</summary>
+                    <pre>{{ pretty(store.selected.resources) }}</pre>
+                  </details>
+                </div>
+                <div v-else-if="activeInstanceTab === 'Budgets'" class="orchestration-tab-panel">
+                  <div class="orchestration-section-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Execution limits</p>
+                      <h3>Budgets</h3>
+                      <p>Attempts consumed against the policy captured for this orchestration.</p>
+                    </div>
+                  </div>
+                  <div v-if="budgetRows.length" class="budget-list">
+                    <article v-for="budget in budgetRows" :key="budget.name" class="budget-card">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <strong>{{ humanizeKey(budget.name) }}</strong>
+                          <p>
+                            {{ humanizeKey(budget.exhausted) }} when exhausted<template
+                              v-if="budget.handoff"
+                            >
+                              · hand off to {{ budget.handoff }}</template
+                            >
+                          </p>
+                        </div>
+                        <span>{{ budget.used }} / {{ budget.limit }}</span>
+                      </div>
+                      <div
+                        class="budget-track"
+                        role="progressbar"
+                        :aria-valuenow="budget.used"
+                        :aria-valuemax="budget.limit"
+                      >
+                        <span :style="{ width: `${budget.percent}%` }" />
+                      </div>
+                    </article>
+                  </div>
+                  <EmptyState v-else compact icon="percentage" title="No budgets configured" />
+                </div>
                 <div v-else-if="activeInstanceTab === 'Operations'" class="space-y-2">
                   <article
                     v-for="operation in store.operations"
@@ -444,11 +586,53 @@
                     No alternate correlation identities route to this generation.
                   </p>
                 </div>
-                <pre v-else-if="activeInstanceTab === 'Commands'" class="overflow-auto text-xs">{{
-                  pretty(store.commands)
-                }}</pre>
-                <pre v-else class="overflow-auto text-xs">{{ pretty(store.selected) }}</pre>
-              </div>
+                <div v-else-if="activeInstanceTab === 'Commands'" class="orchestration-tab-panel">
+                  <div class="orchestration-section-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Durable control plane</p>
+                      <h3>Commands</h3>
+                      <p>Commands issued for this orchestration and their delivery state.</p>
+                    </div>
+                  </div>
+                  <article v-for="command in store.commands" :key="command.id" class="command-card">
+                    <div class="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <strong>{{ humanizeKey(command.command_type) }}</strong>
+                        <p>
+                          Epoch {{ command.epoch }} · {{ command.attempts }} attempt{{
+                            command.attempts === 1 ? "" : "s"
+                          }}
+                        </p>
+                      </div>
+                      <StatusBadge :status="command.status" />
+                    </div>
+                    <code>{{ command.operation_key }}</code>
+                    <details class="adapter-raw-details">
+                      <summary>View command payload and result</summary>
+                      <pre>{{ pretty({ payload: command.payload, result: command.result }) }}</pre>
+                    </details>
+                  </article>
+                  <EmptyState
+                    v-if="!store.commands.length"
+                    compact
+                    icon="list"
+                    title="No commands issued"
+                  />
+                </div>
+                <div v-else class="orchestration-tab-panel">
+                  <div class="orchestration-section-heading">
+                    <div>
+                      <p class="adapter-eyebrow">Diagnostics</p>
+                      <h3>Raw orchestration record</h3>
+                      <p>The complete state for debugging or support.</p>
+                    </div>
+                    <button class="btn btn-sm" type="button" @click="downloadSelectedOrchestration">
+                      Download JSON
+                    </button>
+                  </div>
+                  <pre class="orchestration-raw-record">{{ pretty(store.selected) }}</pre>
+                </div>
+              </section>
             </main>
             <EmptyState v-else icon="branch" title="Select an orchestration" />
           </div>
@@ -1151,141 +1335,298 @@
     </Modal>
     <Modal
       v-if="adapterFormOpen"
-      :title="editingAdapterId ? 'Edit adapter' : 'New adapter'"
+      :title="editingAdapterId ? 'Create adapter revision' : 'Set up an adapter'"
       description="Connect a provider, normalize its events, and route them into correlated orchestrations."
-      width="min(820px, 100%)"
+      width="min(980px, 100%)"
       @close="adapterFormOpen = false"
     >
-      <form id="adapter-form" class="grid gap-3" @submit.prevent="saveAdapter">
-        <div class="mt-3 grid gap-3 md:grid-cols-3">
-          <label class="text-sm"
-            >Name<input v-model="adapterForm.name" required class="mt-1 w-full" /></label
-          ><label class="text-sm"
-            >Kind<select
-              v-model="adapterForm.kind"
-              required
-              class="mt-1 w-full"
-              :disabled="!!editingAdapterId"
-              @change="initializeKind"
-            >
-              <option value="" disabled>Select a loaded kind</option>
-              <option v-for="kind in store.adapterKinds" :key="kind.kind" :value="kind.kind">
-                {{ kind.display_name }} v{{ kind.version }}
-              </option>
-            </select></label
-          ><label class="text-sm"
-            >Transport<select
-              v-model="adapterForm.transport"
-              class="mt-1 w-full"
-              :disabled="identityLocked"
-            >
-              <option value="webhook">Webhook</option>
-              <option
-                v-if="adapterForm.kind === 'github' || adapterForm.kind === 'jira'"
-                value="polling"
+      <form id="adapter-form" class="adapter-form" @submit.prevent="saveAdapter">
+        <section class="adapter-form-main">
+          <div class="adapter-form-section">
+            <div class="adapter-form-section-heading">
+              <span>1</span>
+              <div>
+                <h3>Choose a provider</h3>
+                <p>Select the event vocabulary and verification behavior this adapter uses.</p>
+              </div>
+            </div>
+            <div v-if="!editingAdapterId" class="adapter-kind-grid">
+              <button
+                v-for="kind in store.adapterKinds"
+                :key="kind.kind"
+                type="button"
+                class="adapter-kind-option"
+                :class="{ 'is-selected': adapterForm.kind === kind.kind }"
+                @click="selectAdapterKind(kind.kind)"
               >
-                Polling
-              </option>
-            </select></label
-          >
-        </div>
-        <div v-if="formKind" class="mt-4 grid gap-3">
-          <p class="text-sm text-fg-muted">{{ formKind.description }}</p>
-          <template v-if="adapterForm.transport === 'polling'"
-            ><label class="text-sm"
-              >Poll interval (seconds)<input
-                v-model.number="adapterForm.configuration.poll_interval_seconds"
-                type="number"
-                min="30"
-                max="3600"
+                <span class="adapter-mark">{{ adapterMark(kind.kind) }}</span>
+                <span class="min-w-0 flex-1">
+                  <strong>{{ kind.display_name }}</strong>
+                  <small>{{ kind.description || "Provider event adapter" }}</small>
+                </span>
+                <Icon v-if="adapterForm.kind === kind.kind" name="check" :size="17" />
+              </button>
+            </div>
+            <div v-else-if="formKind" class="adapter-kind-summary">
+              <span class="adapter-mark">{{ adapterMark(formKind.kind) }}</span>
+              <div>
+                <strong>{{ formKind.display_name }}</strong>
+                <p>{{ formKind.description }}</p>
+              </div>
+              <span class="badge status-muted">v{{ formKind.version }}</span>
+            </div>
+            <label class="adapter-form-field adapter-name-field">
+              <span>Adapter name</span>
+              <input
+                v-model="adapterForm.name"
                 required
-                class="mt-1 w-full" /></label
-            ><label v-if="adapterForm.kind === 'github'" class="text-sm"
-              >Repositories (JSON array)<textarea
-                v-model="pollRepositories"
-                required
-                data-validation="json"
-                class="mt-1 min-h-20 w-full font-mono text-xs"
-              /></label
-            ><template v-if="adapterForm.kind === 'jira'"
-              ><label class="text-sm"
-                >Jira instance identity<input
-                  v-model="adapterForm.configuration.instance_id"
-                  required
-                  class="mt-1 w-full"
-                  placeholder="acme.atlassian.net" /></label
-              ><label class="text-sm"
-                >Jira base URL<input
-                  v-model="adapterForm.configuration.base_url"
-                  required
-                  type="url"
-                  class="mt-1 w-full" /></label
-              ><label class="text-sm"
-                >Jira account email<input
-                  v-model="adapterForm.configuration.email"
-                  required
-                  type="email"
-                  class="mt-1 w-full" /></label
-              ><label class="text-sm"
-                >JQL<input
-                  v-model="adapterForm.configuration.jql"
-                  required
-                  class="mt-1 w-full" /></label></template
-            ><label class="text-sm"
-              >{{ adapterForm.kind === "github" ? "access_token" : "api_token" }} Secret<select
-                v-model="
-                  adapterForm.secret_bindings[
-                    adapterForm.kind === 'github' ? 'access_token' : 'api_token'
-                  ]
-                "
-                required
-                class="mt-1 w-full"
+                placeholder="Production GitHub events"
+                autocomplete="off"
+              />
+              <small>Use a name operators will recognize in event history and filters.</small>
+            </label>
+          </div>
+
+          <div v-if="formKind" class="adapter-form-section">
+            <div class="adapter-form-section-heading">
+              <span>2</span>
+              <div>
+                <h3>Choose delivery</h3>
+                <p>Receive events immediately or let Runinator poll the provider.</p>
+              </div>
+            </div>
+            <div class="adapter-transport-grid">
+              <button
+                type="button"
+                class="adapter-transport-option"
+                :class="{ 'is-selected': adapterForm.transport === 'webhook' }"
+                :disabled="identityLocked"
+                @click="selectTransport('webhook')"
               >
-                <option value="">Select stored Secret</option>
-                <option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">
-                  {{ secret.scope }}/{{ secret.name }}
-                </option>
-              </select></label
-            ></template
-          ><template v-else
-            ><label v-for="field in configurationFields" :key="field.name" class="text-sm"
-              ><span>{{ field.name }}<template v-if="field.required"> *</template></span
-              ><TypedValueEditor
-                class="mt-1"
-                :model-value="adapterForm.configuration[field.name]"
-                :ty="field.value_type"
-                :allow-expressions="false"
-                :required="field.required"
-                @update:model-value="updateConfigField(field.name, $event)"
-              /><small v-if="field.description" class="mt-1 block text-fg-muted">{{
-                field.description
-              }}</small></label
-            ><label v-for="field in secretFields" :key="field.name" class="text-sm"
-              >{{ field.name }} Secret<template v-if="field.required"> *</template
-              ><select
-                v-model="adapterForm.secret_bindings[field.name]"
-                class="mt-1 w-full"
-                :required="field.required"
+                <span class="adapter-section-icon"><Icon name="bolt" :size="17" /></span>
+                <span
+                  ><strong>Webhook</strong
+                  ><small>Provider pushes events as they happen</small></span
+                >
+                <Icon v-if="adapterForm.transport === 'webhook'" name="check" :size="17" />
+              </button>
+              <button
+                v-if="supportsPolling"
+                type="button"
+                class="adapter-transport-option"
+                :class="{ 'is-selected': adapterForm.transport === 'polling' }"
+                :disabled="identityLocked"
+                @click="selectTransport('polling')"
               >
-                <option value="">Select stored Secret</option>
-                <option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">
-                  {{ secret.scope }}/{{ secret.name }}
-                </option>
-              </select></label
-            ></template
-          ><label class="text-sm"
-            >Identity extraction JSON<textarea
-              v-model="identityText"
-              data-validation="json"
-              class="mt-1 min-h-28 w-full font-mono text-xs"
-              :disabled="identityLocked"
+                <span class="adapter-section-icon"><Icon name="clock" :size="17" /></span>
+                <span><strong>Polling</strong><small>Runinator checks on a schedule</small></span>
+                <Icon v-if="adapterForm.transport === 'polling'" name="check" :size="17" />
+              </button>
+            </div>
+            <p v-if="identityLocked" class="adapter-safety-note">
+              <Icon name="lock" :size="15" />
+              Delivery and identity are locked after the first correlation is admitted.
+            </p>
+          </div>
+
+          <div v-if="formKind" class="adapter-form-section">
+            <div class="adapter-form-section-heading">
+              <span>3</span>
+              <div>
+                <h3>Configure the connection</h3>
+                <p>{{ connectionStepDescription }}</p>
+              </div>
+            </div>
+            <div v-if="adapterForm.transport === 'polling'" class="adapter-field-grid">
+              <label class="adapter-form-field">
+                <span>Check every</span>
+                <div class="adapter-number-field">
+                  <input
+                    v-model.number="adapterForm.configuration.poll_interval_seconds"
+                    type="number"
+                    min="30"
+                    max="3600"
+                    required
+                  />
+                  <span>seconds</span>
+                </div>
+                <small>Between 30 seconds and one hour.</small>
+              </label>
+              <label
+                v-if="adapterForm.kind === 'github'"
+                class="adapter-form-field adapter-field-wide"
+              >
+                <span>Repositories</span>
+                <TypedValueEditor
+                  :model-value="adapterForm.configuration.repositories"
+                  :ty="repositoryListType"
+                  :allow-expressions="false"
+                  required
+                  @update:model-value="updateConfigField('repositories', $event)"
+                />
+                <small>One <code>owner/repository</code> per line.</small>
+              </label>
+              <template v-if="adapterForm.kind === 'jira'">
+                <label class="adapter-form-field">
+                  <span>Jira site</span>
+                  <input
+                    v-model="adapterForm.configuration.instance_id"
+                    required
+                    placeholder="acme.atlassian.net"
+                  />
+                  <small>A stable identity for this Jira instance.</small>
+                </label>
+                <label class="adapter-form-field">
+                  <span>Base URL</span>
+                  <input
+                    v-model="adapterForm.configuration.base_url"
+                    required
+                    type="url"
+                    placeholder="https://acme.atlassian.net"
+                  />
+                </label>
+                <label class="adapter-form-field">
+                  <span>Account email</span>
+                  <input v-model="adapterForm.configuration.email" required type="email" />
+                </label>
+                <label class="adapter-form-field adapter-field-wide">
+                  <span>Issues to watch (JQL)</span>
+                  <input
+                    v-model="adapterForm.configuration.jql"
+                    required
+                    placeholder="project = ENG AND statusCategory != Done"
+                  />
+                </label>
+              </template>
+              <label class="adapter-form-field">
+                <span>{{ adapterForm.kind === "github" ? "Access token" : "API token" }}</span>
+                <select
+                  v-model="
+                    adapterForm.secret_bindings[
+                      adapterForm.kind === 'github' ? 'access_token' : 'api_token'
+                    ]
+                  "
+                  required
+                >
+                  <option value="">Choose a stored secret</option>
+                  <option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">
+                    {{ secret.scope }}/{{ secret.name }}
+                  </option>
+                </select>
+                <small>The credential stays in the secret store and is never copied here.</small>
+              </label>
+            </div>
+            <div v-else class="adapter-field-grid">
+              <label
+                v-for="field in configurationFields"
+                :key="field.name"
+                class="adapter-form-field"
+              >
+                <span
+                  >{{ humanizeKey(field.name) }}<template v-if="field.required"> *</template></span
+                >
+                <TypedValueEditor
+                  :model-value="adapterForm.configuration[field.name]"
+                  :ty="field.value_type"
+                  :allow-expressions="false"
+                  :required="field.required"
+                  @update:model-value="updateConfigField(field.name, $event)"
+                />
+                <small v-if="field.description">{{ field.description }}</small>
+              </label>
+              <label v-for="field in secretFields" :key="field.name" class="adapter-form-field">
+                <span
+                  >{{ humanizeKey(field.name) }}<template v-if="field.required"> *</template></span
+                >
+                <select
+                  v-model="adapterForm.secret_bindings[field.name]"
+                  :required="field.required"
+                >
+                  <option value="">Choose a stored secret</option>
+                  <option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">
+                    {{ secret.scope }}/{{ secret.name }}
+                  </option>
+                </select>
+                <small>{{
+                  field.description || "Stored securely and resolved at delivery time."
+                }}</small>
+              </label>
+            </div>
+          </div>
+
+          <details v-if="formKind" class="adapter-advanced-identity" :open="identityHasValues">
+            <summary>
+              <span>
+                <strong>Advanced identity metadata</strong>
+                <small>Optional revision identity used by custom adapter plugins.</small>
+              </span>
+              <span class="adapter-count">{{ identityEntryCount }}</span>
+            </summary>
+            <div v-if="identityLocked" class="adapter-readonly-values">
+              <div v-for="[key, value] in identityEntries" :key="key">
+                <span>{{ humanizeKey(key) }}</span
+                ><strong>{{ formatConfigValue(value) }}</strong>
+              </div>
+              <p v-if="!identityEntries.length">No extra identity metadata.</p>
+            </div>
+            <TypedValueEditor
+              v-else
+              :model-value="adapterIdentity"
+              :ty="identityMapType"
+              :allow-expressions="false"
+              @update:model-value="setAdapterIdentity"
             />
-          </label>
-        </div>
+          </details>
+          <p v-if="adapterFormError" class="adapter-form-error">{{ adapterFormError }}</p>
+        </section>
+
+        <aside v-if="formKind" class="adapter-form-aside">
+          <div class="adapter-form-provider">
+            <span class="adapter-hero-mark">{{ adapterMark(formKind.kind) }}</span>
+            <div>
+              <p class="adapter-eyebrow">Ready to connect</p>
+              <h3>{{ formKind.display_name }}</h3>
+              <p>{{ formKind.description }}</p>
+            </div>
+          </div>
+          <div class="adapter-form-review">
+            <span><Icon name="check" :size="15" /> Provider selected</span>
+            <span :class="{ 'is-pending': !adapterForm.name.trim() }">
+              <Icon :name="adapterForm.name.trim() ? 'check' : 'circle'" :size="15" /> Named for
+              operators
+            </span>
+            <span
+              ><Icon name="check" :size="15" />
+              {{ humanizeKey(adapterForm.transport) }} delivery</span
+            >
+          </div>
+          <div v-if="formKind.setup_instructions?.length" class="adapter-form-checklist">
+            <p class="adapter-eyebrow">After saving</p>
+            <ol>
+              <li v-for="instruction in formKind.setup_instructions" :key="instruction">
+                {{ instruction }}
+              </li>
+            </ol>
+          </div>
+          <p class="adapter-form-revision-note">
+            <Icon name="lock" :size="15" />
+            {{
+              editingAdapterId
+                ? "Saving creates a new immutable revision."
+                : "Connection settings are versioned from the first save."
+            }}
+          </p>
+        </aside>
       </form>
       <template #actions>
         <button type="button" class="btn" @click="adapterFormOpen = false">Cancel</button>
-        <button class="btn btn-primary" type="submit" form="adapter-form">
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="adapter-form"
+          :disabled="adapterFormSaving || !formKind || !adapterForm.name.trim()"
+        >
+          <LoadingSpinner v-if="adapterFormSaving" size="sm" label="Saving adapter" />
           Save immutable revision
         </button>
       </template>
@@ -1305,8 +1646,10 @@ import type {
   OrchestrationCorrelationAlias,
   OrchestrationEvidence,
   PipelineRunDetail,
+  RuninatorType,
   WorkspaceLease,
 } from "../../core/domain/models";
+import type { IconName } from "../../core/domain/icons";
 import {
   fetchAdapterHealth,
   fetchAdapterKinds,
@@ -1434,7 +1777,11 @@ interface AdapterTestResult {
 const testResult = ref<AdapterTestResult | null>(null);
 const adapterFormOpen = ref(false);
 const editingAdapterId = ref<string | null>(null);
-const identityText = ref("{}");
+const adapterFormSaving = ref(false);
+const adapterFormError = ref<string | null>(null);
+const adapterIdentity = shallowRef<JsonValue>({});
+const repositoryListType: RuninatorType = { type: "array", items: { type: "string" } };
+const identityMapType: RuninatorType = { type: "map", values: { type: "any" } };
 interface AdapterFormState {
   name: string;
   kind: string;
@@ -1459,8 +1806,16 @@ const formKind = computed<AdapterKindMetadata | undefined>(() =>
 const configurationFields = computed(
   () => formKind.value?.fields.filter((field) => !field.secret) ?? [],
 );
-const pollRepositories = ref("[]");
 const secretFields = computed(() => formKind.value?.fields.filter((field) => field.secret) ?? []);
+const supportsPolling = computed(() => formKind.value?.capabilities.includes("polling") ?? false);
+const connectionStepDescription = computed(() =>
+  adapterForm.transport === "polling"
+    ? "Choose what to watch, how often to check, and which stored credential to use."
+    : "Map the provider payload and choose a stored secret for delivery verification.",
+);
+const identityEntries = computed(() => Object.entries(jsonObject(adapterIdentity.value)));
+const identityEntryCount = computed(() => identityEntries.value.length);
+const identityHasValues = computed(() => identityEntryCount.value > 0);
 const selectableSecrets = computed(() =>
   secrets.secretEntries.filter((secret) => Boolean(secret.id)),
 );
@@ -1495,6 +1850,10 @@ const isSelectedTerminal = computed(() =>
 const activeFilterCount = computed(
   () => Object.values(filters).filter((value) => value.trim()).length,
 );
+const technicalFilterCount = computed(
+  () =>
+    [filters.scope, filters.pipeline_id, filters.adapter_id].filter((value) => value.trim()).length,
+);
 const selectedIntent = computed(() =>
   intentName.value ? store.selected?.policy.intents[intentName.value] : undefined,
 );
@@ -1523,21 +1882,6 @@ const selectedIntentSummary = computed(() => {
 });
 const intentPayloadError = computed(() => jsonError(intentPayload.value, "Payload"));
 const resolutionReceiptError = computed(() => jsonError(resolutionReceipt.value, "Receipt"));
-const instanceChips = computed(() =>
-  store.selected
-    ? [
-        `generation ${String(store.selected.generation)}`,
-        `epoch ${String(store.selected.current_epoch)}`,
-        `phase ${store.selected.current_phase ?? "—"}`,
-        `attempt ${String(store.selected.current_attempt)}`,
-        `CAS ${String(store.selected.version)}`,
-        `pipeline revision ${String(store.selected.pipeline_revision)}`,
-        ...(store.selected.adapter_id
-          ? [`adapter revision ${String(store.selected.adapter_revision ?? "—")}`]
-          : []),
-      ]
-    : [],
-);
 const currentEpoch = computed(() =>
   store.epochs.find((epoch) => epoch.epoch === store.selected?.current_epoch),
 );
@@ -1547,6 +1891,38 @@ const currentEpochDetail = computed<PipelineRunDetail | null>(() => {
 
   return detail?.run.id === currentEpochRunId.value ? detail : null;
 });
+const resourceEntries = computed(() => Object.entries(jsonObject(store.selected?.resources)));
+const budgetRows = computed(() => {
+  const selected = store.selected;
+
+  if (!selected) {
+    return [];
+  }
+
+  return Object.entries(selected.policy.budgets).map(([name, policy]) => {
+    const used = selected.budgets[name] ?? 0;
+    const limit = Math.max(policy.attempts, 0);
+
+    return {
+      name,
+      used,
+      limit,
+      exhausted: policy.exhausted,
+      handoff: policy.handoff,
+      percent: limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0,
+    };
+  });
+});
+const orchestrationSummary = computed(() => {
+  const selected = store.selected;
+
+  if (!selected) {
+    return "";
+  }
+
+  const phase = selected.current_phase ? ` in ${selected.current_phase}` : "";
+  return `Generation ${String(selected.generation)}, epoch ${String(selected.current_epoch)}${phase}. Updated ${relativeTimestamp(selected.updated_at).toLowerCase()}.`;
+});
 
 function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -1554,6 +1930,64 @@ function pretty(value: unknown): string {
 
 function formatTimestamp(value?: string | null): string {
   return value ? new Date(value).toLocaleString() : "Never";
+}
+
+function relativeTimestamp(value?: string | null): string {
+  if (!value) {
+    return "Never";
+  }
+
+  const elapsed = Date.now() - new Date(value).getTime();
+  const future = elapsed < 0;
+  const absolute = Math.abs(elapsed);
+  const units: [number, Intl.RelativeTimeFormatUnit][] = [
+    [86_400_000, "day"],
+    [3_600_000, "hour"],
+    [60_000, "minute"],
+  ];
+
+  for (const [milliseconds, unit] of units) {
+    if (absolute >= milliseconds) {
+      const amount = Math.round(absolute / milliseconds) * (future ? 1 : -1);
+      return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
+    }
+  }
+
+  return "Just now";
+}
+
+function statusIcon(status: string): IconName {
+  if (status === "completed" || status === "succeeded") {
+    return "check";
+  }
+
+  if (status === "failed" || status === "terminated") {
+    return "alert";
+  }
+
+  if (status === "suspended") {
+    return "pause";
+  }
+
+  if (status === "waiting" || status === "pending") {
+    return "clock";
+  }
+
+  return "bolt";
+}
+
+function instanceTabCount(tab: string): number | null {
+  const counts: Record<string, number> = {
+    Timeline: store.events.length,
+    Epochs: store.epochs.length,
+    Evidence: store.evidence.length,
+    Operations: store.operations.length,
+    Workspaces: store.workspaces.length,
+    Aliases: store.aliases.length,
+    Commands: store.commands.length,
+  };
+
+  return tab in counts ? counts[tab] : null;
 }
 
 function adapterMark(kind: string): string {
@@ -1603,6 +2037,17 @@ function downloadAllEvidence(): void {
   const correlation = store.selected?.correlation_key ?? "orchestration";
 
   downloadJson(`${safeFileSegment(correlation)}-evidence.json`, store.evidence);
+}
+
+function downloadSelectedOrchestration(): void {
+  if (!store.selected) {
+    return;
+  }
+
+  downloadJson(
+    `${safeFileSegment(store.selected.correlation_key)}-orchestration.json`,
+    store.selected,
+  );
 }
 
 function downloadWorkspaceEvidence(workspace: WorkspaceLease): void {
@@ -1896,7 +2341,7 @@ async function runTest(): Promise<void> {
 function initializeKind(): void {
   adapterForm.configuration = {};
   adapterForm.secret_bindings = {};
-  pollRepositories.value = "[]";
+  adapterIdentity.value = {};
 
   if (adapterForm.kind !== "github" && adapterForm.kind !== "jira") {
     adapterForm.transport = "webhook";
@@ -1909,6 +2354,35 @@ function initializeKind(): void {
   }
 }
 
+function selectAdapterKind(kind: string): void {
+  if (adapterForm.kind === kind) {
+    return;
+  }
+
+  adapterForm.kind = kind;
+  initializeKind();
+}
+
+function selectTransport(transport: "webhook" | "polling"): void {
+  if (identityLocked.value) {
+    return;
+  }
+
+  adapterForm.transport = transport;
+
+  if (transport === "polling") {
+    adapterForm.configuration.poll_interval_seconds ??= 60;
+
+    if (adapterForm.kind === "github") {
+      adapterForm.configuration.repositories ??= [];
+    }
+  }
+}
+
+function setAdapterIdentity(value: unknown): void {
+  adapterIdentity.value = (value ?? {}) as JsonValue;
+}
+
 function openAdapterForm(adapter?: AdapterDefinition, clone = false): void {
   const revision: AdapterRevision | undefined = adapter ? currentAdapterRevision.value : undefined;
   const firstKind = store.adapterKinds.at(0);
@@ -1919,8 +2393,8 @@ function openAdapterForm(adapter?: AdapterDefinition, clone = false): void {
   adapterForm.transport = revision?.transport ?? "webhook";
   adapterForm.configuration = revision ? jsonObject(revision.configuration) : {};
   adapterForm.secret_bindings = revision ? { ...revision.secret_bindings } : {};
-  pollRepositories.value = pretty(adapterForm.configuration.repositories ?? []);
-  identityText.value = pretty(revision?.identity_configuration ?? {});
+  adapterIdentity.value = revision?.identity_configuration ?? {};
+  adapterFormError.value = null;
 
   if (!revision) {
     initializeKind();
@@ -1940,33 +2414,37 @@ async function saveAdapter(): Promise<void> {
     return;
   }
 
-  const identity = parseJson(identityText.value || "{}");
   const configuration = { ...adapterForm.configuration };
-
-  if (adapterForm.transport === "polling" && adapterForm.kind === "github") {
-    configuration.repositories = parseJson(pollRepositories.value || "[]") as JsonValue;
-  }
 
   const bindings = Object.fromEntries(
     Object.entries(adapterForm.secret_bindings).filter(([, value]) => value),
   );
 
-  await store.saveAdapter(
-    {
-      name: adapterForm.name.trim(),
-      kind: kind.kind,
-      kind_version: kind.version,
-      transport: adapterForm.transport,
-      configuration,
-      secret_bindings: bindings,
-      identity_configuration: identity,
-      ...(editingAdapterId.value && store.selectedAdapter
-        ? { expected_revision: store.selectedAdapter.current_revision }
-        : {}),
-    },
-    editingAdapterId.value ?? undefined,
-  );
-  adapterFormOpen.value = false;
+  adapterFormSaving.value = true;
+  adapterFormError.value = null;
+
+  try {
+    await store.saveAdapter(
+      {
+        name: adapterForm.name.trim(),
+        kind: kind.kind,
+        kind_version: kind.version,
+        transport: adapterForm.transport,
+        configuration,
+        secret_bindings: bindings,
+        identity_configuration: adapterIdentity.value,
+        ...(editingAdapterId.value && store.selectedAdapter
+          ? { expected_revision: store.selectedAdapter.current_revision }
+          : {}),
+      },
+      editingAdapterId.value ?? undefined,
+    );
+    adapterFormOpen.value = false;
+  } catch (cause) {
+    adapterFormError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    adapterFormSaving.value = false;
+  }
 }
 
 watch(
@@ -2007,6 +2485,806 @@ onMounted(refreshInstances);
 }
 
 .action-impact.is-danger strong {
+  color: var(--danger-fg);
+}
+
+.orchestration-toolbar {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.orchestration-filters {
+  display: flex;
+  align-items: end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.orchestration-filter {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.orchestration-filter-primary {
+  width: min(420px, 44vw);
+}
+
+.orchestration-filter select {
+  min-width: 145px;
+}
+
+.orchestration-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding-left: 10px;
+  color: var(--text-muted);
+}
+
+.orchestration-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.orchestration-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding-left: 0;
+  box-shadow: none;
+}
+
+.orchestration-search input:focus {
+  box-shadow: none;
+}
+
+.orchestration-advanced-filters {
+  position: relative;
+}
+
+.orchestration-advanced-filters > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0 10px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.orchestration-advanced-filters > summary::-webkit-details-marker {
+  display: none;
+}
+
+.orchestration-advanced-grid {
+  position: absolute;
+  z-index: 15;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  width: min(560px, 86vw);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised, var(--surface));
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-4);
+}
+
+.orchestration-advanced-grid label:first-child {
+  grid-column: 1 / -1;
+}
+
+.orchestration-result-count {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.orchestration-list {
+  gap: 0;
+  background: var(--surface);
+}
+
+.orchestration-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-4);
+}
+
+.orchestration-list-heading h3 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.orchestration-list-items {
+  display: grid;
+  gap: 3px;
+  padding: var(--space-2);
+}
+
+.orchestration-list-item {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 10px;
+  color: inherit;
+  text-align: left;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.orchestration-list-item:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-hover);
+}
+
+.orchestration-list-item:active {
+  transform: scale(0.99);
+}
+
+.orchestration-list-item.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.orchestration-state-mark,
+.orchestration-hero-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.orchestration-state-mark {
+  width: 30px;
+  height: 30px;
+}
+
+.orchestration-state-mark.is-completed,
+.orchestration-hero-mark.is-completed {
+  border-color: color-mix(in srgb, var(--success-fg) 30%, var(--border));
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+
+.orchestration-state-mark.is-failed,
+.orchestration-state-mark.is-terminated,
+.orchestration-hero-mark.is-failed,
+.orchestration-hero-mark.is-terminated {
+  border-color: color-mix(in srgb, var(--danger-fg) 30%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.orchestration-state-mark.is-waiting,
+.orchestration-state-mark.is-suspended,
+.orchestration-hero-mark.is-waiting,
+.orchestration-hero-mark.is-suspended {
+  border-color: color-mix(in srgb, var(--warning-fg) 30%, var(--border));
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+}
+
+.orchestration-detail {
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.orchestration-hero {
+  display: grid;
+  gap: var(--space-4);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 42%
+    ),
+    var(--surface);
+  padding: var(--space-5);
+}
+
+.orchestration-hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.orchestration-hero-mark {
+  width: 42px;
+  height: 42px;
+}
+
+.orchestration-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.orchestration-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.orchestration-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  padding: 0 var(--space-2);
+}
+
+.orchestration-tabs button {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px var(--space-3);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.orchestration-tabs button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.orchestration-tabs button::after {
+  position: absolute;
+  right: var(--space-3);
+  bottom: -1px;
+  left: var(--space-3);
+  height: 2px;
+  content: "";
+  background: transparent;
+}
+
+.orchestration-tabs button.is-active {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.orchestration-tabs button.is-active::after {
+  background: var(--accent);
+}
+
+.orchestration-tab-count {
+  min-width: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.orchestration-workspace {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.orchestration-tab-panel {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.orchestration-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.orchestration-section-heading h3 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.orchestration-section-heading p:not(.adapter-eyebrow) {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.orchestration-timeline {
+  display: grid;
+}
+
+.orchestration-event {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  padding: 0 0 var(--space-4);
+}
+
+.orchestration-event:not(:last-child)::before {
+  position: absolute;
+  top: 30px;
+  bottom: 0;
+  left: 15px;
+  width: 1px;
+  content: "";
+  background: var(--border-subtle);
+}
+
+.orchestration-event-node {
+  z-index: 1;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.orchestration-event > div {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.orchestration-event-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.orchestration-event-summary strong {
+  color: var(--text);
+}
+
+.orchestration-data-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.orchestration-data-card,
+.command-card,
+.budget-card {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.orchestration-data-card {
+  display: grid;
+  gap: 4px;
+}
+
+.orchestration-data-card span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.orchestration-data-card strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.budget-list,
+.command-card {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.budget-card p,
+.command-card p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.budget-card > div > span {
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.budget-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+}
+
+.budget-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.command-card code {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.orchestration-raw-record {
+  max-height: min(560px, 60vh);
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: var(--space-3);
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+.adapter-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: var(--space-5);
+}
+
+.adapter-form-main,
+.adapter-form-section {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.adapter-form-main {
+  min-width: 0;
+}
+
+.adapter-form-section {
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-5);
+}
+
+.adapter-form-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.adapter-form-section-heading > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.adapter-form-section-heading h3,
+.adapter-form-provider h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.adapter-form-section-heading p,
+.adapter-form-provider p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.adapter-kind-grid,
+.adapter-transport-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.adapter-kind-option,
+.adapter-transport-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-3);
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.adapter-kind-option:hover,
+.adapter-transport-option:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--surface-hover);
+}
+
+.adapter-kind-option.is-selected,
+.adapter-transport-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.adapter-kind-option strong,
+.adapter-transport-option strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.adapter-kind-option small,
+.adapter-transport-option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.adapter-kind-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-kind-summary > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.adapter-kind-summary p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.adapter-form-field {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.adapter-form-field > small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.adapter-name-field {
+  max-width: 460px;
+}
+
+.adapter-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.adapter-field-wide {
+  grid-column: 1 / -1;
+}
+
+.adapter-number-field {
+  display: flex;
+  align-items: stretch;
+}
+
+.adapter-number-field input {
+  min-width: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.adapter-number-field span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface-subtle);
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.adapter-advanced-identity {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.adapter-advanced-identity > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-3);
+}
+
+.adapter-advanced-identity > summary::-webkit-details-marker {
+  display: none;
+}
+
+.adapter-advanced-identity > summary strong,
+.adapter-advanced-identity > summary small {
+  display: block;
+}
+
+.adapter-advanced-identity > summary strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.adapter-advanced-identity > summary small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.adapter-advanced-identity > .typed-value-editor,
+.adapter-readonly-values {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-readonly-values {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.adapter-readonly-values > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.adapter-readonly-values strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.adapter-form-aside {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  border-left: 1px solid var(--border-subtle);
+  padding-left: var(--space-5);
+}
+
+.adapter-form-provider {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.adapter-form-review {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.adapter-form-review span {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--success-fg);
+  font-size: 11px;
+}
+
+.adapter-form-review span.is-pending {
+  color: var(--text-muted);
+}
+
+.adapter-form-checklist ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.adapter-form-revision-note,
+.adapter-form-error {
+  margin: 0;
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.adapter-form-revision-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.adapter-form-error {
+  border: 1px solid color-mix(in srgb, var(--danger-fg) 30%, var(--border));
+  background: var(--danger-bg);
   color: var(--danger-fg);
 }
 
@@ -2729,6 +4007,37 @@ onMounted(refreshInstances);
 }
 
 @media (max-width: 840px) {
+  .orchestration-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .orchestration-result-count {
+    display: none;
+  }
+
+  .orchestration-hero-top {
+    display: grid;
+  }
+
+  .orchestration-actions {
+    justify-content: flex-start;
+  }
+
+  .orchestration-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adapter-form {
+    grid-template-columns: 1fr;
+  }
+
+  .adapter-form-aside {
+    border-top: 1px solid var(--border-subtle);
+    border-left: 0;
+    padding-top: var(--space-4);
+    padding-left: 0;
+  }
+
   .adapter-hero-top {
     display: grid;
   }
@@ -2744,6 +4053,59 @@ onMounted(refreshInstances);
 }
 
 @media (max-width: 600px) {
+  .orchestration-toolbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .orchestration-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .orchestration-filter-primary {
+    width: auto;
+    grid-column: 1 / -1;
+  }
+
+  .orchestration-advanced-grid {
+    position: fixed;
+    top: auto;
+    right: var(--space-3);
+    bottom: var(--space-3);
+    left: var(--space-3);
+    width: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .orchestration-advanced-grid label:first-child {
+    grid-column: auto;
+  }
+
+  .orchestration-detail {
+    padding: var(--space-2);
+  }
+
+  .orchestration-hero {
+    padding: var(--space-3);
+  }
+
+  .orchestration-metrics,
+  .orchestration-data-grid,
+  .adapter-kind-grid,
+  .adapter-transport-grid,
+  .adapter-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .adapter-field-wide {
+    grid-column: auto;
+  }
+
+  .orchestration-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .adapter-detail {
     padding: var(--space-2);
   }
