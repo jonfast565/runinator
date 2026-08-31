@@ -31,6 +31,47 @@
   --scrollbar-thumb-hover: rgba(246, 244, 251, 0.32);
 }
 
+/* The collapsed shell is an icon rail, not a narrow version of the full navigation. Its
+   expanded-state padding plus a native scrollbar left less space than a single icon, so labels
+   could peek through while icons were clipped. Keep the rail's scrolling available to wheel and
+   keyboard users, but hide its decorative scrollbar so it never steals horizontal space. */
+.sidebar.icon-rail {
+  padding-right: 6px;
+  padding-left: 6px;
+  overflow: hidden;
+}
+
+.sidebar.icon-rail .icon-rail-brand {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar.icon-rail .sidebar-toggle-rail {
+  margin-left: 0;
+}
+
+.sidebar.icon-rail .nav-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar.icon-rail .nav-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar.icon-rail .nav-list button.icon-rail-item {
+  width: 100%;
+  min-height: 39px;
+  justify-content: center;
+  padding-right: 0;
+  padding-left: 0;
+  text-align: center;
+}
+
+.sidebar.icon-rail .nav-list button.icon-rail-item::before {
+  left: 4px;
+}
+
 /* drag rail on the sidebar's trailing edge; it straddles the border so the whole seam is grabbable. */
 .sidebar-resize {
   position: absolute;

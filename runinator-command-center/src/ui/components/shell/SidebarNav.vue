@@ -1,11 +1,15 @@
 <template>
-  <aside ref="sidebarRef" class="sidebar" :class="{ collapsed: app.sidebarCollapsed }">
-    <div class="brand" :class="railMode ? 'flex-col gap-2.5' : ''">
+  <aside
+    ref="sidebarRef"
+    class="sidebar"
+    :class="{ collapsed: app.sidebarCollapsed, 'icon-rail': railMode }"
+  >
+    <div class="brand" :class="{ 'icon-rail-brand': railMode }">
       <BrandMark />
-      <span class="brand-text" :class="railMode ? 'hidden' : ''">Command Center</span>
+      <span v-if="!railMode" class="brand-text">Command Center</span>
       <button
         class="sidebar-toggle inline-flex size-[26px] cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-fg-inverse-muted hover:bg-inverse-hover hover:text-fg-inverse disabled:cursor-default"
-        :class="railMode ? 'ml-0' : 'ml-auto'"
+        :class="{ 'sidebar-toggle-rail': railMode, 'ml-auto': !railMode }"
         :title="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
         :aria-label="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
         :disabled="app.interactionsDisabled"
@@ -22,8 +26,8 @@
       <div class="nav-list">
         <template v-for="section in sections" :key="section.label">
           <div
+            v-if="!railMode"
             class="mt-2.5 px-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-inverse-faint first:mt-0"
-            :class="railMode ? 'hidden' : ''"
           >
             {{ section.label }}
           </div>
@@ -32,10 +36,11 @@
             :key="item.tab"
             :class="{
               active: app.activeTab === item.tab,
-              '!justify-center': railMode,
+              'icon-rail-item': railMode,
             }"
             :disabled="app.interactionsDisabled"
             :title="app.sidebarCollapsed ? item.label : undefined"
+            :aria-label="railMode ? item.label : undefined"
             @click="app.activeTab = item.tab"
           >
             <span
@@ -43,18 +48,13 @@
               :class="railMode ? 'gap-0' : 'gap-[9px]'"
             >
               <Icon :name="item.icon" :size="15" />
-              <span
-                class="overflow-hidden text-ellipsis whitespace-nowrap"
-                :class="railMode ? 'hidden' : ''"
-                >{{ item.label }}</span
-              >
+              <span v-if="!railMode" class="overflow-hidden text-ellipsis whitespace-nowrap">{{
+                item.label
+              }}</span>
             </span>
-            <span
-              v-if="countFor(item.tab) !== null"
-              class="nav-count"
-              :class="railMode ? 'hidden' : ''"
-              >{{ countFor(item.tab) }}</span
-            >
+            <span v-if="countFor(item.tab) !== null && !railMode" class="nav-count">{{
+              countFor(item.tab)
+            }}</span>
           </button>
         </template>
       </div>
