@@ -6,7 +6,10 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::State,
-    http::{Request, StatusCode, header::AUTHORIZATION},
+    http::{
+        Request, StatusCode,
+        header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL},
+    },
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -26,6 +29,12 @@ pub struct AuthState<T: AuthStore + RbacStore> {
     pub config: Arc<AuthConfig>,
     pub db: Arc<T>,
 }
+
+/// Browser WebSockets cannot set `Authorization`, so the web client puts its bearer credential in
+/// the second offered subprotocol. The first, stable protocol is negotiated back by the server and
+/// keeps the secret out of the URL, browser console, and typical access logs.
+pub const WEBSOCKET_AUTH_PROTOCOL: &str = "runinator-auth";
+pub const WEBSOCKET_TOKEN_PROTOCOL_PREFIX: &str = "runinator-token.";
 
 // manual Clone: the fields are `Arc`, so cloning never requires `T: Clone` (the derive would).
 impl<T: AuthStore + RbacStore> Clone for AuthState<T> {
@@ -93,8 +102,9 @@ fn is_public_path(path: &str) -> bool {
         )
 }
 
-/// pull a presented credential from `Authorization: Bearer …`, `X-Api-Key`, or `?token=` (the last
-/// for browser WebSocket upgrades, which cannot set headers).
+/// Pull a presented credential from standard HTTP headers, the browser WebSocket subprotocol, or
+/// the legacy `?token=` query parameter. Keeping the query fallback preserves existing non-browser
+/// clients while browser clients no longer place a bearer token in a URL.
 fn extract_credential(req: &Request<Body>) -> Option<String> {
     if let Some(value) = req
         .headers()
@@ -107,9 +117,32 @@ fn extract_credential(req: &Request<Body>) -> Option<String> {
     if let Some(value) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) {
         return Some(value.trim().to_string());
     }
+    if let Some(token) = websocket_subprotocol_credential(req) {
+        return Some(token);
+    }
     req.uri()
         .query()
         .and_then(|query| url_query_value(query, "token"))
+}
+
+fn websocket_subprotocol_credential(req: &Request<Body>) -> Option<String> {
+    let protocols = req
+        .headers()
+        .get(SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|value| value.to_str().ok())?;
+    let mut protocols = protocols.split(',').map(str::trim);
+
+    while let Some(protocol) = protocols.next() {
+        if protocol != WEBSOCKET_AUTH_PROTOCOL {
+            continue;
+        }
+        return protocols
+            .next()
+            .and_then(|token| token.strip_prefix(WEBSOCKET_TOKEN_PROTOCOL_PREFIX))
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned);
+    }
+    None
 }
 
 fn url_query_value(query: &str, key: &str) -> Option<String> {
@@ -175,4 +208,44 @@ async fn resolve_header_org<T: AuthStore + RbacStore>(
 
 fn unauthorized(message: &str) -> Response {
     (StatusCode::UNAUTHORIZED, message.to_string()).into_response()
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use axum::{
+        body::Body,
+        http::{Request, header::SEC_WEBSOCKET_PROTOCOL},
+    };
+
+    use super::extract_credential;
+
+    #[test]
+    fn extracts_a_websocket_bearer_token_from_the_auth_subprotocol_pair() {
+        let request = Request::builder()
+            .uri("/ws/events")
+            .header(
+                SEC_WEBSOCKET_PROTOCOL,
+                "runinator-auth, runinator-token.header.payload.signature",
+            )
+            .body(Body::empty())
+            .expect("request");
+
+        assert_eq!(
+            extract_credential(&request).as_deref(),
+            Some("header.payload.signature")
+        );
+    }
+
+    #[test]
+    fn continues_to_accept_legacy_websocket_query_tokens() {
+        let request = Request::builder()
+            .uri("/ws/events?token=legacy-token")
+            .body(Body::empty())
+            .expect("request");
+
+        assert_eq!(
+            extract_credential(&request).as_deref(),
+            Some("legacy-token")
+        );
+    }
 }

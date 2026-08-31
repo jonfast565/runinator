@@ -4,7 +4,7 @@ import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import type { WorkflowRunDetail } from "../../core/domain/models";
 import { isTerminalWorkflowRunStatus } from "../../core/utils/status";
-import { buildWebSocketUrl } from "../../core/utils/websocket";
+import { buildWebSocketProtocols, buildWebSocketUrl } from "../../core/utils/websocket";
 import { ReconnectBackoff } from "../../core/realtime/reconnect-backoff";
 
 interface RunStreamHandle {
@@ -37,7 +37,10 @@ export function useWorkflowRunStream() {
       handle.reconnectTimer = null;
     }
 
-    handle.socket?.close();
+    if (handle.socket?.readyState === WebSocket.OPEN) {
+      handle.socket.close();
+    }
+
     handle.socket = null;
     sockets.delete(runId);
   }
@@ -74,11 +77,15 @@ export function useWorkflowRunStream() {
     }
 
     const myConnectionId = ++handle.connectionId;
-    const socket = new WebSocket(buildWebSocketUrl(app.serviceUrl, `/ws/workflow-runs/${runId}`));
+    const socket = new WebSocket(
+      buildWebSocketUrl(app.serviceUrl, `/ws/workflow-runs/${runId}`),
+      buildWebSocketProtocols(),
+    );
     handle.socket = socket;
 
     socket.onopen = () => {
       if (handle.disposed || handle.connectionId !== myConnectionId) {
+        socket.close();
         return;
       }
 
@@ -120,7 +127,10 @@ export function useWorkflowRunStream() {
       }
 
       console.info("[command-center] workflow run stream error", { runId, event });
-      socket.close();
+
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
     };
 
     socket.onclose = () => {

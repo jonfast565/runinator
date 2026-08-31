@@ -1,4 +1,4 @@
-import { buildWebSocketUrl } from "./websocket-url";
+import { buildWebSocketProtocols, buildWebSocketUrl } from "./websocket-url";
 import type { EventStreamRouter, ServerEvent } from "./event-router";
 import { ReconnectBackoff } from "./reconnect-backoff";
 
@@ -38,18 +38,27 @@ export class EventStreamClient {
     const currentConnection = ++this.connectionId;
     this.options.onStateChange("connecting");
     const url = buildWebSocketUrl(serviceUrl, "/ws/events");
-    this.ws = new WebSocket(url);
+    const socket = new WebSocket(url, buildWebSocketProtocols());
+    this.ws = socket;
     this.connectTimer = setTimeout(() => {
       if (currentConnection !== this.connectionId) {
         return;
       }
 
-      this.ws?.close();
+      // `close()` during CONNECTING produces a noisy browser error. Invalidate this attempt and
+      // let a late upgrade close itself in `onopen`, where closing is intentional and quiet.
+      this.connectionId += 1;
+
+      if (this.ws === socket) {
+        this.ws = null;
+      }
+
       this.startFallback();
     }, CONNECT_TIMEOUT);
 
     this.ws.onopen = () => {
       if (currentConnection !== this.connectionId) {
+        socket.close();
         return;
       }
 
@@ -91,7 +100,10 @@ export class EventStreamClient {
       }
 
       this.clearConnectTimer();
-      this.ws?.close();
+
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
     };
   }
 
@@ -100,7 +112,11 @@ export class EventStreamClient {
     this.clearReconnectTimer();
     this.clearConnectTimer();
     this.backoff.reset();
-    this.ws?.close();
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.close();
+    }
+
     this.ws = null;
     this.stopFallback();
     this.options.onStateChange("disconnected");

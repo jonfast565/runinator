@@ -132,8 +132,8 @@ onMounted(async () => {
 
     if (baseUrl) {
       // Publish the auth token before advertising the service URL. The event stream connects the
-      // moment serviceUrl is set, and a browser WebSocket can only present its token via ?token=.
-      // initializing auth first means that first connect already carries the token instead of 401ing
+      // moment serviceUrl is set and presents the token in its WebSocket auth subprotocol.
+      // Initializing auth first means that first connect already authenticates instead of 401ing
       // and flapping into fallback.
       await auth.init();
       app.setServiceUrl(baseUrl);

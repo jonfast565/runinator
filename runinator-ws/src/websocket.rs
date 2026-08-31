@@ -30,6 +30,7 @@ use crate::models;
 use crate::openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy};
 use crate::repository;
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::auth::WEBSOCKET_AUTH_PROTOCOL;
 
 fn event_scope_visible(ctx: &AuthContext, org_id: Option<Uuid>) -> bool {
     let scope = org_id
@@ -80,7 +81,7 @@ pub(crate) async fn ws_events(
     }
     log::info!("WebSocket upgrade request for /ws/events");
     let mut rx = events.subscribe();
-    ws.on_upgrade(move |socket| async move {
+    ws.protocols([WEBSOCKET_AUTH_PROTOCOL]).on_upgrade(move |socket| async move {
         let _connection = crate::metrics::websocket_connected("events");
         log::info!("WebSocket connection established for /ws/events");
         let (mut tx, mut rx_ws) = socket.split();
@@ -153,7 +154,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
         return reply.into_response();
     }
     log::info!("WebSocket upgrade request for /ws/workflow-runs/{}", run_id);
-    ws.on_upgrade(move |socket| async move {
+    ws.protocols([WEBSOCKET_AUTH_PROTOCOL]).on_upgrade(move |socket| async move {
         let _connection = crate::metrics::websocket_connected("workflow_run");
         log::info!(
             "WebSocket connection established for /ws/workflow-runs/{}",
@@ -264,7 +265,7 @@ fn upgrade_broker_relay<T: DatabaseImpl>(
     relay_role: RelayRole,
 ) -> Response {
     log::info!("WebSocket upgrade request for broker relay as {relay_role:?}");
-    ws.on_upgrade(move |socket| async move {
+    ws.protocols([WEBSOCKET_AUTH_PROTOCOL]).on_upgrade(move |socket| async move {
         let _connection = crate::metrics::websocket_connected("broker_relay");
         log::info!("WebSocket connection established for broker relay as {relay_role:?}");
         let (tx, mut rx_ws) = socket.split();

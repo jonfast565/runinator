@@ -13,15 +13,21 @@ const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
 
 class MockWebSocket {
   static sockets: MockWebSocket[] = [];
+  static OPEN = 1;
+  readyState = 0;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
   close = vi.fn(() => {
+    this.readyState = 3;
     this.onclose?.();
   });
 
-  constructor(public readonly url: string) {
+  constructor(
+    public readonly url: string,
+    public readonly protocols: string[] = [],
+  ) {
     MockWebSocket.sockets.push(this);
   }
 }
@@ -87,10 +93,14 @@ describe("useWorkflowRunStream", () => {
     await nextTick();
 
     expect(MockWebSocket.sockets).toHaveLength(2);
-    expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
+    expect(MockWebSocket.sockets[0].close).not.toHaveBeenCalled();
     expect(MockWebSocket.sockets[1].url).toBe(
-      `ws://127.0.0.1:8080/ws/workflow-runs/${RUN_ID}?token=org-token-2`,
+      `ws://127.0.0.1:8080/ws/workflow-runs/${RUN_ID}`,
     );
+    expect(MockWebSocket.sockets[1].protocols).toEqual([
+      "runinator-auth",
+      "runinator-token.org-token-2",
+    ]);
     scope.stop();
   });
 });

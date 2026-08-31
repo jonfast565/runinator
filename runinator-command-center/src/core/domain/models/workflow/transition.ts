@@ -1,4 +1,4 @@
-// one edge walked by a workflow run, derived from the node-run chain (`prev_node_run_id`).
+// One edge walked by a workflow run, derived from the immutable VM journal.
 // `from_node` is null for the run's first node.
 export interface NodeTransition {
   from_node: string | null;

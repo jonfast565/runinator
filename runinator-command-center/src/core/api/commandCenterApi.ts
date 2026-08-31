@@ -460,7 +460,7 @@ export async function fetchWorkflowVmCursors(workflowRunId: string) {
   return command<WorkflowVmCursor[]>("fetch_workflow_vm_cursors", { workflowRunId });
 }
 
-// the edges a single run actually walked, in order, reconstructed from the node-run chain.
+// The edges a single run actually walked, in order, reconstructed from the immutable VM journal.
 export async function fetchWorkflowRunTransitions(workflowRunId: string) {
   return command<NodeTransition[]>("fetch_workflow_run_transitions", { workflowRunId });
 }

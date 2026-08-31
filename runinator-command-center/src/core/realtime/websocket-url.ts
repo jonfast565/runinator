@@ -1,1 +1,1 @@
-export { buildWebSocketUrl } from "../utils/websocket";
+export { buildWebSocketProtocols, buildWebSocketUrl } from "../utils/websocket";

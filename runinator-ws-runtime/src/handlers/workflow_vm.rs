@@ -3,7 +3,10 @@
 //! These intentionally expose durable continuations, effects, and journal records directly.
 //! A VM-backed run must never reconstruct its history from legacy node-run rows.
 
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use axum::{
     Extension, Json,
@@ -17,12 +20,15 @@ use runinator_comm::ControlCommand;
 use runinator_engine::services::WorkflowFiles;
 use runinator_models::{
     auth::{AuthContext, Permission},
+    orchestration::{NodeTransition, NodeTransitionStat},
     runs::ProviderTerminalControl,
     validation::{LONG_TEXT_MAX, Validate, ValidationError, optional_text},
     value::Value,
     web::TaskResponse,
     workflow_vm::WorkflowVmCursor,
-    workflow_vm::{WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry},
+    workflow_vm::{
+        WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry, WorkflowJournalRecord,
+    },
 };
 use runinator_store::{
     RuntimeStore,
@@ -275,10 +281,16 @@ fn legacy_effect_call_site_matches(
 #[cfg(test)]
 mod tests {
     use runinator_models::{
-        value::Value, workflow_vm::WorkflowEffectRequest, workflows::WorkflowRetry,
+        value::Value,
+        workflow_vm::{
+            WORKFLOW_JOURNAL_VERSION, WorkflowEffectRequest, WorkflowJournalEntry,
+            WorkflowJournalRecord,
+        },
+        workflows::WorkflowRetry,
     };
+    use uuid::Uuid;
 
-    use super::legacy_effect_call_site_matches;
+    use super::{journal_transitions, legacy_effect_call_site_matches, node_transition_stats};
 
     fn action(input: Value) -> WorkflowEffectRequest {
         WorkflowEffectRequest::Action {
@@ -315,6 +327,54 @@ mod tests {
         *provider = "git".into();
 
         assert!(!legacy_effect_call_site_matches(&compiled, &executed));
+    }
+
+    fn entered_node(
+        id: u128,
+        workflow_run_id: Uuid,
+        continuation_id: Uuid,
+        sequence: u64,
+        node_id: &str,
+        created_at: i64,
+    ) -> WorkflowJournalRecord {
+        WorkflowJournalRecord {
+            version: WORKFLOW_JOURNAL_VERSION,
+            id: Uuid::from_u128(id),
+            workflow_run_id,
+            sequence,
+            continuation_id: Some(continuation_id),
+            effect_id: None,
+            entry: WorkflowJournalEntry::NodeEntered {
+                continuation_id,
+                node_id: node_id.to_owned(),
+            },
+            created_at,
+        }
+    }
+
+    #[test]
+    fn transition_projection_keeps_parallel_continuations_separate() {
+        let workflow_run_id = Uuid::from_u128(100);
+        let primary = Uuid::from_u128(101);
+        let branch = Uuid::from_u128(102);
+        let records = vec![
+            entered_node(1, workflow_run_id, primary, 1, "start", 10),
+            entered_node(2, workflow_run_id, branch, 2, "side", 11),
+            entered_node(3, workflow_run_id, primary, 3, "finish", 12),
+        ];
+
+        let transitions = journal_transitions(records.clone());
+        assert_eq!(transitions.len(), 3);
+        assert_eq!(transitions[0].from_node, None);
+        assert_eq!(transitions[1].from_node, None);
+        assert_eq!(transitions[2].from_node.as_deref(), Some("start"));
+        assert_eq!(transitions[2].to_node, "finish");
+
+        let stats = node_transition_stats(records, "start");
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].to_node, "finish");
+        assert_eq!(stats[0].count, 1);
+        assert_eq!(stats[0].last_at.timestamp(), 12);
     }
 }
 
@@ -586,6 +646,107 @@ pub async fn list_journal<T: AuthorizationStore + RuntimeStore + WorkflowVmStore
     }
 }
 
+/// Project the graph edges a VM run took from the durable `NodeEntered` journal events. The
+/// journal sequence is global to the run, while the predecessor must remain per continuation so
+/// interleaved parallel branches never manufacture cross-branch edges.
+fn journal_transitions(records: Vec<WorkflowJournalRecord>) -> Vec<NodeTransition> {
+    let mut previous_node_by_continuation = HashMap::new();
+    let mut transitions = Vec::new();
+
+    for record in records {
+        let WorkflowJournalEntry::NodeEntered {
+            continuation_id,
+            node_id,
+        } = record.entry
+        else {
+            continue;
+        };
+        let Some(at) = chrono::DateTime::from_timestamp(record.created_at, 0) else {
+            continue;
+        };
+        let from_node = previous_node_by_continuation.insert(continuation_id, node_id.clone());
+        transitions.push(NodeTransition {
+            from_node,
+            to_node: node_id,
+            reason: None,
+            // The immutable journal id is the durable identity of this transition. Keep the
+            // historical wire field name until a versioned client contract can rename it.
+            node_run_id: record.id,
+            at,
+        });
+    }
+
+    transitions
+}
+
+fn node_transition_stats(
+    records: Vec<WorkflowJournalRecord>,
+    node_id: &str,
+) -> Vec<NodeTransitionStat> {
+    let mut stats = BTreeMap::<String, NodeTransitionStat>::new();
+
+    for transition in journal_transitions(records) {
+        if transition.from_node.as_deref() != Some(node_id) {
+            continue;
+        }
+        let entry = stats
+            .entry(transition.to_node.clone())
+            .or_insert_with(|| NodeTransitionStat {
+                from_node: node_id.to_owned(),
+                to_node: transition.to_node.clone(),
+                count: 0,
+                last_reason: None,
+                last_at: transition.at,
+            });
+        entry.count += 1;
+        if transition.at >= entry.last_at {
+            entry.last_at = transition.at;
+            entry.last_reason = transition.reason;
+        }
+    }
+
+    stats.into_values().collect()
+}
+
+pub async fn list_run_transitions<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = authorize_run(db.as_ref(), &ctx, workflow_run_id).await {
+        return reply;
+    }
+    match db.fetch_workflow_journal(workflow_run_id).await {
+        Ok(records) => (
+            StatusCode::OK,
+            Json(ApiResponse::NodeTransitions(journal_transitions(records))),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn list_node_transitions<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((workflow_id, node_id)): Path<(Uuid, String)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, Permission::View)
+        .await
+    {
+        return reply;
+    }
+    match db.fetch_workflow_journals_for_workflow(workflow_id).await {
+        Ok(records) => (
+            StatusCode::OK,
+            Json(ApiResponse::NodeTransitionStats(node_transition_stats(
+                records, &node_id,
+            ))),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub async fn list_cursors<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -651,6 +812,14 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore + FileStore
         .route(
             "/workflow_runs/{id}/journal",
             get(list_journal::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/transitions",
+            get(list_run_transitions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/nodes/{node_id}/transitions",
+            get(list_node_transitions::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/cursors",
@@ -733,6 +902,32 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "journal",
+        Example::WorkflowRun,
+    ),
+    endpoint(
+        "get",
+        "/workflow_runs/{id}/transitions",
+        "Workflow VM",
+        "Read run transition path",
+        "Projects the graph edges a workflow run actually traversed from its immutable VM journal.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow run transitions",
+        Example::WorkflowRun,
+    ),
+    endpoint(
+        "get",
+        "/workflows/{id}/nodes/{node_id}/transitions",
+        "Workflow VM",
+        "Read node transition statistics",
+        "Aggregates the outgoing graph edges observed from one workflow node across its workflow runs.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow node transition statistics",
         Example::WorkflowRun,
     ),
     endpoint(

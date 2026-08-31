@@ -10,15 +10,21 @@ import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
 
 class MockWebSocket {
   static sockets: MockWebSocket[] = [];
+  static OPEN = 1;
+  readyState = 0;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
   close = vi.fn(() => {
+    this.readyState = 3;
     this.onclose?.();
   });
 
-  constructor(public readonly url: string) {
+  constructor(
+    public readonly url: string,
+    public readonly protocols: string[] = [],
+  ) {
     MockWebSocket.sockets.push(this);
   }
 }
@@ -59,7 +65,12 @@ describe("useEventStream", () => {
     vi.advanceTimersByTime(5000);
 
     expect(app.eventStreamState).toBe("fallback");
-    expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
+    // Leaving a CONNECTING socket alone avoids Chrome's "closed before established" error. A
+    // delayed upgrade is invalidated and then closed safely from its stale `onopen` callback.
+    expect(MockWebSocket.sockets[0].close).not.toHaveBeenCalled();
+    MockWebSocket.sockets[0].readyState = MockWebSocket.OPEN;
+    MockWebSocket.sockets[0].onopen?.();
+    expect(MockWebSocket.sockets[0].close).toHaveBeenCalledTimes(1);
     scope.stop();
   });
 
@@ -101,15 +112,19 @@ describe("useEventStream", () => {
     await nextTick();
 
     expect(MockWebSocket.sockets).toHaveLength(2);
-    expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
-    expect(MockWebSocket.sockets[1].url).toBe("ws://127.0.0.1:8080/ws/events?token=org-token-2");
+    expect(MockWebSocket.sockets[0].close).not.toHaveBeenCalled();
+    expect(MockWebSocket.sockets[1].url).toBe("ws://127.0.0.1:8080/ws/events");
+    expect(MockWebSocket.sockets[1].protocols).toEqual([
+      "runinator-auth",
+      "runinator-token.org-token-2",
+    ]);
     scope.stop();
   });
 
   it("does not open a socket while auth is required but unauthenticated", async () => {
     const app = useAppStore();
     const auth = useAuthStore();
-    // simulate an enabled-but-logged-out backend: a browser WS would only 401 on a ?token=-less connect.
+    // simulate an enabled-but-logged-out backend: no socket should be opened until it can offer a token.
     authService.resetForTests();
     authService.setState((state) => ({ ...state, required: true, authenticated: false }));
     app.setServiceUrl("http://127.0.0.1:8080/");
@@ -133,7 +148,11 @@ describe("useEventStream", () => {
     await nextTick();
 
     expect(MockWebSocket.sockets).toHaveLength(1);
-    expect(MockWebSocket.sockets[0].url).toBe("ws://127.0.0.1:8080/ws/events?token=org-token-9");
+    expect(MockWebSocket.sockets[0].url).toBe("ws://127.0.0.1:8080/ws/events");
+    expect(MockWebSocket.sockets[0].protocols).toEqual([
+      "runinator-auth",
+      "runinator-token.org-token-9",
+    ]);
     scope.stop();
   });
 

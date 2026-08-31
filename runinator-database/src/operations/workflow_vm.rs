@@ -682,6 +682,21 @@ where
             .collect()
     }
 
+    async fn fetch_workflow_journals_for_workflow(
+        &self,
+        workflow_id: Uuid,
+    ) -> Result<Vec<WorkflowJournalRecord>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT journal.id AS id, journal.version AS version, journal.workflow_run_id AS workflow_run_id, journal.sequence AS sequence, journal.continuation_id AS continuation_id, journal.effect_id AS effect_id, journal.entry_json AS entry_json, journal.created_at AS created_at FROM workflow_journal_entries AS journal INNER JOIN workflow_runs AS run ON run.id = journal.workflow_run_id WHERE run.workflow_id = ? ORDER BY journal.workflow_run_id, journal.sequence",
+        ))
+        .bind(workflow_id)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(mappers::row_to_workflow_journal_record)
+            .collect()
+    }
+
     async fn settle_workflow_vm_run(
         &self,
         workflow_run_id: Uuid,

@@ -117,6 +117,14 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkflowJournalRecord>, SendableError>> + Send;
 
+    /// Immutable VM journal records for every run of one workflow definition. Records are grouped
+    /// by run and ordered by their durable per-run sequence so callers can reconstruct each
+    /// continuation's graph path without consulting legacy node-run rows.
+    fn fetch_workflow_journals_for_workflow(
+        &self,
+        workflow_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkflowJournalRecord>, SendableError>> + Send;
+
     /// Settle the public run after all of its continuations are terminal.
     fn settle_workflow_vm_run(
         &self,

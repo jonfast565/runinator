@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { setHttpAuthToken } from "../../api/httpRuntime";
-import { buildWebSocketUrl } from "../websocket";
+import { buildWebSocketProtocols, buildWebSocketUrl } from "../websocket";
 
 describe("websocket url utils", () => {
   beforeEach(() => {
@@ -25,11 +25,12 @@ describe("websocket url utils", () => {
     );
   });
 
-  it("appends the access token as a query param for browser websocket auth", () => {
+  it("offers the access token through a dedicated WebSocket subprotocol", () => {
     setHttpAuthToken("token-123");
 
     expect(buildWebSocketUrl("https://example.test/api/", "/ws/events")).toBe(
-      "wss://example.test/api/ws/events?token=token-123",
+      "wss://example.test/api/ws/events",
     );
+    expect(buildWebSocketProtocols()).toEqual(["runinator-auth", "runinator-token.token-123"]);
   });
 });

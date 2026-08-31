@@ -127,10 +127,10 @@ export function useEventStream() {
   });
 
   function shouldConnect(): boolean {
-    // a browser WebSocket authenticates only via the ?token= query, so when auth is enabled don't
-    // open a socket until we're authenticated — otherwise a logged-out or expired session flaps the
-    // stream in an endless tokenless-401 reconnect loop. when auth is disabled `required` is false,
-    // so this is always allowed.
+    // A browser WebSocket needs the current token in its offered auth subprotocol, so when auth is
+    // enabled don't open a socket until we're authenticated — otherwise a logged-out or expired
+    // session flaps the stream in an endless tokenless-401 reconnect loop. When auth is disabled
+    // `required` is false, so this is always allowed.
     return Boolean(app.serviceUrl) && (!auth.required || auth.authenticated);
   }
 
