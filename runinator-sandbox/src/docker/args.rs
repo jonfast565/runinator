@@ -83,11 +83,20 @@ fn limit_args(limits: &SandboxLimits) -> Vec<String> {
     }
     if limits.read_only_root {
         args.push("--read-only".into());
-        // a read-only root with no scratch space breaks nearly every interpreter, so the tmpfs is
-        // part of the same decision rather than an independent option.
+    }
+    if limits.read_only_root || limits.tmpfs_mb.is_some() {
+        // A read-only root requires scratch space. Callers with a writable root may also bound
+        // `/tmp` explicitly, which is useful for compiler-heavy foreign-language runtimes.
         let tmpfs_mb = limits.tmpfs_mb.unwrap_or(64);
         args.push("--tmpfs".into());
-        args.push(format!("{TMPFS_TARGET}:rw,noexec,nosuid,size={tmpfs_mb}m"));
+        let permissions = if limits.read_only_root {
+            "rw,noexec,nosuid"
+        } else {
+            // Foreign-language compilers emit their executable into `/tmp`; their compatible
+            // writable-root profile therefore needs an executable but still bounded tmpfs.
+            "rw,exec,nosuid"
+        };
+        args.push(format!("{TMPFS_TARGET}:{permissions},size={tmpfs_mb}m"));
     }
     args
 }

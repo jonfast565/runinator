@@ -28,8 +28,13 @@ export const useAdminSettingsStore = defineStore("adminSettings", () => {
     clear: () => { adminSettingsService.clear(); },
     updateLanguageField: (
       language: string,
-      field: "image" | "setup_script",
+      field: "image" | "setup_script" | "environment_text" | "executable" | "build_args_text" | "run_args_text",
       value: string,
     ) => { adminSettingsService.updateLanguageField(language, field, value); },
+    updateLanguageLimit: (
+      language: string,
+      field: "memory_mb" | "cpu_millis" | "pids" | "tmpfs_mb" | "max_output_bytes",
+      value: number,
+    ) => { adminSettingsService.updateLanguageLimit(language, field, value); },
   };
 });

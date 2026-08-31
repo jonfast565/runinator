@@ -28,7 +28,7 @@ ghc -O2 -Wall \
     /work/Main.hs \
     /work/Foreign.hs \
     -o /tmp/runinator_foreign
-/tmp/runinator_foreign
+/tmp/runinator_foreign "$@"
 "#
     }
 

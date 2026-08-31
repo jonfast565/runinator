@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::StdProvider;
 use crate::code::{parse_code_output, validate_code_output};
-use crate::foreign_languages::adapter_for;
+use crate::foreign_languages::{ToolchainConfig, adapter_for};
 
 const PYTHON_RETURN_SOURCE: &str = r#"def main(context):
     return {"answer": context["input"]["value"] + 1}
@@ -420,7 +420,7 @@ fn code_language_specs_support_restored_languages_and_aliases() {
             "swift",
             "swift",
             "foreign.swift",
-            "swiftc -module-cache-path /tmp/runinator-module-cache /work/foreign.swift /work/main.swift -o /tmp/runinator_foreign && /tmp/runinator_foreign",
+            "bash /work/runinator_runner.sh",
         ),
         (
             "powershell",
@@ -485,6 +485,90 @@ fn code_language_specs_support_restored_languages_and_aliases() {
         assert_eq!(adapter.execute(), command, "{input}");
         assert!(!adapter.runner_source().trim().is_empty(), "{input}");
     }
+}
+
+#[test]
+fn toolchain_overrides_are_quoted_and_keep_adapter_operands() {
+    let python = adapter_for("python").unwrap();
+    let command = python.rendered_execute(&ToolchainConfig {
+        executable: "/opt/custom python".into(),
+        build_args: vec!["-X".into(), "value with spaces".into()],
+        run_args: vec!["argument's value".into()],
+    });
+    assert_eq!(
+        command,
+        "'/opt/custom python' '-X' 'value with spaces' /work/runinator_runner.py 'argument'\"'\"'s value'"
+    );
+}
+
+#[test]
+fn swift_compiler_override_stays_in_runner_and_binary_is_final_command() {
+    let swift = adapter_for("swift").unwrap();
+    let toolchain = ToolchainConfig {
+        executable: "/opt/swift toolchain/swiftc".into(),
+        build_args: vec!["-Onone".into()],
+        run_args: vec!["hello world".into()],
+    };
+    let runner = swift.rendered_runner_source(&toolchain);
+    assert!(runner.contains("'/opt/swift toolchain/swiftc' '-Onone' -module-cache-path"));
+    assert!(runner.contains("/tmp/runinator_foreign \"$@\""));
+    assert_eq!(
+        swift.rendered_execute(&toolchain),
+        "bash /work/runinator_runner.sh 'hello world'"
+    );
+}
+
+#[test]
+fn build_arguments_follow_tool_subcommands() {
+    let toolchain = ToolchainConfig {
+        executable: "/opt/dotnet".into(),
+        build_args: vec!["--no-restore".into()],
+        run_args: vec!["application argument".into()],
+    };
+    assert_eq!(
+        adapter_for("csharp").unwrap().rendered_execute(&toolchain),
+        "'/opt/dotnet' run '--no-restore' --project /work/runinator.csproj --configuration Release --artifacts-path /tmp/runinator-csharp-artifacts 'application argument'"
+    );
+
+    let go = adapter_for("go")
+        .unwrap()
+        .rendered_execute(&ToolchainConfig {
+            executable: "go".into(),
+            build_args: vec!["-tags=integration".into()],
+            run_args: Vec::new(),
+        });
+    assert_eq!(
+        go,
+        "'go' run '-tags=integration' /work/runinator_runner.go /work/foreign.go"
+    );
+}
+
+#[test]
+fn code_rejects_reserved_environment_variables_before_docker() {
+    let provider = StdProvider;
+    let err = provider
+        .execute_service(
+            request_for(
+                "code",
+                json!({
+                    "language": "python",
+                    "source": "def main(context): return context",
+                    "runtime": {
+                        "image": "python:3.12",
+                        "setup_script": "",
+                        "environment": { "RUNINATOR_OUTPUT": "/tmp/stolen" }
+                    },
+                    "context": {}
+                }),
+            ),
+            None,
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("reserved variable 'RUNINATOR_OUTPUT'")
+    );
 }
 
 #[test]
@@ -758,7 +842,13 @@ fn run_command_language_contract(language: &str, source: &str) -> runinator_mode
     let context_path = dir.join("context.json");
     let output_path = dir.join("output.json");
     fs::write(dir.join(adapter.source_filename()), source).unwrap();
-    fs::write(dir.join(adapter.runner_filename()), adapter.runner_source()).unwrap();
+    fs::write(
+        dir.join(adapter.runner_filename()),
+        adapter
+            .runner_source()
+            .replace("/work", &dir.to_string_lossy()),
+    )
+    .unwrap();
     for (filename, contents) in adapter.additional_files() {
         fs::write(dir.join(filename), contents).unwrap();
     }
@@ -875,6 +965,32 @@ fn python_foreign_compute_returns_output() {
             CancellationToken::new(),
         )
         .expect("python foreign compute");
+
+    assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and the swift:6.3 image"]
+fn swift_foreign_compute_compiles_then_returns_output() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "swift",
+        "source": r#"import Foundation
+
+func main(_ context: Any) throws -> Any {
+    let input = (context as! [String: Any])["input"] as! [String: Any]
+    return ["answer": (input["value"] as! NSNumber).intValue + 1]
+}
+"#,
+        "runtime": { "image": "swift:6.3", "setup_script": "" },
+        "context": { "input": { "value": 41 } }
+    });
+    let mut request = request_for("code", parameters);
+    request.timeout_secs = 180;
+
+    let result = provider
+        .execute_service(request, None, CancellationToken::new())
+        .expect("Swift foreign compute");
 
     assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
 }

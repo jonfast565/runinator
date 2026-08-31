@@ -33,7 +33,23 @@ describe("admin settings store", () => {
       scope: "foreign_languages",
       name: "python",
       kind: "config",
-      value: { image: "python:3.13", setup_script: "pip install requests" },
+      value: {
+        image: "python:3.13",
+        setup_script: "pip install requests",
+        environment: { PYTHONUNBUFFERED: "1" },
+        toolchain: {
+          executable: "/opt/python",
+          build_args: ["-X", "dev"],
+          run_args: ["--verbose"],
+        },
+        limits: {
+          memory_mb: 4096,
+          cpu_millis: 3000,
+          pids: 300,
+          tmpfs_mb: 768,
+          max_output_bytes: 2097152,
+        },
+      },
     });
     vi.mocked(saveForeignLanguageRuntime).mockResolvedValue({
       success: true,
@@ -146,6 +162,10 @@ describe("admin settings store", () => {
     const python = settings.languages.find((runtime) => runtime.language === "python");
     expect(python?.image).toBe("python:3.13");
     expect(python?.setup_script).toBe("pip install requests");
+    expect(python?.environment_text).toBe("PYTHONUNBUFFERED=1");
+    expect(python?.executable).toBe("/opt/python");
+    expect(python?.build_args_text).toBe("-X\ndev");
+    expect(python?.memory_mb).toBe(4096);
 
     if (!python) {
       throw new Error("missing python runtime");
@@ -157,6 +177,19 @@ describe("admin settings store", () => {
     expect(saveForeignLanguageRuntime).toHaveBeenCalledWith("python", {
       image: "python:3.13-slim",
       setup_script: "pip install requests",
+      environment: { PYTHONUNBUFFERED: "1" },
+      toolchain: {
+        executable: "/opt/python",
+        build_args: ["-X", "dev"],
+        run_args: ["--verbose"],
+      },
+      limits: {
+        memory_mb: 4096,
+        cpu_millis: 3000,
+        pids: 300,
+        tmpfs_mb: 768,
+        max_output_bytes: 2097152,
+      },
     });
   });
 

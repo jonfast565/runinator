@@ -23,7 +23,7 @@ impl ForeignLanguageAdapter for Fortran {
 # from stdin and writes exactly one JSON value to stdout. Diagnostics belong on stderr.
 runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gfortran -std=f2018 -O2 -Wall -Wextra -pedantic "${runner_dir}/foreign.f90" -o /tmp/runinator_foreign
-/tmp/runinator_foreign < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
+/tmp/runinator_foreign "$@" < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
 "#
     }
 

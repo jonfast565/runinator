@@ -123,6 +123,19 @@ export interface WorkflowRexRapSaveRequest {
 export interface ForeignLanguageRuntimeConfig {
   image: string;
   setup_script: string;
+  environment?: Record<string, string>;
+  toolchain?: {
+    executable: string;
+    build_args: string[];
+    run_args: string[];
+  };
+  limits?: {
+    memory_mb: number;
+    cpu_millis: number;
+    pids: number;
+    tmpfs_mb: number;
+    max_output_bytes: number;
+  };
 }
 
 const FOREIGN_LANGUAGE_SCOPE = "foreign_languages";

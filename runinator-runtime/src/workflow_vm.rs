@@ -1134,46 +1134,61 @@ struct ForeignLanguageRuntime {
     canonical: &'static str,
     image: &'static str,
     setup_script: &'static str,
+    executable: &'static str,
 }
 
 fn foreign_language_runtime(language: &str) -> Option<ForeignLanguageRuntime> {
-    let (canonical, image, setup_script) = match language {
-        "python" | "py" => ("python", "python:3.12", ""),
-        "javascript" | "js" | "node" => ("javascript", "node:22", ""),
-        "bash" | "sh" => ("bash", "bash:5.2", ""),
-        "commonlisp" | "common-lisp" | "common_lisp" | "lisp" | "cl" | "sbcl" => (
-            "commonlisp",
+    use runinator_models::foreign_languages::ForeignLanguage;
+    let language = ForeignLanguage::parse(language)?;
+    let (image, setup_script, executable) = match language {
+        ForeignLanguage::Python => ("python:3.12", "", "python"),
+        ForeignLanguage::JavaScript => ("node:22", "", "node"),
+        ForeignLanguage::Bash => ("bash:5.2", "", "bash"),
+        ForeignLanguage::CommonLisp => (
             "clfoundation/sbcl:2.6.1-bookworm",
             COMMON_LISP_SETUP,
+            "sbcl",
         ),
-        "cobol" | "cob" | "gnucobol" => ("cobol", "debian:bookworm-slim", COBOL_SETUP),
-        "c" | "gcc" | "c17" => ("c", "debian:bookworm-slim", C_SETUP),
-        "cpp" | "c++" | "cxx" | "cplusplus" | "g++" => ("cpp", "debian:bookworm-slim", CPP_SETUP),
-        "fortran" | "f90" | "f95" | "gfortran" => {
-            ("fortran", "debian:bookworm-slim", FORTRAN_SETUP)
+        ForeignLanguage::Cobol => ("debian:bookworm-slim", COBOL_SETUP, "cobc"),
+        ForeignLanguage::C => ("debian:bookworm-slim", C_SETUP, "gcc"),
+        ForeignLanguage::Cpp => ("debian:bookworm-slim", CPP_SETUP, "g++"),
+        ForeignLanguage::Fortran => ("debian:bookworm-slim", FORTRAN_SETUP, "gfortran"),
+        ForeignLanguage::Ada => ("debian:bookworm-slim", ADA_SETUP, "gnatmake"),
+        ForeignLanguage::Haskell => ("debian:bookworm-slim", HASKELL_SETUP, "ghc"),
+        ForeignLanguage::Ocaml => ("debian:bookworm-slim", OCAML_SETUP, "ocamlfind"),
+        ForeignLanguage::Erlang => ("debian:bookworm-slim", ERLANG_SETUP, "escript"),
+        ForeignLanguage::Ruby => ("ruby:3.3", "", "ruby"),
+        ForeignLanguage::Perl => ("perl:5.40", "", "perl"),
+        ForeignLanguage::Php => ("php:8.3-cli", "", "php"),
+        ForeignLanguage::Go => ("golang:1.26", "", "go"),
+        ForeignLanguage::Swift => ("swift:6.3", "", "swiftc"),
+        ForeignLanguage::PowerShell => ("mcr.microsoft.com/dotnet/sdk:8.0", "", "pwsh"),
+        ForeignLanguage::CSharp | ForeignLanguage::FSharp | ForeignLanguage::VbNet => {
+            ("mcr.microsoft.com/dotnet/sdk:10.0", "", "dotnet")
         }
-        "ada" | "adb" | "gnat" => ("ada", "debian:bookworm-slim", ADA_SETUP),
-        "haskell" | "hs" | "ghc" => ("haskell", "debian:bookworm-slim", HASKELL_SETUP),
-        "ocaml" | "ml" | "ocamlopt" => ("ocaml", "debian:bookworm-slim", OCAML_SETUP),
-        "erlang" | "erl" | "escript" => ("erlang", "debian:bookworm-slim", ERLANG_SETUP),
-        "ruby" | "rb" => ("ruby", "ruby:3.3", ""),
-        "perl" | "pl" => ("perl", "perl:5.40", ""),
-        "php" => ("php", "php:8.3-cli", ""),
-        "go" | "golang" => ("go", "golang:1.26", ""),
-        "swift" => ("swift", "swift:6.3", ""),
-        "powershell" | "pwsh" | "ps1" => ("powershell", "mcr.microsoft.com/dotnet/sdk:8.0", ""),
-        "csharp" | "c#" | "cs" => ("csharp", "mcr.microsoft.com/dotnet/sdk:10.0", ""),
-        "fsharp" | "f#" | "fs" => ("fsharp", "mcr.microsoft.com/dotnet/sdk:10.0", ""),
-        "vbnet" | "vb.net" | "visualbasic" | "vb" => {
-            ("vbnet", "mcr.microsoft.com/dotnet/sdk:10.0", "")
-        }
-        _ => return None,
     };
     Some(ForeignLanguageRuntime {
-        canonical,
+        canonical: language.canonical(),
         image,
         setup_script,
+        executable,
     })
+}
+
+fn merge_runtime_value(target: &mut Value, override_value: &Value) {
+    if let (Some(target), Some(override_object)) =
+        (target.as_object_mut(), override_value.as_object())
+    {
+        for (key, value) in override_object {
+            if let Some(existing) = target.get_mut(key) {
+                merge_runtime_value(existing, value);
+            } else {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        *target = override_value.clone();
+    }
 }
 
 /// Complete the authoring-time `std.code` payload at the durable effect boundary. The runtime and
@@ -1189,7 +1204,8 @@ fn enrich_foreign_code_input(mut input: Value, context: &Value) -> Result<Value,
         .unwrap_or_default();
     let runtime = foreign_language_runtime(language).ok_or_else(|| {
         format!(
-            "unsupported foreign language '{language}'; supported languages: python, javascript, bash, commonlisp, cobol, c, cpp, fortran, ada, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
+            "unsupported foreign language '{language}'; supported languages: {}",
+            runinator_models::foreign_languages::ForeignLanguage::supported_names()
         )
     })?;
     let configured = context
@@ -1197,17 +1213,31 @@ fn enrich_foreign_code_input(mut input: Value, context: &Value) -> Result<Value,
         .and_then(|config| config.get("foreign_languages"))
         .and_then(|languages| languages.get(runtime.canonical))
         .cloned();
-    let runtime_object = configured.unwrap_or_else(|| {
-        runinator_models::json!({
-            "image": runtime.image,
-            "setup_script": runtime.setup_script,
-        })
-    });
-    if !runtime_object.is_object() {
+    if configured.as_ref().is_some_and(|value| !value.is_object()) {
         return Err(format!(
             "config.foreign_languages.{} must be a runtime object",
             runtime.canonical
         ));
+    }
+    let mut runtime_object = runinator_models::json!({
+        "image": runtime.image,
+        "setup_script": runtime.setup_script,
+        "environment": {},
+        "toolchain": {
+            "executable": runtime.executable,
+            "build_args": [],
+            "run_args": [],
+        },
+        "limits": {
+            "memory_mb": 2048,
+            "cpu_millis": 2000,
+            "pids": 256,
+            "tmpfs_mb": 512,
+            "max_output_bytes": 1048576,
+        },
+    });
+    if let Some(configured) = configured {
+        merge_runtime_value(&mut runtime_object, &configured);
     }
     object.insert(
         "language".into(),
@@ -1975,6 +2005,12 @@ mod tests {
                 .unwrap()
                 .contains("gnucobol")
         );
+        assert_eq!(input["runtime"]["toolchain"]["executable"], "cobc");
+        assert_eq!(input["runtime"]["limits"]["memory_mb"], 2048);
+        assert_eq!(input["runtime"]["limits"]["cpu_millis"], 2000);
+        assert_eq!(input["runtime"]["limits"]["pids"], 256);
+        assert_eq!(input["runtime"]["limits"]["tmpfs_mb"], 512);
+        assert_eq!(input["runtime"]["limits"]["max_output_bytes"], 1048576);
         assert_eq!(input["context"]["input"]["value"], 41);
     }
 
@@ -2048,7 +2084,10 @@ mod tests {
                 "foreign_languages": {
                     "commonlisp": {
                         "image": "registry.example/runinator-sbcl:stable",
-                        "setup_script": ""
+                        "setup_script": "",
+                        "environment": { "LANG": "C.UTF-8" },
+                        "toolchain": { "run_args": ["--dynamic-space-size", "2048"] },
+                        "limits": { "memory_mb": 4096 }
                     }
                 }
             }),
@@ -2061,12 +2100,18 @@ mod tests {
         };
         assert_eq!(input["language"], "commonlisp");
         assert_eq!(
-            input["runtime"],
-            runinator_models::json!({
-                "image": "registry.example/runinator-sbcl:stable",
-                "setup_script": ""
-            })
+            input["runtime"]["image"],
+            "registry.example/runinator-sbcl:stable"
         );
+        assert_eq!(input["runtime"]["setup_script"], "");
+        assert_eq!(input["runtime"]["toolchain"]["executable"], "sbcl");
+        assert_eq!(
+            input["runtime"]["toolchain"]["run_args"][0],
+            "--dynamic-space-size"
+        );
+        assert_eq!(input["runtime"]["environment"]["LANG"], "C.UTF-8");
+        assert_eq!(input["runtime"]["limits"]["memory_mb"], 4096);
+        assert_eq!(input["runtime"]["limits"]["cpu_millis"], 2000);
     }
 
     #[test]

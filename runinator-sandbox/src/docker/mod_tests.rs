@@ -106,6 +106,22 @@ fn a_disabled_limit_emits_no_flag_at_all() {
 }
 
 #[test]
+fn writable_roots_can_still_have_a_bounded_tmp_directory() {
+    let limits = SandboxLimits {
+        read_only_root: false,
+        tmpfs_mb: Some(512),
+        ..SandboxLimits::compatible(Duration::from_secs(30))
+    };
+    let args = args::run_args(&spec().with_limits(limits), "c1");
+
+    assert!(!args.iter().any(|arg| arg == "--read-only"));
+    assert_eq!(
+        flag_value(&args, "--tmpfs"),
+        Some("/tmp:rw,exec,nosuid,size=512m")
+    );
+}
+
+#[test]
 fn output_is_truncated_rather_than_allowed_to_grow() {
     let noisy = "0123456789\n".repeat(1000);
     let handle = pump::spawn(

@@ -29,7 +29,7 @@ ocamlfind ocamlopt -package yojson -linkpkg \
     foreign.ml \
     runinator_main.ml \
     -o /tmp/runinator_foreign
-/tmp/runinator_foreign
+/tmp/runinator_foreign "$@"
 "#
     }
 

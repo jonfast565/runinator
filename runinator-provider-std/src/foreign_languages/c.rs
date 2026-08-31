@@ -23,7 +23,7 @@ impl ForeignLanguageAdapter for C {
 # and writes exactly one JSON value to stdout. Diagnostics belong on stderr.
 runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gcc -std=c17 -O2 -Wall -Wextra -Wpedantic "${runner_dir}/foreign.c" -o /tmp/runinator_foreign
-/tmp/runinator_foreign < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
+/tmp/runinator_foreign "$@" < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
 "#
     }
 

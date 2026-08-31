@@ -23,7 +23,7 @@ impl ForeignLanguageAdapter for Cobol {
 # GnuCOBOL reserves the generated C main symbol for the executable entry point.
 runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cobc -x -free -Wall "${runner_dir}/foreign.cob" -o /tmp/runinator_foreign
-/tmp/runinator_foreign < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
+/tmp/runinator_foreign "$@" < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
 "#
     }
 

@@ -287,8 +287,8 @@
                 {{ activeLanguage ? activeLanguage.label : "Foreign Languages" }}
               </h2>
               <HelpBubble label="About foreign language runtimes">
-                Configure the container image and setup script <code>std.code</code> uses to run
-                this language.
+                Configure the image, toolchain, environment, and resource envelope
+                <code>std.code</code> uses to run this language. Environment values are not secret.
               </HelpBubble>
             </header>
 
@@ -330,6 +330,63 @@
                   @input="onLanguageField('image', $event)"
                 />
               </label>
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="grid gap-1.5">
+                  <span class="text-[0.84rem] font-semibold text-fg-muted">Executable</span>
+                  <input
+                    :value="activeLanguage.executable"
+                    required
+                    :placeholder="activeLanguage.defaultExecutable"
+                    @input="onLanguageField('executable', $event)"
+                  />
+                </label>
+                <label class="grid gap-1.5">
+                  <span class="text-[0.84rem] font-semibold text-fg-muted">Environment</span>
+                  <textarea
+                    :value="activeLanguage.environment_text"
+                    class="min-h-[84px] resize-y font-mono"
+                    spellcheck="false"
+                    placeholder="NAME=value (one per line)"
+                    @input="onLanguageField('environment_text', $event)"
+                  />
+                </label>
+                <label class="grid gap-1.5">
+                  <span class="text-[0.84rem] font-semibold text-fg-muted">Build arguments</span>
+                  <textarea
+                    :value="activeLanguage.build_args_text"
+                    class="min-h-[84px] resize-y font-mono"
+                    spellcheck="false"
+                    placeholder="One exact argument per line"
+                    @input="onLanguageField('build_args_text', $event)"
+                  />
+                </label>
+                <label class="grid gap-1.5">
+                  <span class="text-[0.84rem] font-semibold text-fg-muted">Run arguments</span>
+                  <textarea
+                    :value="activeLanguage.run_args_text"
+                    class="min-h-[84px] resize-y font-mono"
+                    spellcheck="false"
+                    placeholder="One exact argument per line"
+                    @input="onLanguageField('run_args_text', $event)"
+                  />
+                </label>
+              </div>
+              <fieldset class="grid gap-3 rounded-md border border-border p-3">
+                <legend class="px-1 text-[0.84rem] font-semibold text-fg-muted">Resource limits</legend>
+                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <label v-for="limit in languageLimits" :key="limit.field" class="grid gap-1.5">
+                    <span class="text-[0.84rem] font-semibold text-fg-muted">{{ limit.label }}</span>
+                    <input
+                      :value="activeLanguage[limit.field]"
+                      type="number"
+                      min="1"
+                      step="1"
+                      required
+                      @input="onLanguageLimit(limit.field, $event)"
+                    />
+                  </label>
+                </div>
+              </fieldset>
               <label class="grid gap-1.5">
                 <span class="text-[0.84rem] font-semibold text-fg-muted">Setup script</span>
                 <textarea
@@ -453,13 +510,36 @@ function selectLanguage(language: string) {
   selectSection("languages");
 }
 
-function onLanguageField(field: "image" | "setup_script", event: Event) {
+function onLanguageField(
+  field: "image" | "setup_script" | "environment_text" | "executable" | "build_args_text" | "run_args_text",
+  event: Event,
+) {
   if (!activeLanguage.value) {
     return;
   }
 
   const target = event.target as HTMLInputElement | HTMLTextAreaElement;
   settings.updateLanguageField(activeLanguage.value.language, field, target.value);
+}
+
+const languageLimits = [
+  { field: "memory_mb", label: "Memory (MiB)" },
+  { field: "cpu_millis", label: "CPU (millicores)" },
+  { field: "pids", label: "Processes" },
+  { field: "tmpfs_mb", label: "/tmp (MiB)" },
+  { field: "max_output_bytes", label: "Output bytes / stream" },
+] as const;
+
+function onLanguageLimit(field: (typeof languageLimits)[number]["field"], event: Event) {
+  if (!activeLanguage.value) {
+    return;
+  }
+
+  settings.updateLanguageLimit(
+    activeLanguage.value.language,
+    field,
+    Number((event.target as HTMLInputElement).value),
+  );
 }
 
 function onDefaultTabChange(event: Event) {

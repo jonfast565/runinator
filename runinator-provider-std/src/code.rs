@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -19,7 +20,7 @@ use runinator_sandbox::{
 use uuid::Uuid;
 
 use crate::errors::{CODE_FAILED, INVALID_CODE};
-use crate::foreign_languages::{ForeignLanguageAdapter, adapter_for};
+use crate::foreign_languages::{ForeignLanguageAdapter, ToolchainConfig, adapter_for};
 
 const LANGUAGE_KEY: &str = "language";
 const SOURCE_KEY: &str = "source";
@@ -43,6 +44,20 @@ struct CodeRequest {
 struct CodeRuntime {
     image: String,
     setup_script: String,
+    environment: BTreeMap<String, String>,
+    executable: Option<String>,
+    build_args: Vec<String>,
+    run_args: Vec<String>,
+    limits: RuntimeLimits,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeLimits {
+    memory_mb: i64,
+    cpu_millis: i64,
+    pids: i64,
+    tmpfs_mb: i64,
+    max_output_bytes: usize,
 }
 
 struct DockerRun<'a> {
@@ -52,6 +67,8 @@ struct DockerRun<'a> {
     work_dir: &'a Path,
     context: &'a Value,
     timeout_secs: i64,
+    environment: &'a BTreeMap<String, String>,
+    limits: &'a RuntimeLimits,
 }
 
 pub(crate) fn execute_code(
@@ -61,8 +78,17 @@ pub(crate) fn execute_code(
 ) -> Result<TaskExecutionResult, SendableError> {
     let code = parse_request(request)?;
     let language = adapter_for(&code.language)?;
-    let work_dir = prepare_work_dir(request, language, &code.source, &code.runtime)?;
-    let command = run_command(language.execute());
+    let toolchain = ToolchainConfig {
+        executable: code
+            .runtime
+            .executable
+            .clone()
+            .unwrap_or_else(|| language.default_executable().to_string()),
+        build_args: code.runtime.build_args.clone(),
+        run_args: code.runtime.run_args.clone(),
+    };
+    let work_dir = prepare_work_dir(request, language, &code.source, &code.runtime, &toolchain)?;
+    let command = run_command(&language.rendered_execute(&toolchain));
     let output = run_docker(
         DockerRun {
             image: &code.runtime.image,
@@ -71,6 +97,8 @@ pub(crate) fn execute_code(
             work_dir: &work_dir,
             context: &code.context,
             timeout_secs: request.timeout_secs,
+            environment: &code.runtime.environment,
+            limits: &code.runtime.limits,
         },
         sink,
         token,
@@ -169,9 +197,124 @@ fn runtime_param(request: &ProviderExecutionRequest) -> Result<CodeRuntime, Send
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let environment = parse_environment(runtime.get("environment"))?;
+    let toolchain = optional_object(runtime.get("toolchain"), "runtime.toolchain")?;
+    let executable = toolchain
+        .and_then(|value| value.get("executable"))
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    INVALID_CODE.error("runtime.toolchain.executable must be a non-empty string")
+                })
+        })
+        .transpose()?;
+    let build_args = parse_string_array(
+        toolchain.and_then(|value| value.get("build_args")),
+        "runtime.toolchain.build_args",
+    )?;
+    let run_args = parse_string_array(
+        toolchain.and_then(|value| value.get("run_args")),
+        "runtime.toolchain.run_args",
+    )?;
+    let limits_object = optional_object(runtime.get("limits"), "runtime.limits")?;
+    let limits = RuntimeLimits {
+        memory_mb: positive_i64(limits_object, "memory_mb", 2048)?,
+        cpu_millis: positive_i64(limits_object, "cpu_millis", 2000)?,
+        pids: positive_i64(limits_object, "pids", 256)?,
+        tmpfs_mb: positive_i64(limits_object, "tmpfs_mb", 512)?,
+        max_output_bytes: positive_i64(limits_object, "max_output_bytes", 1024 * 1024)?
+            .try_into()
+            .map_err(|_| INVALID_CODE.error("runtime.limits.max_output_bytes is too large"))?,
+    };
     Ok(CodeRuntime {
         image,
         setup_script,
+        environment,
+        executable,
+        build_args,
+        run_args,
+        limits,
+    })
+}
+
+fn optional_object<'a>(
+    value: Option<&'a Value>,
+    field: &str,
+) -> Result<Option<&'a runinator_models::value::Map>, SendableError> {
+    value
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| INVALID_CODE.error(format!("{field} must be an object")))
+        })
+        .transpose()
+}
+
+fn parse_environment(value: Option<&Value>) -> Result<BTreeMap<String, String>, SendableError> {
+    let Some(environment) = optional_object(value, "runtime.environment")? else {
+        return Ok(BTreeMap::new());
+    };
+    let mut parsed = BTreeMap::new();
+    for (name, value) in environment {
+        if !valid_environment_name(name) {
+            return Err(INVALID_CODE.error(format!(
+                "runtime.environment contains invalid variable name '{name}'"
+            )));
+        }
+        if matches!(
+            name.as_str(),
+            "RUNINATOR_CONTEXT" | "RUNINATOR_OUTPUT" | "RUNINATOR_LANGUAGE"
+        ) {
+            return Err(INVALID_CODE.error(format!(
+                "runtime.environment cannot override reserved variable '{name}'"
+            )));
+        }
+        let value = value.as_str().ok_or_else(|| {
+            INVALID_CODE.error(format!("runtime.environment.{name} must be a string"))
+        })?;
+        parsed.insert(name.clone(), value.to_string());
+    }
+    Ok(parsed)
+}
+
+fn valid_environment_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
+        && chars.all(|character| matches!(character, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
+}
+
+fn parse_string_array(value: Option<&Value>, field: &str) -> Result<Vec<String>, SendableError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| INVALID_CODE.error(format!("{field} must be an array of strings")))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| INVALID_CODE.error(format!("{field} must contain only strings")))
+        })
+        .collect()
+}
+
+fn positive_i64(
+    object: Option<&runinator_models::value::Map>,
+    name: &str,
+    default: i64,
+) -> Result<i64, SendableError> {
+    let Some(value) = object.and_then(|object| object.get(name)) else {
+        return Ok(default);
+    };
+    value.as_i64().filter(|value| *value > 0).ok_or_else(|| {
+        INVALID_CODE.error(format!("runtime.limits.{name} must be a positive integer"))
     })
 }
 
@@ -190,6 +333,7 @@ fn prepare_work_dir(
     language: &dyn ForeignLanguageAdapter,
     source: &str,
     runtime: &CodeRuntime,
+    toolchain: &ToolchainConfig,
 ) -> Result<PathBuf, SendableError> {
     let base = if request.artifact_dir.is_empty() {
         std::env::temp_dir().join("runinator-std-code")
@@ -203,7 +347,7 @@ fn prepare_work_dir(
         .map_err(|err| INVALID_CODE.error(format!("failed to write code source: {err}")))?;
     fs::write(
         work_dir.join(language.runner_filename()),
-        language.runner_source(),
+        language.rendered_runner_source(toolchain),
     )
     .map_err(|err| INVALID_CODE.error(format!("failed to write code runner: {err}")))?;
     for (filename, contents) in language.additional_files() {
@@ -247,18 +391,28 @@ fn run_docker(
     fs::write(&context_path, &input)
         .map_err(|err| INVALID_CODE.error(format!("failed to write code context: {err}")))?;
 
-    let spec = ContainerSpec::new(run.image, "runinator-code")
+    let limits = SandboxLimits {
+        memory_mb: Some(run.limits.memory_mb),
+        cpu_millis: Some(run.limits.cpu_millis),
+        pids: Some(run.limits.pids),
+        tmpfs_mb: Some(run.limits.tmpfs_mb),
+        max_output_bytes: run.limits.max_output_bytes,
+        ..SandboxLimits::compatible(Duration::from_secs(run.timeout_secs.max(1) as u64))
+    };
+    let mut spec = ContainerSpec::new(run.image, "runinator-code")
         .with_command(run.command.to_vec())
         .with_working_dir(WORK_DIR)
         .with_mount(Mount::read_only(run.work_dir, WORK_DIR))
         .with_mount(Mount::writable(&runtime_dir, RUNTIME_DIR))
+        .with_stdin(input.into_bytes())
+        .with_limits(limits);
+    for (key, value) in run.environment {
+        spec = spec.with_env(key, value);
+    }
+    spec = spec
         .with_env("RUNINATOR_CONTEXT", format!("{RUNTIME_DIR}/{CONTEXT_FILE}"))
         .with_env("RUNINATOR_OUTPUT", format!("{RUNTIME_DIR}/{OUTPUT_FILE}"))
-        .with_env("RUNINATOR_LANGUAGE", run.language)
-        .with_stdin(input.into_bytes())
-        .with_limits(SandboxLimits::compatible(Duration::from_secs(
-            run.timeout_secs.max(1) as u64,
-        )));
+        .with_env("RUNINATOR_LANGUAGE", run.language);
 
     let cancel = move || token.is_cancelled();
     let logs = sink.map(|sink| Arc::new(EventLineSink(sink)) as Arc<dyn LineSink>);

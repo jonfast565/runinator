@@ -10,6 +10,7 @@ pub mod cursor;
 pub mod debug;
 pub mod errors;
 pub mod files;
+pub mod foreign_languages;
 pub mod functions;
 pub mod interrupt;
 pub mod invocation;

@@ -23,7 +23,7 @@ impl ForeignLanguageAdapter for Cpp {
 # and writes exactly one JSON value to stdout. Diagnostics belong on stderr.
 runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic "${runner_dir}/foreign.cpp" -o /tmp/runinator_foreign
-/tmp/runinator_foreign < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
+/tmp/runinator_foreign "$@" < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
 "#
     }
 

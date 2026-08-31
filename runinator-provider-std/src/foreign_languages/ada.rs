@@ -26,7 +26,7 @@ build_dir="$(mktemp -d)"
 cp "${runner_dir}/runinator_foreign.adb" "${build_dir}/"
 cd "${build_dir}"
 gnatmake -q -gnat2022 -O2 -gnatwa runinator_foreign.adb -o /tmp/runinator_foreign
-/tmp/runinator_foreign < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
+/tmp/runinator_foreign "$@" < "${RUNINATOR_CONTEXT}" > "${RUNINATOR_OUTPUT}"
 "#
     }
 
