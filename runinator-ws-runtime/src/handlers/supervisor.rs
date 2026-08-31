@@ -12,8 +12,11 @@ pub async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
     });
     let path_buf = std::path::PathBuf::from(&path);
     if !path_buf.exists() {
+        // An absent local supervisor is an expected deployment mode, not an unavailable API
+        // resource. Reply successfully so Command Center can disable its optional status poll
+        // without leaving a benign 404 in the browser console.
         return (
-            StatusCode::NOT_FOUND,
+            StatusCode::OK,
             Json(serde_json::json!({
                 "configured": false,
                 "path": path
