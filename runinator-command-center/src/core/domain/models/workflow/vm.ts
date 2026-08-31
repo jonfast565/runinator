@@ -47,8 +47,16 @@ export interface WorkflowEffectOutputEvent {
   attempt: number;
   output:
     | { type: "chunk"; stream: string; content: string }
-    | { type: "artifact"; artifact: JsonValue };
+    | { type: "artifact"; artifact: JsonValue }
+    | { type: "terminal_interaction"; interaction: TerminalInteraction };
   created_at: number;
+}
+
+export interface TerminalInteraction {
+  sequence: number;
+  request_id: string;
+  state: "input_required" | "input_accepted";
+  prompt?: string | null;
 }
 
 export interface WorkflowJournalRecord {

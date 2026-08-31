@@ -142,7 +142,9 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     WorkflowFailureKind::Canceled,
                     effect.message.unwrap_or_else(|| "effect canceled".into()),
                 )),
-                WorkflowEffectStatus::Requested | WorkflowEffectStatus::Running => {
+                WorkflowEffectStatus::Requested
+                | WorkflowEffectStatus::Running
+                | WorkflowEffectStatus::InputRequired => {
                     return Err(WORKFLOW_VM_EFFECT_MISSING
                         .error(format!("effect {effect_id} was claimed before settlement")));
                 }

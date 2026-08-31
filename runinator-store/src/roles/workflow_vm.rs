@@ -103,6 +103,15 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         event: WorkflowEffectOutputEvent,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Persist a terminal input lifecycle event and project the newest attempt-local sequence onto
+    /// the effect/run status. Older or duplicate broker deliveries remain history but cannot move
+    /// the live effect back to a stale state.
+    fn record_workflow_terminal_interaction(
+        &self,
+        event: WorkflowEffectOutputEvent,
+        recorded_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     fn fetch_workflow_journal(
         &self,
         workflow_run_id: Uuid,

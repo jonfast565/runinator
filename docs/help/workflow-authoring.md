@@ -391,6 +391,63 @@ The import file is a `{ "secrets": [...] }` document; each entry carries
 `schema`. Existing entries are only overwritten when an incoming `updated_at` is
 strictly newer.
 
+### Interactive terminal input
+
+PTY-backed actions such as `console.run({ interactive: true, ... })` can expose their terminal
+transcript in a run's selected action **Step Output** panel. A program can also tell Runinator when
+it is blocked on human input. This is explicit rather than prompt detection: write an OSC frame
+containing base64url JSON to the terminal, then emit the matching acceptance frame only after the
+program has validated the submitted input:
+
+```text
+ESC ] 777 ; runinator ; BASE64URL({"version":1,"event":"input_required","request_id":"login","prompt":"Enter the one-time code"}) ESC \
+ESC ] 777 ; runinator ; BASE64URL({"version":1,"event":"input_accepted","request_id":"login"}) ESC \
+```
+
+Runinator removes valid frames from the visible transcript, durably records the prompt lifecycle,
+marks the action `input_required`, and returns it to `running` after the matching acceptance. The
+action's normal wall-clock timeout continues throughout the wait. Request ids are 1–128 bytes,
+prompts are at most 8 KiB, and decoded payloads are at most 16 KiB. Prompt text is durable and must
+not contain secrets; actual keystrokes remain ephemeral, although the child terminal may echo them.
+
+Python:
+
+```python
+import base64, json, sys
+
+def runinator_terminal(event, request_id, prompt=None):
+    payload = {"version": 1, "event": event, "request_id": request_id}
+    if prompt is not None:
+        payload["prompt"] = prompt
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    sys.stdout.write(f"\x1b]777;runinator;{encoded}\x1b\\")
+    sys.stdout.flush()
+```
+
+Node:
+
+```javascript
+function runinatorTerminal(event, requestId, prompt) {
+  const payload = { version: 1, event, request_id: requestId };
+  if (prompt !== undefined) payload.prompt = prompt;
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  process.stdout.write(`\x1b]777;runinator;${encoded}\x1b\\`);
+}
+```
+
+POSIX shell (using Python for safe JSON/base64 encoding):
+
+```bash
+runinator_terminal() {
+  python3 -c 'import base64,json,sys; p={"version":1,"event":sys.argv[1],"request_id":sys.argv[2]}; p.update({"prompt":sys.argv[3]}) if len(sys.argv)>3 else None; e=base64.urlsafe_b64encode(json.dumps(p).encode()).rstrip(b"=").decode(); print("\033]777;runinator;"+e+"\033\\",end="",flush=True)' "$@"
+}
+
+runinator_terminal input_required login "Enter the one-time code"
+read -r code
+# validate $code first
+runinator_terminal input_accepted login
+```
+
 Live execution uses a frozen VM module and persisted continuations. A linear run starts with one
 continuation; `parallel`, `race`, and concurrent `map` work create independently schedulable child
 continuations. The engine leases runnable continuations with bounded concurrency (default 16 per

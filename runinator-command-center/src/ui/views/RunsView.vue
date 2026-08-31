@@ -128,6 +128,7 @@
                     :effect-id="selectedWorkflowEffect.id"
                     :chunks="logChunks"
                     :active="terminalActive"
+                    :interaction="terminalInteraction"
                   />
                   <LogPanel
                     v-else
@@ -275,6 +276,7 @@ import {
   workflowEffectId,
   type RunArtifact,
   type RunChunk,
+  type TerminalInteraction,
   type WorkflowRunArtifact,
 } from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
@@ -287,6 +289,7 @@ const { isLoading: loadingRuns, loadingMessage: loadingRunsMessage } =
 const artifacts = ref<RunArtifact[]>([]);
 const runArtifacts = ref<WorkflowRunArtifact[]>([]);
 const logChunks = ref<RunChunk[]>([]);
+const terminalInteraction = ref<TerminalInteraction | null>(null);
 const lastLogChunkAt = ref(0);
 const runDetailScroller = ref<HTMLElement | null>(null);
 
@@ -317,8 +320,8 @@ const isInteractiveEffect = computed(() => {
 });
 const terminalActive = computed(
   () =>
-    selectedWorkflowEffect.value?.status === "running" &&
-    Boolean(selectedWorkflowEffect.value.current_executor_replica_id),
+    ["running", "input_required"].includes(selectedWorkflowEffect.value?.status ?? "") &&
+    Boolean(selectedWorkflowEffect.value?.current_executor_replica_id),
 );
 const workflowNames = computed(() =>
   Object.fromEntries(
@@ -450,12 +453,13 @@ watch(
   () => [workflows.selectedWorkflowNodeRunId, workflows.workflowRunDetail] as const,
   async () => {
     const id = workflows.selectedWorkflowNodeRunId;
-    const [nextArtifacts, nextChunks] = id
+    const [nextArtifacts, nextChunks, nextInteraction] = id
       ? await Promise.all([
           workflowRunExtrasService.fetchNodeRunArtifacts(id),
           workflowRunExtrasService.fetchNodeRunChunks(id),
+          workflowRunExtrasService.fetchTerminalInteraction(id),
         ])
-      : [[], []];
+      : [[], [], null];
 
     // A rapid step selection can leave an older output request in flight. Do not let its response
     // replace the logs/artifacts for the step that is currently selected.
@@ -465,6 +469,7 @@ watch(
 
     artifacts.value = nextArtifacts;
     logChunks.value = nextChunks;
+    terminalInteraction.value = nextInteraction;
     const latestChunkAt = Math.max(
       ...nextChunks.map((chunk) => Date.parse(chunk.created_at)).filter(Number.isFinite),
     );

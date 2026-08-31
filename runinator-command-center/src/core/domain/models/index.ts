@@ -89,6 +89,7 @@ export type {
   WorkflowContinuation,
   WorkflowEffect,
   WorkflowEffectOutputEvent,
+  TerminalInteraction,
   WorkflowJournalRecord,
   WorkflowVmCursor,
 } from "./workflow/vm";

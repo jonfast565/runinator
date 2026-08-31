@@ -10,6 +10,10 @@
         {{ active ? "Click the terminal and type; Ctrl+C is sent to the process." : "Session ended." }}
       </span>
     </div>
+    <div v-if="interaction" class="workflow-terminal-prompt" role="status">
+      <strong>Input required</strong>
+      <span>{{ interaction.prompt || "The terminal program is waiting for input." }}</span>
+    </div>
     <XtermSurface
       ref="surface"
       :content="content"
@@ -27,10 +31,15 @@ import {
   controlWorkflowEffectTerminal,
   type WorkflowTerminalControl,
 } from "../../../core/api/commandCenterApi";
-import type { RunChunk } from "../../../core/domain/models";
+import type { RunChunk, TerminalInteraction } from "../../../core/domain/models";
 import XtermSurface from "../console/XtermSurface.vue";
 
-const props = defineProps<{ effectId: string; chunks: RunChunk[]; active: boolean }>();
+const props = defineProps<{
+  effectId: string;
+  chunks: RunChunk[];
+  active: boolean;
+  interaction: TerminalInteraction | null;
+}>();
 const surface = ref<InstanceType<typeof XtermSurface> | null>(null);
 const error = ref("");
 let bufferedInput = "";
@@ -86,7 +95,7 @@ function onResize(size: { cols: number; rows: number }) {
 }
 
 watch(
-  () => props.effectId,
+  () => [props.effectId, props.interaction?.request_id] as const,
   () => {
     error.value = "";
     bufferedInput = "";
@@ -127,5 +136,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+.workflow-terminal-prompt {
+  display: flex;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+  font-size: 12px;
 }
 </style>

@@ -2,6 +2,7 @@ use super::*;
 use runinator_comm::EffectCommand;
 use runinator_models::interrupt::InterruptSource;
 use runinator_models::pipelines::{PIPELINE_GRAPH_VERSION, Pipeline, PipelineGraph};
+use runinator_models::runs::{TerminalInteraction, TerminalInteractionState};
 use runinator_models::workflow_vm::{
     WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowEffect, WorkflowEffectOutput,
     WorkflowEffectOutputEvent, WorkflowEffectRequest, WorkflowEffectStatus, WorkflowInstruction,
@@ -517,7 +518,92 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
     );
     assert_eq!(
         db.fetch_workflow_effect_output(effect_id).await.unwrap(),
-        vec![output_event]
+        vec![output_event.clone()]
+    );
+    let required = WorkflowEffectOutputEvent {
+        event_id: Uuid::now_v7(),
+        effect_id,
+        workflow_run_id: run.id,
+        continuation_id: continuation.id,
+        attempt: 0,
+        output: WorkflowEffectOutput::TerminalInteraction {
+            interaction: TerminalInteraction {
+                sequence: 1,
+                request_id: "login".into(),
+                state: TerminalInteractionState::InputRequired,
+                prompt: Some("Code".into()),
+            },
+        },
+        created_at: Utc::now().timestamp(),
+    };
+    assert!(
+        db.record_workflow_terminal_interaction(required.clone(), Utc::now())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db.fetch_workflow_effect(effect_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        WorkflowEffectStatus::InputRequired
+    );
+    assert_eq!(
+        db.fetch_workflow_run(run.id).await.unwrap().unwrap().status,
+        WorkflowStatus::InputRequired
+    );
+    let accepted = WorkflowEffectOutputEvent {
+        event_id: Uuid::now_v7(),
+        output: WorkflowEffectOutput::TerminalInteraction {
+            interaction: TerminalInteraction {
+                sequence: 2,
+                request_id: "login".into(),
+                state: TerminalInteractionState::InputAccepted,
+                prompt: None,
+            },
+        },
+        ..required.clone()
+    };
+    assert!(
+        db.record_workflow_terminal_interaction(accepted.clone(), Utc::now())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db.fetch_workflow_effect(effect_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        WorkflowEffectStatus::Running
+    );
+    // This test uses a timer request, so returning its executor state to running restores the
+    // request-derived coarse status rather than pretending the workflow itself is active work.
+    assert_eq!(
+        db.fetch_workflow_run(run.id).await.unwrap().unwrap().status,
+        WorkflowStatus::Sleeping
+    );
+    let stale = WorkflowEffectOutputEvent {
+        event_id: Uuid::now_v7(),
+        ..required.clone()
+    };
+    assert!(
+        db.record_workflow_terminal_interaction(stale.clone(), Utc::now())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db.fetch_workflow_effect(effect_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        WorkflowEffectStatus::Running
+    );
+    assert_eq!(
+        db.fetch_workflow_effect_output(effect_id).await.unwrap(),
+        vec![output_event, required, accepted, stale]
     );
     assert_eq!(db.pause_workflow_vm_run(run.id).await.unwrap(), 1);
     assert!(

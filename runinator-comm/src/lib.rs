@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     providers::ProviderMetadata,
     replicas::ReplicaRegistrationRequest,
-    runs::ProviderTerminalControl,
+    runs::{ProviderTerminalControl, TerminalInteraction},
     value::Value,
     workflow_vm::{
         UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
@@ -210,6 +210,9 @@ pub enum EffectResultKind {
     },
     Artifact {
         artifact: Value,
+    },
+    TerminalInteraction {
+        interaction: TerminalInteraction,
     },
     /// The executing host has taken this attempt. It carries the executor's replica id, which is
     /// the VM's executor lease — the fact replica load and stale-replica reaping read now that

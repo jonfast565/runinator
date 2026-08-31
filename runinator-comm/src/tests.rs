@@ -229,6 +229,35 @@ fn effect_results_round_trip_with_json() {
 }
 
 #[test]
+fn terminal_interaction_results_round_trip_with_json() {
+    let result = EffectResult {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        event_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 2,
+        kind: EffectResultKind::TerminalInteraction {
+            interaction: runinator_models::runs::TerminalInteraction {
+                sequence: 7,
+                request_id: "otp".into(),
+                state: runinator_models::runs::TerminalInteractionState::InputRequired,
+                prompt: Some("One-time code".into()),
+            },
+        },
+        timestamp: chrono::Utc::now(),
+        trace_id: Uuid::now_v7(),
+        notification_delivery_id: None,
+    };
+    let decoded = EffectResult::from_wire(&result.to_wire().unwrap()).unwrap();
+    assert!(matches!(
+        decoded.kind,
+        EffectResultKind::TerminalInteraction { interaction }
+            if interaction.sequence == 7 && interaction.request_id == "otp"
+    ));
+}
+
+#[test]
 fn ui_event_round_trips_org_scope_and_accepts_legacy_unscoped_json() {
     let run_id = Uuid::now_v7();
     let org_id = Uuid::now_v7();

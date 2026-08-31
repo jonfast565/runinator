@@ -5,9 +5,9 @@ use runinator_comm::{EffectCommand, EffectDispatchRecord};
 use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_vm::{
     WORKFLOW_JOURNAL_VERSION, WorkflowContinuation, WorkflowContinuationStatus, WorkflowEffect,
-    WorkflowEffectOutputEvent, WorkflowEffectRequest, WorkflowEffectStatus, WorkflowFrame,
-    WorkflowInterruptOutcome, WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule,
-    WorkflowPendingInterrupt,
+    WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowEffectRequest, WorkflowEffectStatus,
+    WorkflowFrame, WorkflowInterruptOutcome, WorkflowJournalEntry, WorkflowJournalRecord,
+    WorkflowModule, WorkflowPendingInterrupt,
 };
 use runinator_store::roles::{NewWorkflowVmRun, WorkflowTimerInterrupt};
 
@@ -20,23 +20,33 @@ fn wire_name<T: serde::Serialize>(value: &T) -> Result<String, SendableError> {
     Ok(serde_json::to_string(value)?.trim_matches('"').to_string())
 }
 
-fn suspended_workflow_run_status(requests: &[WorkflowEffectRequest]) -> WorkflowStatus {
-    if requests
-        .iter()
-        .any(|request| matches!(request, WorkflowEffectRequest::Action { .. }))
-    {
+fn suspended_workflow_run_status(
+    effects: &[(WorkflowEffectRequest, WorkflowEffectStatus)],
+) -> WorkflowStatus {
+    if effects.iter().any(|(request, status)| {
+        matches!(request, WorkflowEffectRequest::Action { .. })
+            && matches!(
+                status,
+                WorkflowEffectStatus::Requested | WorkflowEffectStatus::Running
+            )
+    }) {
         WorkflowStatus::Running
-    } else if requests
+    } else if effects
         .iter()
-        .any(|request| matches!(request, WorkflowEffectRequest::Approval { .. }))
-    {
-        WorkflowStatus::ApprovalRequired
-    } else if requests
-        .iter()
-        .any(|request| matches!(request, WorkflowEffectRequest::Input { .. }))
+        .any(|(_, status)| *status == WorkflowEffectStatus::InputRequired)
     {
         WorkflowStatus::InputRequired
-    } else if requests.iter().any(|request| {
+    } else if effects
+        .iter()
+        .any(|(request, _)| matches!(request, WorkflowEffectRequest::Approval { .. }))
+    {
+        WorkflowStatus::ApprovalRequired
+    } else if effects
+        .iter()
+        .any(|(request, _)| matches!(request, WorkflowEffectRequest::Input { .. }))
+    {
+        WorkflowStatus::InputRequired
+    } else if effects.iter().any(|(request, _)| {
         matches!(
             request,
             WorkflowEffectRequest::Timer { .. } | WorkflowEffectRequest::TimerDelay { .. }
@@ -90,20 +100,26 @@ where
     {
         WorkflowStatus::Paused
     } else {
-        let requests = sqlx::query(&store.render(
-            "SELECT request_json FROM workflow_effects WHERE workflow_run_id = ? AND status IN ('requested', 'running')",
+        let effects = sqlx::query(&store.render(
+            "SELECT request_json, status FROM workflow_effects WHERE workflow_run_id = ? AND status IN ('requested', 'running', 'input_required')",
         ))
         .bind(workflow_run_id)
         .fetch_all(&mut **tx)
         .await?
         .iter()
-        .map(|row| row.try_get::<String, _>("request_json"))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|json| serde_json::from_str::<WorkflowEffectRequest>(&json))
+        .map(|row| {
+            let request = serde_json::from_str::<WorkflowEffectRequest>(
+                &row.try_get::<String, _>("request_json")?,
+            )?;
+            let status = serde_json::from_str::<WorkflowEffectStatus>(&format!(
+                "\"{}\"",
+                row.try_get::<String, _>("status")?
+            ))?;
+            Ok::<_, SendableError>((request, status))
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
-        suspended_workflow_run_status(&requests)
+        suspended_workflow_run_status(&effects)
     };
 
     sqlx::query(&store.render(
@@ -137,31 +153,59 @@ mod activity_status_tests {
             function_binding: None,
         };
         assert_eq!(
-            suspended_workflow_run_status(&[action]),
+            suspended_workflow_run_status(&[(action, WorkflowEffectStatus::Running)]),
             WorkflowStatus::Running
         );
         assert_eq!(
-            suspended_workflow_run_status(&[WorkflowEffectRequest::TimerDelay { seconds: 1 }]),
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::TimerDelay { seconds: 1 },
+                WorkflowEffectStatus::Running
+            )]),
             WorkflowStatus::Sleeping
         );
         assert_eq!(
-            suspended_workflow_run_status(&[WorkflowEffectRequest::MutexAcquire {
-                key: "critical".into(),
-            }]),
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::MutexAcquire {
+                    key: "critical".into(),
+                },
+                WorkflowEffectStatus::Running
+            )]),
             WorkflowStatus::Parked
         );
         assert_eq!(
-            suspended_workflow_run_status(&[WorkflowEffectRequest::Approval {
-                prompt: Value::Null,
-                expires_at: None,
-            }]),
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::Approval {
+                    prompt: Value::Null,
+                    expires_at: None,
+                },
+                WorkflowEffectStatus::Running
+            )]),
             WorkflowStatus::ApprovalRequired
         );
         assert_eq!(
-            suspended_workflow_run_status(&[WorkflowEffectRequest::Input {
-                prompt: None,
-                schema: Value::Null,
-            }]),
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::Input {
+                    prompt: None,
+                    schema: Value::Null,
+                },
+                WorkflowEffectStatus::Running
+            )]),
+            WorkflowStatus::InputRequired
+        );
+        let action = WorkflowEffectRequest::Action {
+            provider: "test".into(),
+            function: "run".into(),
+            input: Value::Null,
+            timeout_seconds: None,
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        };
+        assert_eq!(
+            suspended_workflow_run_status(&[(action, WorkflowEffectStatus::InputRequired)]),
             WorkflowStatus::InputRequired
         );
     }
@@ -600,6 +644,105 @@ where
             .execute(self.pool())
             .await?;
         Ok(inserted.affected() > 0)
+    }
+
+    async fn record_workflow_terminal_interaction(
+        &self,
+        event: WorkflowEffectOutputEvent,
+        recorded_at: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let WorkflowEffectOutput::TerminalInteraction { interaction } = &event.output else {
+            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                .error("terminal interaction write requires a terminal interaction output"));
+        };
+        let mut tx = self.pool().begin().await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE id = ?"
+        )))
+        .bind(event.effect_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(false);
+        };
+        let effect = mappers::row_to_workflow_effect(&row)?;
+        if effect.attempt != event.attempt
+            || effect.workflow_run_id != event.workflow_run_id
+            || effect.continuation_id != event.continuation_id
+            || effect.status.is_terminal()
+        {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        let sql = self.dialect().insert_ignore(
+            "workflow_effect_output_events",
+            "event_id, effect_id, workflow_run_id, continuation_id, attempt, output_json, created_at",
+            "?, ?, ?, ?, ?, ?, ?",
+            "event_id",
+            None,
+        );
+        let inserted = sqlx::query(&self.render(&sql))
+            .bind(event.event_id)
+            .bind(event.effect_id)
+            .bind(event.workflow_run_id)
+            .bind(event.continuation_id)
+            .bind(i64::from(event.attempt))
+            .bind(serde_json::to_string(&event.output)?)
+            .bind(event.created_at)
+            .execute(&mut *tx)
+            .await?;
+        if inserted.affected() == 0 {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        let rows = sqlx::query(&self.render(
+            "SELECT output_json FROM workflow_effect_output_events WHERE effect_id = ? AND attempt = ?",
+        ))
+        .bind(event.effect_id)
+        .bind(i64::from(event.attempt))
+        .fetch_all(&mut *tx)
+        .await?;
+        let newest_sequence = rows
+            .iter()
+            .filter_map(|row| row.try_get::<String, _>("output_json").ok())
+            .filter_map(|raw| serde_json::from_str::<WorkflowEffectOutput>(&raw).ok())
+            .filter_map(|output| match output {
+                WorkflowEffectOutput::TerminalInteraction { interaction } => {
+                    Some(interaction.sequence)
+                }
+                _ => None,
+            })
+            .max();
+        if newest_sequence == Some(interaction.sequence) {
+            let status = match interaction.state {
+                runinator_models::runs::TerminalInteractionState::InputRequired => {
+                    WorkflowEffectStatus::InputRequired
+                }
+                runinator_models::runs::TerminalInteractionState::InputAccepted => {
+                    WorkflowEffectStatus::Running
+                }
+            };
+            sqlx::query(&self.render(
+                "UPDATE workflow_effects SET status = ?, updated_at = ? WHERE id = ? AND attempt = ? AND status IN ('requested', 'running', 'input_required')",
+            ))
+            .bind(wire_name(&status)?)
+            .bind(recorded_at.timestamp())
+            .bind(event.effect_id)
+            .bind(i64::from(event.attempt))
+            .execute(&mut *tx)
+            .await?;
+            refresh_workflow_run_activity(
+                self,
+                &mut tx,
+                event.workflow_run_id,
+                recorded_at.timestamp(),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(true)
     }
 
     async fn fetch_workflow_journal(
@@ -1460,7 +1603,7 @@ where
         // guarded on the attempt so a redelivery to a second worker after the first one's attempt
         // was superseded cannot steal the lease from the live executor.
         let updated = sqlx::query(&self.render(
-            "UPDATE workflow_effects SET status = 'running', current_executor_replica_id = ?, updated_at = ? WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
+            "UPDATE workflow_effects SET status = 'running', current_executor_replica_id = ?, updated_at = ? WHERE id = ? AND attempt = ? AND status IN ('requested', 'running', 'input_required')",
         ))
         .bind(replica_id)
         .bind(claimed_at.timestamp())
@@ -1499,7 +1642,7 @@ where
         // re-arming clears the previous outcome but keeps the executor attribution, exactly as
         // settling does: a retry-exhaustion report still needs to name who ran the attempt before.
         let updated = sqlx::query(&self.render(
-            "UPDATE workflow_effects SET attempt = attempt + 1, status = 'requested', result_json = NULL, message = ?, updated_at = ?, finished_at = NULL, last_executor_replica_id = COALESCE(current_executor_replica_id, last_executor_replica_id), current_executor_replica_id = NULL WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
+            "UPDATE workflow_effects SET attempt = attempt + 1, status = 'requested', result_json = NULL, message = ?, updated_at = ?, finished_at = NULL, last_executor_replica_id = COALESCE(current_executor_replica_id, last_executor_replica_id), current_executor_replica_id = NULL WHERE id = ? AND attempt = ? AND status IN ('requested', 'running', 'input_required')",
         ))
         .bind(message)
         .bind(stamp)
@@ -1600,7 +1743,7 @@ where
         // settling releases the executor lease but keeps the attribution: `last_...` is what a
         // retry-exhaustion report and the replica views read after the fact.
         let updated = sqlx::query(&self.render(
-            "UPDATE workflow_effects SET status = ?, result_json = ?, message = ?, updated_at = ?, finished_at = ?, last_executor_replica_id = COALESCE(current_executor_replica_id, last_executor_replica_id), current_executor_replica_id = NULL WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
+            "UPDATE workflow_effects SET status = ?, result_json = ?, message = ?, updated_at = ?, finished_at = ?, last_executor_replica_id = COALESCE(current_executor_replica_id, last_executor_replica_id), current_executor_replica_id = NULL WHERE id = ? AND attempt = ? AND status IN ('requested', 'running', 'input_required')",
         ))
         .bind(wire_name(&status)?)
         .bind(output.as_ref().map(serde_json::to_string).transpose()?)
@@ -1782,7 +1925,7 @@ where
         let now = Utc::now().timestamp();
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(
-            "UPDATE workflow_effects SET status = 'canceled', message = ?, updated_at = ?, finished_at = ? WHERE workflow_run_id = ? AND status IN ('requested', 'running')",
+            "UPDATE workflow_effects SET status = 'canceled', message = ?, updated_at = ?, finished_at = ? WHERE workflow_run_id = ? AND status IN ('requested', 'running', 'input_required')",
         ))
         .bind(message.as_str())
         .bind(now)

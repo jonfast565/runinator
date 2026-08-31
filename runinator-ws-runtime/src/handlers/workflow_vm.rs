@@ -394,9 +394,12 @@ pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + Work
             "terminal control is only available for interactive provider effects",
         );
     }
-    if effect.status != WorkflowEffectStatus::Running {
+    if !matches!(
+        effect.status,
+        WorkflowEffectStatus::Running | WorkflowEffectStatus::InputRequired
+    ) {
         return runinator_ws_core::responses::bad_request(
-            "terminal control requires a running effect",
+            "terminal control requires an active effect",
         );
     }
     let Some(replica_id) = effect.current_executor_replica_id else {

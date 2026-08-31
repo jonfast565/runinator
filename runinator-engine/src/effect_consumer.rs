@@ -67,6 +67,7 @@ pub async fn run_effect_result_consumer<
                 // payloads so an old/misbehaving provider cannot wedge the result channel.
                 EffectResultKind::Chunk { .. }
                 | EffectResultKind::Artifact { .. }
+                | EffectResultKind::TerminalInteraction { .. }
                 | EffectResultKind::Claimed { .. } => Ok(()),
             };
             match result {
@@ -155,7 +156,7 @@ pub async fn run_effect_result_consumer<
                         db.settle_workflow_effect(
                             delivery.result.effect_id,
                             delivery.result.attempt,
-                            status.clone(),
+                            *status,
                             output.clone(),
                             message.clone(),
                             delivery.result.timestamp,
@@ -203,6 +204,23 @@ pub async fn run_effect_result_consumer<
                     },
                     created_at: delivery.result.timestamp.timestamp(),
                 })
+                .await
+            }
+            EffectResultKind::TerminalInteraction { interaction } => {
+                db.record_workflow_terminal_interaction(
+                    WorkflowEffectOutputEvent {
+                        event_id: delivery.result.event_id,
+                        effect_id: delivery.result.effect_id,
+                        workflow_run_id: delivery.result.workflow_run_id,
+                        continuation_id: delivery.result.continuation_id,
+                        attempt: delivery.result.attempt,
+                        output: WorkflowEffectOutput::TerminalInteraction {
+                            interaction: interaction.clone(),
+                        },
+                        created_at: delivery.result.timestamp.timestamp(),
+                    },
+                    delivery.result.timestamp,
+                )
                 .await
             }
         };
@@ -330,7 +348,9 @@ async fn record_external_operation_result<T: OrchestrationStore>(
                 }),
             )
         }
-        EffectResultKind::Chunk { .. } | EffectResultKind::Artifact { .. } => return Ok(None),
+        EffectResultKind::Chunk { .. }
+        | EffectResultKind::Artifact { .. }
+        | EffectResultKind::TerminalInteraction { .. } => return Ok(None),
     };
     let updated = db
         .update_external_operation(

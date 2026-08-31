@@ -1051,7 +1051,7 @@ function projectedEffectNodeId(
   return (
     effect.node_id ??
     journalNodesByEffect.get(effect.id)?.nodeId ??
-    (["requested", "running"].includes(effect.status)
+    (["requested", "running", "input_required"].includes(effect.status)
       ? cursorByContinuation.get(effect.continuation_id)?.node_id
       : null) ??
     null
@@ -1296,7 +1296,9 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     const journalNode = journalNodeByEffect.get(effect.id);
     const requestType = typeof request.type === "string" ? request.type : "";
     const status =
-      effect.status === "requested" || effect.status === "running"
+      effect.status === "requested" ||
+      effect.status === "running" ||
+      effect.status === "input_required"
         ? requestType === "approval"
           ? "approval_required"
           : ["input", "signal", "gate", "event_wait"].includes(requestType)

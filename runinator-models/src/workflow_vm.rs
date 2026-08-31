@@ -829,8 +829,16 @@ pub struct WorkflowEffectOutputEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkflowEffectOutput {
-    Chunk { stream: String, content: String },
-    Artifact { artifact: Value },
+    Chunk {
+        stream: String,
+        content: String,
+    },
+    Artifact {
+        artifact: Value,
+    },
+    TerminalInteraction {
+        interaction: crate::runs::TerminalInteraction,
+    },
 }
 
 impl WorkflowContinuationStatus {
@@ -1049,6 +1057,7 @@ impl WorkflowJournalRecord {
 pub enum WorkflowEffectStatus {
     Requested,
     Running,
+    InputRequired,
     Succeeded,
     Failed,
     /// An external decision declined the step (an approval or input rejection). Distinct from
@@ -1069,6 +1078,7 @@ impl WorkflowEffectStatus {
     pub fn workflow_status(self) -> WorkflowStatus {
         match self {
             Self::Requested | Self::Running => WorkflowStatus::Waiting,
+            Self::InputRequired => WorkflowStatus::InputRequired,
             Self::Succeeded => WorkflowStatus::Succeeded,
             Self::Failed | Self::Rejected => WorkflowStatus::Failed,
             Self::TimedOut => WorkflowStatus::TimedOut,

@@ -484,6 +484,7 @@ fn effect_status(status: WorkflowEffectStatus) -> &'static str {
     match status {
         WorkflowEffectStatus::Requested => "requested",
         WorkflowEffectStatus::Running => "running",
+        WorkflowEffectStatus::InputRequired => "input_required",
         WorkflowEffectStatus::Succeeded => "succeeded",
         WorkflowEffectStatus::Failed => "failed",
         WorkflowEffectStatus::Rejected => "rejected",

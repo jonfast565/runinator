@@ -146,6 +146,27 @@ pub enum ProviderExecutionEvent {
     Message {
         message: String,
     },
+    TerminalInteraction {
+        interaction: TerminalInteraction,
+    },
+}
+
+/// A program-authored lifecycle boundary embedded in a PTY stream. The input bytes themselves
+/// remain ephemeral; this small record is safe to retain with the effect's durable output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalInteraction {
+    pub sequence: u64,
+    pub request_id: String,
+    pub state: TerminalInteractionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalInteractionState {
+    InputRequired,
+    InputAccepted,
 }
 
 /// Input sent by an operator to a provider-owned terminal session. The worker routes these
