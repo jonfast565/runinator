@@ -45,6 +45,7 @@ import {
 } from "../../workflow/interrupt-regions";
 import { getAtLocation } from "../../workflow/field-location";
 import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
+import { validateStepEditor } from "../../workflow/step-editor-validation";
 import {
   defaultEdgeEditorDraft,
   errorMessage,
@@ -114,16 +115,17 @@ export function createWorkflowEditorService(
     const regions = interruptRegionOrigins(host.state.workflowDraft);
     const sourceRegion = regions.get(edge.source);
     const targetRegion = regions.get(edge.target);
-    const handlerEdge = sourceRegion?.handler === targetRegion?.handler ? (sourceRegion ?? null) : null;
+    const handlerEdge =
+      sourceRegion?.handler === targetRegion?.handler ? (sourceRegion ?? null) : null;
 
     return addableNodeKinds().filter((kind): kind is WorkflowNodeKind => {
       const metadata = findNodeKindMetadata(kind);
 
       return Boolean(
         metadata &&
-          metadata.addable &&
-          metadata.edge_slots.length === 0 &&
-          (!handlerEdge || metadata.handler_safe),
+        metadata.addable &&
+        metadata.edge_slots.length === 0 &&
+        (!handlerEdge || metadata.handler_safe),
       );
     });
   }
@@ -155,9 +157,7 @@ export function createWorkflowEditorService(
 
     // Capture the visible geometry before rewiring: the fallback layout would otherwise place the
     // not-yet-positioned node and make the midpoint drift as soon as the graph changes.
-    const positions = new Map(
-      host.buildDraftGraphNodes().map((node) => [node.id, node.position]),
-    );
+    const positions = new Map(host.buildDraftGraphNodes().map((node) => [node.id, node.position]));
     const sourcePosition = positions.get(edge.source);
     const targetPosition = positions.get(edge.target);
     const fallback = graphCentroidPosition();
@@ -350,6 +350,19 @@ export function createWorkflowEditorService(
     const index = nodes.findIndex((node: JsonRecord) => node.id === host.state.selectedStepId);
 
     if (index < 0) {
+      return false;
+    }
+
+    const stepValidation = validateStepEditor(
+      host.state.stepEditor,
+      host.state.selectedStepId,
+      nodes,
+      findNodeKindMetadata(host.state.stepEditor.kind),
+    );
+
+    if (stepValidation.error) {
+      host.state.stepEditorError = stepValidation.error;
+      host.ctx.setError(stepValidation.error);
       return false;
     }
 

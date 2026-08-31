@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { artifactIdentityError, artifactIdentityPath } from "../identity";
+import { artifactIdentityError, artifactIdentityErrors, artifactIdentityPath } from "../identity";
 
 describe("artifact identity", () => {
   it("accepts canonical namespaced stable keys", () => {
@@ -32,5 +32,28 @@ describe("artifact identity", () => {
     expect(
       artifactIdentityError({ name: "Release", namespace: "acme.delivery", key: "release-job" }),
     ).toContain("Stable key must start");
+  });
+
+  it("assigns an error to the field that needs correction", () => {
+    expect(
+      artifactIdentityErrors({
+        name: "Release",
+        namespace: "acme.delivery-jobs",
+        key: "release",
+      }),
+    ).toEqual({
+      name: "",
+      namespace:
+        "Each namespace segment must start with a letter or underscore and contain only letters, numbers, or underscores.",
+      key: "",
+    });
+  });
+
+  it("reports every invalid identity field together", () => {
+    expect(artifactIdentityErrors({ name: "", namespace: "", key: "bad-key" })).toEqual({
+      name: "Name is required.",
+      namespace: "Namespace is required; use dot-separated identifiers such as acme.delivery.",
+      key: "Stable key must start with a letter or underscore and contain only letters, numbers, or underscores.",
+    });
   });
 });

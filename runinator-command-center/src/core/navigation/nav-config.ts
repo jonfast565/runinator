@@ -3,34 +3,8 @@ import type { AppTab, NavItem, NavSection } from "./app";
 
 export const navSections: NavSection[] = [
   {
-    label: "Workspace",
+    label: "Build",
     items: [
-      {
-        tab: "Dev",
-        label: "Dev",
-        icon: "debug",
-        description: "Start and inspect the local development stack before testing changes.",
-        desktopOnly: true,
-      },
-      {
-        tab: "Pipelines",
-        label: "Pipelines",
-        icon: "branch",
-        description: "Create a pipeline, add workflows, connect hand-offs, then start a run.",
-        searchPlaceholder: "Search pipelines",
-      },
-      {
-        tab: "PipelineRuns",
-        label: "Pipeline Runs",
-        icon: "runs",
-        description: "Start a pipeline run, then inspect each member attempt and hand-off.",
-      },
-      {
-        tab: "Orchestrations",
-        label: "Orchestrations",
-        icon: "branch",
-        description: "Inspect correlated work or configure the adapter that admits it.",
-      },
       {
         tab: "Workflows",
         label: "Workflows",
@@ -39,18 +13,11 @@ export const navSections: NavSection[] = [
         searchPlaceholder: "Search workflows",
       },
       {
-        tab: "Runs",
-        label: "Runs",
-        icon: "runs",
-        description: "Select a run to inspect its timeline, outputs, logs, and recovery actions.",
-        searchPlaceholder: "Search runs",
-      },
-      {
-        tab: "Providers",
-        label: "Providers",
-        icon: "box",
-        description: "Verify registered providers, their actions, and required credential scopes.",
-        searchPlaceholder: "Search providers",
+        tab: "Pipelines",
+        label: "Pipelines",
+        icon: "branch",
+        description: "Create a pipeline, add workflows, connect hand-offs, then start a run.",
+        searchPlaceholder: "Search pipelines",
       },
       {
         tab: "Functions",
@@ -66,28 +33,30 @@ export const navSections: NavSection[] = [
         description: "Upload reusable files and pin immutable revisions from workflow inputs.",
         searchPlaceholder: "Search files",
       },
-      {
-        // gated: a console cell can start a workflow run, so this is a privilege rather than a view.
-        tab: "Console",
-        label: "Console",
-        icon: "debug",
-        description:
-          "Run a command, review its output, and keep long-lived work in a saved session.",
-        requires: "console:use",
-      },
-      {
-        tab: "Replicas",
-        label: "Replicas",
-        icon: "list",
-        description:
-          "Check runtime health first; use drain or restart only on the selected replica.",
-        searchPlaceholder: "Search replicas",
-      },
     ],
   },
   {
-    label: "Inbox",
+    label: "Run & review",
     items: [
+      {
+        tab: "Runs",
+        label: "Runs",
+        icon: "runs",
+        description: "Select a run to inspect its timeline, outputs, logs, and recovery actions.",
+        searchPlaceholder: "Search runs",
+      },
+      {
+        tab: "PipelineRuns",
+        label: "Pipeline Runs",
+        icon: "runs",
+        description: "Start a pipeline run, then inspect each member attempt and hand-off.",
+      },
+      {
+        tab: "Orchestrations",
+        label: "Orchestrations",
+        icon: "branch",
+        description: "Inspect correlated work or configure the adapter that admits it.",
+      },
       {
         tab: "Approvals",
         label: "Approvals",
@@ -97,19 +66,24 @@ export const navSections: NavSection[] = [
         searchPlaceholder: "Search approvals",
       },
       {
-        tab: "Notifications",
-        label: "Notifications",
-        icon: "bell",
-        description:
-          "Review unread alerts and define policies for failures that require attention.",
-        endpoint: "notifications",
-        searchPlaceholder: "Search notifications",
+        tab: "Gates",
+        label: "Gates",
+        icon: "gate",
+        description: "Select a blocking gate, verify its run, and record why you open or close it.",
+        searchPlaceholder: "Search gates",
       },
     ],
   },
   {
-    label: "Data",
+    label: "Integrations",
     items: [
+      {
+        tab: "Providers",
+        label: "Providers",
+        icon: "box",
+        description: "Verify registered providers, their actions, and required credential scopes.",
+        searchPlaceholder: "Search providers",
+      },
       {
         tab: "ExternalItems",
         label: "External Items",
@@ -126,17 +100,36 @@ export const navSections: NavSection[] = [
         endpoint: "automation_events",
         searchPlaceholder: "Search events",
       },
+      {
+        tab: "Notifications",
+        label: "Notifications",
+        icon: "bell",
+        description:
+          "Review unread alerts and define policies for failures that require attention.",
+        endpoint: "notifications",
+        searchPlaceholder: "Search notifications",
+      },
     ],
   },
   {
-    label: "Other",
+    label: "Operate",
     items: [
       {
-        tab: "Gates",
-        label: "Gates",
-        icon: "gate",
-        description: "Select a blocking gate, verify its run, and record why you open or close it.",
-        searchPlaceholder: "Search gates",
+        // gated: a console cell can start a workflow run, so this is a privilege rather than a view.
+        tab: "Console",
+        label: "Console",
+        icon: "debug",
+        description:
+          "Run a command, review its output, and keep long-lived work in a saved session.",
+        requires: "console:use",
+      },
+      {
+        tab: "Replicas",
+        label: "Replicas",
+        icon: "list",
+        description:
+          "Check runtime health first; use drain or restart only on the selected replica.",
+        searchPlaceholder: "Search replicas",
       },
       {
         tab: "Schedules",
@@ -162,6 +155,13 @@ export const navSections: NavSection[] = [
         requires: "secrets:read",
         searchPlaceholder: "Search secrets",
       },
+      {
+        tab: "Dev",
+        label: "Dev",
+        icon: "debug",
+        description: "Start and inspect the local development stack before testing changes.",
+        desktopOnly: true,
+      },
     ],
   },
   {
@@ -182,7 +182,7 @@ export const navSections: NavSection[] = [
     ],
   },
   {
-    label: "Admin",
+    label: "Administration",
     items: [
       {
         tab: "AdminSettings",

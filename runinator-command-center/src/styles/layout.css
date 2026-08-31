@@ -199,7 +199,28 @@
 
 .nav-list {
   display: grid;
-  gap: 4px;
+  gap: 12px;
+}
+
+.nav-section {
+  display: grid;
+  gap: 3px;
+}
+
+.nav-section-label {
+  padding: 1px 10px 4px;
+  color: var(--text-inverse-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.nav-section-rail + .nav-section-rail {
+  padding-top: 8px;
+  border-top: 1px solid var(--surface-inverse-hover);
 }
 
 .nav-list button {

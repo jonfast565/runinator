@@ -43,4 +43,32 @@ describe("visibleNavSections", () => {
     expect(tabs).toContain("Permissions");
     expect(tabs).toContain("Secrets");
   });
+
+  it("groups navigation by the operator's workflow", () => {
+    const section = (label: string) =>
+      navSections.find((item) => item.label === label)?.items ?? [];
+
+    expect(section("Build").map((item) => item.tab)).toEqual([
+      "Workflows",
+      "Pipelines",
+      "Functions",
+      "Files",
+    ]);
+    expect(section("Run & review").map((item) => item.tab)).toEqual([
+      "Runs",
+      "PipelineRuns",
+      "Orchestrations",
+      "Approvals",
+      "Gates",
+    ]);
+    expect(section("Integrations").map((item) => item.tab)).toContain("Providers");
+    expect(section("Operate").map((item) => item.tab)).toEqual([
+      "Console",
+      "Replicas",
+      "Schedules",
+      "Configs",
+      "Secrets",
+      "Dev",
+    ]);
+  });
 });

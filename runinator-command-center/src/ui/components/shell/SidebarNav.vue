@@ -24,11 +24,14 @@
     </div>
     <nav class="nav-scroll">
       <div class="nav-list">
-        <template v-for="section in sections" :key="section.label">
-          <div
-            v-if="!railMode"
-            class="mt-2.5 px-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-inverse-faint first:mt-0"
-          >
+        <section
+          v-for="section in sections"
+          :key="section.label"
+          class="nav-section"
+          :class="{ 'nav-section-rail': railMode }"
+          :aria-label="section.label"
+        >
+          <div v-if="!railMode" class="nav-section-label">
             {{ section.label }}
           </div>
           <button
@@ -41,6 +44,7 @@
             :disabled="app.interactionsDisabled"
             :title="app.sidebarCollapsed ? item.label : undefined"
             :aria-label="railMode ? item.label : undefined"
+            :aria-current="app.activeTab === item.tab ? 'page' : undefined"
             @click="app.activeTab = item.tab"
           >
             <span
@@ -56,7 +60,7 @@
               countFor(item.tab)
             }}</span>
           </button>
-        </template>
+        </section>
       </div>
     </nav>
     <div v-if="!railMode" class="sidebar-foot">

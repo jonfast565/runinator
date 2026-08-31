@@ -78,8 +78,8 @@ describe("admin settings store", () => {
     }));
   });
 
-  it("shows settings under the admin left nav section", () => {
-    const admin = navSections.find((section) => section.label === "Admin");
+  it("shows settings under the administration left nav section", () => {
+    const admin = navSections.find((section) => section.label === "Administration");
 
     expect(admin?.items).toContainEqual({
       tab: "AdminSettings",

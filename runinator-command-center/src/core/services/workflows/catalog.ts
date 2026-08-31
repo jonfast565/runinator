@@ -24,10 +24,11 @@ import { artifactIdentityError, artifactIdentityPath } from "../../domain/models
 import { isJsonObject } from "../../domain/json";
 import { describeBulkResult, runBulk, type BulkResult } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
-import { cloneJson, parseRequiredObject } from "../../utils/json";
+import { cloneJson } from "../../utils/json";
 
 import { createZip, type ZipEntry } from "../../utils/zip";
 import { normalizeWorkflowDefinition } from "../../workflow/index";
+import { validateTriggerEditor } from "../../workflow/trigger-validation";
 
 import {
   boundedIndex,
@@ -365,22 +366,26 @@ export function createWorkflowCatalogService(
       return;
     }
 
-    const configuration = parseRequiredObject(host.state.triggerJson.configuration);
-    const metadata = parseRequiredObject(host.state.triggerJson.metadata);
+    const validation = validateTriggerEditor(
+      host.state.triggerDraft,
+      host.state.triggerJson.configuration,
+      host.state.triggerJson.metadata,
+      host.getTriggerKinds().find((kind) => kind.kind === host.state.triggerDraft.kind),
+    );
 
-    if (!configuration || !metadata) {
-      host.state.triggerEditorError = configuration
-        ? "Trigger metadata must be a JSON object"
-        : "Trigger configuration must be a JSON object";
+    if (validation.error || !validation.configuration || !validation.metadata) {
+      host.state.triggerEditorError =
+        validation.error || "Correct the trigger fields before saving.";
       host.ctx.setError(host.state.triggerEditorError);
+      host.notify();
       return;
     }
 
     const trigger: WorkflowTrigger = {
       ...cloneJson(host.state.triggerDraft),
       workflow_id: host.state.workflowDraft.id,
-      configuration,
-      metadata,
+      configuration: validation.configuration,
+      metadata: validation.metadata,
       next_execution: dateTimeLocalToIso(host.state.triggerDraft.next_execution),
       blackout_start: dateTimeLocalToIso(host.state.triggerDraft.blackout_start),
       blackout_end: dateTimeLocalToIso(host.state.triggerDraft.blackout_end),

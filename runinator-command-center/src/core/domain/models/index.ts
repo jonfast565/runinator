@@ -11,9 +11,10 @@ export {
   isJsonRecord,
 } from "../json";
 
-export type { ArtifactIdentity } from "./artifact/identity";
+export type { ArtifactIdentity, ArtifactIdentityErrors } from "./artifact/identity";
 export {
   artifactIdentityError,
+  artifactIdentityErrors,
   artifactIdentityPath,
   REXRAP_IDENTIFIER_PATTERN,
 } from "./artifact/identity";
@@ -101,6 +102,15 @@ export type {
 export type { WorkflowLayoutDirection, WorkflowLayoutPosition } from "./workflow/layout";
 export type { WorkflowEditorNodeRecord } from "./workflow/editor-node";
 export type { WorkflowDefinition } from "./workflow/definition";
+export type {
+  WorkflowSettingsErrors,
+  WorkflowSettingsIdentity,
+} from "./workflow/settings-validation";
+export {
+  workflowSettingsError,
+  workflowSettingsErrors,
+  WORKFLOW_VERSION_PATTERN,
+} from "./workflow/settings-validation";
 export type {
   WorkflowContinuation,
   WorkflowEffect,

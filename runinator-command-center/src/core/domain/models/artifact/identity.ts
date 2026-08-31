@@ -4,49 +4,48 @@ export interface ArtifactIdentity {
   key?: string | null;
 }
 
+export interface ArtifactIdentityErrors {
+  name: string;
+  namespace: string;
+  key: string;
+}
+
 export const REXRAP_IDENTIFIER_PATTERN = "[A-Za-z_][A-Za-z0-9_]*";
 
 const identifier = new RegExp(`^${REXRAP_IDENTIFIER_PATTERN}$`);
 const MAX_IDENTITY_LENGTH = 256;
 
-export function artifactIdentityError(identity: ArtifactIdentity): string {
+export function artifactIdentityErrors(identity: ArtifactIdentity): ArtifactIdentityErrors {
   const name = identity.name.trim();
   const namespace = identity.namespace?.trim() ?? "";
   const key = identity.key?.trim() ?? "";
 
-  if (!name) {
-    return "Name is required.";
-  }
+  return {
+    name: !name
+      ? "Name is required."
+      : name.length > MAX_IDENTITY_LENGTH
+        ? `Name must be at most ${String(MAX_IDENTITY_LENGTH)} characters.`
+        : "",
+    namespace: !namespace
+      ? "Namespace is required; use dot-separated identifiers such as acme.delivery."
+      : namespace.length > MAX_IDENTITY_LENGTH
+        ? `Namespace must be at most ${String(MAX_IDENTITY_LENGTH)} characters.`
+        : !namespace.split(".").every((segment) => identifier.test(segment))
+          ? "Each namespace segment must start with a letter or underscore and contain only letters, numbers, or underscores."
+          : "",
+    key: !key
+      ? "Stable key is required."
+      : key.length > MAX_IDENTITY_LENGTH
+        ? `Stable key must be at most ${String(MAX_IDENTITY_LENGTH)} characters.`
+        : !identifier.test(key)
+          ? "Stable key must start with a letter or underscore and contain only letters, numbers, or underscores."
+          : "",
+  };
+}
 
-  if (name.length > MAX_IDENTITY_LENGTH) {
-    return `Name must be at most ${String(MAX_IDENTITY_LENGTH)} characters.`;
-  }
-
-  if (!namespace) {
-    return "Namespace is required; use dot-separated identifiers such as acme.delivery.";
-  }
-
-  if (namespace.length > MAX_IDENTITY_LENGTH) {
-    return `Namespace must be at most ${String(MAX_IDENTITY_LENGTH)} characters.`;
-  }
-
-  if (!namespace.split(".").every((segment) => identifier.test(segment))) {
-    return "Each namespace segment must start with a letter or underscore and contain only letters, numbers, or underscores.";
-  }
-
-  if (!key) {
-    return "Stable key is required.";
-  }
-
-  if (key.length > MAX_IDENTITY_LENGTH) {
-    return `Stable key must be at most ${String(MAX_IDENTITY_LENGTH)} characters.`;
-  }
-
-  if (!identifier.test(key)) {
-    return "Stable key must start with a letter or underscore and contain only letters, numbers, or underscores.";
-  }
-
-  return "";
+export function artifactIdentityError(identity: ArtifactIdentity): string {
+  const errors = artifactIdentityErrors(identity);
+  return errors.name || errors.namespace || errors.key;
 }
 
 export function artifactIdentityPath(identity: ArtifactIdentity): string {
