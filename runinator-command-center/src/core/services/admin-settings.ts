@@ -53,6 +53,14 @@ const HASKELL_SETUP = `apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ghc libghc-aeson-dev
 rm -rf /var/lib/apt/lists/*`;
 
+const OCAML_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ocaml ocaml-findlib libyojson-ocaml-dev
+rm -rf /var/lib/apt/lists/*`;
+
+const ERLANG_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends erlang-nox erlang-jiffy
+rm -rf /var/lib/apt/lists/*`;
+
 const LANGUAGE_DEFINITIONS: readonly {
   language: string;
   label: string;
@@ -111,6 +119,20 @@ const LANGUAGE_DEFINITIONS: readonly {
     aliases: ["hs", "ghc"],
     defaultImage: "debian:bookworm-slim",
     defaultSetupScript: HASKELL_SETUP,
+  },
+  {
+    language: "ocaml",
+    label: "OCaml",
+    aliases: ["ml", "ocamlopt"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: OCAML_SETUP,
+  },
+  {
+    language: "erlang",
+    label: "Erlang (escript)",
+    aliases: ["erl", "escript"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: ERLANG_SETUP,
   },
   { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3" },
   { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40" },

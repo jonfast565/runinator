@@ -1122,6 +1122,14 @@ const HASKELL_SETUP: &str = r#"apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ghc libghc-aeson-dev
 rm -rf /var/lib/apt/lists/*"#;
 
+const OCAML_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ocaml ocaml-findlib libyojson-ocaml-dev
+rm -rf /var/lib/apt/lists/*"#;
+
+const ERLANG_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends erlang-nox erlang-jiffy
+rm -rf /var/lib/apt/lists/*"#;
+
 struct ForeignLanguageRuntime {
     canonical: &'static str,
     image: &'static str,
@@ -1146,6 +1154,8 @@ fn foreign_language_runtime(language: &str) -> Option<ForeignLanguageRuntime> {
         }
         "ada" | "adb" | "gnat" => ("ada", "debian:bookworm-slim", ADA_SETUP),
         "haskell" | "hs" | "ghc" => ("haskell", "debian:bookworm-slim", HASKELL_SETUP),
+        "ocaml" | "ml" | "ocamlopt" => ("ocaml", "debian:bookworm-slim", OCAML_SETUP),
+        "erlang" | "erl" | "escript" => ("erlang", "debian:bookworm-slim", ERLANG_SETUP),
         "ruby" | "rb" => ("ruby", "ruby:3.3", ""),
         "perl" | "pl" => ("perl", "perl:5.40", ""),
         "php" => ("php", "php:8.3-cli", ""),
@@ -1992,6 +2002,25 @@ mod tests {
             assert_eq!(runtime.canonical, "haskell", "{alias}");
             assert_eq!(runtime.image, "debian:bookworm-slim", "{alias}");
             assert!(runtime.setup_script.contains("libghc-aeson-dev"), "{alias}");
+        }
+    }
+
+    #[test]
+    fn ocaml_and_erlang_aliases_have_explicit_runtime_defaults() {
+        let cases = [
+            ("ocaml", "ocaml", "ocaml-findlib"),
+            ("ml", "ocaml", "libyojson-ocaml-dev"),
+            ("ocamlopt", "ocaml", "ocaml"),
+            ("erlang", "erlang", "erlang-nox"),
+            ("erl", "erlang", "erlang-jiffy"),
+            ("escript", "erlang", "erlang-nox"),
+        ];
+
+        for (alias, canonical, package) in cases {
+            let runtime = foreign_language_runtime(alias).expect(alias);
+            assert_eq!(runtime.canonical, canonical, "{alias}");
+            assert_eq!(runtime.image, "debian:bookworm-slim", "{alias}");
+            assert!(runtime.setup_script.contains(package), "{alias}");
         }
     }
 

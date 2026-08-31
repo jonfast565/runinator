@@ -209,7 +209,8 @@ administrator under Admin -> Settings -> Foreign Languages, with built-in defaul
 `commonlisp`/`common-lisp`/`common_lisp`/`lisp`/`cl`/`sbcl`,
 `cobol`/`cob`/`gnucobol`, `c`/`gcc`/`c17`,
 `cpp`/`c++`/`cxx`/`cplusplus`/`g++`, `fortran`/`f90`/`f95`/`gfortran`,
-`ada`/`adb`/`gnat`, `haskell`/`hs`/`ghc`, `ruby`/`rb`, `perl`/`pl`, `php`,
+`ada`/`adb`/`gnat`, `haskell`/`hs`/`ghc`, `ocaml`/`ml`/`ocamlopt`,
+`erlang`/`erl`/`escript`, `ruby`/`rb`, `perl`/`pl`, `php`,
 `go`/`golang`, `swift`, `powershell`/`pwsh`/`ps1`, `csharp`/`c#`/`cs`,
 `fsharp`/`f#`/`fs`, and `vbnet`/`vb.net`/`visualbasic`/`vb`. Setup
 scripts are bash, so configured images must include `bash`. Local and Kubernetes workers need a
@@ -221,11 +222,11 @@ configured, otherwise the built-in `{ image, setup_script }` default. The same r
 the continuation context. Retries therefore use the same source, context, image, and setup script
 even if an administrator edits the language setting while the run is in flight.
 
-The Common Lisp, COBOL, C, C++, Fortran, Ada, and Haskell defaults bootstrap their system
-dependencies through the setup script so they work without a Runinator-specific image. For
-frequent execution, configure an image that already contains the needed frontend (SBCL + YASON,
-GnuCOBOL, GCC, G++, GFortran, GNAT, or GHC + Aeson) and clear the setup script; setup scripts run
-for every invocation because containers are disposable.
+The Common Lisp, COBOL, C, C++, Fortran, Ada, Haskell, OCaml, and Erlang defaults bootstrap their
+system dependencies through the setup script so they work without a Runinator-specific image.
+For frequent execution, configure an image that already contains the needed frontend (SBCL +
+YASON, GnuCOBOL, GCC, G++, GFortran, GNAT, GHC + Aeson, OCaml + Yojson, or Erlang + Jiffy) and
+clear the setup script; setup scripts run for every invocation because containers are disposable.
 
 Entry points use each language's native function syntax. JavaScript must export
 `main(context)` from its module (`export function main(context) { ... }`); Python may use
@@ -239,7 +240,11 @@ Go source uses `package main` and exports `func Main(context any) any`. Swift us
 C# defines `Foreign.Main(JsonElement context)`, F# defines `Foreign.main` over a `JsonElement`,
 and VB.NET defines `Foreign.Main(JsonElement context)`. Haskell source defines module `Foreign` and
 exports `runinatorMain :: Value -> Value` or `runinatorMain :: Value -> IO Value`, using
-`Data.Aeson.Value` for both context and result. Common Lisp defines `(defun main (context)
+`Data.Aeson.Value` for both context and result. OCaml defines
+`let runinator_main (context : Yojson.Safe.t) : Yojson.Safe.t`; the authored `foreign.ml` file is
+compiled as module `Foreign`. Erlang source declares `-module(foreign)` and exports
+`runinator_main/1`; the generated escript decodes JSON objects as maps with binary keys through
+Jiffy. Common Lisp defines `(defun main (context)
 ...)`; JSON objects arrive as YASON hash tables with string keys, and hash tables are the natural
 way to return JSON objects. The three .NET languages share the administrator-configurable .NET SDK
 image.

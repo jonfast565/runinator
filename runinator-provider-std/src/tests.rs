@@ -133,6 +133,21 @@ runinatorMain context = pure $ case parseEither parser context of
         input .: "value"
 "#;
 
+const OCAML_RETURN_SOURCE: &str = r#"let runinator_main (context : Yojson.Safe.t) : Yojson.Safe.t =
+  let open Yojson.Safe.Util in
+  let value = context |> member "input" |> member "value" |> to_int in
+  `Assoc [("answer", `Int (value + 1))]
+"#;
+
+const ERLANG_RETURN_SOURCE: &str = r#"-module(foreign).
+-export([runinator_main/1]).
+
+runinator_main(Context) ->
+    Input = maps:get(<<"input">>, Context),
+    Value = maps:get(<<"value">>, Input),
+    #{<<"answer">> => Value + 1}.
+"#;
+
 fn request_for(
     action_function: &str,
     parameters: runinator_models::value::Value,
@@ -334,6 +349,42 @@ fn code_language_specs_support_restored_languages_and_aliases() {
             "bash /work/runinator_runner.sh",
         ),
         (
+            "ocaml",
+            "ocaml",
+            "foreign.ml",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "ocamlopt",
+            "ocaml",
+            "foreign.ml",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "ml",
+            "ocaml",
+            "foreign.ml",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "erlang",
+            "erlang",
+            "foreign.erl",
+            "escript /work/runinator_runner.escript",
+        ),
+        (
+            "erl",
+            "erlang",
+            "foreign.erl",
+            "escript /work/runinator_runner.escript",
+        ),
+        (
+            "escript",
+            "erlang",
+            "foreign.erl",
+            "escript /work/runinator_runner.escript",
+        ),
+        (
             "ruby",
             "ruby",
             "foreign.rb",
@@ -448,6 +499,24 @@ fn haskell_adapter_supports_pure_and_io_results() {
         .expect("Haskell adapter must provide Main.hs");
     assert!(main_source.contains("instance IntoRuninatorIO Value"));
     assert!(main_source.contains("instance IntoRuninatorIO (IO Value)"));
+}
+
+#[test]
+fn ocaml_and_erlang_adapters_use_native_json_contracts() {
+    let ocaml = adapter_for("ocaml").unwrap();
+    assert_eq!(ocaml.runner_filename(), "runinator_runner.sh");
+    let ocaml_main = ocaml
+        .additional_files()
+        .iter()
+        .find_map(|(name, source)| (*name == "runinator_main.ml").then_some(*source))
+        .expect("OCaml adapter must provide runinator_main.ml");
+    assert!(ocaml_main.contains("Foreign.runinator_main context"));
+    assert!(ocaml_main.contains("Yojson.Safe.to_file"));
+
+    let erlang = adapter_for("erlang").unwrap();
+    assert_eq!(erlang.runner_filename(), "runinator_runner.escript");
+    assert!(erlang.runner_source().contains("jiffy:decode"));
+    assert!(erlang.runner_source().contains("foreign:runinator_main"));
 }
 
 #[test]
@@ -914,6 +983,52 @@ fn haskell_foreign_compute_returns_output() {
     let result = provider
         .execute_service(request, None, CancellationToken::new())
         .expect("Haskell foreign compute");
+
+    assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and the OCaml + Yojson runtime packages"]
+fn ocaml_foreign_compute_returns_output() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "ocaml",
+        "source": OCAML_RETURN_SOURCE,
+        "runtime": {
+            "image": "debian:bookworm-slim",
+            "setup_script": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ocaml ocaml-findlib libyojson-ocaml-dev"
+        },
+        "context": { "input": { "value": 41 } }
+    });
+    let mut request = request_for("code", parameters);
+    request.timeout_secs = 240;
+
+    let result = provider
+        .execute_service(request, None, CancellationToken::new())
+        .expect("OCaml foreign compute");
+
+    assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and the Erlang + Jiffy runtime packages"]
+fn erlang_escript_foreign_compute_returns_output() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "erlang",
+        "source": ERLANG_RETURN_SOURCE,
+        "runtime": {
+            "image": "debian:bookworm-slim",
+            "setup_script": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends erlang-nox erlang-jiffy"
+        },
+        "context": { "input": { "value": 41 } }
+    });
+    let mut request = request_for("code", parameters);
+    request.timeout_secs = 240;
+
+    let result = provider
+        .execute_service(request, None, CancellationToken::new())
+        .expect("Erlang escript foreign compute");
 
     assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
 }

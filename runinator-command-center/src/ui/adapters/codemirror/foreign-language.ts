@@ -27,6 +27,10 @@ const aliases: Record<string, TextEditorLanguage> = {
   gnat: "ada",
   hs: "haskell",
   ghc: "haskell",
+  ml: "ocaml",
+  ocamlopt: "ocaml",
+  erl: "erlang",
+  escript: "erlang",
   rb: "ruby",
   pl: "perl",
   golang: "go",
@@ -52,6 +56,8 @@ const supported = new Set<TextEditorLanguage>([
   "fortran",
   "ada",
   "haskell",
+  "ocaml",
+  "erlang",
   "ruby",
   "perl",
   "php",
@@ -121,6 +127,16 @@ export async function loadForeignLanguageExtension(
     case "haskell": {
       const { haskell } = await import("@codemirror/legacy-modes/mode/haskell");
       return StreamLanguage.define(haskell);
+    }
+
+    case "ocaml": {
+      const { oCaml } = await import("@codemirror/legacy-modes/mode/mllike");
+      return StreamLanguage.define(oCaml);
+    }
+
+    case "erlang": {
+      const { erlang } = await import("@codemirror/legacy-modes/mode/erlang");
+      return StreamLanguage.define(erlang);
     }
 
     case "ruby": {

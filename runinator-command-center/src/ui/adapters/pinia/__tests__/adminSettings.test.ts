@@ -90,6 +90,8 @@ describe("admin settings store", () => {
       ["fortran", "debian:bookworm-slim"],
       ["ada", "debian:bookworm-slim"],
       ["haskell", "debian:bookworm-slim"],
+      ["ocaml", "debian:bookworm-slim"],
+      ["erlang", "debian:bookworm-slim"],
       ["ruby", "ruby:3.3"],
       ["perl", "perl:5.40"],
       ["php", "php:8.3-cli"],
@@ -121,6 +123,12 @@ describe("admin settings store", () => {
     expect(
       settings.languages.find((runtime) => runtime.language === "haskell")?.setup_script,
     ).toContain("libghc-aeson-dev");
+    expect(
+      settings.languages.find((runtime) => runtime.language === "ocaml")?.setup_script,
+    ).toContain("libyojson-ocaml-dev");
+    expect(
+      settings.languages.find((runtime) => runtime.language === "erlang")?.setup_script,
+    ).toContain("erlang-jiffy");
     expect(fetchForeignLanguageRuntime).not.toHaveBeenCalled();
   });
 
