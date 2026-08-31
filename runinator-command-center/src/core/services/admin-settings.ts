@@ -33,6 +33,22 @@ const COBOL_SETUP = `apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnucobol
 rm -rf /var/lib/apt/lists/*`;
 
+const C_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev
+rm -rf /var/lib/apt/lists/*`;
+
+const CPP_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++
+rm -rf /var/lib/apt/lists/*`;
+
+const FORTRAN_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gfortran
+rm -rf /var/lib/apt/lists/*`;
+
+const ADA_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnat
+rm -rf /var/lib/apt/lists/*`;
+
 const LANGUAGE_DEFINITIONS: readonly {
   language: string;
   label: string;
@@ -56,6 +72,34 @@ const LANGUAGE_DEFINITIONS: readonly {
     aliases: ["cob", "gnucobol"],
     defaultImage: "debian:bookworm-slim",
     defaultSetupScript: COBOL_SETUP,
+  },
+  {
+    language: "c",
+    label: "C (GCC)",
+    aliases: ["gcc", "c17"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: C_SETUP,
+  },
+  {
+    language: "cpp",
+    label: "C++ (G++)",
+    aliases: ["c++", "cxx", "cplusplus", "g++"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: CPP_SETUP,
+  },
+  {
+    language: "fortran",
+    label: "Fortran (GFortran)",
+    aliases: ["f90", "f95", "gfortran"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: FORTRAN_SETUP,
+  },
+  {
+    language: "ada",
+    label: "Ada (GNAT)",
+    aliases: ["adb", "gnat"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: ADA_SETUP,
   },
   { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3" },
   { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40" },

@@ -195,9 +195,11 @@ def main(context):
 ````
 
 The fenced source is carried verbatim in the compiled workflow and lowers to `std.code`, which runs
-on a worker through Docker. Foreign source must define `main(context)` and return one
-JSON-serializable value; Runinator owns context loading and output serialization. Python awaitables
-and JavaScript promises are awaited. The returned value becomes the compute node output and is
+on a worker through Docker. Function-ABI languages define `main(context)` (with the native naming
+exceptions below) and return one JSON-serializable value; Runinator owns context loading and output
+serialization. JSON-stream languages instead compile a complete program that reads context JSON
+from stdin and writes result JSON to stdout. Python awaitables and JavaScript promises are awaited.
+The returned value becomes the compute node output and is
 available to later REXRAP nodes as `score.field`. A typed binding such as
 `let score: { score: integer } = compute ...` also validates the returned JSON at runtime. Bash's
 `main` receives the context as a JSON string and must print its JSON result to stdout; Bash logging
@@ -205,7 +207,9 @@ must use stderr. The Docker image and optional bash setup script are configured 
 administrator under Admin -> Settings -> Foreign Languages, with built-in defaults for
 `python`/`py`, `javascript`/`js`/`node`, `bash`/`sh`,
 `commonlisp`/`common-lisp`/`common_lisp`/`lisp`/`cl`/`sbcl`,
-`cobol`/`cob`/`gnucobol`, `ruby`/`rb`, `perl`/`pl`, `php`,
+`cobol`/`cob`/`gnucobol`, `c`/`gcc`/`c17`,
+`cpp`/`c++`/`cxx`/`cplusplus`/`g++`, `fortran`/`f90`/`f95`/`gfortran`,
+`ada`/`adb`/`gnat`, `ruby`/`rb`, `perl`/`pl`, `php`,
 `go`/`golang`, `swift`, `powershell`/`pwsh`/`ps1`, `csharp`/`c#`/`cs`,
 `fsharp`/`f#`/`fs`, and `vbnet`/`vb.net`/`visualbasic`/`vb`. Setup
 scripts are bash, so configured images must include `bash`. Local and Kubernetes workers need a
@@ -217,17 +221,18 @@ configured, otherwise the built-in `{ image, setup_script }` default. The same r
 the continuation context. Retries therefore use the same source, context, image, and setup script
 even if an administrator edits the language setting while the run is in flight.
 
-The Common Lisp and COBOL defaults bootstrap their small system dependencies through the setup
-script so they work without a Runinator-specific image. For frequent execution, configure an image
-that already contains SBCL + YASON or GnuCOBOL and clear the setup script; setup scripts run for
-every invocation because containers are disposable.
+The Common Lisp, COBOL, C, C++, Fortran, and Ada defaults bootstrap their system dependencies
+through the setup script so they work without a Runinator-specific image. For frequent execution,
+configure an image that already contains the needed frontend (SBCL + YASON, GnuCOBOL, GCC, G++,
+GFortran, or GNAT) and clear the setup script; setup scripts run for every invocation because
+containers are disposable.
 
 Entry points use each language's native function syntax. JavaScript must export
 `main(context)` from its module (`export function main(context) { ... }`); Python may use
 `def main(context)` or `async def main(context)`. Ruby, Perl, and PHP define their ordinary
 `main` function. Foreign source that does not define this entry point fails before producing a
 result; writing `RUNINATOR_OUTPUT` or printing JSON from a top-level script is not supported except
-for COBOL's explicit stdin/stdout ABI described below. Go is a naming exception because the
+for the explicit JSON-stream ABI described below. Go is a naming exception because the
 language reserves `main` for the process entry point:
 Go source uses `package main` and exports `func Main(context any) any`. Swift uses
 `func main(_ context: Any) throws -> Any`, and PowerShell defines `function main($context)`.
@@ -237,12 +242,20 @@ and VB.NET defines `Foreign.Main(JsonElement context)`. Common Lisp defines `(de
 way to return JSON objects. The three .NET languages share the administrator-configurable .NET SDK
 image.
 
-COBOL deliberately uses a raw JSON ABI rather than pretending arbitrary JSON has a universal COBOL
-record shape. The fenced source is a complete free-format GnuCOBOL program. Its program ID can be
-any valid name except `main`, which would collide with the C entry point GnuCOBOL generates for an
-executable. Runinator compiles it with `cobc -x -free`, writes one compact JSON document to standard
-input, and captures standard output as the result JSON. The program must emit only that JSON value
-on stdout; diagnostics and logs use `display ... upon syserr`. For example:
+COBOL and the GCC frontends deliberately use a raw JSON-stream ABI rather than pretending arbitrary
+JSON has a universal native record shape. Runinator writes one compact JSON document to standard
+input and captures standard output as the result JSON. The program must emit only that JSON value
+on stdout; diagnostics and logs use the language's stderr facility.
+
+| Language | Compiler contract | Fenced source |
+| --- | --- | --- |
+| C | `gcc -std=c17` | Complete translation unit with `int main(...)` |
+| C++ | `g++ -std=c++20` | Complete translation unit with `int main(...)` |
+| Fortran | `gfortran -std=f2018` | Complete program unit |
+| Ada | `gnatmake -gnat2022` | `procedure Runinator_Foreign` in the generated `runinator_foreign.adb` source |
+| COBOL | `cobc -x -free` | Complete free-format program; `PROGRAM-ID` must not be `MAIN` because that collides with GnuCOBOL's generated C entry point |
+
+For example:
 
 ````
 let result = compute "cobol" ```

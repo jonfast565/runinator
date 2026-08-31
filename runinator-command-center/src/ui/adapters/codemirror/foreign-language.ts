@@ -14,6 +14,17 @@ const aliases: Record<string, TextEditorLanguage> = {
   sbcl: "commonlisp",
   cob: "cobol",
   gnucobol: "cobol",
+  gcc: "c",
+  c17: "c",
+  "c++": "cpp",
+  cxx: "cpp",
+  cplusplus: "cpp",
+  "g++": "cpp",
+  f90: "fortran",
+  f95: "fortran",
+  gfortran: "fortran",
+  adb: "ada",
+  gnat: "ada",
   rb: "ruby",
   pl: "perl",
   golang: "go",
@@ -34,6 +45,10 @@ const supported = new Set<TextEditorLanguage>([
   "bash",
   "commonlisp",
   "cobol",
+  "c",
+  "cpp",
+  "fortran",
+  "ada",
   "ruby",
   "perl",
   "php",
@@ -78,6 +93,26 @@ export async function loadForeignLanguageExtension(
     case "cobol": {
       const { cobol } = await import("@codemirror/legacy-modes/mode/cobol");
       return StreamLanguage.define(cobol);
+    }
+
+    case "c": {
+      const { c } = await import("@codemirror/legacy-modes/mode/clike");
+      return StreamLanguage.define(c);
+    }
+
+    case "cpp": {
+      const { cpp } = await import("@codemirror/legacy-modes/mode/clike");
+      return StreamLanguage.define(cpp);
+    }
+
+    case "fortran": {
+      const { fortran } = await import("@codemirror/legacy-modes/mode/fortran");
+      return StreamLanguage.define(fortran);
+    }
+
+    case "ada": {
+      const { ada } = await import("./ada-mode");
+      return StreamLanguage.define(ada);
     }
 
     case "ruby": {

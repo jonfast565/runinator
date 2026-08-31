@@ -36,6 +36,68 @@ procedure division.
     stop run.
 "#;
 
+const C_RETURN_SOURCE: &str = r#"#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    char context[4096];
+    if (fgets(context, sizeof context, stdin) == NULL || strstr(context, "\"value\":41") == NULL) {
+        fputs("context JSON was not provided on stdin\n", stderr);
+        return 1;
+    }
+    fputs("{\"answer\":42}", stdout);
+    return 0;
+}
+"#;
+
+const CPP_RETURN_SOURCE: &str = r#"#include <iostream>
+#include <string>
+
+int main() {
+    std::string context;
+    std::getline(std::cin, context);
+    if (context.find("\"value\":41") == std::string::npos) {
+        std::cerr << "context JSON was not provided on stdin\n";
+        return 1;
+    }
+    std::cout << "{\"answer\":42}";
+    return 0;
+}
+"#;
+
+const FORTRAN_RETURN_SOURCE: &str = r#"program runinator_foreign
+    use, intrinsic :: iso_fortran_env, only: error_unit
+    implicit none
+    character(len=4096) :: context
+    integer :: status
+
+    read (*, '(A)', iostat=status) context
+    if (status /= 0 .or. index(context, '"value":41') == 0) then
+        write (error_unit, '(A)') 'context JSON was not provided on stdin'
+        error stop 1
+    end if
+    write (*, '(A)', advance='no') '{"answer":42}'
+end program runinator_foreign
+"#;
+
+const ADA_RETURN_SOURCE: &str = r#"with Ada.Command_Line; use Ada.Command_Line;
+with Ada.Strings.Fixed;
+with Ada.Text_IO; use Ada.Text_IO;
+
+procedure Runinator_Foreign is
+   Context : String (1 .. 4096);
+   Last    : Natural;
+begin
+   Get_Line (Context, Last);
+   if Last = 0 or else Ada.Strings.Fixed.Index (Context (1 .. Last), """value"":41") = 0 then
+      Put_Line (Standard_Error, "context JSON was not provided on stdin");
+      Set_Exit_Status (Failure);
+      return;
+   end if;
+   Put ("{""answer"":42}");
+end Runinator_Foreign;
+"#;
+
 fn request_for(
     action_function: &str,
     parameters: runinator_models::value::Value,
@@ -180,6 +242,44 @@ fn code_language_specs_support_restored_languages_and_aliases() {
             "foreign.cob",
             "bash /work/runinator_runner.sh",
         ),
+        ("c", "c", "foreign.c", "bash /work/runinator_runner.sh"),
+        ("gcc", "c", "foreign.c", "bash /work/runinator_runner.sh"),
+        (
+            "cpp",
+            "cpp",
+            "foreign.cpp",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "g++",
+            "cpp",
+            "foreign.cpp",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "fortran",
+            "fortran",
+            "foreign.f90",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "gfortran",
+            "fortran",
+            "foreign.f90",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "ada",
+            "ada",
+            "runinator_foreign.adb",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "gnat",
+            "ada",
+            "runinator_foreign.adb",
+            "bash /work/runinator_runner.sh",
+        ),
         (
             "ruby",
             "ruby",
@@ -279,10 +379,7 @@ fn code_language_specs_support_restored_languages_and_aliases() {
         assert_eq!(adapter.canonical(), canonical, "{input}");
         assert_eq!(adapter.source_filename(), filename, "{input}");
         assert_eq!(adapter.execute(), command, "{input}");
-        assert!(
-            adapter.runner_source().to_lowercase().contains("main"),
-            "{input}"
-        );
+        assert!(!adapter.runner_source().trim().is_empty(), "{input}");
     }
 }
 
@@ -475,6 +572,10 @@ procedure division.
     stop run.
 "#,
         ),
+        ("c", "gcc", "--version", C_RETURN_SOURCE),
+        ("cpp", "g++", "--version", CPP_RETURN_SOURCE),
+        ("fortran", "gfortran", "--version", FORTRAN_RETURN_SOURCE),
+        ("ada", "gnatmake", "--version", ADA_RETURN_SOURCE),
     ];
 
     for (language, executable, version_arg, source) in cases {
@@ -685,6 +786,45 @@ fn cobol_foreign_compute_returns_output() {
         .expect("COBOL foreign compute");
 
     assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and Debian GCC frontend packages"]
+fn gcc_frontend_foreign_compute_returns_output() {
+    let cases = [
+        ("c", C_RETURN_SOURCE, "gcc libc6-dev"),
+        ("cpp", CPP_RETURN_SOURCE, "g++"),
+        ("fortran", FORTRAN_RETURN_SOURCE, "gfortran"),
+        ("ada", ADA_RETURN_SOURCE, "gnat"),
+    ];
+
+    for (language, source, packages) in cases {
+        let provider = StdProvider;
+        let setup_script = format!(
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {packages}"
+        );
+        let parameters = json!({
+            "language": language,
+            "source": source,
+            "runtime": {
+                "image": "debian:bookworm-slim",
+                "setup_script": setup_script
+            },
+            "context": { "input": { "value": 41 } }
+        });
+        let mut request = request_for("code", parameters);
+        request.timeout_secs = 180;
+
+        let result = provider
+            .execute_service(request, None, CancellationToken::new())
+            .unwrap_or_else(|error| panic!("{language} foreign compute failed: {error}"));
+
+        assert_eq!(
+            result.output_json,
+            Some(json!({ "answer": 42 })),
+            "{language}"
+        );
+    }
 }
 
 #[test]

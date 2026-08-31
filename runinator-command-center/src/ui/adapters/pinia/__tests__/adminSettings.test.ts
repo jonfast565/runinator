@@ -85,6 +85,10 @@ describe("admin settings store", () => {
       ["bash", "bash:5.2"],
       ["commonlisp", "clfoundation/sbcl:2.6.1-bookworm"],
       ["cobol", "debian:bookworm-slim"],
+      ["c", "debian:bookworm-slim"],
+      ["cpp", "debian:bookworm-slim"],
+      ["fortran", "debian:bookworm-slim"],
+      ["ada", "debian:bookworm-slim"],
       ["ruby", "ruby:3.3"],
       ["perl", "perl:5.40"],
       ["php", "php:8.3-cli"],
@@ -101,6 +105,18 @@ describe("admin settings store", () => {
     expect(
       settings.languages.find((runtime) => runtime.language === "cobol")?.setup_script,
     ).toContain("gnucobol");
+    expect(settings.languages.find((runtime) => runtime.language === "c")?.setup_script).toContain(
+      "gcc",
+    );
+    expect(
+      settings.languages.find((runtime) => runtime.language === "cpp")?.setup_script,
+    ).toContain("g++");
+    expect(
+      settings.languages.find((runtime) => runtime.language === "fortran")?.setup_script,
+    ).toContain("gfortran");
+    expect(
+      settings.languages.find((runtime) => runtime.language === "ada")?.setup_script,
+    ).toContain("gnat");
     expect(fetchForeignLanguageRuntime).not.toHaveBeenCalled();
   });
 

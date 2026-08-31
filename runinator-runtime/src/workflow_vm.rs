@@ -1102,6 +1102,22 @@ const COBOL_SETUP: &str = r#"apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnucobol
 rm -rf /var/lib/apt/lists/*"#;
 
+const C_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev
+rm -rf /var/lib/apt/lists/*"#;
+
+const CPP_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++
+rm -rf /var/lib/apt/lists/*"#;
+
+const FORTRAN_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gfortran
+rm -rf /var/lib/apt/lists/*"#;
+
+const ADA_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnat
+rm -rf /var/lib/apt/lists/*"#;
+
 struct ForeignLanguageRuntime {
     canonical: &'static str,
     image: &'static str,
@@ -1119,6 +1135,12 @@ fn foreign_language_runtime(language: &str) -> Option<ForeignLanguageRuntime> {
             COMMON_LISP_SETUP,
         ),
         "cobol" | "cob" | "gnucobol" => ("cobol", "debian:bookworm-slim", COBOL_SETUP),
+        "c" | "gcc" | "c17" => ("c", "debian:bookworm-slim", C_SETUP),
+        "cpp" | "c++" | "cxx" | "cplusplus" | "g++" => ("cpp", "debian:bookworm-slim", CPP_SETUP),
+        "fortran" | "f90" | "f95" | "gfortran" => {
+            ("fortran", "debian:bookworm-slim", FORTRAN_SETUP)
+        }
+        "ada" | "adb" | "gnat" => ("ada", "debian:bookworm-slim", ADA_SETUP),
         "ruby" | "rb" => ("ruby", "ruby:3.3", ""),
         "perl" | "pl" => ("perl", "perl:5.40", ""),
         "php" => ("php", "php:8.3-cli", ""),
@@ -1152,7 +1174,7 @@ fn enrich_foreign_code_input(mut input: Value, context: &Value) -> Result<Value,
         .unwrap_or_default();
     let runtime = foreign_language_runtime(language).ok_or_else(|| {
         format!(
-            "unsupported foreign language '{language}'; supported languages: python, javascript, bash, commonlisp, cobol, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
+            "unsupported foreign language '{language}'; supported languages: python, javascript, bash, commonlisp, cobol, c, cpp, fortran, ada, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
         )
     })?;
     let configured = context
@@ -1939,6 +1961,23 @@ mod tests {
                 .contains("gnucobol")
         );
         assert_eq!(input["context"]["input"]["value"], 41);
+    }
+
+    #[test]
+    fn gcc_frontend_aliases_have_explicit_runtime_defaults() {
+        let cases = [
+            ("gcc", "c", "gcc"),
+            ("g++", "cpp", "g++"),
+            ("gfortran", "fortran", "gfortran"),
+            ("gnat", "ada", "gnat"),
+        ];
+
+        for (alias, canonical, package) in cases {
+            let runtime = foreign_language_runtime(alias).expect(alias);
+            assert_eq!(runtime.canonical, canonical, "{alias}");
+            assert_eq!(runtime.image, "debian:bookworm-slim", "{alias}");
+            assert!(runtime.setup_script.contains(package), "{alias}");
+        }
     }
 
     #[test]
