@@ -37,9 +37,21 @@ function readEffectiveActions(source: unknown): Action[] {
 
 function readPrincipal(source: unknown): JsonRecord | null {
   const record = source as JsonRecord | null;
-  if (!record) {return null;}
+
+  if (!record) {
+    return null;
+  }
+
   const principal = record.principal;
-  return principal && typeof principal === "object" ? principal as JsonRecord : record;
+
+  if (principal && typeof principal === "object") {
+    return {
+      ...(principal as JsonRecord),
+      ...(typeof record.platform_role === "string" ? { platform_role: record.platform_role } : {}),
+    };
+  }
+
+  return record;
 }
 
 const fallbackAuthStorage: AuthStorage = {
@@ -124,8 +136,14 @@ export function createAuthService() {
     }));
 
     if (Number.isFinite(result.expires_in) && result.expires_in > 0) {
-      if (refreshTimer !== null) {clearTimeout(refreshTimer);}
-      refreshTimer = setTimeout(() => void refreshCurrentSession(), Math.max(5000, result.expires_in * 750));
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+      }
+
+      refreshTimer = setTimeout(
+        () => void refreshCurrentSession(),
+        Math.max(5000, result.expires_in * 750),
+      );
     }
   }
 
@@ -138,7 +156,11 @@ export function createAuthService() {
 
       if (typeof decoded.exp === "number") {
         const delay = Math.max(5000, Math.floor((decoded.exp * 1000 - Date.now()) * 0.75));
-        if (refreshTimer !== null) {clearTimeout(refreshTimer);}
+
+        if (refreshTimer !== null) {
+          clearTimeout(refreshTimer);
+        }
+
         refreshTimer = setTimeout(() => void refreshCurrentSession(), delay);
       }
     } catch {
@@ -174,22 +196,37 @@ export function createAuthService() {
   }
 
   async function refreshCurrentSession(): Promise<boolean> {
-    if (refreshPromise) {return refreshPromise;}
+    if (refreshPromise) {
+      return refreshPromise;
+    }
+
     const token = refreshToken;
-    if (!token || !store.getState().required) {return false;}
-    refreshPromise = tryRefresh(token).finally(() => { refreshPromise = null; });
+
+    if (!token || !store.getState().required) {
+      return false;
+    }
+
+    refreshPromise = tryRefresh(token).finally(() => {
+      refreshPromise = null;
+    });
     return refreshPromise;
   }
 
   setUnauthorizedHandler(async () => {
-    if (!store.getState().authenticated) {return false;}
+    if (!store.getState().authenticated) {
+      return false;
+    }
+
     return refreshCurrentSession();
   });
 
   return {
     ...store,
     resetForTests() {
-      if (refreshTimer !== null) {clearTimeout(refreshTimer);}
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+      }
+
       refreshTimer = null;
       setUnauthorizedHandler(null);
       refreshToken = null;
@@ -281,7 +318,11 @@ export function createAuthService() {
 
       try {
         const user = await fetchAuthMe();
-        store.setState((state) => ({ ...state, user: readPrincipal(user), effectiveActions: readEffectiveActions(user) }));
+        store.setState((state) => ({
+          ...state,
+          user: readPrincipal(user),
+          effectiveActions: readEffectiveActions(user),
+        }));
       } catch {
         /* keep the current principal on a transient failure */
       }

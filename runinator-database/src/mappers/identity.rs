@@ -94,6 +94,12 @@ row_mapper!(row_to_auth_session(row) -> AuthSession {
             .unwrap_or_else(Utc::now),
         revoked: row.get::<bool, _>("revoked"),
         refresh_count: row.get::<i64, _>("refresh_count"),
+        created_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("created_at"), 0)
+            .unwrap_or_else(Utc::now),
+        last_seen_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("last_seen_at"), 0)
+            .unwrap_or_else(Utc::now),
+        user_agent: row.get::<Option<String>, _>("user_agent"),
+        ip_address: row.get::<Option<String>, _>("ip_address"),
     }
 });
 

@@ -66,6 +66,29 @@ function escape(part: unknown): string {
 const REGISTRY: Record<string, HttpDescriptor> = {
   auth_config: { method: "GET", path: () => "auth/config" },
   auth_me: { method: "GET", path: () => "auth/me" },
+  update_current_user: {
+    method: "PATCH",
+    path: () => "auth/me",
+    body: (args) => arg(args, "request"),
+  },
+  change_current_password: {
+    method: "POST",
+    path: () => "auth/me/password",
+    body: (args) => arg(args, "request"),
+  },
+  list_current_sessions: { method: "GET", path: () => "auth/sessions" },
+  revoke_current_session: {
+    method: "DELETE",
+    path: (args) => `auth/sessions/${escape(arg(args, "sessionId"))}`,
+  },
+  revoke_other_sessions: { method: "POST", path: () => "auth/sessions/revoke-others" },
+  list_personal_api_keys: { method: "GET", path: () => "auth/me/api-keys" },
+  list_personal_api_key_scopes: { method: "GET", path: () => "auth/me/api-key-scopes" },
+  create_personal_api_key: {
+    method: "POST",
+    path: () => "auth/me/api-keys",
+    body: (args) => arg(args, "request"),
+  },
   login: {
     method: "POST",
     path: () => "auth/login",
@@ -95,11 +118,13 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   list_resource_grants: {
     method: "GET",
-    path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
+    path: (args) =>
+      `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
   },
   create_resource_grant: {
     method: "POST",
-    path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
+    path: (args) =>
+      `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
     body: (args) => ({
       principal_type: arg(args, "principalType"),
       principal_id: arg(args, "principalId"),
@@ -113,7 +138,8 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   transfer_resource_owner: {
     method: "POST",
-    path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/owner`,
+    path: (args) =>
+      `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/owner`,
     body: (args) => ({
       owner: {
         kind: arg(args, "scopeKind"),
@@ -254,9 +280,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "POST",
     path: () => "packs/import?overwrite=true",
     rawBody: (args) => ({
-      body: createZip([
-        { name: "workflows.json", content: JSON.stringify(arg(args, "request")) },
-      ]),
+      body: createZip([{ name: "workflows.json", content: JSON.stringify(arg(args, "request")) }]),
       contentType: "application/zip",
     }),
   },
@@ -477,7 +501,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     }),
   },
   fetch_adapter_health: { method: "GET", path: () => "orchestrations/adapters/health" },
-  reload_adapter_host: { method: "POST", path: () => "orchestrations/adapters/reload", body: () => ({}) },
+  reload_adapter_host: {
+    method: "POST",
+    path: () => "orchestrations/adapters/reload",
+    body: () => ({}),
+  },
   send_orchestration_intent: {
     method: "POST",
     path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/intents`,

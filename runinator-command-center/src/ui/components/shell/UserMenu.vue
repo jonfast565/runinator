@@ -46,6 +46,15 @@
           type="button"
           role="menuitem"
           class="btn btn-ghost mt-1 justify-start gap-2 border-transparent bg-transparent text-xs text-fg hover:bg-surface-hover"
+          @click="openProfile"
+        >
+          <Icon name="settings" :size="14" />
+          <span>Profile & security</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          class="btn btn-ghost mt-1 justify-start gap-2 border-transparent bg-transparent text-xs text-fg hover:bg-surface-hover"
           @click="signOut"
         >
           <Icon name="lock" :size="14" />
@@ -66,9 +75,11 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Icon from "../shared/Icon.vue";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { buildTooltip, versionLabel } from "../../../core/utils/build-info";
 
 const auth = useAuthStore();
+const app = useAppStore();
 const buildLabel = versionLabel();
 const buildTitle = buildTooltip();
 const menuRef = ref<HTMLElement | null>(null);
@@ -112,6 +123,11 @@ function close() {
 async function signOut() {
   close();
   await auth.signOut();
+}
+
+function openProfile() {
+  close();
+  app.activeTab = "Profile";
 }
 
 function onDocumentPointerDown(event: PointerEvent) {

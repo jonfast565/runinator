@@ -2,6 +2,7 @@ import type { IconName } from "../domain/icons";
 import type { Action } from "../domain/models";
 
 export type AppTab =
+  | "Profile"
   | "Dev"
   | "Pipelines"
   | "PipelineRuns"

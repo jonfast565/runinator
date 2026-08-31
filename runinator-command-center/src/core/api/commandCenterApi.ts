@@ -5,6 +5,12 @@ import type {
   JsonRecord,
   JsonValue,
   ApiKey,
+  AuthSessionSummary,
+  ChangePasswordInput,
+  CreatePersonalApiKeyInput,
+  PersonalApiKeySecret,
+  PersonalApiKeyScope,
+  UpdateCurrentUserInput,
   AgentEnrollmentToken,
   AgentDirectiveKind,
   AgentDirectiveRecord,
@@ -140,6 +146,38 @@ export async function fetchAuthConfig() {
 
 export async function fetchAuthMe() {
   return command<JsonRecord>("auth_me");
+}
+
+export async function updateCurrentUser(request: UpdateCurrentUserInput) {
+  return command<User>("update_current_user", { request });
+}
+
+export async function changeCurrentPassword(request: ChangePasswordInput) {
+  return command<TaskResponse>("change_current_password", { request });
+}
+
+export async function listCurrentSessions() {
+  return command<AuthSessionSummary[]>("list_current_sessions");
+}
+
+export async function revokeCurrentSession(sessionId: string) {
+  return command<TaskResponse>("revoke_current_session", { sessionId });
+}
+
+export async function revokeOtherSessions() {
+  return command<TaskResponse>("revoke_other_sessions");
+}
+
+export async function listPersonalApiKeys() {
+  return command<ApiKey[]>("list_personal_api_keys");
+}
+
+export async function listPersonalApiKeyScopes() {
+  return command<PersonalApiKeyScope[]>("list_personal_api_key_scopes");
+}
+
+export async function createPersonalApiKey(request: CreatePersonalApiKeyInput) {
+  return command<PersonalApiKeySecret>("create_personal_api_key", { request });
 }
 
 export async function login(username: string, password: string) {

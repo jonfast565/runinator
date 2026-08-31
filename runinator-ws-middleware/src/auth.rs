@@ -1,11 +1,11 @@
 //! authentication primitives + the request-gating middleware. authorization (resource grants) is a
 //! Authentication resolves a credential to a live principal and current RBAC assignments.
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{
         Request, StatusCode,
         header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL},
@@ -185,6 +185,23 @@ pub async fn auth_middleware<T: AuthStore + RbacStore>(
             .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
     {
         resolve_header_org(&state, &mut context, org_id).await;
+    }
+    if let Some(session_id) = context.session_id {
+        let now = chrono::Utc::now();
+        let stale_before = now - chrono::Duration::minutes(5);
+        let user_agent = req
+            .headers()
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.chars().take(512).collect());
+        let ip_address = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip().to_string());
+        let _ = state
+            .db
+            .touch_session_activity(session_id, now, stale_before, user_agent, ip_address)
+            .await;
     }
     req.extensions_mut().insert(context);
     next.run(req).await

@@ -68,7 +68,7 @@ pub trait AuthStore: Send + Sync + 'static {
     fn update_user(
         &self,
         id: Uuid,
-        email: Option<String>,
+        email: Option<Option<String>>,
         disabled: Option<bool>,
     ) -> impl Future<Output = Result<User, SendableError>> + Send;
 
@@ -183,6 +183,23 @@ pub trait AuthStore: Send + Sync + 'static {
         id: Uuid,
     ) -> impl Future<Output = Result<Option<AuthSession>, SendableError>> + Send;
 
+    /// List active, unexpired refresh sessions for one user.
+    fn list_user_sessions(
+        &self,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Vec<AuthSession>, SendableError>> + Send;
+
+    /// Coarsely update activity metadata when the persisted value is older than `stale_before`.
+    fn touch_session_activity(
+        &self,
+        id: Uuid,
+        seen_at: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+        user_agent: Option<String>,
+        ip_address: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Revoke a single session.
     fn revoke_session(&self, id: Uuid) -> impl Future<Output = Result<(), SendableError>> + Send;
 
@@ -190,6 +207,13 @@ pub trait AuthStore: Send + Sync + 'static {
     fn revoke_user_sessions(
         &self,
         user_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Revoke every session for a user except the session currently serving the request.
+    fn revoke_user_sessions_except(
+        &self,
+        user_id: Uuid,
+        current_session_id: Uuid,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     // ---- authz: teams + resource grants ----

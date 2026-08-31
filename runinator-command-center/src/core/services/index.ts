@@ -30,9 +30,11 @@ import { createNodePoolsService } from "./node-pools";
 import { createSupervisorService } from "./supervisor";
 import { createAgentEnrollmentService } from "./agent-enrollment";
 import { createAgentDirectivesService } from "./agent-directives";
+import { createProfileSecurityService } from "./profile-security";
 
 export const appService = createAppService();
 export const authService = createAuthService();
+export const profileSecurityService = createProfileSecurityService(appService, authService);
 export const resourcesService = createResourcesService(appService);
 export const consoleService = createConsoleService(appService);
 export const consoleTerminalService = createConsoleTerminalService(consoleService);
@@ -78,6 +80,7 @@ export const agentDirectivesService = createAgentDirectivesService(appService);
 
 export type { AppService } from "./app";
 export type { AuthService } from "./auth";
+export type { ProfileSecurityService } from "./profile-security";
 export type { ResourcesService } from "./resources";
 export type { ConsoleService } from "./console";
 export type { FunctionsService } from "./functions";

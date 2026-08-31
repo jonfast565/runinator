@@ -13,6 +13,7 @@ use runinator_models::auth::{
     AgentEnrollmentRequestBody, AgentEnrollmentToken, AgentEnrollmentTokenRecord,
     EnrollAgentRequest, LoginRequest,
 };
+use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
 };
@@ -117,6 +118,114 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
 }
 
 #[tokio::test]
+async fn current_user_can_update_profile_and_change_password_without_losing_current_session() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let user = db
+        .create_user(
+            "alice".into(),
+            None,
+            Some(crate::auth::hash_password("old-password").unwrap()),
+        )
+        .await
+        .unwrap();
+    let user_id = user.id.unwrap();
+    db.upsert_role_assignment(
+        PrincipalKind::User,
+        user_id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Member),
+        None,
+    )
+    .await
+    .unwrap();
+    let now = Utc::now();
+    let current_id = Uuid::new_v4();
+    let other_id = Uuid::new_v4();
+    for id in [current_id, other_id] {
+        db.create_session(runinator_models::auth::AuthSession {
+            id,
+            user_id,
+            refresh_token_hash: format!("hash-{id}"),
+            expires_at: now + ChronoDuration::hours(1),
+            revoked: false,
+            refresh_count: 0,
+            created_at: now,
+            last_seen_at: now,
+            user_agent: Some("test-client".into()),
+            ip_address: Some("127.0.0.1".into()),
+        })
+        .await
+        .unwrap();
+    }
+    let ctx = AuthContext {
+        principal_id: Some(user_id),
+        session_id: Some(current_id),
+        platform_role: Some(PlatformRole::Member),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::User,
+        org_id: None,
+    };
+
+    let (status, _) = crate::handlers::auth::update_current_user::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(ctx.clone()),
+        ValidatedJson(runinator_models::auth::UpdateCurrentUserRequest {
+            email: Some(Some("alice@example.com".into())),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        db.fetch_user(user_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .email
+            .as_deref(),
+        Some("alice@example.com")
+    );
+
+    let (status, _) = crate::handlers::auth::change_current_password::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(ctx.clone()),
+        ValidatedJson(runinator_models::auth::ChangePasswordRequest {
+            current_password: "wrong".into(),
+            new_password: "new-password".into(),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = crate::handlers::auth::change_current_password::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(ctx),
+        ValidatedJson(runinator_models::auth::ChangePasswordRequest {
+            current_password: "old-password".into(),
+            new_password: "new-password".into(),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!db.fetch_session(current_id).await.unwrap().unwrap().revoked);
+    assert!(db.fetch_session(other_id).await.unwrap().unwrap().revoked);
+    let credential = db
+        .fetch_local_credential("alice".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(crate::auth::verify_password(
+        "new-password",
+        &credential.password_hash
+    ));
+
+    drop(db);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn login_requires_an_enabled_organization_membership() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
@@ -145,6 +254,7 @@ async fn login_requires_an_enabled_organization_membership() {
         Extension(db.clone()),
         Extension(auth_config.clone()),
         ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))),
+        axum::http::HeaderMap::new(),
         ValidatedJson(login()),
     )
     .await;
@@ -164,6 +274,7 @@ async fn login_requires_an_enabled_organization_membership() {
         Extension(db.clone()),
         Extension(auth_config),
         ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 1))),
+        axum::http::HeaderMap::new(),
         ValidatedJson(login()),
     )
     .await;

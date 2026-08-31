@@ -8,6 +8,7 @@ import {
   cancelWorkflowRun,
   clearConsoleSession,
   createApiKey,
+  createPersonalApiKey,
   createUser,
   deleteOrchestrationAlias,
   deliverSignal,
@@ -18,10 +19,13 @@ import {
   fetchWorkflowRun,
   importPackArchive,
   listTeamMembers,
+  listCurrentSessions,
+  revokeOtherSessions,
   requestRunInterrupt,
   rotateApiKey,
   saveWorkflowBundle,
   updateApiKey,
+  updateCurrentUser,
   updateTeam,
 } from "../commandCenterApi";
 import { invoke } from "@tauri-apps/api/core";
@@ -668,6 +672,45 @@ describe("command center permissions API in web mode", () => {
           password: "secret",
           email: "ada@example.com",
           platform_role: "admin",
+        }),
+      }),
+    );
+  });
+
+  it("maps self-service profile, session, and scoped key operations", async () => {
+    await updateCurrentUser({ email: null });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/auth/me",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ email: null }) }),
+    );
+
+    await listCurrentSessions();
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/auth/sessions",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    await revokeOtherSessions();
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/auth/sessions/revoke-others",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    await createPersonalApiKey({
+      name: "automation",
+      org_id: "org-1",
+      action_ceiling: ["view"],
+      expires_at: null,
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/auth/me/api-keys",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          name: "automation",
+          org_id: "org-1",
+          action_ceiling: ["view"],
+          expires_at: null,
         }),
       }),
     );

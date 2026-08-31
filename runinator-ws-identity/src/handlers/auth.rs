@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::{
     Extension, Json,
     extract::{ConnectInfo, Path},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -12,11 +12,12 @@ use chrono::{Duration, Utc};
 use runinator_auth::enroll::EnrollToken;
 use runinator_models::auth::{
     AddTeamMemberRequest, AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord,
-    AuthContext, AuthSession, CreateAgentEnrollmentTokenRequest,
-    CreateAgentEnrollmentTokenResponse, CreateApiKeyRequest, CreateApiKeyResponse,
-    CreateTeamRequest, CreateUserRequest, EnrollAgentRequest, EnrollAgentResponse, LoginRequest,
-    LoginResponse, PrincipalKind, RefreshRequest, UpdateApiKeyRequest, UpdateTeamRequest,
-    UpdateUserRequest, User,
+    AuthContext, AuthSession, AuthSessionSummary, ChangePasswordRequest,
+    CreateAgentEnrollmentTokenRequest, CreateAgentEnrollmentTokenResponse, CreateApiKeyRequest,
+    CreateApiKeyResponse, CreatePersonalApiKeyRequest, CreateTeamRequest, CreateUserRequest,
+    EnrollAgentRequest, EnrollAgentResponse, LoginRequest, LoginResponse, PersonalApiKeyScope,
+    PrincipalKind, RefreshRequest, UpdateApiKeyRequest, UpdateCurrentUserRequest,
+    UpdateTeamRequest, UpdateUserRequest, User,
 };
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::server_settings::{
@@ -49,6 +50,25 @@ type Reply = (StatusCode, Json<ApiResponse>);
 
 const ORGANIZATION_MEMBERSHIP_REQUIRED: &str =
     "user must belong to an enabled organization before signing in";
+
+#[derive(Clone)]
+struct SessionMetadata {
+    created_at: chrono::DateTime<Utc>,
+    user_agent: Option<String>,
+    ip_address: Option<String>,
+}
+
+fn session_metadata(headers: &HeaderMap, addr: SocketAddr) -> SessionMetadata {
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.chars().take(512).collect());
+    SessionMetadata {
+        created_at: Utc::now(),
+        user_agent,
+        ip_address: Some(addr.ip().to_string()),
+    }
+}
 
 #[derive(serde::Deserialize)]
 pub struct AuthSettingsRequest {
@@ -202,6 +222,7 @@ async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore + 
     config: &AuthConfig,
     user: User,
     refresh_count: i64,
+    metadata: SessionMetadata,
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
     if !has_enabled_organization(db, user_id).await? {
@@ -215,6 +236,10 @@ async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore + 
         expires_at: Utc::now() + Duration::seconds(config.refresh_ttl_secs),
         revoked: false,
         refresh_count,
+        created_at: metadata.created_at,
+        last_seen_at: Utc::now(),
+        user_agent: metadata.user_agent,
+        ip_address: metadata.ip_address,
     };
     db.create_session(session.clone())
         .await
@@ -289,6 +314,7 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgS
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     ValidatedJson(request): ValidatedJson<LoginRequest>,
 ) -> Reply {
     // bound credential brute force per client ip before doing any work.
@@ -333,7 +359,15 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgS
             return forbidden(ORGANIZATION_MEMBERSHIP_REQUIRED);
         }
     }
-    match issue_session(db.as_ref(), &config, credential.user, 0).await {
+    match issue_session(
+        db.as_ref(),
+        &config,
+        credential.user,
+        0,
+        session_metadata(&headers, addr),
+    )
+    .await
+    {
         Ok(response) => {
             crate::audit::record_audit(
                 db.as_ref(),
@@ -405,6 +439,8 @@ async fn audit_credential_change<T: AuthStore + RbacStore + RuntimeStore>(
 pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     ValidatedJson(request): ValidatedJson<RefreshRequest>,
 ) -> Reply {
     let hash = hash_secret(&request.refresh_token);
@@ -436,7 +472,17 @@ pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + Or
         Ok(false) => return unauthorized("refresh session exhausted or already used"),
         Err(err) => return api_error(err.to_string()),
     }
-    match issue_session(db.as_ref(), &config, user, session.refresh_count + 1).await {
+    let mut metadata = session_metadata(&headers, addr);
+    metadata.created_at = session.created_at;
+    match issue_session(
+        db.as_ref(),
+        &config,
+        user,
+        session.refresh_count + 1,
+        metadata,
+    )
+    .await
+    {
         Ok(response) => ok_value(&response),
         Err(reply) => reply,
     }
@@ -733,6 +779,328 @@ pub async fn me<T: AuthStore + RbacStore + RuntimeStore>(
             "effective_actions": effective_actions,
         })),
         Ok(None) => not_found("user not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn current_user_ids(ctx: &AuthContext) -> Result<(Uuid, Uuid), Reply> {
+    if ctx.kind != PrincipalKind::User {
+        return Err(forbidden("profile management is available only to users"));
+    }
+    let user_id = ctx
+        .principal_id
+        .ok_or_else(|| unauthorized("principal missing id"))?;
+    let session_id = ctx
+        .session_id
+        .ok_or_else(|| unauthorized("session missing id"))?;
+    Ok((user_id, session_id))
+}
+
+async fn audit_profile_event<T: AuthStore + RbacStore + RuntimeStore>(
+    db: &T,
+    ctx: &AuthContext,
+    action: &str,
+    outcome: crate::audit::AuditOutcome,
+    detail: Option<&str>,
+) {
+    crate::audit::record_audit(
+        db,
+        ctx.principal_id,
+        ctx.actor_kind(),
+        action,
+        outcome,
+        Some("user"),
+        ctx.principal_id,
+        detail,
+    )
+    .await;
+}
+
+pub async fn update_current_user<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<UpdateCurrentUserRequest>,
+) -> Reply {
+    let (user_id, _) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    match db.update_user(user_id, request.email, None).await {
+        Ok(user) => {
+            audit_profile_event(
+                db.as_ref(),
+                &ctx,
+                "profile.update",
+                crate::audit::AuditOutcome::Success,
+                None,
+            )
+            .await;
+            match user_with_platform_role(db.as_ref(), &user).await {
+                Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
+                Err(reply) => reply,
+            }
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn change_current_password<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<ChangePasswordRequest>,
+) -> Reply {
+    let (user_id, session_id) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    let user = match db.fetch_user(user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return not_found("user not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let credential = match db.fetch_local_credential(user.username).await {
+        Ok(Some(credential)) => credential,
+        Ok(None) => return unauthorized("current password is incorrect"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if !verify_password(&request.current_password, &credential.password_hash) {
+        audit_profile_event(
+            db.as_ref(),
+            &ctx,
+            "profile.password.change",
+            crate::audit::AuditOutcome::Failure,
+            Some("current password verification failed"),
+        )
+        .await;
+        return unauthorized("current password is incorrect");
+    }
+    let hash = match hash_password(&request.new_password) {
+        Ok(hash) => hash,
+        Err(err) => return api_error(err),
+    };
+    if let Err(err) = db.set_local_password(user_id, hash).await {
+        return api_error(err.to_string());
+    }
+    if let Err(err) = db.revoke_user_sessions_except(user_id, session_id).await {
+        return api_error(err.to_string());
+    }
+    audit_profile_event(
+        db.as_ref(),
+        &ctx,
+        "profile.password.change",
+        crate::audit::AuditOutcome::Success,
+        None,
+    )
+    .await;
+    task_response_success("Password changed")
+}
+
+pub async fn list_current_sessions<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    let (user_id, current_id) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    match db.list_user_sessions(user_id, Utc::now()).await {
+        Ok(sessions) => {
+            let summaries: Vec<AuthSessionSummary> = sessions
+                .into_iter()
+                .map(|session| AuthSessionSummary {
+                    id: session.id,
+                    user_agent: session.user_agent,
+                    ip_address: session.ip_address,
+                    created_at: session.created_at,
+                    last_seen_at: session.last_seen_at,
+                    expires_at: session.expires_at,
+                    current: session.id == current_id,
+                })
+                .collect();
+            match summaries
+                .iter()
+                .map(json_value)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+                Err(reply) => reply,
+            }
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn revoke_current_session<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(session_id): Path<Uuid>,
+) -> Reply {
+    let (user_id, _) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    let session = match db.fetch_session(session_id).await {
+        Ok(Some(session)) if session.user_id == user_id && !session.revoked => session,
+        Ok(_) => return not_found("session not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(err) = db.revoke_session(session.id).await {
+        return api_error(err.to_string());
+    }
+    audit_profile_event(
+        db.as_ref(),
+        &ctx,
+        "profile.session.revoke",
+        crate::audit::AuditOutcome::Success,
+        Some(&session_id.to_string()),
+    )
+    .await;
+    task_response_success("Session revoked")
+}
+
+pub async fn revoke_other_sessions<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    let (user_id, current_id) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    if let Err(err) = db.revoke_user_sessions_except(user_id, current_id).await {
+        return api_error(err.to_string());
+    }
+    audit_profile_event(
+        db.as_ref(),
+        &ctx,
+        "profile.sessions.revoke_others",
+        crate::audit::AuditOutcome::Success,
+        None,
+    )
+    .await;
+    task_response_success("Other sessions revoked")
+}
+
+pub async fn list_personal_api_keys<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    let (user_id, _) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    match db.list_api_keys(Some(user_id)).await {
+        Ok(keys) => match keys.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+            Err(reply) => reply,
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn personal_api_key_scopes<T: AuthStore + RbacStore + RuntimeStore + OrgStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    let (user_id, _) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    let mut scopes = vec![PersonalApiKeyScope {
+        org_id: None,
+        name: "Platform".to_string(),
+        actions: Action::ALL
+            .iter()
+            .copied()
+            .filter(|action| ctx.authorize_scope(*action, ScopeRef::PLATFORM))
+            .collect(),
+    }];
+    let memberships = match db.list_user_orgs(user_id).await {
+        Ok(memberships) => memberships,
+        Err(err) => return api_error(err.to_string()),
+    };
+    for (org, _) in memberships.into_iter().filter(|(org, _)| !org.disabled) {
+        let Some(org_id) = org.id else { continue };
+        let scope = ScopeRef::new(ScopeKind::Organization, Some(org_id)).unwrap();
+        scopes.push(PersonalApiKeyScope {
+            org_id: Some(org_id),
+            name: org.name,
+            actions: Action::ALL
+                .iter()
+                .copied()
+                .filter(|action| ctx.authorize_scope(*action, scope))
+                .collect(),
+        });
+    }
+    match scopes.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+        Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+        Err(reply) => reply,
+    }
+}
+
+pub async fn create_personal_api_key<T: AuthStore + RbacStore + RuntimeStore + OrgStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<CreatePersonalApiKeyRequest>,
+) -> Reply {
+    let (user_id, _) = match current_user_ids(&ctx) {
+        Ok(ids) => ids,
+        Err(reply) => return reply,
+    };
+    let target_scope = request
+        .org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    if let Some(org_id) = request.org_id {
+        let memberships = match db.list_user_orgs(user_id).await {
+            Ok(memberships) => memberships,
+            Err(err) => return api_error(err.to_string()),
+        };
+        if !memberships
+            .iter()
+            .any(|(org, _)| org.id == Some(org_id) && !org.disabled)
+        {
+            return forbidden("organization is not available to this user");
+        }
+    }
+    if request
+        .action_ceiling
+        .iter()
+        .any(|action| !ctx.authorize_scope(*action, target_scope))
+    {
+        return forbidden("api key action ceiling exceeds the caller's authority");
+    }
+    let generated = new_api_key();
+    let key = ApiKey {
+        id: Some(Uuid::new_v4()),
+        name: request.name,
+        principal_kind: PrincipalKind::User,
+        principal_id: user_id,
+        system_role: None,
+        org_id: request.org_id,
+        action_ceiling: request.action_ceiling,
+        key_prefix: generated.prefix,
+        last_used_at: None,
+        expires_at: request.expires_at,
+        disabled: false,
+        created_at: Utc::now(),
+    };
+    match db
+        .create_api_key(ApiKeyRecord {
+            key,
+            key_hash: generated.key_hash,
+        })
+        .await
+    {
+        Ok(stored) => {
+            if let Some(id) = stored.id {
+                audit_credential_change(db.as_ref(), &ctx, "credential.create", id).await;
+            }
+            ok_value(&CreateApiKeyResponse {
+                api_key: stored,
+                secret: generated.secret,
+            })
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -1504,7 +1872,38 @@ pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>
             "/auth/logout",
             post(logout::<T>).layer(Extension(pool.clone())),
         )
-        .route("/auth/me", get(me::<T>).layer(Extension(pool.clone())))
+        .route(
+            "/auth/me",
+            get(me::<T>)
+                .patch(update_current_user::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/me/password",
+            post(change_current_password::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/sessions",
+            get(list_current_sessions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/sessions/revoke-others",
+            post(revoke_other_sessions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/sessions/{id}",
+            delete(revoke_current_session::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/me/api-keys",
+            get(list_personal_api_keys::<T>)
+                .post(create_personal_api_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/me/api-key-scopes",
+            get(personal_api_key_scopes::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/users",
             get(list_users::<T>)
@@ -1693,6 +2092,110 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "current principal",
         Example::User,
+    ),
+    endpoint(
+        "patch",
+        "/auth/me",
+        "Auth",
+        "Update current profile",
+        "Updates the authenticated user's self-service profile fields.",
+        false,
+        json_body("Profile fields to update.", Example::User),
+        &[],
+        200,
+        "updated current user",
+        Example::User,
+    ),
+    endpoint(
+        "post",
+        "/auth/me/password",
+        "Auth",
+        "Change current password",
+        "Verifies the current password, changes it, and revokes other sessions.",
+        false,
+        json_body("Current and replacement passwords.", Example::None),
+        &[],
+        200,
+        "password changed",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/auth/sessions",
+        "Auth",
+        "List current user sessions",
+        "Lists active refresh sessions owned by the authenticated user.",
+        false,
+        None,
+        &[],
+        200,
+        "active sessions",
+        Example::None,
+    ),
+    endpoint(
+        "delete",
+        "/auth/sessions/{id}",
+        "Auth",
+        "Revoke a session",
+        "Revokes an active refresh session owned by the authenticated user.",
+        false,
+        None,
+        &[],
+        200,
+        "session revoked",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/auth/sessions/revoke-others",
+        "Auth",
+        "Revoke other sessions",
+        "Revokes every session owned by the authenticated user except the current one.",
+        false,
+        None,
+        &[],
+        200,
+        "other sessions revoked",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/auth/me/api-keys",
+        "Auth",
+        "List personal API keys",
+        "Lists only API keys owned by the authenticated user.",
+        false,
+        None,
+        &[],
+        200,
+        "personal API keys",
+        Example::ApiKeyList,
+    ),
+    endpoint(
+        "post",
+        "/auth/me/api-keys",
+        "Auth",
+        "Create personal API key",
+        "Creates a scoped API key owned by the authenticated user.",
+        false,
+        json_body("Personal key settings.", Example::None),
+        &[],
+        200,
+        "created personal API key",
+        Example::ApiKey,
+    ),
+    endpoint(
+        "get",
+        "/auth/me/api-key-scopes",
+        "Auth",
+        "List personal API key scopes",
+        "Lists organizations and action ceilings available to the authenticated user.",
+        false,
+        None,
+        &[],
+        200,
+        "personal API key scopes",
+        Example::None,
     ),
     endpoint(
         "get",

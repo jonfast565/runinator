@@ -11,6 +11,64 @@ pub async fn auth_me(state: State<'_, CommandCenterState>) -> CommandResult<Valu
 }
 
 #[tauri::command]
+pub async fn update_current_user(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    patch_json(&state, "auth/me", &request).await
+}
+
+#[tauri::command]
+pub async fn change_current_password(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "auth/me/password", &request).await
+}
+
+#[tauri::command]
+pub async fn list_current_sessions(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "auth/sessions").await
+}
+
+#[tauri::command]
+pub async fn revoke_current_session(
+    state: State<'_, CommandCenterState>,
+    session_id: Uuid,
+) -> CommandResult<Value> {
+    delete(&state, &format!("auth/sessions/{session_id}")).await
+}
+
+#[tauri::command]
+pub async fn revoke_other_sessions(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    post_empty(&state, "auth/sessions/revoke-others").await
+}
+
+#[tauri::command]
+pub async fn list_personal_api_keys(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "auth/me/api-keys").await
+}
+
+#[tauri::command]
+pub async fn list_personal_api_key_scopes(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "auth/me/api-key-scopes").await
+}
+
+#[tauri::command]
+pub async fn create_personal_api_key(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "auth/me/api-keys", &request).await
+}
+
+#[tauri::command]
 pub async fn login(
     state: State<'_, CommandCenterState>,
     username: String,

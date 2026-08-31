@@ -214,6 +214,31 @@ pub struct AuthSession {
     pub revoked: bool,
     /// Number of successful refresh rotations consumed by this login session.
     pub refresh_count: i64,
+    /// The original login time, preserved across refresh-token rotation.
+    pub created_at: DateTime<Utc>,
+    /// Coarse-grained activity timestamp, updated at most once every few minutes.
+    pub last_seen_at: DateTime<Utc>,
+    pub user_agent: Option<String>,
+    pub ip_address: Option<String>,
+}
+
+/// Safe, user-facing view of one refresh session. Credential material is never included.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSessionSummary {
+    pub id: Uuid,
+    pub user_agent: Option<String>,
+    pub ip_address: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalApiKeyScope {
+    pub org_id: Option<Uuid>,
+    pub name: String,
+    pub actions: Vec<Action>,
 }
 
 /// JWT access-token claims.
@@ -349,13 +374,35 @@ pub struct CreateUserRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateUserRequest {
     #[serde(default)]
-    pub email: Option<String>,
+    pub email: Option<Option<String>>,
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
     pub platform_role: Option<PlatformRole>,
     #[serde(default)]
     pub disabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateCurrentUserRequest {
+    #[serde(default)]
+    pub email: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePersonalApiKeyRequest {
+    pub name: String,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    pub action_ceiling: Vec<Action>,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -510,8 +557,46 @@ impl Validate for CreateUserRequest {
 
 impl Validate for UpdateUserRequest {
     fn validate(&self) -> Result<(), ValidationError> {
-        optional_email("email", self.email.as_deref())?;
+        optional_email(
+            "email",
+            self.email.as_ref().and_then(|value| value.as_deref()),
+        )?;
         optional_text("password", self.password.as_deref(), LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for UpdateCurrentUserRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        optional_email(
+            "email",
+            self.email.as_ref().and_then(|value| value.as_deref()),
+        )
+    }
+}
+
+impl Validate for ChangePasswordRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("current_password", &self.current_password, LONG_TEXT_MAX)?;
+        required_text("new_password", &self.new_password, LONG_TEXT_MAX)
+    }
+}
+
+impl Validate for CreatePersonalApiKeyRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        if self.action_ceiling.is_empty() {
+            return Err(ValidationError::new(
+                "action_ceiling",
+                "must contain at least one action",
+            ));
+        }
+        if self.action_ceiling.len() > 128 {
+            return Err(ValidationError::new(
+                "action_ceiling",
+                "must contain at most 128 actions",
+            ));
+        }
+        Ok(())
     }
 }
 

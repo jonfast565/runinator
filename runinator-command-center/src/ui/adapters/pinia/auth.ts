@@ -11,11 +11,13 @@ export const useAuthStore = defineStore("auth", () => {
     authenticated: computed(() => state.value.authenticated),
     ready: computed(() => state.value.ready),
     user: computed(() => state.value.user),
+    effectiveActions: computed(() => state.value.effectiveActions),
     error: computed(() => state.value.error),
     accessTokenRevision: computed(() => state.value.accessTokenRevision),
     init: () => authService.init(),
     signIn: (username: string, password: string) => authService.signIn(username, password),
     signOut: () => authService.signOut(),
     applyAccessToken: (access: string) => authService.applyAccessToken(access),
+    reloadMe: () => authService.reloadMe(),
   };
 });

@@ -1,6 +1,7 @@
 <template>
   <LoginView v-if="auth.required && !auth.authenticated" />
   <AppShell v-else>
+    <ProfileSecurityView v-if="app.activeTab === 'Profile'" />
     <DevView v-if="app.activeTab === 'Dev' && isDesktop" />
     <section v-else-if="app.activeTab === 'Dev'" class="pane">
       <div class="py-3.5 text-fg-muted">
@@ -62,6 +63,9 @@ import { useGatesStore } from "./ui/adapters/pinia/gates";
 import { useResizableTables } from "./ui/composables/useResizableTables";
 
 const RunsView = defineAsyncComponent(() => import("./ui/views/RunsView.vue"));
+const ProfileSecurityView = defineAsyncComponent(
+  () => import("./ui/views/ProfileSecurityView.vue"),
+);
 const ProvidersView = defineAsyncComponent(() => import("./ui/views/ProvidersView.vue"));
 const ReplicasView = defineAsyncComponent(() => import("./ui/views/ReplicasView.vue"));
 const DevView = defineAsyncComponent(() => import("./ui/views/DevView.vue"));

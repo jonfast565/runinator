@@ -57,6 +57,14 @@ export type { Team } from "./auth/team";
 export type { Grant } from "./auth/grant";
 export type { ApiKey, CreateApiKeyResponse } from "./auth/api-key";
 export type {
+  AuthSessionSummary,
+  ChangePasswordInput,
+  CreatePersonalApiKeyInput,
+  PersonalApiKeySecret,
+  PersonalApiKeyScope,
+  UpdateCurrentUserInput,
+} from "./auth/profile-security";
+export type {
   AgentEnrollmentToken,
   CreateAgentEnrollmentTokenInput,
   CreateAgentEnrollmentTokenResponse,

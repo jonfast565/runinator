@@ -194,7 +194,7 @@ where
     async fn update_user(
         &self,
         id: Uuid,
-        email: Option<String>,
+        email: Option<Option<String>>,
         disabled: Option<bool>,
     ) -> Result<User, SendableError> {
         let Some(current) = self.fetch_user(id).await? else {
@@ -203,7 +203,7 @@ where
                 format!("User {id} not found"),
             )));
         };
-        let email = email.or(current.email);
+        let email = email.unwrap_or(current.email);
         let disabled = disabled.unwrap_or(current.disabled);
         let now = Utc::now().timestamp();
         let mut tx = self.pool().begin().await?;
@@ -608,7 +608,7 @@ where
 
     async fn create_session(&self, session: AuthSession) -> Result<(), SendableError> {
         sqlx::query(&self.render(
-            "INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, revoked, refresh_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, revoked, refresh_count, created_at, last_seen_at, user_agent, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(session.id)
         .bind(session.user_id)
@@ -616,7 +616,10 @@ where
         .bind(session.expires_at.timestamp())
         .bind(session.revoked)
         .bind(session.refresh_count)
-        .bind(Utc::now().timestamp())
+        .bind(session.created_at.timestamp())
+        .bind(session.last_seen_at.timestamp())
+        .bind(&session.user_agent)
+        .bind(&session.ip_address)
         .execute(self.pool())
         .await?;
         Ok(())
@@ -627,7 +630,7 @@ where
         refresh_token_hash: String,
     ) -> Result<Option<AuthSession>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count FROM auth_sessions WHERE refresh_token_hash = ? AND revoked = ?",
+            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count, created_at, last_seen_at, user_agent, ip_address FROM auth_sessions WHERE refresh_token_hash = ? AND revoked = ?",
         ))
         .bind(refresh_token_hash)
         .bind(false)
@@ -655,12 +658,50 @@ where
 
     async fn fetch_session(&self, id: Uuid) -> Result<Option<AuthSession>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count FROM auth_sessions WHERE id = ?",
+            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count, created_at, last_seen_at, user_agent, ip_address FROM auth_sessions WHERE id = ?",
         ))
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|row| mappers::row_to_auth_session(&row)))
+    }
+
+    async fn list_user_sessions(
+        &self,
+        user_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<AuthSession>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count, created_at, last_seen_at, user_agent, ip_address FROM auth_sessions WHERE user_id = ? AND revoked = ? AND expires_at > ? ORDER BY last_seen_at DESC, created_at DESC",
+        ))
+        .bind(user_id)
+        .bind(false)
+        .bind(now.timestamp())
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_auth_session).collect())
+    }
+
+    async fn touch_session_activity(
+        &self,
+        id: Uuid,
+        seen_at: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+        user_agent: Option<String>,
+        ip_address: Option<String>,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render(
+            "UPDATE auth_sessions SET last_seen_at = ?, user_agent = COALESCE(?, user_agent), ip_address = COALESCE(?, ip_address) WHERE id = ? AND revoked = ? AND last_seen_at < ?",
+        ))
+        .bind(seen_at.timestamp())
+        .bind(user_agent)
+        .bind(ip_address)
+        .bind(id)
+        .bind(false)
+        .bind(stale_before.timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 
     async fn revoke_session(&self, id: Uuid) -> Result<(), SendableError> {
@@ -678,6 +719,22 @@ where
             .bind(user_id)
             .execute(self.pool())
             .await?;
+        Ok(())
+    }
+
+    async fn revoke_user_sessions_except(
+        &self,
+        user_id: Uuid,
+        current_session_id: Uuid,
+    ) -> Result<(), SendableError> {
+        sqlx::query(
+            &self.render("UPDATE auth_sessions SET revoked = ? WHERE user_id = ? AND id <> ?"),
+        )
+        .bind(true)
+        .bind(user_id)
+        .bind(current_session_id)
+        .execute(self.pool())
+        .await?;
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 import type { Action } from "../domain/models";
-import type { AppTab, NavSection } from "./app";
+import type { AppTab, NavItem, NavSection } from "./app";
 
 export const navSections: NavSection[] = [
   {
@@ -218,12 +218,24 @@ export const navSections: NavSection[] = [
   },
 ];
 
-export const tabs: AppTab[] = navSections.flatMap((section) =>
-  section.items.map((item) => item.tab),
-);
+const auxiliaryItems: NavItem[] = [
+  {
+    tab: "Profile",
+    label: "Profile & security",
+    icon: "lock",
+    description: "Manage your account details, signed-in sessions, and personal API keys.",
+  },
+];
+
+export const tabs: AppTab[] = [
+  ...navSections.flatMap((section) => section.items.map((item) => item.tab)),
+  ...auxiliaryItems.map((item) => item.tab),
+];
 
 const navItemByTab = new Map(
-  navSections.flatMap((section) => section.items.map((item) => [item.tab, item] as const)),
+  [...navSections.flatMap((section) => section.items), ...auxiliaryItems].map(
+    (item) => [item.tab, item] as const,
+  ),
 );
 
 export function navItemForTab(tab: AppTab) {
