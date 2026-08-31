@@ -35,9 +35,7 @@ async fn wss_urls_are_supported() {
     let Ok(result) = outcome else {
         return;
     };
-    let err = result
-        .err()
-        .expect("a tls handshake against a plaintext listener must fail");
+    let err = result.expect_err("a tls handshake against a plaintext listener must fail");
     assert!(
         !matches!(err, WsError::Url(UrlError::TlsFeatureNotEnabled)),
         "wss:// support is not compiled in; check runinator-broker's tokio-tungstenite features"

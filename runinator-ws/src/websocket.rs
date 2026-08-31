@@ -824,6 +824,71 @@ async fn relay_owns_replica<T: DatabaseImpl>(
     ))
 }
 
+/// the WS upgrade endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::get;
+    axum::Router::new()
+        .route("/ws/events", get(ws_events))
+        .route(
+            "/ws/workflow-runs/{id}",
+            get(ws_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ws/broker",
+            get(ws_broker_relay::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint_with_policy(
+        "get",
+        "/ws/broker",
+        "WebSockets",
+        "Relay broker calls for an external cluster runtime",
+        "Upgrades to the authenticated broker relay. The connecting system role selects its allowed broker operations.",
+        EndpointPolicy::SystemRole(&[
+            SystemRole::Agent,
+            SystemRole::Worker,
+            SystemRole::Waker,
+            SystemRole::Engine,
+            SystemRole::Replica,
+        ]),
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+    endpoint_with_policy(
+        "get",
+        "/ws/events",
+        "WebSockets",
+        "Subscribe to UI events",
+        "Upgrades to a websocket stream of fan-out UI events emitted by this web-service replica.",
+        EndpointPolicy::ScopedAction(Action::View),
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+    endpoint_with_policy(
+        "get",
+        "/ws/workflow-runs/{id}",
+        "WebSockets",
+        "Subscribe to one workflow run",
+        "Upgrades to a websocket stream for workflow-run changes and node activity for one run.",
+        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -979,68 +1044,3 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 }
-
-/// the WS upgrade endpoints.
-pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
-    use axum::Extension;
-    use axum::routing::get;
-    axum::Router::new()
-        .route("/ws/events", get(ws_events))
-        .route(
-            "/ws/workflow-runs/{id}",
-            get(ws_workflow_run::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/ws/broker",
-            get(ws_broker_relay::<T>).layer(Extension(pool.clone())),
-        )
-}
-
-/// the openapi entries for the routes above.
-pub(crate) const DOCS: &[EndpointDoc] = &[
-    endpoint_with_policy(
-        "get",
-        "/ws/broker",
-        "WebSockets",
-        "Relay broker calls for an external cluster runtime",
-        "Upgrades to the authenticated broker relay. The connecting system role selects its allowed broker operations.",
-        EndpointPolicy::SystemRole(&[
-            SystemRole::Agent,
-            SystemRole::Worker,
-            SystemRole::Waker,
-            SystemRole::Engine,
-            SystemRole::Replica,
-        ]),
-        None,
-        &[],
-        101,
-        "websocket upgrade accepted",
-        Example::None,
-    ),
-    endpoint_with_policy(
-        "get",
-        "/ws/events",
-        "WebSockets",
-        "Subscribe to UI events",
-        "Upgrades to a websocket stream of fan-out UI events emitted by this web-service replica.",
-        EndpointPolicy::ScopedAction(Action::View),
-        None,
-        &[],
-        101,
-        "websocket upgrade accepted",
-        Example::None,
-    ),
-    endpoint_with_policy(
-        "get",
-        "/ws/workflow-runs/{id}",
-        "WebSockets",
-        "Subscribe to one workflow run",
-        "Upgrades to a websocket stream for workflow-run changes and node activity for one run.",
-        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
-        None,
-        &[],
-        101,
-        "websocket upgrade accepted",
-        Example::None,
-    ),
-];

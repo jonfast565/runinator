@@ -207,6 +207,34 @@ fn rabbitmq_config(config: &BrokerClientConfig) -> RabbitMqBrokerConfig {
     }
 }
 
+// construct a kafka-backed broker, or fail when the kafka feature is disabled.
+#[cfg(feature = "kafka")]
+pub fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, BrokerError> {
+    Ok(Arc::new(crate::adapters::kafka::KafkaBroker::new(config)?))
+}
+
+#[cfg(not(feature = "kafka"))]
+pub fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, BrokerError> {
+    Err(BrokerError::FeatureDisabled("kafka"))
+}
+
+// construct a rabbitmq-backed broker, or fail when the rabbitmq feature is disabled.
+#[cfg(feature = "rabbitmq")]
+pub async fn build_rabbitmq_broker(
+    config: RabbitMqBrokerConfig,
+) -> Result<Arc<dyn Broker>, BrokerError> {
+    Ok(Arc::new(
+        crate::adapters::rabbitmq::RabbitMqBroker::connect(config).await?,
+    ))
+}
+
+#[cfg(not(feature = "rabbitmq"))]
+pub async fn build_rabbitmq_broker(
+    _config: RabbitMqBrokerConfig,
+) -> Result<Arc<dyn Broker>, BrokerError> {
+    Err(BrokerError::FeatureDisabled("rabbitmq"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,32 +314,4 @@ mod tests {
             Err(BrokerBuildError::Capability { .. })
         ));
     }
-}
-
-// construct a kafka-backed broker, or fail when the kafka feature is disabled.
-#[cfg(feature = "kafka")]
-pub fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, BrokerError> {
-    Ok(Arc::new(crate::adapters::kafka::KafkaBroker::new(config)?))
-}
-
-#[cfg(not(feature = "kafka"))]
-pub fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, BrokerError> {
-    Err(BrokerError::FeatureDisabled("kafka"))
-}
-
-// construct a rabbitmq-backed broker, or fail when the rabbitmq feature is disabled.
-#[cfg(feature = "rabbitmq")]
-pub async fn build_rabbitmq_broker(
-    config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, BrokerError> {
-    Ok(Arc::new(
-        crate::adapters::rabbitmq::RabbitMqBroker::connect(config).await?,
-    ))
-}
-
-#[cfg(not(feature = "rabbitmq"))]
-pub async fn build_rabbitmq_broker(
-    _config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, BrokerError> {
-    Err(BrokerError::FeatureDisabled("rabbitmq"))
 }

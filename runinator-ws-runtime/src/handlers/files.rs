@@ -140,10 +140,10 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore>(
             runinator_models::rbac::SystemRole::Agent,
         ])
         .is_ok();
-    if !worker_or_agent {
-        if let Err(reply) = ctx.require_scope_action(Action::View, ctx.selected_scope()) {
-            return reply.into_response();
-        }
+    if !worker_or_agent
+        && let Err(reply) = ctx.require_scope_action(Action::View, ctx.selected_scope())
+    {
+        return reply.into_response();
     }
     let file = match service.fetch(id).await {
         Ok(Some(file))

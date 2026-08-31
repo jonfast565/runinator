@@ -61,10 +61,11 @@ pub async fn upsert_workflow<
     }
     match authoring.save(&workflow, &ctx.revision_author()).await {
         Ok(workflow) => {
-            if !is_update && let Some(id) = workflow.id {
-                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await {
-                    return reply;
-                }
+            if !is_update
+                && let Some(id) = workflow.id
+                && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await
+            {
+                return reply;
             }
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }
@@ -468,10 +469,10 @@ pub async fn duplicate_workflow<
         .await
     {
         Ok(workflow) => {
-            if let Some(id) = workflow.id {
-                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await {
-                    return reply;
-                }
+            if let Some(id) = workflow.id
+                && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await
+            {
+                return reply;
             }
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }

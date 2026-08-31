@@ -94,6 +94,10 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> R
     }
 
     /// Start a run from a workflow definition and publish its invalidation after it is durable.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "run creation preserves independent provenance, ownership, file, and debug inputs at the service boundary"
+    )]
     pub async fn create(
         &self,
         workflow_id: Uuid,

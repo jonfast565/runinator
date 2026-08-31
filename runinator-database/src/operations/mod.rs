@@ -217,6 +217,10 @@ trait ScheduleSqlExt: SqlBackend {
     ) -> Result<bool, SendableError>;
 
     /// create the run for a claimed slot and point the firing row at it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the scheduling transaction needs each independently typed trigger, snapshot, clock, and module input"
+    )]
     async fn insert_trigger_run(
         &self,
         conn: &mut <Self::Db as Database>::Connection,

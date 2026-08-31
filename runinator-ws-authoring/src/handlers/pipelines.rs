@@ -145,13 +145,12 @@ pub async fn create_pipeline<
     pipeline.org_id = ctx.org_id;
     match service.save(&pipeline).await {
         Ok(pipeline) => {
-            if let Some(id) = pipeline.id {
-                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            if let Some(id) = pipeline.id
+                && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
                     .grant_pipeline_owner(id)
                     .await
-                {
-                    return reply;
-                }
+            {
+                return reply;
             }
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
         }

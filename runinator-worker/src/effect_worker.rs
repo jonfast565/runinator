@@ -555,19 +555,6 @@ fn validate_workspace_key(local_key: &str) -> Result<(), SendableError> {
     Ok(())
 }
 
-#[cfg(test)]
-mod workspace_tests {
-    use super::validate_workspace_key;
-
-    #[test]
-    fn workspace_keys_cannot_escape_the_configured_root() {
-        assert!(validate_workspace_key("admissions/example/source/1-id").is_ok());
-        assert!(validate_workspace_key("../outside").is_err());
-        assert!(validate_workspace_key("/absolute").is_err());
-        assert!(validate_workspace_key("").is_err());
-    }
-}
-
 fn value_key(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
@@ -778,5 +765,18 @@ impl ProviderEventSink for EffectOutputSink {
             }
             runinator_models::runs::ProviderExecutionEvent::Message { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::validate_workspace_key;
+
+    #[test]
+    fn workspace_keys_cannot_escape_the_configured_root() {
+        assert!(validate_workspace_key("admissions/example/source/1-id").is_ok());
+        assert!(validate_workspace_key("../outside").is_err());
+        assert!(validate_workspace_key("/absolute").is_err());
+        assert!(validate_workspace_key("").is_err());
     }
 }

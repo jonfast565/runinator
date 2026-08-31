@@ -236,7 +236,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
             polling_id,
             "parity-b".into(),
             1,
-            json!({ "streams": { "1:pull_request": "2026-08-27T00:00:00+00:00" } }).into(),
+            json!({ "streams": { "1:pull_request": "2026-08-27T00:00:00+00:00" } }),
             now + chrono::TimeDelta::seconds(60),
             now,
         )
@@ -249,7 +249,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
             polling_id,
             "parity-a".into(),
             1,
-            json!({ "streams": { "1:pull_request": "2026-08-27T01:00:00+00:00" } }).into(),
+            json!({ "streams": { "1:pull_request": "2026-08-27T01:00:00+00:00" } }),
             now + chrono::TimeDelta::seconds(60),
             now,
         )

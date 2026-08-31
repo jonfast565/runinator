@@ -481,12 +481,11 @@ fn leave(
     if alternate_screen {
         result = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     }
-    if raw {
-        if let Err(error) = disable_raw_mode()
-            && result.is_ok()
-        {
-            result = Err(error);
-        }
+    if raw
+        && let Err(error) = disable_raw_mode()
+        && result.is_ok()
+    {
+        result = Err(error);
     }
     if let Err(error) = terminal.show_cursor()
         && result.is_ok()
@@ -705,7 +704,7 @@ fn dashboard_component_page_capacity(terminal_height: u16) -> usize {
 fn component_page_count(component_count: usize, components_per_page: usize) -> usize {
     let components_per_page = components_per_page.max(1);
     (component_count / components_per_page
-        + usize::from(component_count % components_per_page != 0))
+        + usize::from(!component_count.is_multiple_of(components_per_page)))
     .max(1)
 }
 

@@ -758,16 +758,14 @@ fn enter_closure(
 
 // --- small stack helpers -------------------------------------------------------------------
 
-fn frame<'c>(continuation: &'c InvocationContinuation) -> Result<&'c InvocationFrame, String> {
+fn frame(continuation: &InvocationContinuation) -> Result<&InvocationFrame, String> {
     continuation
         .frames
         .last()
         .ok_or_else(|| "no active frame".to_string())
 }
 
-fn frame_mut<'c>(
-    continuation: &'c mut InvocationContinuation,
-) -> Result<&'c mut InvocationFrame, String> {
+fn frame_mut(continuation: &mut InvocationContinuation) -> Result<&mut InvocationFrame, String> {
     continuation
         .frames
         .last_mut()

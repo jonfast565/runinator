@@ -45,6 +45,10 @@ async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCat
     runinator_adapter_client::kinds().await
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "handler helpers pass the shared Axum reply through without allocating an error wrapper"
+)]
 fn org_id(ctx: &AuthContext) -> Result<Uuid, (StatusCode, Json<ApiResponse>)> {
     ctx.org_id
         .ok_or_else(|| bad_request("an organization must be selected"))
@@ -62,6 +66,10 @@ fn forbidden() -> (StatusCode, Json<ApiResponse>) {
     )
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "handler helpers pass the shared Axum reply through without allocating an error wrapper"
+)]
 fn require_scope(
     ctx: &AuthContext,
     action: Action,
@@ -74,6 +82,10 @@ fn require_scope(
 /// Platform administrators may inspect adapters without selecting an organization. In that
 /// platform-wide view `None` deliberately means every organization; ordinary callers remain
 /// restricted to their selected organization.
+#[allow(
+    clippy::result_large_err,
+    reason = "handler helpers pass the shared Axum reply through without allocating an error wrapper"
+)]
 fn adapter_list_scope(
     ctx: &AuthContext,
     action: Action,

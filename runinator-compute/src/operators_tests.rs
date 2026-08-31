@@ -37,7 +37,11 @@ fn concat_rejects_a_non_string_in_both() {
 fn to_string_matches_the_evaluator_for_each_accepted_type() {
     for value in [Value::from("s"), Value::from(true), Value::from(3)] {
         assert_eq!(
-            call_operator(crate::assemble::TO_STRING_INTRINSIC, &[value.clone()]).unwrap(),
+            call_operator(
+                crate::assemble::TO_STRING_INTRINSIC,
+                std::slice::from_ref(&value)
+            )
+            .unwrap(),
             evaluated(&json!({ "$to_string": value })).unwrap(),
             "disagreed about string({value})"
         );
@@ -47,7 +51,13 @@ fn to_string_matches_the_evaluator_for_each_accepted_type() {
 #[test]
 fn to_string_refuses_the_same_types_the_evaluator_does() {
     for value in [Value::Null, json!([1]), json!({ "a": 1 })] {
-        assert!(call_operator(crate::assemble::TO_STRING_INTRINSIC, &[value.clone()]).is_err());
+        assert!(
+            call_operator(
+                crate::assemble::TO_STRING_INTRINSIC,
+                std::slice::from_ref(&value)
+            )
+            .is_err()
+        );
         assert!(evaluated(&json!({ "$to_string": value })).is_err());
     }
 }
@@ -56,7 +66,11 @@ fn to_string_refuses_the_same_types_the_evaluator_does() {
 fn to_json_matches_the_evaluator() {
     let value = json!({ "b": 1, "a": 2 });
     assert_eq!(
-        call_operator(crate::assemble::TO_JSON_INTRINSIC, &[value.clone()]).unwrap(),
+        call_operator(
+            crate::assemble::TO_JSON_INTRINSIC,
+            std::slice::from_ref(&value)
+        )
+        .unwrap(),
         evaluated(&json!({ "$to_json_string": value })).unwrap()
     );
 }
@@ -65,7 +79,7 @@ fn to_json_matches_the_evaluator() {
 fn neg_wraps_integers_and_negates_floats_like_the_evaluator() {
     for value in [Value::from(5), Value::from(-5), Value::from(2.5)] {
         assert_eq!(
-            call_operator(crate::assemble::NEG_INTRINSIC, &[value.clone()]).unwrap(),
+            call_operator(crate::assemble::NEG_INTRINSIC, std::slice::from_ref(&value)).unwrap(),
             evaluated(&json!({ "$neg": value })).unwrap(),
             "disagreed about -({value})"
         );
@@ -98,7 +112,11 @@ fn truthiness_matches_the_condition_evaluator() {
         (json!({}), false),
     ] {
         assert_eq!(
-            call_operator(crate::assemble::TRUTHY_INTRINSIC, &[value.clone()]).unwrap(),
+            call_operator(
+                crate::assemble::TRUTHY_INTRINSIC,
+                std::slice::from_ref(&value)
+            )
+            .unwrap(),
             Value::from(expected),
             "disagreed about the truthiness of {value}"
         );
@@ -133,8 +151,16 @@ fn exists_tests_presence_not_truthiness() {
 #[test]
 fn is_null_is_the_complement_of_exists() {
     for value in [Value::Null, Value::from(false), Value::from(0)] {
-        let is_null = call_operator(crate::assemble::IS_NULL_INTRINSIC, &[value.clone()]).unwrap();
-        let exists = call_operator(crate::assemble::EXISTS_INTRINSIC, &[value.clone()]).unwrap();
+        let is_null = call_operator(
+            crate::assemble::IS_NULL_INTRINSIC,
+            std::slice::from_ref(&value),
+        )
+        .unwrap();
+        let exists = call_operator(
+            crate::assemble::EXISTS_INTRINSIC,
+            std::slice::from_ref(&value),
+        )
+        .unwrap();
         assert_eq!(is_null, Value::from(!exists.as_bool().unwrap()));
     }
 }

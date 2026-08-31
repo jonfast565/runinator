@@ -298,7 +298,7 @@ impl Broker for InMemoryBroker {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
                 guard.reclaim_expired_effects(Instant::now());
-                guard.effect_queue.pop_front().map(|delivery| {
+                guard.effect_queue.pop_front().inspect(|delivery| {
                     guard.effect_inflight.insert(
                         delivery.delivery_id,
                         Leased {
@@ -306,7 +306,6 @@ impl Broker for InMemoryBroker {
                             leased_until: Instant::now() + self.lease_duration,
                         },
                     );
-                    delivery
                 })
             } {
                 return Ok(delivery);
@@ -359,7 +358,7 @@ impl Broker for InMemoryBroker {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
                 guard.reclaim_expired_effect_results(Instant::now());
-                guard.effect_result_queue.pop_front().map(|delivery| {
+                guard.effect_result_queue.pop_front().inspect(|delivery| {
                     guard.effect_result_inflight.insert(
                         delivery.delivery_id,
                         Leased {
@@ -367,7 +366,6 @@ impl Broker for InMemoryBroker {
                             leased_until: Instant::now() + self.lease_duration,
                         },
                     );
-                    delivery
                 })
             } {
                 return Ok(delivery);

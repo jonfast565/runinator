@@ -236,12 +236,11 @@ pub async fn import_rexrap<
         Ok(saved) => {
             if is_create {
                 for workflow in &saved.workflows {
-                    if let Some(id) = workflow.id {
-                        if let Err(reply) =
+                    if let Some(id) = workflow.id
+                        && let Err(reply) =
                             AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await
-                        {
-                            return reply;
-                        }
+                    {
+                        return reply;
                     }
                 }
             }

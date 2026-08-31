@@ -282,7 +282,7 @@ async fn declares_interrupt<T: RuntimeStore>(
 /// ask a run to raise an interrupt on its next drive.
 ///
 /// the request is recorded on the run rather than raised here: every rule about whether an interrupt
-//// Record an out-of-band interrupt request against one thread of a run.
+/// Record an out-of-band interrupt request against one thread of a run.
 ///
 /// Nothing about serviceability is decided here. The request is stamped on the target continuation
 /// and the VM raises or refuses it at that thread's next safe point, which is the only place the

@@ -545,17 +545,16 @@ fn validate_mapping_roots(value: &Value, span: crate::errors::Span) -> Result<()
             }
         }
         Value::Object(object) => {
-            if let Some(reference) = object.get("$ref").and_then(Value::as_object) {
-                if let Some(node) = reference.get("node").and_then(Value::as_str)
-                    && !matches!(node, "source" | "members")
-                {
-                    return Err(RexRapError::syntax(
-                        span,
-                        format!(
-                            "pipeline mapping root '{node}' is unsupported; use params, source, or members"
-                        ),
-                    ));
-                }
+            if let Some(reference) = object.get("$ref").and_then(Value::as_object)
+                && let Some(node) = reference.get("node").and_then(Value::as_str)
+                && !matches!(node, "source" | "members")
+            {
+                return Err(RexRapError::syntax(
+                    span,
+                    format!(
+                        "pipeline mapping root '{node}' is unsupported; use params, source, or members"
+                    ),
+                ));
             }
             if let Some(call) = object.get("$call").and_then(Value::as_str) {
                 let leaf = call.rsplit('.').next().unwrap_or(call);
@@ -742,12 +741,11 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
                         })
                         .unwrap_or_default();
                     out.push_str(
-                        &format!(
+                        format!(
                             "            if {} {operator} {value}\n",
                             quote(&predicate.pointer)
                         )
-                        .trim_end()
-                        .to_string(),
+                        .trim_end(),
                     );
                     out.push('\n');
                 }
@@ -960,11 +958,11 @@ fn render_orchestration_policy(out: &mut String, policy: &OrchestrationPolicy) {
 }
 
 fn render_duration(seconds: u64) -> String {
-    if seconds % 86_400 == 0 {
+    if seconds.is_multiple_of(86_400) {
         format!("{}d", seconds / 86_400)
-    } else if seconds % 3_600 == 0 {
+    } else if seconds.is_multiple_of(3_600) {
         format!("{}h", seconds / 3_600)
-    } else if seconds % 60 == 0 {
+    } else if seconds.is_multiple_of(60) {
         format!("{}m", seconds / 60)
     } else {
         format!("{seconds}s")

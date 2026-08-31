@@ -59,7 +59,7 @@ pub(crate) async fn list(client: &Client) -> Vec<Value> {
         return resources;
     };
     let mut runs = runs;
-    runs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
     runs.truncate(25);
     for run in runs {
         resources.push(json!({

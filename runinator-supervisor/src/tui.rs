@@ -293,11 +293,10 @@ impl MetricHistory {
             .iter()
             .filter(|process| status_tone(&process.status) == StatusTone::Good)
             .count();
-        let percent = if total == 0 {
-            0
-        } else {
-            (healthy * 100 / total) as u64
-        };
+        let percent = healthy
+            .saturating_mul(100)
+            .checked_div(total)
+            .unwrap_or_default() as u64;
         push_sample(&mut self.healthy_percent, percent);
 
         let mut restarts = 0;
@@ -698,7 +697,7 @@ fn process_page_position(
 ) -> (usize, usize) {
     let process_page_rows = process_page_rows.max(1);
     let page_count = (process_count / process_page_rows
-        + usize::from(process_count % process_page_rows != 0))
+        + usize::from(!process_count.is_multiple_of(process_page_rows)))
     .max(1);
     let page =
         (selected.min(process_count.saturating_sub(1)) / process_page_rows + 1).min(page_count);

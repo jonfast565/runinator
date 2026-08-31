@@ -47,30 +47,30 @@ pub async fn prepare_agent_credentials(
     // An explicit one-time token is an operator-directed re-enrollment. It must take precedence
     // over the cache: otherwise a rejected cached credential would make the desktop agent retry
     // the same bad key forever and never redeem the replacement token.
-    if config.enrollment_token.is_none() {
-        if let Some(mut stored) = read_stored(config)? {
-            let relay_path = if config.locator_mode == LocatorMode::Discover {
-                let cluster_id = stored.cluster_id.ok_or_else(|| {
+    if config.enrollment_token.is_none()
+        && let Some(mut stored) = read_stored(config)?
+    {
+        let relay_path = if config.locator_mode == LocatorMode::Discover {
+            let cluster_id = stored.cluster_id.ok_or_else(|| {
                     crate::errors::API_CLIENT.error(
                         "the stored legacy credential is not bound to a cluster; configure --service-url once before enabling discovery",
                     )
                 })?;
-                let service = discover_service(config, cluster_id).await?;
-                stored.service_url = runinator_comm::discovery::web::web_service_base_url(&service);
-                Some(service.relay_path)
-            } else {
-                None
-            };
-            apply(config, stored);
-            if let Some(relay_path) = relay_path
-                && config.broker.broker_backend == "ws"
-            {
-                config.broker.broker_endpoint =
-                    derive_relay_url_with_path(&config.service_url, &relay_path)?;
-                config.broker_description = format!("relay via {}", config.broker.broker_endpoint);
-            }
-            return Ok(());
+            let service = discover_service(config, cluster_id).await?;
+            stored.service_url = runinator_comm::discovery::web::web_service_base_url(&service);
+            Some(service.relay_path)
+        } else {
+            None
+        };
+        apply(config, stored);
+        if let Some(relay_path) = relay_path
+            && config.broker.broker_backend == "ws"
+        {
+            config.broker.broker_endpoint =
+                derive_relay_url_with_path(&config.service_url, &relay_path)?;
+            config.broker_description = format!("relay via {}", config.broker.broker_endpoint);
         }
+        return Ok(());
     }
     let Some(raw_token) = config.enrollment_token.take() else {
         if config.locator_mode == LocatorMode::Discover {

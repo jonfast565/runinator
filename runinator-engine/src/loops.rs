@@ -2205,7 +2205,7 @@ async fn record_workspace_abandonment<
     let _ = db
         .mark_workspace_abandonment_notified(workspace.id, workspace.version, now)
         .await?;
-    crate::events::emit_orchestration(&publisher, binding.id, binding.org_id);
+    crate::events::emit_orchestration(publisher, binding.id, binding.org_id);
     Ok(())
 }
 

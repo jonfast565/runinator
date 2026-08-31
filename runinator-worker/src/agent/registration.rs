@@ -47,6 +47,10 @@ pub async fn announce_agent_replica(
 }
 
 /// Heartbeat the agent through broker ingress and explicitly retire it on a clean stop.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the spawned task takes the distinct agent runtime resources it owns for its full lifetime"
+)]
 pub fn spawn_agent_heartbeat(
     broker: Arc<dyn Broker>,
     config: &AgentRuntimeConfig,
@@ -156,15 +160,16 @@ async fn publish_agent_availability(
         &mut attributes,
         report_context.report(&reporter.status(), heartbeat_seq, 0),
     );
-    let providers = availability
-        .publish_providers
-        .then(|| {
+    let providers = if availability.publish_providers {
+        {
             (availability.providers)()
                 .into_iter()
                 .map(|provider| provider.metadata())
                 .collect()
-        })
-        .unwrap_or_default();
+        }
+    } else {
+        Default::default()
+    };
     let command = WsIngressCommand::replica_available(
         ReplicaRegistrationRequest {
             replica_id: Some(replica_id),

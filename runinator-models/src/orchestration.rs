@@ -695,16 +695,12 @@ pub struct OrchestrationEvidence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DeliverySemantics {
+    #[default]
     AtLeastOnce,
     Idempotent,
     Reconcilable,
-}
-
-impl Default for DeliverySemantics {
-    fn default() -> Self {
-        Self::AtLeastOnce
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -851,7 +851,7 @@ async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
             "This workflow run belongs to a correlated orchestration; send a named intent to the orchestration instead",
         )),
         Ok(None) => Ok(()),
-        Err(error) => return Err(api_error(error.to_string())),
+        Err(error) => Err(api_error(error.to_string())),
     }
 }
 

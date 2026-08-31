@@ -139,6 +139,10 @@ impl<T: FileStore> WorkflowFiles<T> {
         })
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "storage validates the independent scope, ownership, revision, metadata, and bytes supplied by callers"
+    )]
     async fn store_file(
         &self,
         scope: FileScope,

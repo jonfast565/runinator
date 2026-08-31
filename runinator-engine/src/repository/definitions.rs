@@ -360,7 +360,7 @@ pub fn validate_workflow_definition(
 pub async fn fetch_workflows<T: DefinitionStore>(
     db: &T,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
-    Ok(fetch_workflows_with_managed(db, false).await?)
+    fetch_workflows_with_managed(db, false).await
 }
 
 /// every workflow, optionally including the generated ones.

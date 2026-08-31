@@ -1110,14 +1110,14 @@ impl Lowerer {
     fn lower_stmt_inner(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), RexRapError> {
         // an `async` call binds a task handle, whatever the callee is; `await`/`detach` resolve
         // against this. the marker is on the call site, so the callee never has to declare a color.
-        if stmt.is_async {
-            if let Some(label) = &stmt.label {
-                let binding = match &stmt.kind {
-                    StmtKind::Subflow(_) => TaskBinding::Subflow,
-                    _ => TaskBinding::Provider,
-                };
-                self.task_bindings.insert(label.clone(), binding);
-            }
+        if stmt.is_async
+            && let Some(label) = &stmt.label
+        {
+            let binding = match &stmt.kind {
+                StmtKind::Subflow(_) => TaskBinding::Subflow,
+                _ => TaskBinding::Provider,
+            };
+            self.task_bindings.insert(label.clone(), binding);
         }
         match &stmt.kind {
             StmtKind::Action(action) => self.lower_action(action, stmt, id, next),

@@ -379,6 +379,10 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
     /// Put an administrator's emergency low-level run control through the durable inbox. The
     /// control itself remains deliberately out of band, but its immutable event is reduced in
     /// sequence with adapter and operator intents so the timeline cannot hide the bypass.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the durable audit event records every override identity and cannot use a lossy context object"
+    )]
     pub async fn record_out_of_band_override(
         &self,
         binding: &OrchestrationBinding,
@@ -453,10 +457,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             .store
             .fetch_orchestration_pending_intents(binding.id)
             .await?;
-        for pending in due
-            .into_iter()
-            .filter(|intent| intent.wake_at <= Utc::now())
-        {
+        if let Some(pending) = due.into_iter().find(|intent| intent.wake_at <= Utc::now()) {
             (binding, _) = self
                 .apply_intent(
                     binding,
@@ -498,7 +499,6 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             })?;
             // Pending intents are sorted by descending policy priority. The atomic consume above
             // removes every lower-priority row, so none from this stale in-memory page may run.
-            break;
         }
         Ok(binding)
     }
@@ -945,14 +945,14 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 {
                     return Ok((binding, IntentApplyOutcome::IgnoredNoActiveMember));
                 }
-                if let Some(pointer) = intent.subject_revision_pointer.as_deref() {
-                    if !signal_revision_matches(
+                if let Some(pointer) = intent.subject_revision_pointer.as_deref()
+                    && !signal_revision_matches(
                         binding.subject_revision.as_deref(),
                         &payload,
                         pointer,
-                    ) {
-                        return Ok((binding, IntentApplyOutcome::IgnoredSubjectRevision));
-                    }
+                    )
+                {
+                    return Ok((binding, IntentApplyOutcome::IgnoredSubjectRevision));
                 }
                 self.enqueue_control(
                     &binding,

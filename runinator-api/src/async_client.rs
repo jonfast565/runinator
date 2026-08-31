@@ -1784,7 +1784,7 @@ where
                 .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
                 .into(),
         )
-        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()).into())
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
     }
 
     pub async fn delete_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {

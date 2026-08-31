@@ -599,9 +599,11 @@ fn a_disabled_interrupt_link_round_trips_through_rexrap() {
 #[test]
 fn every_interrupt_source_parses_and_round_trips() {
     for source in runinator_models::interrupt::InterruptSource::ALL {
-        let every = (source == runinator_models::interrupt::InterruptSource::Timer)
-            .then_some(" every 60s")
-            .unwrap_or_default();
+        let every = if source == runinator_models::interrupt::InterruptSource::Timer {
+            " every 60s"
+        } else {
+            Default::default()
+        };
         let src = format!(
             r#"
             workflow "Sources" v1 {{

@@ -198,10 +198,12 @@ async fn save_validates_ingress_and_orchestration_as_one_pipeline_contract() {
     let error = service.save(&unknown_intent).await.unwrap_err();
     assert!(error.to_string().contains("does not exist"));
 
-    unknown_intent
+    if let Some(intent) = unknown_intent
         .metadata
         .pointer_mut("/ingress/routes/1/intent")
-        .map(|intent| *intent = Value::String("refresh".into()));
+    {
+        *intent = Value::String("refresh".into());
+    }
     service
         .save(&unknown_intent)
         .await

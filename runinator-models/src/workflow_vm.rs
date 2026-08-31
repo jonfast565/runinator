@@ -485,6 +485,10 @@ pub struct WorkflowVmInterruptHandler {
 /// and invocation-call bookkeeping; every value needed to resume a branch is serializable here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "durable frames are serialized as a tagged union and keeping variants direct avoids an allocation during every resume"
+)]
 pub enum WorkflowFrame {
     Loop(WorkflowLoopFrame),
     Reentry(WorkflowReentryFrame),

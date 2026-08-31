@@ -442,7 +442,7 @@ fn unknown_argument(tool: &CommandTool, arguments: &Value) -> Option<String> {
                 && !tool
                     .arguments
                     .iter()
-                    .any(|argument| &argument.key == key.as_str())
+                    .any(|argument| argument.key == key.as_str())
         })
         .cloned()
 }

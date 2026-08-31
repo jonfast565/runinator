@@ -115,10 +115,10 @@ fn rewrite_stmt(
     bindings: &HashMap<String, Expr>,
     renames: &HashMap<String, String>,
 ) {
-    if let Some(label) = stmt.label.as_mut() {
-        if let Some(renamed) = renames.get(label.as_str()) {
-            *label = renamed.clone();
-        }
+    if let Some(label) = stmt.label.as_mut()
+        && let Some(renamed) = renames.get(label.as_str())
+    {
+        *label = renamed.clone();
     }
     rewrite_transitions(&mut stmt.transitions, bindings, renames);
     for expr in stmt_exprs_mut(&mut stmt.kind) {
@@ -159,10 +159,10 @@ fn rewrite_transitions(
 }
 
 fn rewrite_target(slot: &mut Option<Target>, renames: &HashMap<String, String>) {
-    if let Some(Target::Label(label)) = slot {
-        if let Some(renamed) = renames.get(label.as_str()) {
-            *label = renamed.clone();
-        }
+    if let Some(Target::Label(label)) = slot
+        && let Some(renamed) = renames.get(label.as_str())
+    {
+        *label = renamed.clone();
     }
 }
 
@@ -176,27 +176,27 @@ fn subst_expr(
     bindings: &HashMap<String, Expr>,
     renames: &HashMap<String, String>,
 ) {
-    if let ExprKind::Path(segs) = &expr.kind {
-        if let Some(PathSeg::Key(head)) = segs.first() {
-            if let Some(replacement) = bindings.get(head.as_str()) {
-                if segs.len() == 1 {
-                    let span = expr.span;
-                    *expr = replacement.clone();
-                    expr.span = span;
-                    return;
-                }
-                if let ExprKind::Path(base) = &replacement.kind {
-                    let mut merged = base.clone();
-                    merged.extend(segs[1..].iter().cloned());
-                    expr.kind = ExprKind::Path(merged);
-                    return;
-                }
-            } else if let Some(renamed) = renames.get(head.as_str()) {
-                let mut segs = segs.clone();
-                segs[0] = PathSeg::Key(renamed.clone());
-                expr.kind = ExprKind::Path(segs);
+    if let ExprKind::Path(segs) = &expr.kind
+        && let Some(PathSeg::Key(head)) = segs.first()
+    {
+        if let Some(replacement) = bindings.get(head.as_str()) {
+            if segs.len() == 1 {
+                let span = expr.span;
+                *expr = replacement.clone();
+                expr.span = span;
                 return;
             }
+            if let ExprKind::Path(base) = &replacement.kind {
+                let mut merged = base.clone();
+                merged.extend(segs[1..].iter().cloned());
+                expr.kind = ExprKind::Path(merged);
+                return;
+            }
+        } else if let Some(renamed) = renames.get(head.as_str()) {
+            let mut segs = segs.clone();
+            segs[0] = PathSeg::Key(renamed.clone());
+            expr.kind = ExprKind::Path(segs);
+            return;
         }
     }
     for child in expr_children_mut(&mut expr.kind) {
@@ -432,12 +432,11 @@ fn consumes_any(stmt: &Stmt, handles: &[String]) -> bool {
 }
 
 fn expr_reads_any(expr: &mut Expr, handles: &[String]) -> bool {
-    if let ExprKind::Path(segs) = &expr.kind {
-        if let Some(PathSeg::Key(head)) = segs.first() {
-            if handles.iter().any(|handle| handle == head) {
-                return true;
-            }
-        }
+    if let ExprKind::Path(segs) = &expr.kind
+        && let Some(PathSeg::Key(head)) = segs.first()
+        && handles.iter().any(|handle| handle == head)
+    {
+        return true;
     }
     expr_children_mut(&mut expr.kind)
         .into_iter()

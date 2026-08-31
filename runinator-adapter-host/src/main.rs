@@ -251,7 +251,7 @@ async fn invoke(
     } else {
         invoke_dynamic(Path::new(&entry.origin), &request.request, state.limits)
             .await
-            .unwrap_or_else(|error| AdapterResponse::rejected(error))
+            .unwrap_or_else(AdapterResponse::rejected)
     };
     if response.events.len() > state.limits.event_count {
         return (
@@ -1930,7 +1930,7 @@ mod tests {
         // rebuilding the map from only the streams that produced events would reset every quiet
         // stream to a cold start, replaying its whole history on the next poll.
         let checkpoint = json!({ "streams": { "7:check_run": "2026-08-27T08:00:00+00:00" } });
-        let mut marks = existing_streams(&checkpoint.clone().into());
+        let mut marks = existing_streams(&checkpoint.clone());
         advance(&mut marks, "7:pull_request", "2026-08-27T10:00:00+00:00");
 
         let next = stream_checkpoints(marks);
@@ -1944,7 +1944,7 @@ mod tests {
     fn a_legacy_flat_checkpoint_seeds_every_stream() {
         // adapters already in flight carry the old single-mark shape; it must keep its position
         // rather than reading as a cold start.
-        let legacy: Value = json!({ "updated_at": "2026-08-27T08:00:00+00:00" }).into();
+        let legacy: Value = json!({ "updated_at": "2026-08-27T08:00:00+00:00" });
         assert_eq!(
             stream_checkpoint(&legacy, "7:pull_request").as_deref(),
             Some("2026-08-27T08:00:00+00:00")

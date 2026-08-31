@@ -333,9 +333,7 @@ where
         error: Option<&str>,
         workflow_run_id: Option<Uuid>,
     ) -> Result<Option<ConsoleCell>, SendableError> {
-        let encoded = result
-            .map(|value| serde_json::to_string(value))
-            .transpose()?;
+        let encoded = result.map(serde_json::to_string).transpose()?;
         sqlx::query(&self.render(
             "UPDATE console_cells SET kind = ?, status = ?, result = ?, error = ?, \
              workflow_run_id = ?, updated_at = ? WHERE id = ?",

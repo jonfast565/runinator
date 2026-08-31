@@ -52,6 +52,10 @@ impl Label {
 }
 
 /// An instruction before its graph targets have been laid out.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "this short-lived compiler representation is consumed before module serialization and direct variants keep lowering straightforward"
+)]
 enum PendingInstruction {
     Instruction(WorkflowInstruction),
     Jump(Label),
@@ -264,7 +268,7 @@ pub fn compile_workflow_module(
                     configuration,
                     targets: targets
                         .iter()
-                        .map(|target| resolve(target))
+                        .map(&resolve)
                         .collect::<Result<Vec<_>, _>>()?,
                     default: default.as_ref().map(resolve).transpose()?,
                 }
@@ -272,7 +276,7 @@ pub fn compile_workflow_module(
             PendingInstruction::Fork(targets, join_key) => WorkflowInstruction::Fork {
                 targets: targets
                     .iter()
-                    .map(|target| resolve(target))
+                    .map(&resolve)
                     .collect::<Result<Vec<_>, _>>()?,
                 join_key,
             },
@@ -320,7 +324,7 @@ pub fn compile_workflow_module(
             } => WorkflowInstruction::Race {
                 targets: targets
                     .iter()
-                    .map(|target| resolve(target))
+                    .map(&resolve)
                     .collect::<Result<Vec<_>, _>>()?,
                 race_key,
                 winner,
@@ -976,9 +980,7 @@ fn apply_failure_edges(
     if node.kind == WorkflowNodeKind::Try {
         return Vec::new();
     }
-    let tail_position = body
-        .iter()
-        .rposition(|instruction| transfers_control(instruction));
+    let tail_position = body.iter().rposition(transfers_control);
     let insert_at = match tail_position {
         Some(position) if position + 1 == body.len() => {
             if !matches!(body[position], PendingInstruction::Jump(_)) {

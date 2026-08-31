@@ -122,21 +122,6 @@ fn parse_secret_ref(raw: &str) -> Option<SecretRef> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_uuid_backed_secret_references() {
-        let id = Uuid::new_v4();
-        let reference =
-            parse_secret_ref(&format!("secret+uuid://{id}/acme.shared/api%2Ftoken")).unwrap();
-        assert_eq!(reference.id, Some(id));
-        assert_eq!(reference.scope, "acme.shared");
-        assert_eq!(reference.name, "api/token");
-    }
-}
-
 fn percent_decode(raw: &str) -> Option<String> {
     let bytes = raw.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -161,5 +146,20 @@ fn hex_value(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_uuid_backed_secret_references() {
+        let id = Uuid::new_v4();
+        let reference =
+            parse_secret_ref(&format!("secret+uuid://{id}/acme.shared/api%2Ftoken")).unwrap();
+        assert_eq!(reference.id, Some(id));
+        assert_eq!(reference.scope, "acme.shared");
+        assert_eq!(reference.name, "api/token");
     }
 }

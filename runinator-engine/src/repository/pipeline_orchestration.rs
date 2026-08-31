@@ -919,8 +919,8 @@ async fn advance_pipeline_graph<T: RuntimeStore + WorkflowVmStore>(
                         }
                     }
                 }
-            } else if impossible {
-                if let Some(attempt) = db
+            } else if impossible
+                && let Some(attempt) = db
                     .create_pipeline_member_attempt(
                         pipeline_run.id,
                         member.key.clone(),
@@ -929,16 +929,15 @@ async fn advance_pipeline_graph<T: RuntimeStore + WorkflowVmStore>(
                         pipeline_run.parameters.clone(),
                     )
                     .await?
-                {
-                    db.update_pipeline_member_attempt(
-                        attempt.id,
-                        PipelineMemberAttemptStatus::Skipped,
-                        Value::Null,
-                        Some("No inbound link satisfied the join".into()),
-                    )
-                    .await?;
-                    changed = true;
-                }
+            {
+                db.update_pipeline_member_attempt(
+                    attempt.id,
+                    PipelineMemberAttemptStatus::Skipped,
+                    Value::Null,
+                    Some("No inbound link satisfied the join".into()),
+                )
+                .await?;
+                changed = true;
             }
         }
         if !changed {

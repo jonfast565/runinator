@@ -20,22 +20,12 @@ pub fn is_reserved_server_setting(kind: SettingKind, scope: &str, name: &str) ->
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+#[derive(Default)]
 pub struct ServerSettings {
     pub authentication: AuthenticationSettings,
     pub orchestration: OrchestrationSettings,
     pub notifications: NotificationSettings,
     pub replicas: ReplicaSettings,
-}
-
-impl Default for ServerSettings {
-    fn default() -> Self {
-        Self {
-            authentication: AuthenticationSettings::default(),
-            orchestration: OrchestrationSettings::default(),
-            notifications: NotificationSettings::default(),
-            replicas: ReplicaSettings::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,7 +523,7 @@ impl ServerSettings {
     pub fn validate(&self) -> Result<(), String> {
         for definition in server_setting_catalog() {
             let value = self
-                .value(&definition.key)
+                .value(definition.key)
                 .expect("catalog key must resolve");
             if !(definition.minimum..=definition.maximum).contains(&value) {
                 return Err(format!(

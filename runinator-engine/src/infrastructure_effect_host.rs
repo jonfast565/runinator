@@ -719,6 +719,10 @@ async fn execute_condition_gate<T: RuntimeStore + WorkflowVmStore>(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the effect protocol supplies each child-run identity and execution option independently"
+)]
 async fn execute_child_run<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,

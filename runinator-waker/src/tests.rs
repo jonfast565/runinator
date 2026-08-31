@@ -62,7 +62,8 @@ fn config_parser_accepts_waker_and_broker_overrides() {
 
 #[test]
 fn config_parser_rejects_control_plane_options() {
-    for option in ["--api-base-url"] {
+    {
+        let option = "--api-base-url";
         assert!(
             Config::try_parse_from(["runinator-waker", option, "unused"]).is_err(),
             "{option} must not be accepted by the broker-only waker"

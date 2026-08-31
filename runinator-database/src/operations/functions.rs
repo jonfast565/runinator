@@ -124,12 +124,12 @@ where
         // a left join rather than `NOT IN`: the three engines disagree about how `NOT IN` treats a
         // null in the subquery, and a null `artifact_digest` would make the whole set empty on one
         // of them — which would silently disable the sweep rather than fail it.
-        let rows = sqlx::query(&self.render(&format!(
+        let rows = sqlx::query(&self.render(
             "SELECT a.digest, a.size_bytes, a.uri, a.media_type, a.created_at \
              FROM function_artifacts a \
              LEFT JOIN function_versions v ON v.artifact_digest = a.digest \
-             WHERE v.id IS NULL ORDER BY a.created_at ASC"
-        )))
+             WHERE v.id IS NULL ORDER BY a.created_at ASC",
+        ))
         .fetch_all(self.pool())
         .await?;
         let _ = FUNCTION_ARTIFACT_COLUMNS;

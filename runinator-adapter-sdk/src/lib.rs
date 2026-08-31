@@ -61,6 +61,11 @@ macro_rules! export_adapter {
 }
 
 /// Called by the generated ABI wrapper; plugins should use [`export_adapter!`] instead.
+///
+/// # Safety
+///
+/// `response_path` must be non-null and point to a valid, NUL-terminated filesystem path for the
+/// duration of this call.
 pub unsafe fn write_metadata<T: Adapter>(response_path: *const std::ffi::c_char) -> i32 {
     let result = (|| {
         // SAFETY: the adapter host passes a non-null, NUL-terminated path for this invocation.
@@ -76,6 +81,11 @@ pub unsafe fn write_metadata<T: Adapter>(response_path: *const std::ffi::c_char)
 }
 
 /// Called by the generated ABI wrapper; plugins should use [`export_adapter!`] instead.
+///
+/// # Safety
+///
+/// Both pointers must be non-null and point to valid, NUL-terminated filesystem paths for the
+/// duration of this call.
 pub unsafe fn handle_files<T: Adapter>(
     request_path: *const std::ffi::c_char,
     response_path: *const std::ffi::c_char,
@@ -93,6 +103,11 @@ pub unsafe fn handle_files<T: Adapter>(
 }
 
 /// Called by the generated ABI wrapper for a durable polling invocation.
+///
+/// # Safety
+///
+/// Both pointers must be non-null and point to valid, NUL-terminated filesystem paths for the
+/// duration of this call.
 pub unsafe fn poll_files<T: Adapter>(
     request_path: *const std::ffi::c_char,
     response_path: *const std::ffi::c_char,

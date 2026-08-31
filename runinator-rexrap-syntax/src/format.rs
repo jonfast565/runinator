@@ -316,12 +316,11 @@ impl Formatter {
                         .map(format_expr)
                         .unwrap_or_default();
                     self.line(
-                        &format!(
+                        format!(
                             "if {:?} {} {}",
                             predicate.pointer, predicate.operator, value
                         )
-                        .trim_end()
-                        .to_string(),
+                        .trim_end(),
                     );
                 }
                 let action = if route.action == "dispatch" {

@@ -109,6 +109,10 @@ fn current_commit(workspace_root: &Path) -> String {
 
 /// builds (and optionally pushes) the selected images, returning a map of image name -> tagged
 /// reference for the ones that were built.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the CLI passes each image-selection and backend option independently"
+)]
 pub fn build_container_images(
     workspace_root: &Path,
     repository: Option<&str>,

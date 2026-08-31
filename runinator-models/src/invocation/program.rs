@@ -36,6 +36,10 @@ impl InvocationProgram {
 /// a call, or a jump. keeping it small is what makes the vm auditable and the continuation cheap.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the serialized instruction contract keeps call policies inline and avoids an allocation for every decoded call"
+)]
 pub enum InvocationInstruction {
     /// push a constant.
     Const { value: Value },

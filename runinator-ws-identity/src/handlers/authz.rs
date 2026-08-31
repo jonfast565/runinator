@@ -118,6 +118,10 @@ fn forbidden(message: &str) -> Reply {
     )
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "handlers return the shared Axum reply directly so errors remain ready to convert into HTTP responses"
+)]
 fn parse_scope(kind: &str, id: &str) -> Result<ScopeRef, Reply> {
     let Some(kind) = ScopeKind::from_str_lossy(kind) else {
         return Err(bad_request("unknown scope kind"));
@@ -136,6 +140,10 @@ fn parse_scope(kind: &str, id: &str) -> Result<ScopeRef, Reply> {
     ScopeRef::new(kind, id).ok_or_else(|| bad_request("invalid scope"))
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "handlers return the shared Axum reply directly so errors remain ready to convert into HTTP responses"
+)]
 fn parse_principal(kind: &str) -> Result<PrincipalKind, Reply> {
     match PrincipalKind::from_str_lossy(kind) {
         Some(PrincipalKind::User) => Ok(PrincipalKind::User),

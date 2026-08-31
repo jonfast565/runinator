@@ -3,7 +3,7 @@
 //! Providers receive a portable descriptor plus a transient `local_path`; they never need object
 //! store credentials and cannot use a descriptor to fetch a different object's bytes.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::{
@@ -27,7 +27,7 @@ pub async fn materialize(
 
 async fn materialize_value(
     client: &AsyncApiClient<StaticLocator>,
-    root: &PathBuf,
+    root: &Path,
     value: Value,
 ) -> Result<Value, SendableError> {
     if let Ok(descriptor) = FileDescriptor::from_value(&value) {
@@ -54,7 +54,7 @@ async fn materialize_value(
 
 async fn materialize_file(
     client: &AsyncApiClient<StaticLocator>,
-    root: &PathBuf,
+    root: &Path,
     descriptor: &FileDescriptor,
 ) -> Result<Value, SendableError> {
     validate_relative_path(&descriptor.path).map_err(|message| {

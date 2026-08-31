@@ -30,14 +30,14 @@ pub struct DbProvider;
 
 /// the engine selector shared by every action.
 fn engine_parameter() -> ParameterMetadata {
-    #[allow(unused_mut)]
-    let mut engines = Vec::new();
-    #[cfg(feature = "sqlite")]
-    engines.push(json!("sqlite").into());
-    #[cfg(feature = "postgres")]
-    engines.push(json!("postgres").into());
-    #[cfg(feature = "mariadb")]
-    engines.push(json!("mariadb").into());
+    let engines = vec![
+        #[cfg(feature = "sqlite")]
+        json!("sqlite").into(),
+        #[cfg(feature = "postgres")]
+        json!("postgres").into(),
+        #[cfg(feature = "mariadb")]
+        json!("mariadb").into(),
+    ];
 
     ParameterMetadata::required("engine", RuninatorType::Enum(engines))
         .with_description("Database engine to connect to")

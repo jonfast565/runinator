@@ -133,84 +133,6 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-mod activity_status_tests {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn suspended_effects_keep_provider_work_running_and_classify_true_parks() {
-        let action = WorkflowEffectRequest::Action {
-            provider: "test".into(),
-            function: "run".into(),
-            input: Value::Null,
-            timeout_seconds: None,
-            retry: Default::default(),
-            tags: Vec::new(),
-            required_labels: BTreeMap::new(),
-            workspace_affinity: None,
-            idempotency_key: None,
-            function_binding: None,
-        };
-        assert_eq!(
-            suspended_workflow_run_status(&[(action, WorkflowEffectStatus::Running)]),
-            WorkflowStatus::Running
-        );
-        assert_eq!(
-            suspended_workflow_run_status(&[(
-                WorkflowEffectRequest::TimerDelay { seconds: 1 },
-                WorkflowEffectStatus::Running
-            )]),
-            WorkflowStatus::Sleeping
-        );
-        assert_eq!(
-            suspended_workflow_run_status(&[(
-                WorkflowEffectRequest::MutexAcquire {
-                    key: "critical".into(),
-                },
-                WorkflowEffectStatus::Running
-            )]),
-            WorkflowStatus::Parked
-        );
-        assert_eq!(
-            suspended_workflow_run_status(&[(
-                WorkflowEffectRequest::Approval {
-                    prompt: Value::Null,
-                    expires_at: None,
-                },
-                WorkflowEffectStatus::Running
-            )]),
-            WorkflowStatus::ApprovalRequired
-        );
-        assert_eq!(
-            suspended_workflow_run_status(&[(
-                WorkflowEffectRequest::Input {
-                    prompt: None,
-                    schema: Value::Null,
-                },
-                WorkflowEffectStatus::Running
-            )]),
-            WorkflowStatus::InputRequired
-        );
-        let action = WorkflowEffectRequest::Action {
-            provider: "test".into(),
-            function: "run".into(),
-            input: Value::Null,
-            timeout_seconds: None,
-            retry: Default::default(),
-            tags: Vec::new(),
-            required_labels: BTreeMap::new(),
-            workspace_affinity: None,
-            idempotency_key: None,
-            function_binding: None,
-        };
-        assert_eq!(
-            suspended_workflow_run_status(&[(action, WorkflowEffectStatus::InputRequired)]),
-            WorkflowStatus::InputRequired
-        );
-    }
-}
-
 /// Release every named mutex held by one run. Called from the same transaction that settles or
 /// cancels the run, so a terminal run can never leave a key locked behind it.
 async fn release_run_mutexes<B>(
@@ -2188,5 +2110,83 @@ where
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod activity_status_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn suspended_effects_keep_provider_work_running_and_classify_true_parks() {
+        let action = WorkflowEffectRequest::Action {
+            provider: "test".into(),
+            function: "run".into(),
+            input: Value::Null,
+            timeout_seconds: None,
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        };
+        assert_eq!(
+            suspended_workflow_run_status(&[(action, WorkflowEffectStatus::Running)]),
+            WorkflowStatus::Running
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::TimerDelay { seconds: 1 },
+                WorkflowEffectStatus::Running
+            )]),
+            WorkflowStatus::Sleeping
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::MutexAcquire {
+                    key: "critical".into(),
+                },
+                WorkflowEffectStatus::Running
+            )]),
+            WorkflowStatus::Parked
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::Approval {
+                    prompt: Value::Null,
+                    expires_at: None,
+                },
+                WorkflowEffectStatus::Running
+            )]),
+            WorkflowStatus::ApprovalRequired
+        );
+        assert_eq!(
+            suspended_workflow_run_status(&[(
+                WorkflowEffectRequest::Input {
+                    prompt: None,
+                    schema: Value::Null,
+                },
+                WorkflowEffectStatus::Running
+            )]),
+            WorkflowStatus::InputRequired
+        );
+        let action = WorkflowEffectRequest::Action {
+            provider: "test".into(),
+            function: "run".into(),
+            input: Value::Null,
+            timeout_seconds: None,
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            workspace_affinity: None,
+            idempotency_key: None,
+            function_binding: None,
+        };
+        assert_eq!(
+            suspended_workflow_run_status(&[(action, WorkflowEffectStatus::InputRequired)]),
+            WorkflowStatus::InputRequired
+        );
     }
 }

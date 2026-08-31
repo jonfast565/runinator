@@ -21,6 +21,8 @@ use runinator_rexrap_syntax::errors::RexRapError;
 
 use metadata::*;
 
+type InterruptRegion = (String, Option<i64>, String, bool);
+
 /// options controlling how a definition is rendered back to rexrap.
 #[derive(Debug, Clone, Default)]
 pub struct DecompileOptions {
@@ -592,7 +594,7 @@ impl<'a> Decompiler<'a> {
         &mut self,
         graph: &WorkflowGraph,
         metadata: &[Value],
-    ) -> Result<Vec<(String, Option<i64>, String, bool)>, RexRapError> {
+    ) -> Result<Vec<InterruptRegion>, RexRapError> {
         let regions = metadata
             .iter()
             .map(|interrupt| {
@@ -2566,12 +2568,12 @@ impl<'a> Decompiler<'a> {
             branches
                 .iter()
                 .zip(surface.labels.iter())
-                .filter_map(|(branch, label)| {
+                .filter(|&(_branch, label)| {
                     label
                         .as_deref()
                         .is_some_and(|label| selected.contains(label))
-                        .then(|| branch.clone())
                 })
+                .map(|(branch, _label)| branch.clone())
                 .collect::<Vec<_>>()
         } else {
             branches.clone()

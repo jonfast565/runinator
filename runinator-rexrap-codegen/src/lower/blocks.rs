@@ -354,13 +354,13 @@ impl Lowerer {
                 .branches
                 .iter()
                 .zip(branch_refs.iter())
-                .filter_map(|(branch, entry)| {
+                .filter(|&(branch, _entry)| {
                     branch
                         .label
                         .as_deref()
                         .is_some_and(|label| selected.contains(label))
-                        .then(|| entry.clone())
                 })
+                .map(|(_branch, entry)| entry.clone())
                 .collect()
         } else {
             branch_refs.clone()

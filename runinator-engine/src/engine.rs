@@ -85,24 +85,6 @@ impl<T> BackgroundEngineStore for T where
 {
 }
 
-#[cfg(test)]
-mod tests {
-    use super::EngineConfig;
-
-    #[test]
-    fn ingress_concurrency_defaults_to_a_bounded_parallel_limit() {
-        assert_eq!(EngineConfig::default().max_concurrent_ingress, 16);
-        assert_eq!(
-            EngineConfig {
-                max_concurrent_ingress: 0,
-            }
-            .normalized()
-            .max_concurrent_ingress,
-            1
-        );
-    }
-}
-
 /// Run the durable VM orchestration engine.
 ///
 /// Continuation and effect outboxes are the only workflow execution queues. In particular, this
@@ -286,5 +268,23 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
             loops.shutdown().await;
             Err(crate::errors::BACKGROUND_LOOP_EXITED.bare())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EngineConfig;
+
+    #[test]
+    fn ingress_concurrency_defaults_to_a_bounded_parallel_limit() {
+        assert_eq!(EngineConfig::default().max_concurrent_ingress, 16);
+        assert_eq!(
+            EngineConfig {
+                max_concurrent_ingress: 0,
+            }
+            .normalized()
+            .max_concurrent_ingress,
+            1
+        );
     }
 }
