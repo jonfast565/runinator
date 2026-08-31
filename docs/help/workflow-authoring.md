@@ -393,6 +393,23 @@ strictly newer.
 
 ### Interactive terminal input
 
+REXRAP can request one line of input directly with the typed `console.input` function. It runs as
+an action, so the prompt and entered line appear in the selected action's **Step Output** terminal,
+the normal action timeout continues while it waits, and the result can be used by later statements:
+
+```rexrap
+@runner("desktop")
+@timeout(300)
+let answer = console.input(prompt: "Which environment should I deploy?")
+
+output (answer.value)
+```
+
+`console.input` must run on a desktop worker and returns `{ value: string }`. The completed value is
+part of the durable action result so the workflow can resume deterministically; do not use this
+function for passwords or other secrets. The existing `input "Prompt"` statement is different: it
+creates an external/manual workflow input gate and does not read from the action terminal.
+
 PTY-backed actions such as `console.run({ interactive: true, ... })` can expose their terminal
 transcript in a run's selected action **Step Output** panel. A program can also tell Runinator when
 it is blocked on human input. This is explicit rather than prompt detection: write an OSC frame

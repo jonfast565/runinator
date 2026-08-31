@@ -96,6 +96,67 @@ fn interactive_commands_receive_input_and_stream_terminal_bytes() {
 }
 
 #[test]
+fn input_action_waits_for_a_line_and_emits_the_prompt_lifecycle() {
+    let request = ProviderExecutionRequest {
+        run_id: None,
+        action_name: "console".into(),
+        action_function: "input".into(),
+        parameters: Value::from(serde_json::json!({ "prompt": "Your name?" })),
+        timeout_secs: 5,
+        artifact_dir: String::new(),
+        events_jsonl_path: String::new(),
+        idempotency_key: None,
+        workspace_path: None,
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    sender
+        .send(ProviderTerminalControl::Resize { cols: 80, rows: 24 })
+        .unwrap();
+    sender
+        .send(ProviderTerminalControl::Input {
+            data: "Ada\r".into(),
+        })
+        .unwrap();
+    let sink = Arc::new(TerminalSink {
+        events: Mutex::new(Vec::new()),
+        controls: Mutex::new(Some(receiver)),
+    });
+
+    let result = super::execute_input_with_permission(
+        &request,
+        Some(sink.clone() as Arc<dyn ProviderEventSink>),
+        CancellationToken::new(),
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.output_json,
+        Some(Value::from(serde_json::json!({ "value": "Ada" })))
+    );
+    let events = sink.events.lock().unwrap();
+    let interactions = events
+        .iter()
+        .filter_map(|event| match event {
+            ProviderExecutionEvent::TerminalInteraction { interaction } => Some(interaction),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(interactions.len(), 2);
+    assert_eq!(interactions[0].sequence, 1);
+    assert_eq!(
+        interactions[0].state,
+        runinator_models::runs::TerminalInteractionState::InputRequired
+    );
+    assert_eq!(interactions[0].prompt.as_deref(), Some("Your name?"));
+    assert_eq!(interactions[1].sequence, 2);
+    assert_eq!(
+        interactions[1].state,
+        runinator_models::runs::TerminalInteractionState::InputAccepted
+    );
+}
+
+#[test]
 fn working_dir_reads_env_path() {
     // a non-empty, trimmed path is used; unset/empty/blank inherit the process cwd (None).
     assert_eq!(

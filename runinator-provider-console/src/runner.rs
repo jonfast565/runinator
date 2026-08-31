@@ -1,7 +1,10 @@
 use std::{
     path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
-    sync::Arc,
+    sync::{
+        Arc,
+        mpsc::{Receiver, RecvTimeoutError},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -9,7 +12,10 @@ use std::{
 use log::warn;
 use runinator_models::{
     errors::SendableError,
-    runs::{ProviderExecutionRequest, TaskExecutionResult},
+    runs::{
+        ProviderExecutionEvent, ProviderExecutionRequest, ProviderTerminalControl,
+        TaskExecutionResult, TerminalInteraction, TerminalInteractionState,
+    },
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
@@ -20,7 +26,9 @@ use crate::errors::{
     CANCELED, INTERACTIVE_NOT_PERMITTED, NONZERO_EXIT, STDERR_UNAVAILABLE, STDOUT_UNAVAILABLE,
     TERMINAL_UNAVAILABLE, TIMEOUT, WORKING_DIR_MISSING,
 };
-use crate::params::{ConsoleResult, parse_params, to_runtime_error};
+use crate::params::{
+    ConsoleResult, InputResult, parse_input_params, parse_params, to_runtime_error,
+};
 
 // whether `interactive: true` is permitted on this worker, from the `ALLOW_INTERACTIVE_ENV` flag the
 // desktop agent sets. a missing, empty, or "0" value means not permitted (the cloud-worker default).
@@ -117,6 +125,160 @@ pub(crate) fn execute_command(
     let status = status?;
 
     build_result(status, started, command_text)
+}
+
+pub(crate) fn execute_input(
+    request: &ProviderExecutionRequest,
+    sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
+) -> Result<TaskExecutionResult, SendableError> {
+    execute_input_with_permission(request, sink, token, interactive_permitted())
+}
+
+fn execute_input_with_permission(
+    request: &ProviderExecutionRequest,
+    sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
+    permitted: bool,
+) -> Result<TaskExecutionResult, SendableError> {
+    if !permitted {
+        return Err(INTERACTIVE_NOT_PERMITTED.error(
+            "run console.input on a desktop worker agent (for example with @runner(\"desktop\"))",
+        ));
+    }
+    let params = parse_input_params(request)?;
+    let sink = sink
+        .ok_or_else(|| TERMINAL_UNAVAILABLE.error("input prompt has no terminal event stream"))?;
+    let controls = sink
+        .take_terminal_control()
+        .ok_or_else(|| TERMINAL_UNAVAILABLE.error("input prompt has no terminal control stream"))?;
+    let request_id = request
+        .run_id
+        .map(|id| format!("console-input-{id}"))
+        .unwrap_or_else(|| "console-input".to_string());
+
+    sink.emit(ProviderExecutionEvent::Chunk {
+        stream: "terminal".into(),
+        content: format!("{} ", params.prompt),
+    });
+    sink.emit(ProviderExecutionEvent::TerminalInteraction {
+        interaction: TerminalInteraction {
+            sequence: 1,
+            request_id: request_id.clone(),
+            state: TerminalInteractionState::InputRequired,
+            prompt: Some(params.prompt),
+        },
+    });
+
+    let value = read_terminal_line(
+        &controls,
+        sink.as_ref(),
+        &token,
+        Duration::from_secs(request.timeout_secs.max(1) as u64),
+    )?;
+    sink.emit(ProviderExecutionEvent::TerminalInteraction {
+        interaction: TerminalInteraction {
+            sequence: 2,
+            request_id,
+            state: TerminalInteractionState::InputAccepted,
+            prompt: None,
+        },
+    });
+    sink.emit(ProviderExecutionEvent::Chunk {
+        stream: "terminal".into(),
+        content: "\r\n".into(),
+    });
+
+    Ok(TaskExecutionResult {
+        message: Some("Terminal input accepted".into()),
+        output_json: serde_json::to_value(InputResult { value })
+            .ok()
+            .map(Into::into),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
+}
+
+fn read_terminal_line(
+    controls: &Receiver<ProviderTerminalControl>,
+    sink: &dyn ProviderEventSink,
+    token: &CancellationToken,
+    timeout: Duration,
+) -> Result<String, SendableError> {
+    let deadline = Instant::now() + timeout;
+    let mut value = String::new();
+    let mut escape = false;
+    let mut csi = false;
+    loop {
+        if token.is_cancelled() {
+            return Err(CANCELED.bare());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(TIMEOUT.error(format!(
+                "Input prompt timed out after {} seconds",
+                timeout.as_secs()
+            )));
+        }
+        match controls.recv_timeout(remaining.min(Duration::from_millis(50))) {
+            Ok(ProviderTerminalControl::Resize { .. }) => {}
+            Ok(ProviderTerminalControl::Eof) => return Ok(value),
+            Ok(ProviderTerminalControl::Input { data }) => {
+                let mut echo = String::new();
+                for character in data.chars() {
+                    if csi {
+                        if ('@'..='~').contains(&character) {
+                            csi = false;
+                            escape = false;
+                        }
+                        continue;
+                    }
+                    if escape {
+                        if character == '[' {
+                            csi = true;
+                        } else {
+                            escape = false;
+                        }
+                        continue;
+                    }
+                    match character {
+                        '\u{1b}' => escape = true,
+                        '\r' | '\n' => {
+                            if !echo.is_empty() {
+                                sink.emit(ProviderExecutionEvent::Chunk {
+                                    stream: "terminal".into(),
+                                    content: echo,
+                                });
+                            }
+                            return Ok(value);
+                        }
+                        '\u{8}' | '\u{7f}' => {
+                            if value.pop().is_some() {
+                                echo.push_str("\u{8} \u{8}");
+                            }
+                        }
+                        '\u{3}' => return Err(CANCELED.bare()),
+                        '\u{4}' => return Ok(value),
+                        character if !character.is_control() => {
+                            value.push(character);
+                            echo.push(character);
+                        }
+                        _ => {}
+                    }
+                }
+                if !echo.is_empty() {
+                    sink.emit(ProviderExecutionEvent::Chunk {
+                        stream: "terminal".into(),
+                        content: echo,
+                    });
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(TERMINAL_UNAVAILABLE.error("terminal input stream disconnected"));
+            }
+        }
+    }
 }
 
 fn execute_interactive(

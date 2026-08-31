@@ -1,7 +1,12 @@
 use runinator_models::json;
 use runinator_models::runs::ProviderExecutionRequest;
 
-use crate::params::parse_params;
+use runinator_plugin::provider::Provider;
+
+use crate::{
+    ConsoleProvider,
+    params::{parse_input_params, parse_params},
+};
 
 fn request(parameters: runinator_models::value::Value) -> ProviderExecutionRequest {
     ProviderExecutionRequest {
@@ -45,4 +50,28 @@ fn parse_params_rejects_missing_command() {
 
     assert!(err.to_string().contains("CONSOLE001"));
     assert!(err.to_string().contains("missing field `command`"));
+}
+
+#[test]
+fn parse_input_params_requires_a_prompt() {
+    let params = parse_input_params(&request(json!({ "prompt": "Continue?" }))).unwrap();
+    assert_eq!(params.prompt, "Continue?");
+
+    assert!(parse_input_params(&request(json!({}))).is_err());
+}
+
+#[test]
+fn metadata_advertises_the_typed_input_function() {
+    let metadata = ConsoleProvider.metadata();
+    let input = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "input")
+        .expect("console.input metadata");
+
+    assert_eq!(input.parameters.len(), 1);
+    assert_eq!(input.parameters[0].name, "prompt");
+    assert!(input.parameters[0].required);
+    assert_eq!(input.results.len(), 1);
+    assert_eq!(input.results[0].name, "value");
 }

@@ -10,7 +10,10 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
-use crate::runner::execute_command;
+use crate::{
+    errors::INVALID_PARAMS,
+    runner::{execute_command, execute_input},
+};
 
 #[derive(Clone)]
 pub struct ConsoleProvider;
@@ -39,6 +42,12 @@ impl Provider for ConsoleProvider {
                         ResultMetadata::new("duration_ms", RuninatorType::Integer),
                         ResultMetadata::new("command", RuninatorType::String),
                     ]),
+                ActionMetadata::new("input", "Prompt for one line of terminal input")
+                    .with_parameters(vec![ParameterMetadata::required(
+                        "prompt",
+                        RuninatorType::String,
+                    )])
+                    .with_results(vec![ResultMetadata::new("value", RuninatorType::String)]),
             ],
             metadata: ProviderRuntimeMetadata::default(),
         }
@@ -50,6 +59,10 @@ impl Provider for ConsoleProvider {
         sink: Option<Arc<dyn ProviderEventSink>>,
         token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        execute_command(&request, sink, token)
+        match request.action_function.as_str() {
+            "run" => execute_command(&request, sink, token),
+            "input" => execute_input(&request, sink, token),
+            other => Err(INVALID_PARAMS.error(format!("unsupported console function '{other}'"))),
+        }
     }
 }

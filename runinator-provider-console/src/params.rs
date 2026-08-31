@@ -12,6 +12,11 @@ pub(crate) struct ConsoleParams {
     pub interactive: bool,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct InputParams {
+    pub prompt: String,
+}
+
 #[derive(Serialize)]
 pub(crate) struct ConsoleResult {
     pub success: bool,
@@ -20,9 +25,20 @@ pub(crate) struct ConsoleResult {
     pub command: String,
 }
 
+#[derive(Serialize)]
+pub(crate) struct InputResult {
+    pub value: String,
+}
+
 pub(crate) fn parse_params(
     request: &ProviderExecutionRequest,
 ) -> Result<ConsoleParams, SendableError> {
+    runinator_provider_support::parse_params(request, &INVALID_PARAMS)
+}
+
+pub(crate) fn parse_input_params(
+    request: &ProviderExecutionRequest,
+) -> Result<InputParams, SendableError> {
     runinator_provider_support::parse_params(request, &INVALID_PARAMS)
 }
 
