@@ -114,3 +114,86 @@ async fn rexrap_analyze_validates_source_fragments() {
     assert_eq!(diagnostics[0].severity, "error");
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn rexrap_save_mints_new_ids_and_preserves_the_active_org() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let (tx, _rx) = tokio::sync::broadcast::channel(64);
+    let events = crate::events::EventBus::new(tx, Arc::new(InMemoryBroker::new()));
+    let catalog = Arc::new(CatalogOperations::new(db.clone()));
+    let authoring = Arc::new(WorkflowAuthoring::new(db.clone(), events.publisher()));
+    let org_id = Uuid::now_v7();
+    let mut ctx = AuthContext::disabled_platform_admin();
+    ctx.org_id = Some(org_id);
+    let source = r#"
+        namespace acme.delivery {
+            workflow "Release workflow" v1 {
+                key release_train
+                do { return }
+            }
+        }
+    "#;
+
+    let (status, Json(response)) = crate::handlers::rexrap::import_rexrap(
+        Extension(db.clone()),
+        Extension(catalog.clone()),
+        Extension(authoring.clone()),
+        Extension(ctx.clone()),
+        ValidatedJson(crate::handlers::rexrap::ImportRexRapRequest {
+            source: source.into(),
+            enabled: true,
+            workflow_id: None,
+            triggers: Vec::new(),
+            ui: None,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::WorkflowBundle(created) = response else {
+        panic!("expected saved workflow bundle");
+    };
+    let created = created.workflows.into_iter().next().unwrap();
+    let workflow_id = created.id.expect("create mints an id");
+    assert_eq!(created.org_id, Some(org_id));
+
+    let renamed_source = source.replace("Release workflow", "Release workflow renamed");
+    let (status, Json(response)) = crate::handlers::rexrap::import_rexrap(
+        Extension(db.clone()),
+        Extension(catalog.clone()),
+        Extension(authoring.clone()),
+        Extension(ctx.clone()),
+        ValidatedJson(crate::handlers::rexrap::ImportRexRapRequest {
+            source: renamed_source,
+            enabled: true,
+            workflow_id: Some(workflow_id),
+            triggers: Vec::new(),
+            ui: None,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::WorkflowBundle(updated) = response else {
+        panic!("expected updated workflow bundle");
+    };
+    assert_eq!(updated.workflows[0].org_id, Some(org_id));
+
+    let (status, _) = crate::handlers::rexrap::import_rexrap(
+        Extension(db.clone()),
+        Extension(catalog),
+        Extension(authoring),
+        Extension(ctx),
+        ValidatedJson(crate::handlers::rexrap::ImportRexRapRequest {
+            source: source.into(),
+            enabled: true,
+            workflow_id: None,
+            triggers: Vec::new(),
+            ui: None,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(db.fetch_workflows().await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_file(path);
+}

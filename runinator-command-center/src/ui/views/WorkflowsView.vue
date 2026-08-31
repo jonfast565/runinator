@@ -22,7 +22,7 @@
               <Icon name="upload" />
               <span>Import</span>
             </button>
-            <button class="btn btn-primary" @click="newWorkflow">
+            <button class="btn btn-primary" @click="openNewWorkflow">
               <Icon name="plus" />
               <span>New</span>
             </button>
@@ -54,7 +54,7 @@
             title="No workflows yet"
             description="Workflows orchestrate tasks as a state machine. Create one to start editing on the graph and REXRAP canvas."
           >
-            <button class="btn btn-primary" @click="workflows.addWorkflow">
+            <button class="btn btn-primary" @click="openNewWorkflow">
               <Icon name="plus" />
               <span>New workflow</span>
             </button>
@@ -160,6 +160,70 @@
         </div>
       </template>
     </SplitPane>
+    <Modal
+      v-if="workflowIdentity.open"
+      title="New workflow"
+      description="Choose the workflow identity before opening its draft. The namespace and stable key form its durable REXRAP path."
+      width="480px"
+      @close="workflowIdentity.open = false"
+    >
+      <form
+        id="workflow-identity-form"
+        class="flex flex-col gap-3"
+        @submit.prevent="submitNewWorkflow"
+      >
+        <label class="flex flex-col gap-1 text-sm">
+          <span>Name</span>
+          <input
+            v-model.trim="workflowIdentity.name"
+            type="text"
+            required
+            maxlength="256"
+            placeholder="Release workflow"
+            autofocus
+          />
+        </label>
+        <label class="flex flex-col gap-1 text-sm">
+          <span>Namespace</span>
+          <input
+            v-model.trim="workflowIdentity.namespace"
+            type="text"
+            required
+            maxlength="256"
+            :pattern="namespacePattern"
+            title="Use dot-separated identifiers, for example acme.delivery."
+            placeholder="acme.delivery"
+          />
+        </label>
+        <label class="flex flex-col gap-1 text-sm">
+          <span>Stable key</span>
+          <input
+            v-model.trim="workflowIdentity.key"
+            type="text"
+            required
+            maxlength="256"
+            :pattern="REXRAP_IDENTIFIER_PATTERN"
+            title="Start with a letter or underscore and use only letters, numbers, and underscores."
+            placeholder="release_train"
+          />
+        </label>
+        <p v-if="workflowIdentityError" class="error m-0 text-xs" role="alert">
+          {{ workflowIdentityError }}
+        </p>
+      </form>
+
+      <template #actions>
+        <button class="btn" type="button" @click="workflowIdentity.open = false">Cancel</button>
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="workflow-identity-form"
+          :disabled="Boolean(workflowIdentityError)"
+        >
+          Create draft
+        </button>
+      </template>
+    </Modal>
     <WorkflowStepEditorModal v-if="workflows.stepEditorOpen" />
     <WorkflowRunInputModal v-if="workflows.runInputOpen" />
     <ImportPackDialog v-if="importOpen" @close="importOpen = false" />
@@ -167,8 +231,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { workflowPath } from "../../core/domain/models";
+import { computed, reactive, ref } from "vue";
+import {
+  artifactIdentityError,
+  artifactIdentityPath,
+  REXRAP_IDENTIFIER_PATTERN,
+  workflowPath,
+} from "../../core/domain/models";
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
@@ -179,6 +248,7 @@ import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
+import Modal from "../components/shared/Modal.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import SelectCheckbox from "../components/shared/SelectCheckbox.vue";
@@ -199,6 +269,25 @@ const scopeFilter = ref<"all" | "org" | "global">("all");
 const mobileView = ref<"list" | "editor">("list");
 const importOpen = ref(false);
 const collapsedNamespaces = ref(new Set<string>());
+const workflowIdentity = reactive({ open: false, name: "", namespace: "", key: "" });
+const namespacePattern = `${REXRAP_IDENTIFIER_PATTERN}(\\.${REXRAP_IDENTIFIER_PATTERN})*`;
+const workflowIdentityError = computed(() => {
+  const invalid = artifactIdentityError(workflowIdentity);
+
+  if (invalid) {
+    return invalid;
+  }
+
+  const path = artifactIdentityPath(workflowIdentity);
+  const targetOrgId = orgs.activeOrgId ?? null;
+  return workflows.workflows.some(
+    (workflow) =>
+      (workflow.org_id ?? null) === targetOrgId &&
+      (artifactIdentityPath(workflow) === path || workflow.key === workflowIdentity.key.trim()),
+  )
+    ? `The stable key ${workflowIdentity.key.trim()} is already used in this scope.`
+    : "";
+});
 
 const scopedWorkflows = computed(() => {
   const list = workflows.filteredWorkflows;
@@ -322,12 +411,31 @@ function chooseWorkflow(workflow: (typeof scopedWorkflows.value)[number]) {
   void workflows.selectWorkflow(workflow);
 }
 
-function newWorkflow() {
+function openNewWorkflow() {
   if (!confirmDiscardIfDirty()) {
     return;
   }
 
+  workflowIdentity.name = "";
+  workflowIdentity.namespace = "";
+  workflowIdentity.key = "";
+  workflowIdentity.open = true;
+}
+
+function submitNewWorkflow() {
+  if (workflowIdentityError.value) {
+    return;
+  }
+
   mobileView.value = "editor";
-  workflows.addWorkflow();
+  workflows.addWorkflow(
+    {
+      name: workflowIdentity.name,
+      namespace: workflowIdentity.namespace,
+      key: workflowIdentity.key,
+    },
+    orgs.activeOrgId ?? null,
+  );
+  workflowIdentity.open = false;
 }
 </script>

@@ -23,6 +23,17 @@ pub async fn upsert_pipeline_with_author<T: DefinitionStore>(
     author: &RevisionAuthor,
 ) -> Result<Pipeline, SendableError> {
     validate_pipeline(pipeline)?;
+    let duplicate_key = db.fetch_pipelines().await?.into_iter().any(|candidate| {
+        candidate.id != pipeline.id
+            && candidate.org_id == pipeline.org_id
+            && candidate.artifact_key() == pipeline.artifact_key()
+    });
+    if duplicate_key {
+        return Err(invalid_pipeline(format!(
+            "pipeline stable key '{}' is already in use in this scope",
+            pipeline.artifact_key()
+        )));
+    }
     validate_member_workflow_paths(db, pipeline).await?;
     let saved = db.upsert_pipeline(pipeline).await?;
     if let Some(revision) = PipelineRevision::from_pipeline(&saved, author) {

@@ -141,7 +141,7 @@ pub async fn create_pipeline<
     ValidatedJson(mut pipeline): ValidatedJson<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // a create always mints a fresh id and is owned by the creator's active org (None = global).
-    pipeline.id = None;
+    pipeline.id = Some(Uuid::now_v7());
     pipeline.org_id = ctx.org_id;
     match service.save(&pipeline).await {
         Ok(pipeline) => {

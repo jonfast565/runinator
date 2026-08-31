@@ -203,6 +203,14 @@ pub async fn import_rexrap<
     {
         return reply;
     }
+    let org_id = match request.workflow_id {
+        Some(id) => match authoring.fetch(id).await {
+            Ok(Some(existing)) => existing.org_id,
+            Ok(None) => return bad_request(format!("Workflow {id} not found")),
+            Err(err) => return api_error(err.to_string()),
+        },
+        None => ctx.org_id,
+    };
     let providers = match fetch_provider_metadata(&catalog).await {
         Ok(providers) => providers,
         Err(err) => return api_error(err),
@@ -222,7 +230,18 @@ pub async fn import_rexrap<
         Ok(workflow) => workflow,
         Err(err) => return bad_request(err.to_string()),
     };
-    workflow.id = request.workflow_id;
+    // Interactive creation is distinct from id-less pack reconciliation: mint an id so a reused
+    // key cannot resolve to an existing row. Updates retain their stored tenant instead of turning
+    // platform-global when the compiled source (correctly) carries no organization field.
+    workflow.id = Some(request.workflow_id.unwrap_or_else(Uuid::now_v7));
+    workflow.org_id = org_id;
+    let workflows = match authoring.list().await {
+        Ok(workflows) => workflows,
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Some(error) = super::workflows::workflow_identity_error(&workflow, &workflows, true) {
+        return bad_request(error);
+    }
     if let Some(ui) = request.ui
         && ui.is_object()
     {

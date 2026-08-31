@@ -2,6 +2,7 @@ import type {
   JsonRecord,
   JsonValue,
   RuninatorType,
+  ArtifactIdentity,
   WorkflowDefinition,
   WorkflowEdgeEditorDraft,
   WorkflowTrigger,
@@ -194,10 +195,12 @@ export function createStepEditorState() {
   };
 }
 
-export function newWorkflowDraft(): WorkflowDefinition {
+export function newWorkflowDraft(identity?: ArtifactIdentity): WorkflowDefinition {
   return {
     id: null,
-    name: "New Workflow",
+    name: identity ? identity.name.trim() : "New Workflow",
+    key: identity?.key?.trim() ?? null,
+    namespace: identity?.namespace?.trim() ?? null,
     version: "1.0.0",
     enabled: true,
     input_type: { type: "struct", fields: {}, additional: { type: "any" } },

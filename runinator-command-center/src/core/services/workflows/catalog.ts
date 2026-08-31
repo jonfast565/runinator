@@ -12,6 +12,7 @@ import {
   type WorkflowRexRapSaveRequest,
 } from "../../api/commandCenterApi";
 import type {
+  ArtifactIdentity,
   JsonRecord,
   JsonValue,
   RunSummary,
@@ -19,6 +20,7 @@ import type {
   WorkflowTrigger,
   WorkflowTriggerKind,
 } from "../../domain/models";
+import { artifactIdentityError, artifactIdentityPath } from "../../domain/models";
 import { isJsonObject } from "../../domain/json";
 import { describeBulkResult, runBulk, type BulkResult } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
@@ -58,7 +60,7 @@ export function createWorkflowCatalogService(
 ) {
   const { internal } = host;
 
-  async function refreshWorkflows() {
+  async function refreshWorkflows(preserve?: WorkflowDefinition) {
     console.info("[command-center] refreshing workflows");
     // resolve before touching host.state: notify() elsewhere (e.g. a concurrent
     // fetchRecentWorkflowRuns() in the same Promise.all) can swap the state object out from
@@ -67,6 +69,11 @@ export function createWorkflowCatalogService(
     const fetched = (await host.ctx
       .runOperation("Refreshing workflows", () => fetchWorkflows(), { retryable: true })
       .catch(() => [])) as WorkflowDefinition[];
+
+    if (preserve?.id && !fetched.some((workflow) => workflow.id === preserve.id)) {
+      fetched.push(cloneJson(preserve));
+    }
+
     host.state.workflows = fetched;
 
     if (!host.state.selectedWorkflowId && host.state.workflows.length > 0) {
@@ -141,11 +148,30 @@ export function createWorkflowCatalogService(
     return editor.refreshWorkflowRexRap();
   }
 
-  function addWorkflow() {
-    const workflow = newWorkflowDraft();
+  function addWorkflow(identity: ArtifactIdentity, orgId: string | null = null) {
+    const workflow = newWorkflowDraft(identity);
+    workflow.org_id = orgId;
     host.state.workflows.push(workflow);
     void selectWorkflow(workflow);
+    host.state.isDirty = true;
     host.notify();
+  }
+
+  function workflowIdentityValidationError(workflow: WorkflowDefinition): string {
+    const invalid = artifactIdentityError(workflow);
+
+    if (invalid) {
+      return invalid;
+    }
+
+    const path = artifactIdentityPath(workflow);
+    const duplicate = host.state.workflows.some(
+      (candidate) =>
+        candidate.id != null &&
+        candidate.id !== workflow.id &&
+        artifactIdentityPath(candidate) === path,
+    );
+    return duplicate ? `Another workflow already uses ${path}.` : "";
   }
 
   function workflowNameForRun(run: RunSummary): string {
@@ -447,6 +473,13 @@ export function createWorkflowCatalogService(
   }
 
   async function saveSelectedWorkflowBundle() {
+    const identityError = workflowIdentityValidationError(host.state.workflowDraft);
+
+    if (identityError) {
+      host.ctx.setError(identityError);
+      return;
+    }
+
     const synced =
       host.state.workflowEditorMode === "rexrap"
         ? await editor.syncWorkflowRexRap()
@@ -482,7 +515,7 @@ export function createWorkflowCatalogService(
     host.ctx.setStatus(`Workflow saved: ${savedWorkflow.name}`);
     host.state.isDirty = false;
     host.state.selectedWorkflowId = savedWorkflow.id;
-    await refreshWorkflows();
+    await refreshWorkflows(savedWorkflow);
     host.notify();
   }
 

@@ -323,7 +323,7 @@
             v-model.trim="nameModal.name"
             type="text"
             required
-            maxlength="100"
+            maxlength="256"
             placeholder="Release pipeline"
             autofocus
           />
@@ -334,7 +334,8 @@
             v-model.trim="nameModal.namespace"
             type="text"
             required
-            pattern="[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*"
+            maxlength="256"
+            :pattern="namespacePattern"
             title="Use dot-separated identifiers, for example acme.delivery."
             placeholder="acme.delivery"
           />
@@ -345,7 +346,8 @@
             v-model.trim="nameModal.key"
             type="text"
             required
-            pattern="[A-Za-z_][A-Za-z0-9_]*"
+            maxlength="256"
+            :pattern="REXRAP_IDENTIFIER_PATTERN"
             title="Start with a letter or underscore and use only letters, numbers, and underscores."
             placeholder="release_train"
           />
@@ -359,8 +361,12 @@
             placeholder="Optional"
           />
         </label>
-        <p v-if="pipelineIdentityError" class="error m-0 text-xs" role="alert">
-          {{ pipelineIdentityError }}
+        <p
+          v-if="pipelineIdentityError || identitySubmitError"
+          class="error m-0 text-xs"
+          role="alert"
+        >
+          {{ pipelineIdentityError || identitySubmitError }}
         </p>
       </form>
 
@@ -390,9 +396,9 @@
           class="btn btn-primary"
           type="submit"
           form="pipeline-identity-form"
-          :disabled="!validPipelineIdentity"
+          :disabled="!validPipelineIdentity || identitySaving"
         >
-          {{ nameModal.mode === "create" ? "Create" : "Save" }}
+          {{ identitySaving ? "Saving…" : nameModal.mode === "create" ? "Create" : "Save" }}
         </button>
       </template>
     </Modal>
@@ -445,7 +451,12 @@ import type {
   AdapterKindMetadata,
   JsonRecord,
 } from "../../core/domain/models";
-import { pipelinePath } from "../../core/domain/models";
+import {
+  artifactIdentityError,
+  artifactIdentityPath,
+  pipelinePath,
+  REXRAP_IDENTIFIER_PATTERN,
+} from "../../core/domain/models";
 import { fetchAdapterKinds } from "../../core/services/orchestrations";
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
 import SplitPane from "../components/shared/SplitPane.vue";
@@ -617,30 +628,30 @@ const nameModal = reactive({
   key: "",
   description: "",
 });
-const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const namespacePattern = `${REXRAP_IDENTIFIER_PATTERN}(\\.${REXRAP_IDENTIFIER_PATTERN})*`;
+const identitySubmitError = ref("");
+const identitySaving = ref(false);
 const pipelineIdentityError = computed(() => {
-  if (!nameModal.name.trim()) {
-    return "Name is required.";
+  const invalid = artifactIdentityError(nameModal);
+
+  if (invalid) {
+    return invalid;
   }
 
-  if (!nameModal.namespace.trim()) {
-    return "Namespace is required; use dot-separated identifiers such as acme.delivery.";
-  }
-
-  if (
-    !nameModal.namespace
-      .trim()
-      .split(".")
-      .every((segment) => identifier.test(segment))
-  ) {
-    return "Each namespace segment must start with a letter or underscore and contain only letters, numbers, or underscores.";
-  }
-
-  if (!identifier.test(nameModal.key.trim())) {
-    return "Stable key must start with a letter or underscore and contain only letters, numbers, or underscores.";
-  }
-
-  return "";
+  const path = artifactIdentityPath(nameModal);
+  const selectedId = nameModal.mode === "rename" ? selectedPipeline.value?.id : null;
+  const targetOrgId =
+    nameModal.mode === "rename"
+      ? (selectedPipeline.value?.org_id ?? null)
+      : (orgs.activeOrgId ?? null);
+  return pipeline.pipelines.some(
+    (candidate) =>
+      candidate.id !== selectedId &&
+      (candidate.org_id ?? null) === targetOrgId &&
+      (artifactIdentityPath(candidate) === path || candidate.key === nameModal.key.trim()),
+  )
+    ? `The stable key ${nameModal.key.trim()} is already used in this scope.`
+    : "";
 });
 const validPipelineIdentity = computed(() => !pipelineIdentityError.value);
 const defaultsModalOpen = ref(false);
@@ -665,6 +676,7 @@ function openNewPipeline() {
   nameModal.namespace = "";
   nameModal.key = "";
   nameModal.description = "";
+  identitySubmitError.value = "";
 }
 
 function openRename() {
@@ -681,6 +693,7 @@ function openRename() {
   nameModal.namespace = current.namespace ?? "";
   nameModal.key = current.key ?? "";
   nameModal.description = current.description ?? "";
+  identitySubmitError.value = "";
   ownerOrgId.value = current.org_id ?? "";
 
   if (!orgs.memberships.length) {
@@ -705,28 +718,46 @@ function closeNameModal() {
 }
 
 async function submitNameModal() {
-  if (!validPipelineIdentity.value) {
+  if (!validPipelineIdentity.value || identitySaving.value) {
     return;
   }
 
-  if (nameModal.mode === "create") {
-    await pipeline.createPipeline(
-      nameModal.name,
-      nameModal.namespace,
-      nameModal.key,
-      nameModal.description,
-    );
-    mobileView.value = "editor";
-  } else {
-    await pipeline.renamePipeline(
-      nameModal.name,
-      nameModal.description.trim() || null,
-      nameModal.namespace,
-      nameModal.key,
-    );
-  }
+  identitySubmitError.value = "";
+  identitySaving.value = true;
 
-  nameModal.open = false;
+  try {
+    if (nameModal.mode === "create") {
+      const saved = await pipeline.createPipeline(
+        nameModal.name,
+        nameModal.namespace,
+        nameModal.key,
+        nameModal.description,
+      );
+
+      if (!saved) {
+        identitySubmitError.value = pipeline.error ?? "Could not create pipeline.";
+        return;
+      }
+
+      mobileView.value = "editor";
+    } else {
+      const saved = await pipeline.renamePipeline(
+        nameModal.name,
+        nameModal.description.trim() || null,
+        nameModal.namespace,
+        nameModal.key,
+      );
+
+      if (!saved) {
+        identitySubmitError.value = pipeline.error ?? "Could not save pipeline settings.";
+        return;
+      }
+    }
+
+    nameModal.open = false;
+  } finally {
+    identitySaving.value = false;
+  }
 }
 
 // start the selected pipeline and hand off to the pipeline-runs monitor with the new run selected.

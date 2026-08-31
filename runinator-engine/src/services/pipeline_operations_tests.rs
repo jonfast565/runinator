@@ -126,7 +126,16 @@ async fn save_requires_pipeline_identity_and_canonical_member_keys() {
     let error = service.save(&missing_key).await.unwrap_err();
     assert!(error.to_string().contains("key is required"));
 
+    service.save(&pipeline()).await.unwrap();
+    let error = service.save(&pipeline()).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("stable key 'service_boundary' is already in use")
+    );
+
     let mut bare_member = pipeline();
+    bare_member.key = Some("bare_member".into());
     bare_member.graph.members.push(PipelineMember {
         key: "display name".into(),
         workflow_id: uuid::Uuid::now_v7(),

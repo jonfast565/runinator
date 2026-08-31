@@ -58,6 +58,17 @@ pub async fn upsert_workflow<
     } else {
         // a new workflow is owned by the creator's active org (None = platform-global).
         workflow.org_id = ctx.org_id;
+        // An HTTP create is not a pack reconciliation. Minting the id here prevents an id-less
+        // stable key from resolving to (and silently updating) an existing workflow.
+        workflow.id = Some(Uuid::now_v7());
+    }
+    let workflows = match authoring.list().await {
+        Ok(workflows) => workflows,
+        Err(err) => return api_error(err.to_string()),
+    };
+    let strict_identity = !is_update || workflow.key.is_some() || workflow.namespace.is_some();
+    if let Some(error) = workflow_identity_error(&workflow, &workflows, strict_identity) {
+        return bad_request(error);
     }
     match authoring.save(&workflow, &ctx.revision_author()).await {
         Ok(workflow) => {
@@ -71,6 +82,50 @@ pub async fn upsert_workflow<
         }
         Err(err) => api_error(err.to_string()),
     }
+}
+
+pub(crate) fn workflow_identity_error(
+    workflow: &WorkflowDefinition,
+    existing: &[WorkflowDefinition],
+    strict: bool,
+) -> Option<String> {
+    if strict {
+        let Some(namespace) = workflow
+            .namespace
+            .as_deref()
+            .filter(|namespace| !namespace.trim().is_empty())
+        else {
+            return Some("workflow namespace is required".into());
+        };
+        let Some(key) = workflow.key.as_deref().filter(|key| !key.trim().is_empty()) else {
+            return Some("workflow stable key is required".into());
+        };
+
+        if !namespace.split('.').all(is_rexrap_identifier) {
+            return Some("workflow namespace must be a dotted REXRAP identifier path".into());
+        }
+        if !is_rexrap_identifier(key) {
+            return Some("workflow stable key must be a REXRAP identifier".into());
+        }
+    }
+
+    let Some(key) = workflow.key.as_deref() else {
+        return strict.then(|| "workflow stable key is required".into());
+    };
+    existing
+        .iter()
+        .any(|candidate| {
+            candidate.id != workflow.id
+                && candidate.org_id == workflow.org_id
+                && candidate.artifact_key() == key
+        })
+        .then(|| format!("workflow stable key '{key}' is already in use in this scope"))
+}
+
+fn is_rexrap_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 pub async fn validate_workflow<

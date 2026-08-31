@@ -1,4 +1,9 @@
-import type { ProviderMetadata, WorkflowDefinition, WorkflowRunDetail, WorkflowTrigger } from "../../../../core/domain/models";
+import type {
+  ProviderMetadata,
+  WorkflowDefinition,
+  WorkflowRunDetail,
+  WorkflowTrigger,
+} from "../../../../core/domain/models";
 
 export const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
 export const RUN_ID = "00000000-0000-0000-0000-000000000070";
@@ -9,6 +14,8 @@ export function workflowDefinition(id: string, name: string): WorkflowDefinition
   return {
     id,
     name,
+    key: name.toLowerCase().replace(/[^a-z0-9_]+/g, "_"),
+    namespace: "runinator.tests",
     version: "1.0.0",
     enabled: true,
     input_type: { type: "struct", fields: {} },
@@ -30,7 +37,10 @@ export async function flushWorkflowSync() {
   await Promise.resolve();
 }
 
-export function graphCentroid(nodes: { position?: { x: number; y: number } }[]): { x: number; y: number } {
+export function graphCentroid(nodes: { position?: { x: number; y: number } }[]): {
+  x: number;
+  y: number;
+} {
   const positioned = nodes
     .map((node) => ({ x: Number(node.position?.x), y: Number(node.position?.y) }))
     .filter((position) => Number.isFinite(position.x) && Number.isFinite(position.y));

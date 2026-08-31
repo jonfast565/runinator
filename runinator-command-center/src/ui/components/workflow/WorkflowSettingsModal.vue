@@ -16,7 +16,36 @@
         <div class="form-grid">
           <label
             >Name
-            <input v-model="workflows.workflowDraft.name" @input="workflows.markWorkflowDirty"
+            <input
+              v-model="workflows.workflowDraft.name"
+              type="text"
+              required
+              maxlength="256"
+              @input="workflows.markWorkflowDirty"
+          /></label>
+          <label
+            >Namespace
+            <input
+              v-model="workflows.workflowDraft.namespace"
+              type="text"
+              required
+              maxlength="256"
+              :pattern="namespacePattern"
+              title="Use dot-separated identifiers, for example acme.delivery."
+              placeholder="acme.delivery"
+              @input="workflows.markWorkflowDirty"
+          /></label>
+          <label
+            >Stable key
+            <input
+              v-model="workflows.workflowDraft.key"
+              type="text"
+              required
+              maxlength="256"
+              :pattern="REXRAP_IDENTIFIER_PATTERN"
+              title="Start with a letter or underscore and use only letters, numbers, and underscores."
+              placeholder="release_train"
+              @input="workflows.markWorkflowDirty"
           /></label>
           <label
             >Version
@@ -36,6 +65,9 @@
             Enabled</label
           >
         </div>
+        <p v-if="workflowIdentityError" class="error mb-0 mt-2 text-xs" role="alert">
+          {{ workflowIdentityError }}
+        </p>
       </section>
 
       <section class="form-section ownership-section">
@@ -238,7 +270,7 @@
         >
           Duplicate (bump version)
         </button>
-        <button type="submit" :disabled="saving">
+        <button type="submit" :disabled="saving || Boolean(workflowIdentityError)">
           <LoadingSpinner v-if="saving" size="sm" label="Saving workflow" />
           {{ saving ? "Saving…" : workflows.isDirty ? "Save & Close" : "Done" }}
         </button>
@@ -256,6 +288,11 @@ import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetad
 import { workflowSharingService } from "../../../core/services";
 import type { NodeFieldMetadata, UiField } from "../../../core/domain/models";
 import type { WorkflowDefinition } from "../../../core/domain/models";
+import {
+  artifactIdentityError,
+  artifactIdentityPath,
+  REXRAP_IDENTIFIER_PATTERN,
+} from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
@@ -266,6 +303,29 @@ const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
 const catalogMetadata = useCatalogMetadataStore();
+const namespacePattern = `${REXRAP_IDENTIFIER_PATTERN}(\\.${REXRAP_IDENTIFIER_PATTERN})*`;
+const workflowIdentityError = computed(() => {
+  const invalid = artifactIdentityError(workflows.workflowDraft);
+
+  if (invalid) {
+    return invalid;
+  }
+
+  const path = artifactIdentityPath(workflows.workflowDraft);
+  const targetOrgId = workflows.workflowDraft.id
+    ? (workflows.workflowDraft.org_id ?? null)
+    : (orgs.activeOrgId ?? null);
+  return workflows.workflows.some(
+    (workflow) =>
+      workflow.id != null &&
+      workflow.id !== workflows.workflowDraft.id &&
+      (workflow.org_id ?? null) === targetOrgId &&
+      (artifactIdentityPath(workflow) === path ||
+        workflow.key === workflows.workflowDraft.key?.trim()),
+  )
+    ? `The stable key ${workflows.workflowDraft.key?.trim() ?? path} is already used in this scope.`
+    : "";
+});
 
 const ownerOrgId = ref<string>(workflows.workflowDraft.org_id ?? "");
 const ownerSaving = ref(false);
@@ -313,9 +373,8 @@ watch(
 // schedule, so closing commits the draft too.
 const saving = ref(false);
 
-// a new workflow has no id to save against yet; it is created from the toolbar.
 function draftNeedsSave(): boolean {
-  return workflows.isDirty && workflows.workflowDraft.id !== null;
+  return workflows.isDirty;
 }
 
 async function saveAndClose() {

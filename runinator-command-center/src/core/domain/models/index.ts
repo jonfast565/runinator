@@ -11,6 +11,13 @@ export {
   isJsonRecord,
 } from "../json";
 
+export type { ArtifactIdentity } from "./artifact/identity";
+export {
+  artifactIdentityError,
+  artifactIdentityPath,
+  REXRAP_IDENTIFIER_PATTERN,
+} from "./artifact/identity";
+
 export type {
   FunctionAlias,
   FunctionArtifact,
@@ -152,7 +159,11 @@ export type {
   WorkspacePolicy,
   WorkspaceLease,
 } from "./orchestration/orchestration";
-export type { PipelineRunDetail, PipelineMemberAttempt, PipelineRunEdgeState } from "./pipeline/pipeline-run-detail";
+export type {
+  PipelineRunDetail,
+  PipelineMemberAttempt,
+  PipelineRunEdgeState,
+} from "./pipeline/pipeline-run-detail";
 export { workflowEffectId, type WorkflowNodeRun } from "./workflow/node-run";
 export type { NodeTransition, NodeTransitionStat } from "./workflow/transition";
 export type { WorkflowRunDetail } from "./workflow/run-detail";

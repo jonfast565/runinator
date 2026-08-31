@@ -2,10 +2,51 @@ import { expect, it, vi } from "vitest";
 import { nextTick, watch } from "vue";
 import { useWorkflowsStore } from "../workflows";
 import { useProvidersStore } from "../providers";
-import { decompileToRexRap, fetchWorkflows, saveWorkflowRexRap } from "../../../../core/api/commandCenterApi";
-import { WORKFLOW_ID, TRIGGER_ID, workflowDefinition, graphCentroid, workflowTrigger, nestedWorkflowInputProvider, untypedActionProvider } from "./workflows-fixtures";
+import {
+  decompileToRexRap,
+  fetchWorkflows,
+  saveWorkflowRexRap,
+} from "../../../../core/api/commandCenterApi";
+import {
+  WORKFLOW_ID,
+  TRIGGER_ID,
+  workflowDefinition,
+  graphCentroid,
+  workflowTrigger,
+  nestedWorkflowInputProvider,
+  untypedActionProvider,
+} from "./workflows-fixtures";
 
 export function registerWorkflowAuthoringTests() {
+  it("creates a dirty workflow draft with a validated identity", () => {
+    const workflows = useWorkflowsStore();
+
+    workflows.addWorkflow({
+      name: "Release workflow",
+      namespace: "acme.delivery",
+      key: "release_train",
+    });
+
+    expect(workflows.workflowDraft).toMatchObject({
+      id: null,
+      name: "Release workflow",
+      namespace: "acme.delivery",
+      key: "release_train",
+    });
+    expect(workflows.isDirty).toBe(true);
+  });
+
+  it("blocks a save whose required workflow identity is missing", async () => {
+    const workflows = useWorkflowsStore();
+    const draft = workflowDefinition(WORKFLOW_ID, "Missing namespace");
+    draft.namespace = null;
+    Object.assign(workflows.workflowDraft, draft);
+
+    await workflows.saveSelectedWorkflow();
+
+    expect(saveWorkflowRexRap).not.toHaveBeenCalled();
+  });
+
   it("saves workflow edits as rexrap and reloads workflow triggers", async () => {
     const workflows = useWorkflowsStore();
     const draft = workflowDefinition(WORKFLOW_ID, "bundle draft");
@@ -476,7 +517,10 @@ export function registerWorkflowAuthoringTests() {
   it("notifies watchers when the service hydrates the trigger draft", async () => {
     const workflows = useWorkflowsStore();
     const seen: string[] = [];
-    watch(() => workflows.triggerJson.configuration, (json) => seen.push(json));
+    watch(
+      () => workflows.triggerJson.configuration,
+      (json) => seen.push(json),
+    );
 
     workflows.editWorkflowTrigger(workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "0 * * * *"));
     await nextTick();
@@ -488,5 +532,4 @@ export function registerWorkflowAuthoringTests() {
     expect(JSON.parse(seen[1]).cron).toBe("30 2 * * *");
     expect(workflows.triggerDraft.id).toBe("other");
   });
-
 }

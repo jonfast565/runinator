@@ -163,19 +163,21 @@ export const usePipelineStore = defineStore("pipeline", () => {
   }
 
   // persist a mutation to the selected pipeline record, then re-derive the graph.
-  async function persistSelected(mutate: (draft: Pipeline) => Pipeline): Promise<void> {
+  async function persistSelected(mutate: (draft: Pipeline) => Pipeline): Promise<boolean> {
     const current = selectedPipeline.value;
 
     if (!current) {
-      return;
+      return false;
     }
 
     try {
       const saved = await savePipeline(mutate({ ...current }));
       pipelines.value = pipelines.value.map((p) => (p.id === saved.id ? saved : p));
       await refreshGraph();
+      return true;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
+      return false;
     }
   }
 
