@@ -40,6 +40,10 @@
                     <Icon name="plus" />
                     <span>Enroll</span>
                   </button>
+                  <button v-if="canEnrollAgents" class="btn" @click="openEnrollmentManagement">
+                    <Icon name="list" />
+                    <span>Enrollments</span>
+                  </button>
                   <button class="btn" :disabled="loadingReplicas" @click="refresh">
                     <LoadingSpinner v-if="loadingReplicas" size="sm" label="Refreshing replicas" />
                     <Icon v-else name="refresh" />
@@ -540,6 +544,195 @@
         </template>
       </form>
     </Modal>
+    <Modal
+      v-if="enrollmentManagementOpen"
+      title="Enrollments"
+      description="Inspect enrolled machines and one-time enrollment tokens. Kicking replicas keeps a machine enrollment valid; invalidating a machine revokes it and kicks every replica it owns."
+      width="900px"
+      @close="closeEnrollmentManagement"
+    >
+      <div class="flex max-h-[70vh] flex-col gap-5 overflow-auto pr-1">
+        <div class="flex items-center justify-between gap-3">
+          <p class="m-0 text-sm text-fg-muted">
+            {{ enrollmentMachines.length }} machine{{
+              enrollmentMachines.length === 1 ? "" : "s"
+            }}
+            · {{ enrollmentTokens.length }} token{{ enrollmentTokens.length === 1 ? "" : "s" }}
+          </p>
+          <button
+            class="btn btn-sm"
+            :disabled="enrollmentsLoading || enrollmentActionBusy"
+            @click="refreshEnrollmentManagement"
+          >
+            <LoadingSpinner v-if="enrollmentsLoading" size="sm" label="Refreshing enrollments" />
+            <Icon v-else name="refresh" :size="13" />
+            Refresh
+          </button>
+        </div>
+
+        <p v-if="enrollmentManagementError" class="m-0 text-sm text-danger-fg">
+          {{ enrollmentManagementError }}
+        </p>
+
+        <section>
+          <div class="mb-2">
+            <h3 class="m-0 text-sm font-semibold text-fg">Enrolled machines</h3>
+            <p class="m-0 mt-1 text-sm text-fg-muted">
+              A machine can own several runtime replicas. Kick stops its current activations without
+              revoking access.
+            </p>
+          </div>
+
+          <LoadingPanel
+            v-if="enrollmentsLoading && !enrollmentMachines.length"
+            compact
+            message="Loading enrolled machines…"
+          />
+          <p v-else-if="!enrollmentMachines.length" class="m-0 py-3 text-sm text-fg-muted">
+            No machine enrollments yet.
+          </p>
+          <div v-else class="flex flex-col gap-2">
+            <article
+              v-for="machine in enrollmentMachines"
+              :key="machine.machine_id"
+              class="rounded-lg border border-border bg-surface-subtle p-3"
+            >
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <h4 class="m-0 truncate font-mono text-sm font-semibold text-fg">
+                    {{ machine.instance_id }}
+                  </h4>
+                  <p class="m-0 mt-1 break-all font-mono text-xs text-fg-muted">
+                    {{ machine.machine_id }}
+                  </p>
+                </div>
+                <span
+                  class="rounded-pill px-2 py-0.5 text-xs font-semibold"
+                  :class="
+                    machine.disabled
+                      ? 'bg-danger-bg text-danger-fg'
+                      : 'bg-success-bg text-success-fg'
+                  "
+                >
+                  {{ machine.disabled ? "invalidated" : "active" }}
+                </span>
+              </div>
+
+              <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm md:grid-cols-4">
+                <div>
+                  <dt class="text-xs text-fg-muted">Access</dt>
+                  <dd class="m-0">{{ machine.permanent ? "permanent" : "timed" }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-fg-muted">Credentials</dt>
+                  <dd class="m-0">
+                    {{ machine.active_credential_count }} active / {{ machine.credential_count }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-fg-muted">Unkicked replicas</dt>
+                  <dd class="m-0">{{ machineReplicas(machine.machine_id).length }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-fg-muted">Last used</dt>
+                  <dd class="m-0">{{ formatDate(machine.last_used_at) }}</dd>
+                </div>
+              </dl>
+
+              <div v-if="!machine.disabled" class="mt-3 flex flex-wrap justify-end gap-2">
+                <button
+                  v-if="machineReplicas(machine.machine_id).length && canManageAgent"
+                  class="btn btn-sm"
+                  :disabled="enrollmentActionBusy"
+                  @click="kickMachineReplicas(machine)"
+                >
+                  Kick {{ machineReplicas(machine.machine_id).length }} replica{{
+                    machineReplicas(machine.machine_id).length === 1 ? "" : "s"
+                  }}
+                </button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  :disabled="enrollmentActionBusy"
+                  @click="invalidateMachine(machine)"
+                >
+                  Invalidate & kick
+                </button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section>
+          <div class="mb-2">
+            <h3 class="m-0 text-sm font-semibold text-fg">Enrollment tokens</h3>
+            <p class="m-0 mt-1 text-sm text-fg-muted">
+              Token secrets are intentionally never shown here; only the token created moments ago
+              can be copied.
+            </p>
+          </div>
+
+          <LoadingPanel
+            v-if="enrollmentsLoading && !enrollmentTokens.length"
+            compact
+            message="Loading enrollment tokens…"
+          />
+          <p v-else-if="!enrollmentTokens.length" class="m-0 py-3 text-sm text-fg-muted">
+            No enrollment tokens yet.
+          </p>
+          <div v-else class="flex flex-col gap-2">
+            <article
+              v-for="token in enrollmentTokens"
+              :key="token.token_id"
+              class="rounded-lg border border-border bg-surface-subtle p-3"
+            >
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <h4 class="m-0 break-all font-mono text-sm font-semibold text-fg">
+                    {{ token.token_id }}
+                  </h4>
+                  <p class="m-0 mt-1 break-all text-xs text-fg-muted">{{ token.service_url }}</p>
+                </div>
+                <span
+                  class="rounded-pill px-2 py-0.5 text-xs font-semibold"
+                  :class="enrollmentTokenStatusClass(token)"
+                >
+                  {{ enrollmentTokenStatus(token) }}
+                </span>
+              </div>
+
+              <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm md:grid-cols-4">
+                <div>
+                  <dt class="text-xs text-fg-muted">Resulting access</dt>
+                  <dd class="m-0">{{ token.permanent ? "permanent" : "timed" }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-fg-muted">Created</dt>
+                  <dd class="m-0">{{ formatDate(token.created_at) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-fg-muted">Expires</dt>
+                  <dd class="m-0">{{ formatDate(token.expires_at) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-fg-muted">Labels</dt>
+                  <dd class="m-0 break-words">{{ formatEnrollmentLabels(token.labels) }}</dd>
+                </div>
+              </dl>
+
+              <div v-if="!token.consumed_at" class="mt-3 flex justify-end">
+                <button
+                  class="btn btn-sm btn-danger"
+                  :disabled="enrollmentActionBusy"
+                  @click="revokeEnrollmentToken(token)"
+                >
+                  {{ enrollmentTokenExpired(token) ? "Delete expired token" : "Revoke token" }}
+                </button>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </Modal>
   </section>
 </template>
 <script setup lang="ts">
@@ -567,6 +760,8 @@ import { useOperationLoading } from "../composables/useOperationLoading";
 import type {
   AgentDirectiveKind,
   AgentDirectiveRecord,
+  AgentEnrollmentToken,
+  AgentMachineEnrollment,
   AgentStatusReport,
   ReplicaKind,
   ReplicaRecord,
@@ -587,6 +782,12 @@ const enrollmentPermanent = ref(false);
 const enrollmentError = ref("");
 const createdEnrollmentToken = ref("");
 const creatingEnrollment = ref(false);
+const enrollmentManagementOpen = ref(false);
+const enrollmentMachines = ref<AgentMachineEnrollment[]>([]);
+const enrollmentTokens = ref<AgentEnrollmentToken[]>([]);
+const enrollmentsLoading = ref(false);
+const enrollmentActionBusy = ref(false);
+const enrollmentManagementError = ref("");
 const { isLoading: loadingReplicas, loadingMessage: loadingReplicasMessage } = useOperationLoading([
   "Loading replicas",
   "Loading replica samples",
@@ -676,6 +877,137 @@ async function invalidateSelectedMachine() {
     directiveError.value = error instanceof Error ? error.message : String(error);
   } finally {
     directiveBusy.value = false;
+  }
+}
+
+async function openEnrollmentManagement() {
+  enrollmentManagementOpen.value = true;
+  enrollmentManagementError.value = "";
+  await refreshEnrollmentManagement();
+}
+
+function closeEnrollmentManagement() {
+  enrollmentManagementOpen.value = false;
+  enrollmentManagementError.value = "";
+}
+
+async function refreshEnrollmentManagement() {
+  enrollmentsLoading.value = true;
+  enrollmentManagementError.value = "";
+
+  try {
+    const [machines, tokens] = await Promise.all([
+      agentEnrollmentService.machines(),
+      agentEnrollmentService.list(),
+    ]);
+    enrollmentMachines.value = machines;
+    enrollmentTokens.value = tokens;
+  } catch (error) {
+    enrollmentManagementError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    enrollmentsLoading.value = false;
+  }
+}
+
+function machineReplicas(machineId: string): ReplicaRecord[] {
+  return app.replicas.filter(
+    (replica) => replica.registered_by_principal_id === machineId && replica.kicked_at == null,
+  );
+}
+
+async function kickMachineReplicas(machine: AgentMachineEnrollment) {
+  const replicas = machineReplicas(machine.machine_id);
+
+  if (
+    !replicas.length ||
+    !window.confirm(
+      `Kick ${String(replicas.length)} replica${replicas.length === 1 ? "" : "s"} owned by ${machine.instance_id}? The machine enrollment will remain valid.`,
+    )
+  ) {
+    return;
+  }
+
+  enrollmentActionBusy.value = true;
+  enrollmentManagementError.value = "";
+
+  try {
+    await Promise.all(replicas.map((replica) => agentDirectivesService.kick(replica.replica_id)));
+    await Promise.all([refresh(), refreshEnrollmentManagement()]);
+  } catch (error) {
+    enrollmentManagementError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    enrollmentActionBusy.value = false;
+  }
+}
+
+async function invalidateMachine(machine: AgentMachineEnrollment) {
+  if (
+    !window.confirm(
+      `Invalidate ${machine.instance_id}? This revokes every credential for the machine and kicks all of its current replicas.`,
+    )
+  ) {
+    return;
+  }
+
+  enrollmentActionBusy.value = true;
+  enrollmentManagementError.value = "";
+
+  try {
+    await agentEnrollmentService.invalidate(machine.machine_id);
+    await Promise.all([refresh(), refreshEnrollmentManagement()]);
+  } catch (error) {
+    enrollmentManagementError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    enrollmentActionBusy.value = false;
+  }
+}
+
+function enrollmentTokenExpired(token: AgentEnrollmentToken): boolean {
+  return Date.parse(token.expires_at) <= Date.now();
+}
+
+function enrollmentTokenStatus(token: AgentEnrollmentToken): string {
+  if (token.consumed_at) {
+    return "redeemed";
+  }
+
+  return enrollmentTokenExpired(token) ? "expired" : "available";
+}
+
+function enrollmentTokenStatusClass(token: AgentEnrollmentToken): string {
+  if (token.consumed_at) {
+    return "bg-surface-subtle text-fg-muted";
+  }
+
+  return enrollmentTokenExpired(token)
+    ? "bg-warning-bg text-warning-fg"
+    : "bg-success-bg text-success-fg";
+}
+
+function formatEnrollmentLabels(labels: Record<string, string>): string {
+  const entries = Object.entries(labels);
+  return entries.length ? entries.map(([key, value]) => `${key}=${value}`).join(", ") : "—";
+}
+
+async function revokeEnrollmentToken(token: AgentEnrollmentToken) {
+  if (
+    !window.confirm(
+      `Revoke unused enrollment token ${token.token_id}? It can no longer be used to enroll a machine.`,
+    )
+  ) {
+    return;
+  }
+
+  enrollmentActionBusy.value = true;
+  enrollmentManagementError.value = "";
+
+  try {
+    await agentEnrollmentService.revoke(token.token_id);
+    await refreshEnrollmentManagement();
+  } catch (error) {
+    enrollmentManagementError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    enrollmentActionBusy.value = false;
   }
 }
 
