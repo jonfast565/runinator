@@ -46,16 +46,16 @@ pub(crate) fn deadline_wake_with_grace(
     dispatched_at: DateTime<Utc>,
     grace_seconds: i64,
 ) -> Option<WakeCommand> {
+    let due_at = action_expires_at(command, dispatched_at, grace_seconds)?;
     let WorkflowEffectRequest::Action {
         timeout_seconds, ..
     } = &command.request
     else {
-        return None;
+        unreachable!("action_expires_at only returns a deadline for provider actions");
     };
     let budget = timeout_seconds
         .unwrap_or(DEFAULT_ACTION_TIMEOUT_SECONDS)
         .max(1);
-    let due_at = dispatched_at + chrono::Duration::seconds(budget + grace_seconds.max(1));
     let mut result = EffectResult::status(
         command,
         WorkflowEffectStatus::TimedOut,
@@ -69,6 +69,28 @@ pub(crate) fn deadline_wake_with_grace(
     );
     result.timestamp = due_at;
     Some(WakeCommand::new(due_at, result, command.trace_id))
+}
+
+/// Absolute expiry stamped on the broker command and used by the engine's deadline wake.
+///
+/// Keeping both values derived here makes it impossible for the queue to outlive the durable
+/// timeout that settles the effect. The grace remains part of the deadline because it is the
+/// bounded allowance for dispatch, queueing, and worker bookkeeping before execution starts.
+pub(crate) fn action_expires_at(
+    command: &EffectCommand,
+    dispatched_at: DateTime<Utc>,
+    grace_seconds: i64,
+) -> Option<DateTime<Utc>> {
+    let WorkflowEffectRequest::Action {
+        timeout_seconds, ..
+    } = &command.request
+    else {
+        return None;
+    };
+    let budget = timeout_seconds
+        .unwrap_or(DEFAULT_ACTION_TIMEOUT_SECONDS)
+        .max(1);
+    Some(dispatched_at + chrono::Duration::seconds(budget + grace_seconds.max(1)))
 }
 
 /// Arm the deadline for a just-published effect, if it has one.

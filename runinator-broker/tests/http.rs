@@ -180,6 +180,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
                 command,
                 dedupe_key: None,
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();
@@ -294,6 +295,7 @@ async fn http_broker_auth_gates_and_scopes_by_replica() {
             command: command.clone(),
             dedupe_key: Some("auth-scope".into()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();

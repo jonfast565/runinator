@@ -528,6 +528,35 @@ impl RabbitChannel<'_> {
             .map_err(rabbitmq_error("publish_confirm"))?;
         Ok(())
     }
+
+    async fn publish_expiring(
+        &self,
+        queue: &str,
+        key: &str,
+        payload: String,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), BrokerError> {
+        let ttl_ms = (expires_at - chrono::Utc::now()).num_milliseconds();
+        if ttl_ms <= 0 {
+            return Ok(());
+        }
+        self.0
+            .basic_publish(
+                "".into(),
+                queue.into(),
+                lapin::options::BasicPublishOptions::default(),
+                payload.as_bytes(),
+                lapin::BasicProperties::default()
+                    .with_delivery_mode(2)
+                    .with_message_id(key.into())
+                    .with_expiration(ttl_ms.to_string().into()),
+            )
+            .await
+            .map_err(rabbitmq_error("publish"))?
+            .await
+            .map_err(rabbitmq_error("publish_confirm"))?;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "rabbitmq")]
@@ -639,26 +668,32 @@ impl RabbitMqBroker {
         channel: RabbitMqChannel,
         consumer: &str,
     ) -> Result<EffectDelivery, BrokerError> {
-        let result = receive_json::<EffectMessage>(self, channel, consumer).await;
-        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
-            match channel {
-                RabbitMqChannel::Effect => {
-                    self.inner.effect_consumers.lock().remove(consumer);
+        loop {
+            let result = receive_json::<EffectMessage>(self, channel, consumer).await;
+            if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+                match channel {
+                    RabbitMqChannel::Effect => {
+                        self.inner.effect_consumers.lock().remove(consumer);
+                    }
+                    RabbitMqChannel::InfrastructureEffect => {
+                        self.inner
+                            .infrastructure_effect_consumers
+                            .lock()
+                            .remove(consumer);
+                    }
+                    _ => {}
                 }
-                RabbitMqChannel::InfrastructureEffect => {
-                    self.inner
-                        .infrastructure_effect_consumers
-                        .lock()
-                        .remove(consumer);
-                }
-                _ => {}
             }
+            let (message, delivery) = result?;
+            if message.is_expired_at(chrono::Utc::now()) {
+                ack_delivery(delivery).await?;
+                continue;
+            }
+            let broker_delivery = EffectDelivery::from(message);
+            self.inner
+                .track_delivery(broker_delivery.delivery_id, delivery);
+            return Ok(broker_delivery);
         }
-        let (message, delivery) = result?;
-        let broker_delivery = EffectDelivery::from(message);
-        self.inner
-            .track_delivery(broker_delivery.delivery_id, delivery);
-        Ok(broker_delivery)
     }
 }
 
@@ -764,10 +799,18 @@ impl Broker for RabbitMqBroker {
             EffectExecutor::Provider => &self.config.effect_queue,
             EffectExecutor::Infrastructure => &self.config.infrastructure_effect_queue,
         };
+        let expires_at = message.effective_expires_at();
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        RabbitChannel(&ch).publish(queue, &key, payload).await
+        match expires_at {
+            Some(expires_at) => {
+                RabbitChannel(&ch)
+                    .publish_expiring(queue, &key, payload, expires_at)
+                    .await
+            }
+            None => RabbitChannel(&ch).publish(queue, &key, payload).await,
+        }
     }
 
     async fn receive_effect(&self, consumer: &str) -> Result<EffectDelivery, BrokerError> {

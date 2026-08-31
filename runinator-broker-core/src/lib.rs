@@ -85,6 +85,10 @@ pub trait Broker: Send + Sync + 'static {
     ) -> Result<EffectDelivery, BrokerError> {
         loop {
             let delivery = self.receive_effect(consumer).await?;
+            if delivery.is_expired_at(chrono::Utc::now()) {
+                self.ack_effect(consumer, delivery.delivery_id).await?;
+                continue;
+            }
             if delivery.command.executor == EffectExecutor::Infrastructure {
                 return Ok(delivery);
             }
@@ -108,6 +112,10 @@ pub trait Broker: Send + Sync + 'static {
     ) -> Result<EffectDelivery, BrokerError> {
         loop {
             let delivery = self.receive_effect(&profile.id).await?;
+            if delivery.is_expired_at(chrono::Utc::now()) {
+                self.ack_effect(&profile.id, delivery.delivery_id).await?;
+                continue;
+            }
             if delivery.command.executor == EffectExecutor::Provider
                 && delivery.command.target.matches(profile)
             {

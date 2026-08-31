@@ -282,6 +282,9 @@ impl Broker for InMemoryBroker {
     }
 
     async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
+        if message.is_expired_at(chrono::Utc::now()) {
+            return Ok(());
+        }
         let mut guard = self.state.lock();
         let dedupe = message.dedupe_key_or_hash();
         if !guard.effect_dedupe.insert(dedupe.clone()) {
@@ -297,7 +300,9 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
-                guard.reclaim_expired_effects(Instant::now());
+                let now = chrono::Utc::now();
+                guard.reclaim_expired_effects(Instant::now(), now);
+                guard.drop_expired_effects(now);
                 guard.effect_queue.pop_front().inspect(|delivery| {
                     guard.effect_inflight.insert(
                         delivery.delivery_id,
@@ -327,6 +332,10 @@ impl Broker for InMemoryBroker {
     async fn nack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
         if let Some(leased) = guard.effect_inflight.remove(&delivery_id) {
+            if leased.delivery.is_expired_at(chrono::Utc::now()) {
+                guard.effect_dedupe.remove(&leased.delivery.dedupe_key);
+                return Ok(());
+            }
             guard
                 .effect_queue
                 .push_front(redeliver_effect(leased.delivery));
@@ -591,12 +600,30 @@ impl BrokerState {
         });
     }
 
-    fn reclaim_expired_effects(&mut self, now: Instant) {
+    fn reclaim_expired_effects(&mut self, now: Instant, wall_now: chrono::DateTime<chrono::Utc>) {
         for id in expired_ids(&self.effect_inflight, now) {
             if let Some(leased) = self.effect_inflight.remove(&id) {
-                self.effect_queue
-                    .push_front(redeliver_effect(leased.delivery));
+                if leased.delivery.is_expired_at(wall_now) {
+                    self.effect_dedupe.remove(&leased.delivery.dedupe_key);
+                } else {
+                    self.effect_queue
+                        .push_front(redeliver_effect(leased.delivery));
+                }
             }
+        }
+    }
+
+    fn drop_expired_effects(&mut self, now: chrono::DateTime<chrono::Utc>) {
+        let expired_dedupe: Vec<_> = self
+            .effect_queue
+            .iter()
+            .filter(|delivery| delivery.is_expired_at(now))
+            .map(|delivery| delivery.dedupe_key.clone())
+            .collect();
+        self.effect_queue
+            .retain(|delivery| !delivery.is_expired_at(now));
+        for dedupe_key in expired_dedupe {
+            self.effect_dedupe.remove(&dedupe_key);
         }
     }
 

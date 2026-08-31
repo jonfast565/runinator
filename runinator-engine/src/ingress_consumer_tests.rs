@@ -372,6 +372,7 @@ async fn an_armed_timer_settles_through_the_wake_and_ingress_channels() {
             command: command.clone(),
             dedupe_key: None,
             enqueued_at: chrono::Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();

@@ -440,16 +440,27 @@ impl KafkaBroker {
         channel: KafkaChannel,
         consumer: &str,
     ) -> Result<EffectDelivery, BrokerError> {
-        let (message, pending) = receive_json::<EffectMessage>(self, channel, consumer).await?;
-        let delivery = EffectDelivery::from(message);
-        self.inner.track_delivery(
-            delivery.delivery_id,
-            pending.consumer,
-            pending.topic,
-            pending.partition,
-            pending.offset,
-        );
-        Ok(delivery)
+        loop {
+            let (message, pending) = receive_json::<EffectMessage>(self, channel, consumer).await?;
+            if message.is_expired_at(chrono::Utc::now()) {
+                ack_pending(PendingDelivery {
+                    consumer: pending.consumer,
+                    topic: pending.topic,
+                    partition: pending.partition,
+                    offset: pending.offset,
+                })?;
+                continue;
+            }
+            let delivery = EffectDelivery::from(message);
+            self.inner.track_delivery(
+                delivery.delivery_id,
+                pending.consumer,
+                pending.topic,
+                pending.partition,
+                pending.offset,
+            );
+            return Ok(delivery);
+        }
     }
 }
 

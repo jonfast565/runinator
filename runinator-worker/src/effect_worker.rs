@@ -165,6 +165,19 @@ async fn process_provider_effect(
     events: Arc<dyn crate::events::WorkerEventSink>,
     delivery: EffectDelivery,
 ) -> Result<(), SendableError> {
+    let expires_at = delivery.effective_expires_at();
+    if delivery.is_expired_at(chrono::Utc::now()) {
+        warn!(
+            effect_id = %delivery.command.effect_id,
+            ?expires_at,
+            "discarding expired provider effect without executing it"
+        );
+        broker
+            .ack_effect(consumer, delivery.delivery_id)
+            .await
+            .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+        return Ok(());
+    }
     let command = delivery.command;
     command
         .ensure_supported()
@@ -259,11 +272,22 @@ async fn process_provider_effect(
             message,
         )) as SendableError
     })?;
-    let action = WorkflowAction {
+    let configured_timeout =
+        timeout_seconds.unwrap_or(runinator_models::workflow_vm::DEFAULT_ACTION_TIMEOUT_SECONDS);
+    let Some(effective_timeout) =
+        remaining_action_timeout(configured_timeout, expires_at, chrono::Utc::now())
+    else {
+        warn!(effect_id = %command.effect_id, ?expires_at, "provider effect expired during input preparation; skipping execution");
+        broker
+            .ack_effect(consumer, delivery.delivery_id)
+            .await
+            .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+        return Ok(());
+    };
+    let mut action = WorkflowAction {
         provider,
         function,
-        timeout_seconds: timeout_seconds
-            .unwrap_or(runinator_models::workflow_vm::DEFAULT_ACTION_TIMEOUT_SECONDS),
+        timeout_seconds: effective_timeout,
         configuration,
         mcp_enabled: false,
         tags,
@@ -279,7 +303,7 @@ async fn process_provider_effect(
         format!("executing {provider_name}.{function_name}"),
         Some(Duration::from_secs(action.timeout_seconds.max(0) as u64)),
     );
-    match api_client
+    let idempotency_acquired = match api_client
         .claim_idempotency_key(
             &command.idempotency_key,
             command.effect_id,
@@ -316,13 +340,30 @@ async fn process_provider_effect(
                 .map_err(|error| crate::broker::broker_error("nack_effect", error))?;
             return Ok(());
         }
-        Ok(IdempotencyClaim::Acquired) => {}
+        Ok(IdempotencyClaim::Acquired) => true,
         Err(error) => {
             // Provider-native idempotency still receives the frozen key below. The reservation is
             // an additional crash-window guard, so an API outage must not make the worker deadlock.
             warn!(effect_id = %command.effect_id, %error, "effect idempotency reservation unavailable; executing with provider key only");
+            false
         }
-    }
+    };
+    let Some(effective_timeout) =
+        remaining_action_timeout(configured_timeout, expires_at, chrono::Utc::now())
+    else {
+        if idempotency_acquired {
+            let _ = api_client
+                .release_idempotency_key(&command.idempotency_key, command.effect_id)
+                .await;
+        }
+        warn!(effect_id = %command.effect_id, ?expires_at, "provider effect expired before provider invocation; skipping execution");
+        broker
+            .ack_effect(consumer, delivery.delivery_id)
+            .await
+            .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+        return Ok(());
+    };
+    action.timeout_seconds = effective_timeout;
     let provider_key = idempotency_key.as_ref().map(value_key);
     crate::metrics::effect_received();
     let token = CancellationToken::new();
@@ -562,6 +603,25 @@ fn value_key(value: &Value) -> String {
     }
 }
 
+/// Bound a provider's local timeout by the broker command's remaining lifetime.
+///
+/// Whole seconds are intentional: when less than one second remains, starting an external side
+/// effect is less useful than letting the already-armed engine deadline settle it.
+fn remaining_action_timeout(
+    configured_seconds: i64,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<i64> {
+    let configured_seconds = configured_seconds.max(1);
+    match expires_at {
+        None => Some(configured_seconds),
+        Some(expires_at) => {
+            let remaining_seconds = (expires_at - now).num_seconds();
+            (remaining_seconds >= 1).then_some(configured_seconds.min(remaining_seconds))
+        }
+    }
+}
+
 async fn publish_terminal(
     broker: &dyn Broker,
     outbox: &dyn crate::agent::outbox::ResultOutbox,
@@ -770,7 +830,8 @@ impl ProviderEventSink for EffectOutputSink {
 
 #[cfg(test)]
 mod workspace_tests {
-    use super::validate_workspace_key;
+    use super::{remaining_action_timeout, validate_workspace_key};
+    use chrono::{Duration, Utc};
 
     #[test]
     fn workspace_keys_cannot_escape_the_configured_root() {
@@ -778,5 +839,28 @@ mod workspace_tests {
         assert!(validate_workspace_key("../outside").is_err());
         assert!(validate_workspace_key("/absolute").is_err());
         assert!(validate_workspace_key("").is_err());
+    }
+
+    #[test]
+    fn action_timeout_is_capped_by_the_messages_remaining_lifetime() {
+        let now = Utc::now();
+        assert_eq!(
+            remaining_action_timeout(60, Some(now + Duration::seconds(12)), now),
+            Some(12)
+        );
+        assert_eq!(remaining_action_timeout(60, None, now), Some(60));
+    }
+
+    #[test]
+    fn action_does_not_start_with_less_than_one_second_remaining() {
+        let now = Utc::now();
+        assert_eq!(
+            remaining_action_timeout(60, Some(now + Duration::milliseconds(999)), now),
+            None
+        );
+        assert_eq!(
+            remaining_action_timeout(60, Some(now - Duration::seconds(1)), now),
+            None
+        );
     }
 }

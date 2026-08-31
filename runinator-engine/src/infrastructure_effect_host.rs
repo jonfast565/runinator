@@ -907,6 +907,7 @@ mod tests {
                 command: command.clone(),
                 dedupe_key: None,
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();
@@ -957,6 +958,7 @@ mod tests {
                 command: command.clone(),
                 dedupe_key: None,
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();
@@ -1026,6 +1028,7 @@ mod tests {
                 command: command.clone(),
                 dedupe_key: None,
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();

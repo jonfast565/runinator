@@ -51,6 +51,15 @@ fn a_declared_timeout_fires_a_grace_period_after_the_workers_own_deadline() {
         (wake.due_at - dispatched_at).num_seconds(),
         120 + DEADLINE_GRACE_SECONDS
     );
+    assert_eq!(
+        action_expires_at(
+            &command(action(Some(120)), 0),
+            dispatched_at,
+            DEADLINE_GRACE_SECONDS,
+        ),
+        Some(wake.due_at),
+        "the broker command must expire at the same instant as the durable timeout backstop"
+    );
 }
 
 #[test]

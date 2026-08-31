@@ -117,6 +117,7 @@ async fn rabbitmq_broker_nack_redelivers_messages() {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -160,6 +161,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
                 command: command.clone(),
                 dedupe_key: Some(command.effect_id.to_string()),
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();
@@ -280,6 +282,7 @@ async fn rabbitmq_broker_still_delivers_any_targeted_effects_via_receive_effect_
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -313,6 +316,7 @@ async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -366,6 +370,7 @@ async fn rabbitmq_broker_routes_replica_target_to_the_bound_replica_only() {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();

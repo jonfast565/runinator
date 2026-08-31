@@ -106,6 +106,7 @@ async fn tcp_broker_times_out_publish_response() {
             command: effect_command(EffectExecutor::Provider),
             dedupe_key: Some("tcp-timeout-test".into()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .expect_err("publish should time out waiting for a response");
@@ -134,6 +135,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
                 command,
                 dedupe_key: None,
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();

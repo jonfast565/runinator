@@ -1524,11 +1524,17 @@ pub async fn run_workflow_effect_dispatcher<
                     };
                     // kept for the deadline arming below, since publishing consumes the command.
                     let published_command = dispatch.command.clone();
+                    let expires_at = crate::effect_deadline::action_expires_at(
+                        &published_command,
+                        now,
+                        policy.orchestration.action_deadline_grace_seconds as i64,
+                    );
                     match broker
                         .publish_effect(runinator_broker_core::EffectMessage {
                             dedupe_key: Some(dispatch.dedupe_key.clone()),
                             command: dispatch.command,
                             enqueued_at: now,
+                            expires_at,
                         })
                         .await
                     {
@@ -1732,6 +1738,9 @@ pub async fn run_notification_effect_dispatcher<T: NotificationStore>(
                             dedupe_key: Some(dispatch.dedupe_key.clone()),
                             command: dispatch.command,
                             enqueued_at: now,
+                            // Notification delivery rows have their own persistence and no engine
+                            // deadline wake to settle a silently expired broker command.
+                            expires_at: None,
                         })
                         .await
                     {

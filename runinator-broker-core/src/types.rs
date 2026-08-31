@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
 use runinator_comm::{
-    AgentCommand, ControlCommand, EffectCommand, EffectResult, UiEvent, WakeCommand,
-    WsIngressCommand,
+    AgentCommand, ControlCommand, EffectCommand, EffectExecutor, EffectResult, UiEvent,
+    WakeCommand, WsIngressCommand,
 };
+use runinator_models::workflow_vm::{WorkflowEffectRequest, DEFAULT_ACTION_TIMEOUT_SECONDS};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+const LEGACY_ACTION_DEADLINE_GRACE_SECONDS: i64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlDelivery {
@@ -30,6 +33,12 @@ pub struct EffectMessage {
     pub dedupe_key: Option<String>,
     #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
+    /// Absolute point after which this command must not be handed to an executor.
+    ///
+    /// `None` preserves wire compatibility. Receivers derive a bounded fallback for older provider
+    /// actions; infrastructure effects continue to use the lifetime governed by their request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// A leased VM effect command delivery.
@@ -40,6 +49,8 @@ pub struct EffectDelivery {
     pub dedupe_key: String,
     #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// A VM effect result queued for the durable VM host.
@@ -184,6 +195,55 @@ impl EffectMessage {
             .clone()
             .unwrap_or_else(|| self.command.effect_id.to_string())
     }
+
+    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
+        self.effective_expires_at()
+            .is_some_and(|expires_at| expires_at <= now)
+    }
+
+    /// Resolve the explicit wire expiry, or derive one for a provider action published by an
+    /// older engine. This makes an upgrade drain an existing stale backlog safely instead of only
+    /// protecting commands created after the upgrade.
+    pub fn effective_expires_at(&self) -> Option<DateTime<Utc>> {
+        effect_expires_at(&self.command, self.enqueued_at, self.expires_at)
+    }
+}
+
+impl EffectDelivery {
+    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
+        self.effective_expires_at()
+            .is_some_and(|expires_at| expires_at <= now)
+    }
+
+    pub fn effective_expires_at(&self) -> Option<DateTime<Utc>> {
+        effect_expires_at(&self.command, self.enqueued_at, self.expires_at)
+    }
+}
+
+fn effect_expires_at(
+    command: &EffectCommand,
+    enqueued_at: DateTime<Utc>,
+    explicit: Option<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    // Notification actions have no workflow deadline wake to settle them after a silent broker
+    // expiry. Infrastructure effects own their lifetime in their request (some intentionally park
+    // indefinitely), so only ordinary provider actions receive the compatibility fallback.
+    if command.executor != EffectExecutor::Provider || command.notification_delivery_id.is_some() {
+        return None;
+    }
+    let WorkflowEffectRequest::Action {
+        timeout_seconds, ..
+    } = &command.request
+    else {
+        return None;
+    };
+    let budget = timeout_seconds
+        .unwrap_or(DEFAULT_ACTION_TIMEOUT_SECONDS)
+        .max(1);
+    Some(enqueued_at + chrono::Duration::seconds(budget + LEGACY_ACTION_DEADLINE_GRACE_SECONDS))
 }
 
 impl EffectResultMessage {
@@ -196,10 +256,12 @@ impl EffectResultMessage {
 
 impl From<EffectMessage> for EffectDelivery {
     fn from(message: EffectMessage) -> Self {
+        let expires_at = message.effective_expires_at();
         Self {
             delivery_id: Uuid::new_v4(),
             dedupe_key: message.dedupe_key_or_hash(),
             enqueued_at: message.enqueued_at,
+            expires_at,
             command: message.command,
         }
     }

@@ -18,6 +18,7 @@ use crate::{
 /// with. every other method is unreachable in this test and panics if called.
 struct FakeBroker {
     queue: Mutex<Vec<EffectDelivery>>,
+    acked: Mutex<Vec<Uuid>>,
     nacked: Mutex<Vec<Uuid>>,
 }
 
@@ -29,6 +30,7 @@ impl FakeBroker {
         queue.reverse();
         Self {
             queue: Mutex::new(queue),
+            acked: Mutex::new(Vec::new()),
             nacked: Mutex::new(Vec::new()),
         }
     }
@@ -44,7 +46,8 @@ impl Broker for FakeBroker {
             .ok_or_else(|| BrokerError::Internal("queue exhausted".into()))
     }
 
-    async fn ack_effect(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+    async fn ack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.acked.lock().unwrap().push(delivery_id);
         Ok(())
     }
 
@@ -130,7 +133,47 @@ fn delivery(executor: EffectExecutor, target: ActionTarget) -> EffectDelivery {
         command,
         dedupe_key: None,
         enqueued_at: chrono::Utc::now(),
+        expires_at: None,
     })
+}
+
+#[test]
+fn effect_expiry_is_backward_compatible_on_the_wire() {
+    let delivery = delivery(EffectExecutor::Provider, ActionTarget::Any);
+    let message = EffectMessage {
+        command: delivery.command,
+        dedupe_key: Some(delivery.dedupe_key),
+        enqueued_at: delivery.enqueued_at,
+        expires_at: None,
+    };
+    let encoded = serde_json::to_value(&message).unwrap();
+    assert!(encoded.get("expires_at").is_none());
+
+    let decoded: EffectMessage = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.expires_at, None);
+}
+
+#[test]
+fn legacy_provider_actions_derive_an_expiry_from_their_enqueue_time() {
+    let mut delivery = delivery(EffectExecutor::Provider, ActionTarget::Any);
+    delivery.command.request = WorkflowEffectRequest::Action {
+        provider: "std".into(),
+        function: "run".into(),
+        input: Default::default(),
+        timeout_seconds: Some(5),
+        retry: Default::default(),
+        tags: Default::default(),
+        required_labels: Default::default(),
+        workspace_affinity: None,
+        idempotency_key: None,
+        function_binding: None,
+    };
+    delivery.expires_at = None;
+
+    assert_eq!(
+        delivery.effective_expires_at(),
+        Some(delivery.enqueued_at + chrono::Duration::seconds(35))
+    );
 }
 
 #[tokio::test]
@@ -172,4 +215,23 @@ async fn default_receive_effect_for_requeues_mismatches_and_returns_the_first_ma
     assert!(mismatched_ids.iter().all(|id| nacked.contains(id)));
     // one delivery (the Any one) must still be sitting in the queue, untouched.
     assert_eq!(broker.queue.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn default_receive_effect_for_acks_expired_work_without_returning_it() {
+    let mut expired = delivery(EffectExecutor::Provider, ActionTarget::Any);
+    expired.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+    let expired_id = expired.delivery_id;
+    let fresh = delivery(EffectExecutor::Provider, ActionTarget::Any);
+    let fresh_id = fresh.command.command_id;
+    let broker = FakeBroker::with_deliveries(vec![expired, fresh]);
+
+    let received = broker
+        .receive_effect_for(&ConsumerProfile::shared("worker"))
+        .await
+        .unwrap();
+
+    assert_eq!(received.command.command_id, fresh_id);
+    assert_eq!(*broker.acked.lock().unwrap(), vec![expired_id]);
+    assert!(broker.nacked.lock().unwrap().is_empty());
 }

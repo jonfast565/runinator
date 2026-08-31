@@ -36,6 +36,7 @@ async fn in_memory_broker_round_trips_vm_effects_without_action_identity() {
             command: command.clone(),
             dedupe_key: None,
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -106,6 +107,7 @@ async fn in_memory_broker_redelivers_expired_effect_delivery() {
             command: effect_command(),
             dedupe_key: Some("lease-effect".into()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -122,6 +124,46 @@ async fn in_memory_broker_redelivers_expired_effect_delivery() {
         .is_err());
     broker
         .ack_effect("consumer-b", second.delivery_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn in_memory_broker_discards_effects_past_their_absolute_expiry() {
+    let broker = InMemoryBroker::new();
+    let stale_command = effect_command();
+    let fresh_command = effect_command();
+    broker
+        .publish_effect(EffectMessage {
+            command: stale_command,
+            dedupe_key: Some("stale-effect".into()),
+            enqueued_at: Utc::now(),
+            expires_at: Some(Utc::now() + chrono::Duration::milliseconds(10)),
+        })
+        .await
+        .unwrap();
+    broker
+        .publish_effect(EffectMessage {
+            command: fresh_command.clone(),
+            dedupe_key: Some("fresh-effect".into()),
+            enqueued_at: Utc::now(),
+            expires_at: Some(Utc::now() + chrono::Duration::minutes(1)),
+        })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let received = broker.receive_effect("worker").await.unwrap();
+    assert_eq!(received.command.command_id, fresh_command.command_id);
+
+    // Expiry also releases the queue's dedupe reservation instead of leaking it forever.
+    broker
+        .publish_effect(EffectMessage {
+            command: effect_command(),
+            dedupe_key: Some("stale-effect".into()),
+            enqueued_at: Utc::now(),
+            expires_at: None,
+        })
         .await
         .unwrap();
 }
@@ -353,6 +395,7 @@ async fn receive_effect_for_routes_targeted_effects_to_the_matching_consumer() {
             command: targeted.clone(),
             dedupe_key: Some("targeted".into()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -361,6 +404,7 @@ async fn receive_effect_for_routes_targeted_effects_to_the_matching_consumer() {
             command: any.clone(),
             dedupe_key: Some("any".into()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();

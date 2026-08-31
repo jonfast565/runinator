@@ -121,6 +121,7 @@ async fn kafka_broker_nack_redelivers_messages() {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
+            expires_at: None,
         })
         .await
         .unwrap();
@@ -180,6 +181,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
                 command: command.clone(),
                 dedupe_key: Some(command.effect_id.to_string()),
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();

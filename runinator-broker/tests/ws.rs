@@ -112,6 +112,7 @@ async fn ws_broker_concurrent_receive_for_does_not_block_concurrent_requests() {
                 command,
                 dedupe_key: Some("ws-concurrency-test".into()),
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();
@@ -262,6 +263,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
                 command,
                 dedupe_key: None,
                 enqueued_at: Utc::now(),
+                expires_at: None,
             })
             .await
             .unwrap();
