@@ -1,6 +1,4 @@
 -- keep retention candidate scans bounded as runtime history grows.
-CREATE INDEX IF NOT EXISTS idx_runs_archive ON runs(status, created_at);
-CREATE INDEX IF NOT EXISTS idx_run_artifacts_archive ON run_artifacts(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_archive ON workflow_node_runs(created_at, workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_artifacts_archive ON workflow_node_artifacts(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_workflow_run_artifacts_archive ON workflow_run_artifacts(created_at, id);

@@ -1,10 +1,3 @@
-CREATE TABLE IF NOT EXISTS workflow_run_execution_states (
-    workflow_run_id BINARY(16) PRIMARY KEY REFERENCES workflow_runs(id) ON DELETE CASCADE,
-    watch_fired BOOLEAN NOT NULL DEFAULT FALSE,
-    run_metadata_json TEXT NULL,
-    extra_json TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS workflow_run_frames (
     workflow_run_id BINARY(16) NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
     frame_kind VARCHAR(64) NOT NULL,

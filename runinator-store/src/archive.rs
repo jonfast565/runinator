@@ -6,9 +6,6 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ArchiveTable {
-    Runs,
-    RunChunks,
-    RunArtifacts,
     WorkflowRuns,
     WorkflowVmModules,
     WorkflowContinuations,
@@ -46,10 +43,7 @@ pub enum ArchiveTable {
 }
 
 impl ArchiveTable {
-    pub const ALL: [ArchiveTable; 37] = [
-        ArchiveTable::RunChunks,
-        ArchiveTable::RunArtifacts,
-        ArchiveTable::Runs,
+    pub const ALL: [ArchiveTable; 34] = [
         ArchiveTable::WorkflowEffectOutputEvents,
         ArchiveTable::WorkflowEffectDispatches,
         ArchiveTable::WorkflowEffects,
@@ -88,9 +82,6 @@ impl ArchiveTable {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            ArchiveTable::Runs => "runs",
-            ArchiveTable::RunChunks => "run_chunks",
-            ArchiveTable::RunArtifacts => "run_artifacts",
             ArchiveTable::WorkflowRuns => "workflow_runs",
             ArchiveTable::WorkflowVmModules => "workflow_vm_modules",
             ArchiveTable::WorkflowContinuations => "workflow_continuations",
@@ -148,9 +139,6 @@ impl FromStr for ArchiveTable {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "runs" => Ok(ArchiveTable::Runs),
-            "run_chunks" => Ok(ArchiveTable::RunChunks),
-            "run_artifacts" => Ok(ArchiveTable::RunArtifacts),
             "workflow_vm_modules" => Ok(ArchiveTable::WorkflowVmModules),
             "workflow_continuations" => Ok(ArchiveTable::WorkflowContinuations),
             "workflow_effects" => Ok(ArchiveTable::WorkflowEffects),
@@ -263,8 +251,6 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("orchestration_event_reductions", ColdArchive),
     table_policy!("orchestration_evidence", ColdArchive),
     table_policy!("orchestration_pending_intents", ColdArchive),
-    table_policy!("org_memberships", CascadeWithParent),
-    table_policy!("org_quotas", BoundedState),
     table_policy!("org_resource_groups", BoundedState),
     table_policy!("org_usage_ledger", ColdArchive),
     table_policy!("organizations", ExplicitLifecycle),
@@ -280,12 +266,8 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("resource_grants", ExplicitLifecycle),
     table_policy!("resource_ownership", BoundedState),
     table_policy!("role_assignments", ExplicitLifecycle),
-    table_policy!("run_artifacts", ColdArchive),
-    table_policy!("run_chunks", ColdArchive),
-    table_policy!("runs", ColdArchive),
     table_policy!("service_accounts", ExplicitLifecycle),
     table_policy!("settings", BoundedState),
-    table_policy!("team_members", CascadeWithParent),
     table_policy!("teams", ExplicitLifecycle),
     table_policy!("user_identities", CascadeWithParent),
     table_policy!("users", ExplicitLifecycle),
@@ -301,7 +283,6 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("workflow_revisions", ColdArchive),
     table_policy!("workflow_run_cursors", CascadeWithParent),
     table_policy!("workflow_run_event_sources", CascadeWithParent),
-    table_policy!("workflow_run_execution_states", CascadeWithParent),
     table_policy!("workflow_run_frames", CascadeWithParent),
     table_policy!("workflow_run_pending_interrupts", CascadeWithParent),
     table_policy!("workflow_runs", ColdArchive),

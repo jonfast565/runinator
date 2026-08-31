@@ -5,13 +5,6 @@ CREATE TABLE IF NOT EXISTS teams (
     created_at BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS team_members (
-    team_id BINARY(16) NOT NULL,
-    user_id BINARY(16) NOT NULL,
-    PRIMARY KEY (team_id, user_id)
-);
-CREATE INDEX idx_team_members_user ON team_members(user_id);
-
 CREATE TABLE IF NOT EXISTS resource_grants (
     id BINARY(16) PRIMARY KEY,
     resource_type VARCHAR(64) NOT NULL,

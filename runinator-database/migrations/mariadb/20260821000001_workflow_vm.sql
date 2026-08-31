@@ -32,7 +32,6 @@ CREATE INDEX idx_workflow_continuations_run
 CREATE TABLE IF NOT EXISTS workflow_effects (
     id BINARY(16) PRIMARY KEY,
     version BIGINT NOT NULL,
-    workflow_run_id BINARY(16) NOT NULL,
     continuation_id BINARY(16) NOT NULL,
     sequence BIGINT NOT NULL,
     attempt BIGINT NOT NULL DEFAULT 0,
@@ -45,30 +44,19 @@ CREATE TABLE IF NOT EXISTS workflow_effects (
     updated_at BIGINT NOT NULL,
     finished_at BIGINT NULL,
     UNIQUE KEY idx_workflow_effects_sequence (continuation_id, sequence),
-    CONSTRAINT fk_workflow_effects_run FOREIGN KEY (workflow_run_id)
-        REFERENCES workflow_runs(id) ON DELETE CASCADE,
     CONSTRAINT fk_workflow_effects_continuation FOREIGN KEY (continuation_id)
         REFERENCES workflow_continuations(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_workflow_effects_pending
     ON workflow_effects(status, created_at, id);
-CREATE INDEX idx_workflow_effects_run
-    ON workflow_effects(workflow_run_id, created_at);
-
 CREATE TABLE IF NOT EXISTS workflow_effect_output_events (
     event_id BINARY(16) PRIMARY KEY,
     effect_id BINARY(16) NOT NULL,
-    workflow_run_id BINARY(16) NOT NULL,
-    continuation_id BINARY(16) NOT NULL,
     attempt BIGINT NOT NULL,
     output_json TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     CONSTRAINT fk_workflow_effect_output_effect FOREIGN KEY (effect_id)
-        REFERENCES workflow_effects(id) ON DELETE CASCADE,
-    CONSTRAINT fk_workflow_effect_output_run FOREIGN KEY (workflow_run_id)
-        REFERENCES workflow_runs(id) ON DELETE CASCADE,
-    CONSTRAINT fk_workflow_effect_output_continuation FOREIGN KEY (continuation_id)
-        REFERENCES workflow_continuations(id) ON DELETE CASCADE
+        REFERENCES workflow_effects(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_workflow_effect_output_effect
     ON workflow_effect_output_events(effect_id, created_at, event_id);

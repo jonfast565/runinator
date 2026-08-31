@@ -13,11 +13,9 @@ use runinator_store::roles::{
     NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingUpdate,
 };
 
-const BINDING_COLUMNS: &str = "id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, current_phase, current_attempt, current_epoch, restart_member, resume_existing_epoch, subject_revision, resources, budgets, last_reduced_sequence, version, reducer_lease_owner, reducer_leased_until, created_at, updated_at, finished_at";
-const BINDING_COLUMNS_FROM_BINDING: &str = "b.id, b.admission_id, b.org_id, b.scope, b.correlation_key, b.generation, b.pipeline_id, b.pipeline_revision, b.pipeline_digest, b.adapter_id, b.adapter_revision, b.policy, b.status, b.current_phase, b.current_attempt, b.current_epoch, b.restart_member, b.resume_existing_epoch, b.subject_revision, b.resources, b.budgets, b.last_reduced_sequence, b.version, b.reducer_lease_owner, b.reducer_leased_until, b.created_at, b.updated_at, b.finished_at";
+const BINDING_COLUMNS: &str = "b.id, b.admission_id, a.org_scope AS org_scope, a.scope AS scope, a.correlation_key AS correlation_key, b.generation, a.pipeline_id AS pipeline_id, b.pipeline_revision, b.pipeline_digest, b.adapter_id, b.adapter_revision, b.policy, b.status, b.current_phase, b.current_attempt, b.current_epoch, b.restart_member, b.resume_existing_epoch, b.subject_revision, b.resources, b.budgets, b.last_reduced_sequence, b.version, b.reducer_lease_owner, b.reducer_leased_until, b.created_at, b.updated_at, b.finished_at";
 const EPOCH_COLUMNS: &str = "id, binding_id, epoch, pipeline_run_id, start_member, parameters, status, reason, created_at, started_at, finished_at";
-const CORRELATION_ALIAS_COLUMNS: &str =
-    "id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at";
+const CORRELATION_ALIAS_COLUMNS: &str = "ca.id, ca.binding_id, b.generation AS generation, ca.org_scope, ca.source, ca.scope, ca.correlation_key, ca.created_at, ca.updated_at";
 const REDUCTION_COLUMNS: &str = "id, binding_id, inbox_event_id, sequence, matched_intents, winner, suppressed_intents, binding_version, disposition, detail, created_at";
 const PENDING_COLUMNS: &str = "id, binding_id, intent, priority, source_event_ids, latest_payload, wake_at, created_at, updated_at";
 const COMMAND_COLUMNS: &str = "id, binding_id, epoch, command_type, operation_key, payload, status, attempts, claimed_by, claimed_until, result, created_at, updated_at";
@@ -75,19 +73,32 @@ where
         binding: NewOrchestrationBinding,
     ) -> Result<OrchestrationBinding, SendableError> {
         let now = Utc::now().timestamp();
+        let admission = sqlx::query(&self.render(
+            "SELECT org_scope, scope, correlation_key, pipeline_id FROM ingress_admissions WHERE id = ?",
+        ))
+        .bind(binding.admission_id)
+        .fetch_optional(self.pool())
+        .await?
+        .ok_or_else(|| Box::new(std::io::Error::other("orchestration admission does not exist")) as SendableError)?;
+        if admission.get::<String, _>("org_scope")
+            != binding.org_id.map(|id| id.to_string()).unwrap_or_default()
+            || admission.get::<String, _>("scope") != binding.scope
+            || admission.get::<String, _>("correlation_key") != binding.correlation_key
+            || admission.get::<Option<Uuid>, _>("pipeline_id") != Some(binding.pipeline_id)
+        {
+            return Err(Box::new(std::io::Error::other(
+                "orchestration binding identity does not match its admission",
+            )));
+        }
         let insert = if self.dialect() == SqlDialect::MariaDb {
-            "INSERT INTO orchestration_bindings (id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, resources, budgets, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'null', '{}', ?, ?) ON DUPLICATE KEY UPDATE id = id"
+            "INSERT INTO orchestration_bindings (id, admission_id, generation, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, resources, budgets, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'null', '{}', ?, ?) ON DUPLICATE KEY UPDATE id = id"
         } else {
-            "INSERT INTO orchestration_bindings (id, admission_id, org_id, scope, correlation_key, generation, pipeline_id, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, resources, budgets, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'null', '{}', ?, ?) ON CONFLICT(admission_id, generation) DO NOTHING"
+            "INSERT INTO orchestration_bindings (id, admission_id, generation, pipeline_revision, pipeline_digest, adapter_id, adapter_revision, policy, status, resources, budgets, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'null', '{}', ?, ?) ON CONFLICT(admission_id, generation) DO NOTHING"
         };
         sqlx::query(&self.render(insert))
             .bind(binding.id)
             .bind(binding.admission_id)
-            .bind(binding.org_id)
-            .bind(binding.scope)
-            .bind(binding.correlation_key)
             .bind(binding.generation)
-            .bind(binding.pipeline_id)
             .bind(binding.pipeline_revision)
             .bind(binding.pipeline_digest)
             .bind(binding.adapter_id)
@@ -111,7 +122,7 @@ where
         binding_id: Uuid,
     ) -> Result<Option<OrchestrationBinding>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings WHERE id = ?"
+            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings b JOIN ingress_admissions a ON a.id = b.admission_id WHERE b.id = ?"
         )))
         .bind(binding_id)
         .fetch_optional(self.pool())
@@ -125,7 +136,7 @@ where
         admission_id: Uuid,
         generation: i64,
     ) -> Result<Option<OrchestrationBinding>, SendableError> {
-        let row = sqlx::query(&self.render(&format!("SELECT {BINDING_COLUMNS} FROM orchestration_bindings WHERE admission_id = ? AND generation = ?")))
+        let row = sqlx::query(&self.render(&format!("SELECT {BINDING_COLUMNS} FROM orchestration_bindings b JOIN ingress_admissions a ON a.id = b.admission_id WHERE b.admission_id = ? AND b.generation = ?")))
             .bind(admission_id).bind(generation).fetch_optional(self.pool()).await?;
         row.map(|row| mappers::row_to_orchestration_binding(&row))
             .transpose()
@@ -138,14 +149,13 @@ where
     ) -> Result<OrchestrationCorrelationAlias, SendableError> {
         let org_scope = alias.org_id.map(|id| id.to_string()).unwrap_or_default();
         let insert = if self.dialect() == SqlDialect::MariaDb {
-            "INSERT INTO orchestration_correlation_aliases (id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE binding_id = VALUES(binding_id), generation = VALUES(generation), updated_at = VALUES(updated_at)"
+            "INSERT INTO orchestration_correlation_aliases (id, binding_id, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE binding_id = VALUES(binding_id), updated_at = VALUES(updated_at)"
         } else {
-            "INSERT INTO orchestration_correlation_aliases (id, binding_id, generation, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_scope, source, scope, correlation_key) DO UPDATE SET binding_id = excluded.binding_id, generation = excluded.generation, updated_at = excluded.updated_at"
+            "INSERT INTO orchestration_correlation_aliases (id, binding_id, org_scope, source, scope, correlation_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_scope, source, scope, correlation_key) DO UPDATE SET binding_id = excluded.binding_id, updated_at = excluded.updated_at"
         };
         sqlx::query(&self.render(insert))
             .bind(alias.id)
             .bind(alias.binding_id)
-            .bind(alias.generation)
             .bind(&org_scope)
             .bind(&alias.source)
             .bind(&alias.scope)
@@ -177,7 +187,7 @@ where
     ) -> Result<Option<OrchestrationCorrelationAlias>, SendableError> {
         let org_scope = org_id.map(|id| id.to_string()).unwrap_or_default();
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {CORRELATION_ALIAS_COLUMNS} FROM orchestration_correlation_aliases WHERE org_scope = ? AND source = ? AND scope = ? AND correlation_key = ?"
+            "SELECT {CORRELATION_ALIAS_COLUMNS} FROM orchestration_correlation_aliases ca JOIN orchestration_bindings b ON b.id = ca.binding_id WHERE ca.org_scope = ? AND ca.source = ? AND ca.scope = ? AND ca.correlation_key = ?"
         )))
         .bind(org_scope).bind(source).bind(scope).bind(correlation_key)
         .fetch_optional(self.pool()).await?;
@@ -190,7 +200,7 @@ where
         binding_id: Uuid,
     ) -> Result<Vec<OrchestrationCorrelationAlias>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
-            "SELECT {CORRELATION_ALIAS_COLUMNS} FROM orchestration_correlation_aliases WHERE binding_id = ? ORDER BY created_at, id"
+            "SELECT {CORRELATION_ALIAS_COLUMNS} FROM orchestration_correlation_aliases ca JOIN orchestration_bindings b ON b.id = ca.binding_id WHERE ca.binding_id = ? ORDER BY ca.created_at, ca.id"
         )))
         .bind(binding_id).fetch_all(self.pool()).await?;
         rows.into_iter()
@@ -218,7 +228,8 @@ where
         workflow_run_id: Uuid,
     ) -> Result<Option<OrchestrationBinding>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {BINDING_COLUMNS_FROM_BINDING} FROM orchestration_bindings b \
+            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings b \
+             INNER JOIN ingress_admissions a ON a.id = b.admission_id \
              INNER JOIN pipeline_runs p ON p.orchestration_binding_id = b.id AND p.execution_epoch = b.current_epoch \
              INNER JOIN workflow_runs w ON w.pipeline_run_id = p.id \
              WHERE w.id = ? AND b.status IN ('pending', 'running', 'waiting', 'suspended')"
@@ -236,18 +247,20 @@ where
         status: Option<OrchestrationStatus>,
         limit: i64,
     ) -> Result<Vec<OrchestrationBinding>, SendableError> {
-        let mut sql = format!("SELECT {BINDING_COLUMNS} FROM orchestration_bindings WHERE 1 = 1");
+        let mut sql = format!(
+            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings b JOIN ingress_admissions a ON a.id = b.admission_id WHERE 1 = 1"
+        );
         if org_id.is_some() {
-            sql.push_str(" AND org_id = ?");
+            sql.push_str(" AND a.org_scope = ?");
         }
         if status.is_some() {
-            sql.push_str(" AND status = ?");
+            sql.push_str(" AND b.status = ?");
         }
-        sql.push_str(" ORDER BY updated_at DESC, id DESC LIMIT ?");
+        sql.push_str(" ORDER BY b.updated_at DESC, b.id DESC LIMIT ?");
         let rendered = self.render(&sql);
         let mut query = sqlx::query(&rendered);
         if let Some(org_id) = org_id {
-            query = query.bind(org_id);
+            query = query.bind(org_id.to_string());
         }
         if let Some(status) = status {
             query = query.bind(status.as_str());
@@ -269,7 +282,7 @@ where
         limit: i64,
     ) -> Result<Vec<OrchestrationBinding>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
-            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings WHERE status IN ('pending', 'running', 'waiting', 'suspended') AND (reducer_leased_until IS NULL OR reducer_leased_until < ?) ORDER BY updated_at, id LIMIT ?"
+            "SELECT {BINDING_COLUMNS} FROM orchestration_bindings b JOIN ingress_admissions a ON a.id = b.admission_id WHERE b.status IN ('pending', 'running', 'waiting', 'suspended') AND (b.reducer_leased_until IS NULL OR b.reducer_leased_until < ?) ORDER BY b.updated_at, b.id LIMIT ?"
         ))).bind(now.timestamp()).bind(limit.clamp(1, 1000)).fetch_all(self.pool()).await?;
         let mut claimed = Vec::new();
         for row in rows {

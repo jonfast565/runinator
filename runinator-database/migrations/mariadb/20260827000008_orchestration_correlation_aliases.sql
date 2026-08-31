@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS orchestration_correlation_aliases (
     id BINARY(16) PRIMARY KEY,
     binding_id BINARY(16) NOT NULL,
-    generation BIGINT NOT NULL,
     org_scope VARCHAR(36) NOT NULL,
     source VARCHAR(128) NOT NULL,
     scope VARCHAR(255) NOT NULL,

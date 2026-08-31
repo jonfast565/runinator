@@ -41,8 +41,8 @@ where
         let id = Uuid::now_v7();
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
-            "INSERT INTO organizations (id, name, slug, disabled, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO organizations (id, name, slug, disabled, max_nodes_json, max_monthly_cents, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, '{}', 0, ?, ?)",
         ))
         .bind(id)
         .bind(&name)
@@ -119,16 +119,14 @@ where
     async fn delete_org(&self, id: Uuid) -> Result<(), SendableError> {
         retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
-            for sql in [
-                "DELETE FROM org_memberships WHERE org_id = ?",
-                "DELETE FROM role_assignments WHERE scope_kind = 'organization' AND scope_id = ?",
-                "DELETE FROM organizations WHERE id = ?",
-            ] {
-                sqlx::query(&self.render(sql))
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await?;
-            }
+            sqlx::query(&self.render("DELETE FROM role_assignments WHERE scope_key = ?"))
+                .bind(format!("organization:{id}"))
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(&self.render("DELETE FROM organizations WHERE id = ?"))
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await
         })
         .await?;
@@ -141,55 +139,26 @@ where
         user_id: Uuid,
         role: OrgRole,
     ) -> Result<(), SendableError> {
-        // delete-then-insert keeps the (org, user) pair idempotent without a dialect-specific upsert.
         let now = Utc::now().timestamp();
-        retry_delete(|| async {
-            let mut tx = self.pool().begin().await?;
-            sqlx::query(&self.render(
-                "DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?",
-            ))
-            .bind(org_id)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(&self.render(
-                "INSERT INTO org_memberships (org_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
-            ))
-            .bind(org_id)
-            .bind(user_id)
-            .bind(role.as_str())
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(&self.render(
-                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_kind = 'organization' AND scope_id = ?",
-            )).bind(user_id).bind(org_id).execute(&mut *tx).await?;
-            sqlx::query(&self.render(
-                "INSERT INTO role_assignments (principal_kind, principal_id, scope_kind, scope_id, scope_key, role_kind, role, created_by, created_at, updated_at) \
-                 VALUES ('user', ?, 'organization', ?, ?, 'organization', ?, NULL, ?, ?)",
-            )).bind(user_id).bind(org_id).bind(format!("organization:{org_id}"))
-                .bind(role.as_str()).bind(now).bind(now).execute(&mut *tx).await?;
-            tx.commit().await
-        })
-        .await?;
+        let key = format!("organization:{org_id}");
+        let conflict = self.dialect().on_conflict_update(
+            "principal_kind, principal_id, scope_key",
+            &["role", "updated_at"],
+        );
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO role_assignments (principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at) \
+             VALUES ('user', ?, ?, ?, NULL, ?, ?) {conflict}",
+        )))
+        .bind(user_id).bind(key).bind(role.as_str()).bind(now).bind(now)
+        .execute(self.pool()).await?;
         Ok(())
     }
 
     async fn remove_org_member(&self, org_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
-        retry_delete(|| async {
-            let mut tx = self.pool().begin().await?;
-            sqlx::query(
-                &self.render("DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?"),
-            )
-            .bind(org_id)
-            .bind(user_id)
-            .execute(&mut *tx).await?;
-            sqlx::query(&self.render(
-                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_kind = 'organization' AND scope_id = ?",
-            )).bind(user_id).bind(org_id).execute(&mut *tx).await?;
-            tx.commit().await
-        })
-        .await?;
+        sqlx::query(&self.render(
+            "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_key = ?",
+        )).bind(user_id).bind(format!("organization:{org_id}"))
+            .execute(self.pool()).await?;
         Ok(())
     }
 
@@ -199,11 +168,12 @@ where
         user_id: Uuid,
     ) -> Result<Option<OrgMembership>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT org_id, user_id, role, created_at FROM org_memberships \
-             WHERE org_id = ? AND user_id = ?",
+            "SELECT ? AS org_id, principal_id AS user_id, role, created_at FROM role_assignments \
+             WHERE principal_kind = 'user' AND principal_id = ? AND scope_key = ?",
         ))
         .bind(org_id)
         .bind(user_id)
+        .bind(format!("organization:{org_id}"))
         .fetch_optional(self.pool())
         .await?;
         Ok(row.as_ref().map(mappers::row_to_org_membership))
@@ -211,9 +181,11 @@ where
 
     async fn list_org_members(&self, org_id: Uuid) -> Result<Vec<OrgMembership>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT org_id, user_id, role, created_at FROM org_memberships WHERE org_id = ?",
+            "SELECT ? AS org_id, principal_id AS user_id, role, created_at FROM role_assignments \
+             WHERE principal_kind = 'user' AND scope_key = ?",
         ))
         .bind(org_id)
+        .bind(format!("organization:{org_id}"))
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_org_membership).collect())
@@ -224,29 +196,36 @@ where
         user_id: Uuid,
     ) -> Result<Vec<(Organization, OrgRole)>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT o.id, o.name, o.slug, o.disabled, o.created_at, o.updated_at, m.role \
-             FROM organizations o \
-             INNER JOIN org_memberships m ON m.org_id = o.id \
-             WHERE m.user_id = ? \
-             ORDER BY o.name",
+            "SELECT scope_key, role FROM role_assignments \
+             WHERE principal_kind = 'user' AND principal_id = ? AND scope_key <> 'platform' \
+             ORDER BY scope_key",
         ))
         .bind(user_id)
         .fetch_all(self.pool())
         .await?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                let org = mappers::row_to_organization(row);
-                let role = OrgRole::from_str_lossy(&row.get::<String, _>("role"))
-                    .unwrap_or(OrgRole::Member);
-                (org, role)
-            })
-            .collect())
+        let mut memberships = Vec::new();
+        for row in rows {
+            let key = row.get::<String, _>("scope_key");
+            let Some(raw_id) = key.strip_prefix("organization:") else {
+                continue;
+            };
+            let Ok(org_id) = Uuid::parse_str(raw_id) else {
+                continue;
+            };
+            let Some(org) = self.fetch_org(org_id).await? else {
+                continue;
+            };
+            let role =
+                OrgRole::from_str_lossy(&row.get::<String, _>("role")).unwrap_or(OrgRole::Member);
+            memberships.push((org, role));
+        }
+        memberships.sort_by(|left, right| left.0.name.cmp(&right.0.name));
+        Ok(memberships)
     }
 
     async fn fetch_org_quota(&self, org_id: Uuid) -> Result<Option<OrgQuota>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT org_id, max_nodes_json, max_monthly_cents FROM org_quotas WHERE org_id = ?",
+            "SELECT id AS org_id, max_nodes_json, max_monthly_cents FROM organizations WHERE id = ?",
         ))
         .bind(org_id)
         .fetch_optional(self.pool())
@@ -257,18 +236,13 @@ where
     async fn upsert_org_quota(&self, quota: OrgQuota) -> Result<OrgQuota, SendableError> {
         let now = Utc::now().timestamp();
         let max_nodes_json = serde_json::to_string(&quota.max_nodes_per_kind)?;
-        let conflict = self.dialect().on_conflict_update(
-            "org_id",
-            &["max_nodes_json", "max_monthly_cents", "updated_at"],
-        );
-        sqlx::query(&self.render(&format!(
-            "INSERT INTO org_quotas (org_id, max_nodes_json, max_monthly_cents, updated_at) \
-             VALUES (?, ?, ?, ?) {conflict}",
-        )))
-        .bind(quota.org_id)
+        sqlx::query(&self.render(
+            "UPDATE organizations SET max_nodes_json = ?, max_monthly_cents = ?, updated_at = ? WHERE id = ?",
+        ))
         .bind(&max_nodes_json)
         .bind(quota.max_monthly_cents as i64)
         .bind(now)
+        .bind(quota.org_id)
         .execute(self.pool())
         .await?;
         Ok(quota)

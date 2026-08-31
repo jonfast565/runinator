@@ -12,7 +12,7 @@ use runinator_models::workflow_vm::{
 use runinator_store::roles::{NewWorkflowVmRun, WorkflowTimerInterrupt};
 
 const CONTINUATION_COLUMNS: &str = "id, workflow_run_id, module_version, continuation_json, status, version, ready_at, claimed_by, claimed_until, created_at, updated_at";
-const EFFECT_COLUMNS: &str = "id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, current_executor_replica_id, last_executor_replica_id, result_json, message, created_at, updated_at, finished_at";
+const EFFECT_COLUMNS: &str = "workflow_effects.id AS id, workflow_effects.version AS version, workflow_continuations.workflow_run_id AS workflow_run_id, workflow_effects.continuation_id AS continuation_id, workflow_effects.sequence AS sequence, workflow_effects.attempt AS attempt, workflow_effects.request_json AS request_json, workflow_effects.status AS status, workflow_effects.current_executor_replica_id AS current_executor_replica_id, workflow_effects.last_executor_replica_id AS last_executor_replica_id, workflow_effects.result_json AS result_json, workflow_effects.message AS message, workflow_effects.created_at AS created_at, workflow_effects.updated_at AS updated_at, workflow_effects.finished_at AS finished_at";
 const JOURNAL_COLUMNS: &str =
     "id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at";
 
@@ -101,7 +101,7 @@ where
         WorkflowStatus::Paused
     } else {
         let effects = sqlx::query(&store.render(
-            "SELECT request_json, status FROM workflow_effects WHERE workflow_run_id = ? AND status IN ('requested', 'running', 'input_required')",
+            "SELECT e.request_json, e.status FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id WHERE c.workflow_run_id = ? AND e.status IN ('requested', 'running', 'input_required')",
         ))
         .bind(workflow_run_id)
         .fetch_all(&mut **tx)
@@ -322,7 +322,7 @@ where
 
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(
-            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, created_at, name, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(run_id)
         .bind(workflow_id)
@@ -485,7 +485,7 @@ where
         effect_id: Uuid,
     ) -> Result<Option<WorkflowEffect>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE id = ?"
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects INNER JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_effects.id = ?"
         )))
         .bind(effect_id)
         .fetch_optional(self.pool())
@@ -500,7 +500,7 @@ where
         workflow_run_id: Uuid,
     ) -> Result<Vec<WorkflowEffect>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
-            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE workflow_run_id = ? ORDER BY created_at, id"
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects INNER JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_continuations.workflow_run_id = ? ORDER BY workflow_effects.created_at, workflow_effects.id"
         )))
         .bind(workflow_run_id)
         .fetch_all(self.pool())
@@ -513,7 +513,7 @@ where
         effect_id: Uuid,
     ) -> Result<Vec<WorkflowEffectOutputEvent>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT event_id, effect_id, workflow_run_id, continuation_id, attempt, output_json, created_at FROM workflow_effect_output_events WHERE effect_id = ? ORDER BY created_at, event_id",
+            "SELECT o.event_id, o.effect_id, c.workflow_run_id, e.continuation_id, o.attempt, o.output_json, o.created_at FROM workflow_effect_output_events o INNER JOIN workflow_effects e ON e.id = o.effect_id INNER JOIN workflow_continuations c ON c.id = e.continuation_id WHERE o.effect_id = ? ORDER BY o.created_at, o.event_id",
         ))
         .bind(effect_id)
         .fetch_all(self.pool())
@@ -550,16 +550,14 @@ where
         }
         let sql = self.dialect().insert_ignore(
             "workflow_effect_output_events",
-            "event_id, effect_id, workflow_run_id, continuation_id, attempt, output_json, created_at",
-            "?, ?, ?, ?, ?, ?, ?",
+            "event_id, effect_id, attempt, output_json, created_at",
+            "?, ?, ?, ?, ?",
             "event_id",
             None,
         );
         let inserted = sqlx::query(&self.render(&sql))
             .bind(event.event_id)
             .bind(event.effect_id)
-            .bind(event.workflow_run_id)
-            .bind(event.continuation_id)
             .bind(i64::from(event.attempt))
             .bind(serde_json::to_string(&event.output)?)
             .bind(event.created_at)
@@ -579,7 +577,7 @@ where
         };
         let mut tx = self.pool().begin().await?;
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE id = ?"
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects INNER JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_effects.id = ?"
         )))
         .bind(event.effect_id)
         .fetch_optional(&mut *tx)
@@ -599,16 +597,14 @@ where
         }
         let sql = self.dialect().insert_ignore(
             "workflow_effect_output_events",
-            "event_id, effect_id, workflow_run_id, continuation_id, attempt, output_json, created_at",
-            "?, ?, ?, ?, ?, ?, ?",
+            "event_id, effect_id, attempt, output_json, created_at",
+            "?, ?, ?, ?, ?",
             "event_id",
             None,
         );
         let inserted = sqlx::query(&self.render(&sql))
             .bind(event.event_id)
             .bind(event.effect_id)
-            .bind(event.workflow_run_id)
-            .bind(event.continuation_id)
             .bind(i64::from(event.attempt))
             .bind(serde_json::to_string(&event.output)?)
             .bind(event.created_at)
@@ -822,7 +818,7 @@ where
         }
         let mut tx = self.pool().begin().await?;
         let existing = sqlx::query(&self.render(&format!(
-            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE continuation_id = ? AND sequence = ?"
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects INNER JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_effects.continuation_id = ? AND workflow_effects.sequence = ?"
         )))
         .bind(effect.continuation_id)
         .bind(effect.sequence as i64)
@@ -852,11 +848,10 @@ where
             return Err(cas_error());
         }
         sqlx::query(&self.render(
-            "INSERT INTO workflow_effects (id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, current_executor_replica_id, last_executor_replica_id, result_json, message, idempotency_key, created_at, updated_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO workflow_effects (id, version, continuation_id, sequence, attempt, request_json, status, current_executor_replica_id, last_executor_replica_id, result_json, message, idempotency_key, created_at, updated_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(effect.id)
         .bind(i64::from(effect.version))
-        .bind(effect.workflow_run_id)
         .bind(effect.continuation_id)
         .bind(effect.sequence as i64)
         .bind(i64::from(effect.attempt))
@@ -1561,7 +1556,7 @@ where
     ) -> Result<bool, SendableError> {
         let mut tx = self.pool().begin().await?;
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE id = ?"
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects INNER JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_effects.id = ?"
         )))
         .bind(effect_id)
         .fetch_optional(&mut *tx)
@@ -1650,7 +1645,7 @@ where
         }
         let mut tx = self.pool().begin().await?;
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE id = ?"
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects INNER JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_effects.id = ?"
         )))
         .bind(effect_id)
         .fetch_optional(&mut *tx)
@@ -1862,7 +1857,7 @@ where
         let now = Utc::now().timestamp();
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(
-            "UPDATE workflow_effects SET status = 'canceled', message = ?, updated_at = ?, finished_at = ? WHERE workflow_run_id = ? AND status IN ('requested', 'running', 'input_required')",
+            "UPDATE workflow_effects SET status = 'canceled', message = ?, updated_at = ?, finished_at = ? WHERE continuation_id IN (SELECT id FROM workflow_continuations WHERE workflow_run_id = ?) AND status IN ('requested', 'running', 'input_required')",
         ))
         .bind(message.as_str())
         .bind(now)

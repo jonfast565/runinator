@@ -2,40 +2,6 @@
 -- All surrogate keys (primary/foreign/event ids) are UUIDs generated app-side. Columns that hold
 -- workflow graph node identifiers or external identity strings stay TEXT.
 
-CREATE TABLE IF NOT EXISTS runs (
-    id UUID PRIMARY KEY,
-    status TEXT NOT NULL,
-    parameters TEXT NOT NULL,
-    output_json TEXT NULL,
-    message TEXT NULL,
-    trigger TEXT NOT NULL,
-    started_at BIGINT NULL,
-    finished_at BIGINT NULL,
-    created_at BIGINT NOT NULL,
-    workflow_run_id UUID NULL,
-    workflow_node_id TEXT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_chunks (
-    id UUID PRIMARY KEY,
-    run_id UUID NOT NULL REFERENCES runs(id),
-    sequence BIGINT NOT NULL,
-    stream TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_artifacts (
-    id UUID PRIMARY KEY,
-    run_id UUID NOT NULL REFERENCES runs(id),
-    name TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    size_bytes BIGINT NOT NULL,
-    uri TEXT NOT NULL,
-    metadata TEXT NOT NULL,
-    created_at BIGINT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS workflows (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
@@ -68,7 +34,9 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     status TEXT NOT NULL,
     active_node_id TEXT NULL,
     parameters TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT '{}',
+    watch_fired BOOLEAN NOT NULL DEFAULT FALSE,
+    run_metadata_json TEXT NULL,
+    extra_json TEXT NOT NULL DEFAULT '{}',
     created_at BIGINT NOT NULL,
     started_at BIGINT NULL,
     finished_at BIGINT NULL,
@@ -204,8 +172,6 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-CREATE INDEX IF NOT EXISTS idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_workflows_name ON workflows(name);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_scheduler_claim ON workflow_runs(status, scheduler_claimed_until);

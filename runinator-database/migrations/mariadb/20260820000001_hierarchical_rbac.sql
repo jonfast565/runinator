@@ -2,35 +2,24 @@
 CREATE TABLE role_assignments (
     principal_kind VARCHAR(32) NOT NULL,
     principal_id BINARY(16) NOT NULL,
-    scope_kind VARCHAR(32) NOT NULL,
-    scope_id BINARY(16) NULL,
     scope_key VARCHAR(96) NOT NULL,
-    role_kind VARCHAR(32) NOT NULL,
     role VARCHAR(32) NOT NULL,
     created_by BINARY(16) NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     CHECK (principal_kind IN ('user', 'service')),
-    CHECK (scope_kind IN ('platform', 'organization', 'team')),
-    CHECK ((scope_kind = 'platform' AND scope_id IS NULL) OR (scope_kind <> 'platform' AND scope_id IS NOT NULL)),
-    CHECK ((role_kind = 'platform' AND role IN ('member', 'auditor', 'operator', 'admin'))
-        OR (role_kind IN ('organization', 'team') AND role IN ('member', 'operator', 'admin', 'owner'))),
-    CHECK (role_kind = scope_kind),
+    CHECK (scope_key = 'platform' OR scope_key LIKE 'organization:%' OR scope_key LIKE 'team:%'),
+    CHECK ((scope_key = 'platform' AND role IN ('member', 'auditor', 'operator', 'admin'))
+        OR (scope_key <> 'platform' AND role IN ('member', 'operator', 'admin', 'owner'))),
     PRIMARY KEY (principal_kind, principal_id, scope_key)
 );
 CREATE INDEX idx_role_assignments_principal ON role_assignments(principal_kind, principal_id);
 CREATE INDEX idx_role_assignments_scope ON role_assignments(scope_key);
 
 INSERT INTO role_assignments
-SELECT 'user', id, 'platform', NULL, 'platform', 'platform',
+SELECT 'user', id, 'platform',
        CASE WHEN is_admin THEN 'admin' ELSE 'member' END, NULL, created_at, updated_at
 FROM users WHERE disabled = 0;
-
-INSERT INTO role_assignments
-SELECT 'user', user_id, 'organization', org_id, CONCAT('organization:', LOWER(CONCAT(
-       SUBSTR(HEX(org_id),1,8),'-',SUBSTR(HEX(org_id),9,4),'-',SUBSTR(HEX(org_id),13,4),'-',SUBSTR(HEX(org_id),17,4),'-',SUBSTR(HEX(org_id),21,12)))),
-       'organization', role, NULL, created_at, created_at
-FROM org_memberships;
 
 CREATE TABLE service_accounts (
     id BINARY(16) PRIMARY KEY,
@@ -61,30 +50,6 @@ CREATE INDEX idx_api_keys_principal ON api_keys(principal_kind, principal_id);
 ALTER TABLE users DROP COLUMN is_admin;
 ALTER TABLE teams ADD COLUMN scope_kind VARCHAR(32) NOT NULL DEFAULT 'platform';
 ALTER TABLE teams ADD COLUMN scope_id BINARY(16) NULL;
-ALTER TABLE team_members ADD COLUMN role VARCHAR(32) NOT NULL DEFAULT 'member';
-
--- MariaDB does not permit a CTE before UPDATE.  The derived-table form works on both MariaDB and
--- MySQL while keeping the candidate and unambiguous-owner checks in one statement.
-UPDATE teams JOIN (
-    SELECT candidates.team_id, MIN(candidates.org_id) AS org_id
-    FROM (
-        SELECT tm.team_id, om.org_id
-        FROM team_members tm JOIN org_memberships om ON om.user_id = tm.user_id
-        GROUP BY tm.team_id, om.org_id
-        HAVING COUNT(DISTINCT tm.user_id) = (
-            SELECT COUNT(*) FROM team_members all_tm WHERE all_tm.team_id = tm.team_id
-        )
-    ) AS candidates
-    GROUP BY candidates.team_id
-    HAVING COUNT(*) = 1
-) AS unambiguous ON teams.id = unambiguous.team_id
-SET teams.scope_kind = 'organization', teams.scope_id = unambiguous.org_id;
-
-INSERT INTO role_assignments
-SELECT 'user', user_id, 'team', team_id, CONCAT('team:', LOWER(CONCAT(
-       SUBSTR(HEX(team_id),1,8),'-',SUBSTR(HEX(team_id),9,4),'-',SUBSTR(HEX(team_id),13,4),'-',SUBSTR(HEX(team_id),17,4),'-',SUBSTR(HEX(team_id),21,12)))),
-       'team', role, NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP()
-FROM team_members;
 
 CREATE TABLE resource_ownership (
     resource_type VARCHAR(64) NOT NULL,

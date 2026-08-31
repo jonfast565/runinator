@@ -1,17 +1,13 @@
 ALTER TABLE pipeline_runs ADD COLUMN orchestration_binding_id BLOB NULL;
 ALTER TABLE pipeline_runs ADD COLUMN execution_epoch INTEGER NULL;
 ALTER TABLE pipeline_runs ADD COLUMN start_member TEXT NULL;
-CREATE INDEX IF NOT EXISTS idx_pipeline_runs_orchestration
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_runs_orchestration
     ON pipeline_runs(orchestration_binding_id, execution_epoch);
 
 CREATE TABLE IF NOT EXISTS orchestration_bindings (
     id BLOB PRIMARY KEY,
     admission_id BLOB NOT NULL,
-    org_id BLOB NULL,
-    scope TEXT NOT NULL,
-    correlation_key TEXT NOT NULL,
     generation INTEGER NOT NULL,
-    pipeline_id BLOB NOT NULL,
     pipeline_revision INTEGER NOT NULL,
     pipeline_digest TEXT NOT NULL,
     policy TEXT NOT NULL,
@@ -32,13 +28,10 @@ CREATE TABLE IF NOT EXISTS orchestration_bindings (
     updated_at INTEGER NOT NULL,
     finished_at INTEGER NULL,
     FOREIGN KEY(admission_id) REFERENCES ingress_admissions(id) ON DELETE CASCADE,
-    FOREIGN KEY(pipeline_id) REFERENCES pipelines(id),
     UNIQUE(admission_id, generation)
 );
 CREATE INDEX IF NOT EXISTS idx_orchestration_bindings_claim
     ON orchestration_bindings(status, reducer_leased_until, updated_at);
-CREATE INDEX IF NOT EXISTS idx_orchestration_bindings_lookup
-    ON orchestration_bindings(org_id, scope, correlation_key, generation);
 
 CREATE TABLE IF NOT EXISTS orchestration_epochs (
     id BLOB PRIMARY KEY,

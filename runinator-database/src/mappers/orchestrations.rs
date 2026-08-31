@@ -33,12 +33,13 @@ fn status(raw: &str) -> Result<OrchestrationStatus, SendableError> {
 
 fallible_row_mapper!(row_to_orchestration_binding(row) -> OrchestrationBinding {
     let raw_policy = row.get::<String, _>("policy");
+    let org_scope = row.get::<String, _>("org_scope");
     let policy: OrchestrationPolicy = serde_json::from_str(&raw_policy)?;
     let budgets: BTreeMap<String, u32> = serde_json::from_str(&row.get::<String, _>("budgets"))?;
     Ok(OrchestrationBinding {
         id: row.get("id"),
         admission_id: row.get("admission_id"),
-        org_id: row.get("org_id"),
+        org_id: if org_scope.is_empty() { None } else { Some(Uuid::parse_str(&org_scope)?) },
         scope: row.get("scope"),
         correlation_key: row.get("correlation_key"),
         generation: row.get("generation"),

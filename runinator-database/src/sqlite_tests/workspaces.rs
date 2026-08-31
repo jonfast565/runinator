@@ -10,6 +10,12 @@ async fn workspace_allocation_and_transitions_are_idempotent_and_cas_guarded() {
     let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
     db.run_init_scripts(&Vec::new()).await.unwrap();
     let now = Utc::now();
+    let workflow_id = db
+        .insert_workflow(&workflow("workspace-target"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
     let admission_id = Uuid::now_v7();
     let admission = db
         .claim_ingress_admission(
@@ -20,8 +26,8 @@ async fn workspace_allocation_and_transitions_are_idempotent_and_cas_guarded() {
                 correlation_key: "job-42".into(),
                 generation: 1,
                 target: IngressTarget {
-                    kind: IngressTargetKind::Pipeline,
-                    id: Uuid::now_v7(),
+                    kind: IngressTargetKind::Workflow,
+                    id: workflow_id,
                 },
                 status: IngressAdmissionStatus::Active,
                 workflow_run_id: None,

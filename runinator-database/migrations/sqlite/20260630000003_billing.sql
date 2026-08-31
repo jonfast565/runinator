@@ -1,11 +1,4 @@
 -- per-org spending/scale quotas and an append-only usage ledger sampled from live node counts.
-CREATE TABLE IF NOT EXISTS org_quotas (
-    org_id BLOB PRIMARY KEY,
-    max_nodes_json TEXT NOT NULL DEFAULT '{}',
-    max_monthly_cents INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS org_usage_ledger (
     id BLOB PRIMARY KEY,
     org_id BLOB NOT NULL,

@@ -7,12 +7,11 @@
 ALTER TABLE pipeline_runs ADD COLUMN orchestration_binding_id BINARY(16) NULL;
 ALTER TABLE pipeline_runs ADD COLUMN execution_epoch BIGINT NULL;
 ALTER TABLE pipeline_runs ADD COLUMN start_member VARCHAR(255) NULL;
-CREATE INDEX idx_pipeline_runs_orchestration ON pipeline_runs(orchestration_binding_id, execution_epoch);
+CREATE UNIQUE INDEX idx_pipeline_runs_orchestration ON pipeline_runs(orchestration_binding_id, execution_epoch);
 
 CREATE TABLE orchestration_bindings (
-    id BINARY(16) PRIMARY KEY, admission_id BINARY(16) NOT NULL, org_id BINARY(16) NULL,
-    scope VARCHAR(255) NOT NULL, correlation_key VARCHAR(255) NOT NULL, generation BIGINT NOT NULL,
-    pipeline_id BINARY(16) NOT NULL, pipeline_revision BIGINT NOT NULL, pipeline_digest VARCHAR(80) NOT NULL,
+    id BINARY(16) PRIMARY KEY, admission_id BINARY(16) NOT NULL, generation BIGINT NOT NULL,
+    pipeline_revision BIGINT NOT NULL, pipeline_digest VARCHAR(80) NOT NULL,
     policy LONGTEXT NOT NULL, status VARCHAR(32) NOT NULL, current_phase VARCHAR(255) NULL,
     current_attempt BIGINT NOT NULL DEFAULT 0, current_epoch BIGINT NOT NULL DEFAULT 0,
     restart_member VARCHAR(255) NULL, resume_existing_epoch BOOLEAN NOT NULL DEFAULT FALSE,
@@ -21,10 +20,8 @@ CREATE TABLE orchestration_bindings (
     reducer_lease_owner VARCHAR(255) NULL, reducer_leased_until BIGINT NULL,
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, finished_at BIGINT NULL,
     CONSTRAINT fk_orchestration_admission FOREIGN KEY (admission_id) REFERENCES ingress_admissions(id) ON DELETE CASCADE,
-    CONSTRAINT fk_orchestration_pipeline FOREIGN KEY (pipeline_id) REFERENCES pipelines(id),
     UNIQUE KEY idx_orchestration_generation (admission_id, generation),
-    KEY idx_orchestration_bindings_claim (status, reducer_leased_until, updated_at),
-    KEY idx_orchestration_bindings_lookup (org_id, scope, correlation_key, generation)
+    KEY idx_orchestration_bindings_claim (status, reducer_leased_until, updated_at)
 );
 CREATE TABLE orchestration_epochs (
     id BINARY(16) PRIMARY KEY, binding_id BINARY(16) NOT NULL, epoch BIGINT NOT NULL,

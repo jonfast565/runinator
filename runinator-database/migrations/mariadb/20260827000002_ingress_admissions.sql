@@ -11,20 +11,23 @@
 CREATE TABLE IF NOT EXISTS ingress_admissions (
     id BINARY(16) PRIMARY KEY,
     org_scope VARCHAR(36) NOT NULL,
-    org_id BINARY(16) NULL,
     scope VARCHAR(255) NOT NULL,
     correlation_key VARCHAR(255) NOT NULL,
     generation BIGINT NOT NULL,
-    target_kind VARCHAR(16) NOT NULL,
-    target_id BINARY(16) NOT NULL,
+    workflow_id BINARY(16) NULL,
+    pipeline_id BINARY(16) NULL,
     status VARCHAR(16) NOT NULL,
     workflow_run_id BINARY(16) NULL,
     pipeline_run_id BINARY(16) NULL,
     policy LONGTEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
+    CONSTRAINT fk_ingress_admissions_workflow FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ingress_admissions_pipeline FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE,
+    CONSTRAINT chk_ingress_admissions_target CHECK ((workflow_id IS NOT NULL) <> (pipeline_id IS NOT NULL)),
     UNIQUE KEY idx_ingress_admissions_key (org_scope, scope, correlation_key),
-    KEY idx_ingress_admissions_target (target_kind, target_id)
+    KEY idx_ingress_admissions_workflow (workflow_id),
+    KEY idx_ingress_admissions_pipeline (pipeline_id)
 );
 CREATE TABLE IF NOT EXISTS ingress_events (
     id BINARY(16) PRIMARY KEY, admission_id BINARY(16) NOT NULL,

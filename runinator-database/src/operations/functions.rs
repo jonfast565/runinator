@@ -13,7 +13,7 @@ const FUNCTION_VERSION_COLUMNS: &str =
 const FUNCTION_EXPORT_COLUMNS: &str =
     "id, version_id, name, handler, description, input, output, limits";
 const FUNCTION_ALIAS_COLUMNS: &str =
-    "id, package_id, name, version_id, version, created_at, updated_at";
+    "a.id, a.package_id, a.name, a.version_id, v.version, a.created_at, a.updated_at";
 const FUNCTION_ARTIFACT_COLUMNS: &str = "digest, size_bytes, uri, media_type, created_at";
 const FUNCTION_ADAPTER_COLUMNS: &str = "id, export_id, workflow_id, created_at";
 
@@ -222,15 +222,14 @@ where
         if let Some(alias) = &request.alias {
             let alias_conflict = self
                 .dialect()
-                .on_conflict_update("package_id, name", &["version_id", "version", "updated_at"]);
+                .on_conflict_update("package_id, name", &["version_id", "updated_at"]);
             sqlx::query(&self.render(&format!(
-                "INSERT INTO function_aliases ({FUNCTION_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?) {alias_conflict}"
+                "INSERT INTO function_aliases (id, package_id, name, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) {alias_conflict}"
             )))
             .bind(Uuid::now_v7())
             .bind(package_id)
             .bind(alias.as_str())
             .bind(version_id)
-            .bind(next_version)
             .bind(now)
             .bind(now)
             .execute(&mut *tx)
@@ -416,7 +415,7 @@ where
     ) -> Result<FunctionAlias, SendableError> {
         // the alias records the version *number* too, so a listing can show `production -> 3`
         // without a join; read it from the version rather than trusting a caller-supplied one.
-        let version: i64 = sqlx::query_scalar(
+        let _: i64 = sqlx::query_scalar(
             &self.render("SELECT version FROM function_versions WHERE id = ? AND package_id = ?"),
         )
         .bind(version_id)
@@ -432,15 +431,14 @@ where
         let now = Utc::now().timestamp();
         let conflict = self
             .dialect()
-            .on_conflict_update("package_id, name", &["version_id", "version", "updated_at"]);
+            .on_conflict_update("package_id, name", &["version_id", "updated_at"]);
         sqlx::query(&self.render(&format!(
-            "INSERT INTO function_aliases ({FUNCTION_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?) {conflict}"
+            "INSERT INTO function_aliases (id, package_id, name, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) {conflict}"
         )))
         .bind(Uuid::now_v7())
         .bind(package_id)
         .bind(name)
         .bind(version_id)
-        .bind(version)
         .bind(now)
         .bind(now)
         .execute(self.pool())
@@ -456,7 +454,7 @@ where
         package_id: Uuid,
     ) -> Result<Vec<FunctionAlias>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
-            "SELECT {FUNCTION_ALIAS_COLUMNS} FROM function_aliases WHERE package_id = ? ORDER BY name"
+            "SELECT {FUNCTION_ALIAS_COLUMNS} FROM function_aliases a INNER JOIN function_versions v ON v.id = a.version_id WHERE a.package_id = ? ORDER BY a.name"
         )))
         .bind(package_id)
         .fetch_all(self.pool())
@@ -470,7 +468,7 @@ where
         name: &str,
     ) -> Result<Option<FunctionAlias>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
-            "SELECT {FUNCTION_ALIAS_COLUMNS} FROM function_aliases WHERE package_id = ? AND name = ?"
+            "SELECT {FUNCTION_ALIAS_COLUMNS} FROM function_aliases a INNER JOIN function_versions v ON v.id = a.version_id WHERE a.package_id = ? AND a.name = ?"
         )))
         .bind(package_id)
         .bind(name)

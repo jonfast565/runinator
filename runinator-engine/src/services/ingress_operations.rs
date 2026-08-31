@@ -241,14 +241,44 @@ impl<T: IngressStore + RuntimeStore> IngressOperations<T> {
 mod tests {
     use super::*;
     use runinator_database::sqlite::SqliteDb;
-    use runinator_models::orchestration::{IngressRoute, IngressTargetKind};
-    use runinator_store::DatabaseImpl;
+    use runinator_models::{
+        orchestration::{IngressRoute, IngressTargetKind},
+        pipelines::{PIPELINE_GRAPH_VERSION, Pipeline, PipelineDefaults, PipelineGraph},
+        schedules::WorkflowConcurrency,
+    };
+    use runinator_store::{DatabaseImpl, roles::DefinitionStore};
+
+    fn pipeline(name: &str) -> Pipeline {
+        Pipeline {
+            id: None,
+            name: name.into(),
+            key: Some(name.into()),
+            namespace: Some("runinator.tests".into()),
+            description: None,
+            org_id: None,
+            graph: PipelineGraph {
+                version: PIPELINE_GRAPH_VERSION,
+                ..Default::default()
+            },
+            concurrency: WorkflowConcurrency::default(),
+            defaults: PipelineDefaults::default(),
+            metadata: Value::default(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
 
     #[tokio::test]
     async fn one_unbound_start_claim_wins_for_a_shared_scope_and_key() {
         let path = std::env::temp_dir().join(format!("runinator-ingress-{}.db", Uuid::new_v4()));
         let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
         db.run_init_scripts(&Vec::new()).await.unwrap();
+        let pipeline_id = db
+            .upsert_pipeline(&pipeline("ingress_claim"))
+            .await
+            .unwrap()
+            .id
+            .unwrap();
         let service = IngressOperations::new(db);
         let policy = IngressPolicy {
             scope: "release.lifecycle".into(),
@@ -280,7 +310,7 @@ mod tests {
         };
         let target = IngressTarget {
             kind: IngressTargetKind::Pipeline,
-            id: Uuid::now_v7(),
+            id: pipeline_id,
         };
         let admission_id = match service
             .claim_start(None, target.clone(), policy.clone(), &event)
@@ -349,6 +379,12 @@ mod tests {
             std::env::temp_dir().join(format!("runinator-ingress-fifo-{}.db", Uuid::new_v4()));
         let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
         db.run_init_scripts(&Vec::new()).await.unwrap();
+        let pipeline_id = db
+            .upsert_pipeline(&pipeline("ingress_fifo"))
+            .await
+            .unwrap()
+            .id
+            .unwrap();
         let service = IngressOperations::new(db.clone());
         let policy = IngressPolicy {
             scope: "deploy.lifecycle".into(),
@@ -380,7 +416,7 @@ mod tests {
         };
         let target = IngressTarget {
             kind: IngressTargetKind::Pipeline,
-            id: Uuid::now_v7(),
+            id: pipeline_id,
         };
         let admission = match service
             .claim_start(None, target, policy, &initial)

@@ -366,18 +366,6 @@ async fn mark_all<T: ArchiveStore>(
 ) -> Result<u64, SendableError> {
     let policies: [(ArchiveTable, Option<Duration>); ArchiveTable::ALL.len()] = [
         (
-            ArchiveTable::RunChunks,
-            retention(policy.workflow_run_retention_seconds),
-        ),
-        (
-            ArchiveTable::RunArtifacts,
-            retention(policy.workflow_run_retention_seconds),
-        ),
-        (
-            ArchiveTable::Runs,
-            retention(policy.workflow_run_retention_seconds),
-        ),
-        (
             ArchiveTable::WorkflowEffectOutputEvents,
             retention(policy.workflow_run_retention_seconds),
         ),

@@ -6,7 +6,7 @@ use runinator_models::orchestration::{
     IngressEventRecord, IngressPromotion, IngressQueueState,
 };
 
-const INGRESS_ADMISSION_COLUMNS: &str = "id, org_id, scope, correlation_key, generation, target_kind, target_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at";
+const INGRESS_ADMISSION_COLUMNS: &str = "id, org_scope, scope, correlation_key, generation, workflow_id, pipeline_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at";
 const INGRESS_EVENT_COLUMNS: &str = "id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state, claim_token, promoted_generation, workflow_run_id, pipeline_run_id";
 
 fn disposition_name(value: IngressEventDisposition) -> &'static str {
@@ -114,33 +114,36 @@ where
             .org_id
             .map(|id| id.to_string())
             .unwrap_or_default();
-        let target_kind = match admission.target.kind {
-            runinator_models::orchestration::IngressTargetKind::Workflow => "workflow",
-            runinator_models::orchestration::IngressTargetKind::Pipeline => "pipeline",
+        let (workflow_id, pipeline_id) = match admission.target.kind {
+            runinator_models::orchestration::IngressTargetKind::Workflow => {
+                (Some(admission.target.id), None)
+            }
+            runinator_models::orchestration::IngressTargetKind::Pipeline => {
+                (None, Some(admission.target.id))
+            }
         };
         let status = match admission.status {
             runinator_models::orchestration::IngressAdmissionStatus::Active => "active",
             runinator_models::orchestration::IngressAdmissionStatus::Terminal => "terminal",
         };
         let sql = if self.dialect() == SqlDialect::MariaDb {
-            "INSERT INTO ingress_admissions (id, org_scope, org_id, scope, correlation_key, generation, target_kind, target_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO ingress_admissions (id, org_scope, scope, correlation_key, generation, workflow_id, pipeline_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE id = id"
         } else {
-            "INSERT INTO ingress_admissions (id, org_scope, org_id, scope, correlation_key, generation, target_kind, target_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO ingress_admissions (id, org_scope, scope, correlation_key, generation, workflow_id, pipeline_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(org_scope, scope, correlation_key) DO NOTHING"
         };
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(sql))
             .bind(id)
             .bind(org_scope.clone())
-            .bind(admission.org_id)
             .bind(admission.scope.as_str())
             .bind(admission.correlation_key.as_str())
             .bind(admission.generation)
-            .bind(target_kind)
-            .bind(admission.target.id)
+            .bind(workflow_id)
+            .bind(pipeline_id)
             .bind(status)
             .bind(admission.workflow_run_id)
             .bind(admission.pipeline_run_id)
@@ -321,7 +324,7 @@ where
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, SendableError> {
         Ok(sqlx::query(&self.render(
-            "UPDATE ingress_admissions SET workflow_run_id = ?, updated_at = ? WHERE id = ? AND target_kind = 'workflow' AND status = 'active' AND workflow_run_id IS NULL",
+            "UPDATE ingress_admissions SET workflow_run_id = ?, updated_at = ? WHERE id = ? AND workflow_id IS NOT NULL AND status = 'active' AND workflow_run_id IS NULL",
         ))
         .bind(workflow_run_id)
         .bind(now.timestamp())
@@ -339,7 +342,7 @@ where
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, SendableError> {
         Ok(sqlx::query(&self.render(
-            "UPDATE ingress_admissions SET pipeline_run_id = ?, updated_at = ? WHERE id = ? AND target_kind = 'pipeline' AND status = 'active' AND pipeline_run_id IS NULL",
+            "UPDATE ingress_admissions SET pipeline_run_id = ?, updated_at = ? WHERE id = ? AND pipeline_id IS NOT NULL AND status = 'active' AND pipeline_run_id IS NULL",
         ))
         .bind(pipeline_run_id)
         .bind(now.timestamp())
@@ -587,13 +590,13 @@ where
         .bind(event.payload.to_string()).bind(event.provenance.to_string())
         .bind(event.occurred_at.map(|value| value.timestamp()))
         .bind(now.timestamp()).execute(&mut *tx).await?;
-        let target_kind = match target.kind {
-            runinator_models::orchestration::IngressTargetKind::Workflow => "workflow",
-            runinator_models::orchestration::IngressTargetKind::Pipeline => "pipeline",
+        let (workflow_id, pipeline_id) = match target.kind {
+            runinator_models::orchestration::IngressTargetKind::Workflow => (Some(target.id), None),
+            runinator_models::orchestration::IngressTargetKind::Pipeline => (None, Some(target.id)),
         };
         let updated = sqlx::query(&self.render(
-            "UPDATE ingress_admissions SET generation = ?, target_kind = ?, target_id = ?, status = 'active', workflow_run_id = NULL, pipeline_run_id = NULL, policy = ?, updated_at = ? WHERE id = ? AND generation = ? AND status = 'terminal'",
-        )).bind(next_generation).bind(target_kind).bind(target.id).bind(policy.to_string())
+            "UPDATE ingress_admissions SET generation = ?, workflow_id = ?, pipeline_id = ?, status = 'active', workflow_run_id = NULL, pipeline_run_id = NULL, policy = ?, updated_at = ? WHERE id = ? AND generation = ? AND status = 'terminal'",
+        )).bind(next_generation).bind(workflow_id).bind(pipeline_id).bind(policy.to_string())
         .bind(now.timestamp()).bind(admission_id).bind(expected_generation)
         .execute(&mut *tx).await?;
         if updated.affected() == 0 {

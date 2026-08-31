@@ -4,15 +4,8 @@ CREATE TABLE IF NOT EXISTS organizations (
     name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
     disabled BOOL NOT NULL,
+    max_nodes_json TEXT NOT NULL DEFAULT '{}',
+    max_monthly_cents INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS org_memberships (
-    org_id BLOB NOT NULL,
-    user_id BLOB NOT NULL,
-    role TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (org_id, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON org_memberships(user_id);

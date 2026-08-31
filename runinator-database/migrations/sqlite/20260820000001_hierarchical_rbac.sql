@@ -2,36 +2,25 @@
 CREATE TABLE role_assignments (
     principal_kind TEXT NOT NULL,
     principal_id BLOB NOT NULL,
-    scope_kind TEXT NOT NULL,
-    scope_id BLOB NULL,
     scope_key TEXT NOT NULL,
-    role_kind TEXT NOT NULL,
     role TEXT NOT NULL,
     created_by BLOB NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     CHECK (principal_kind IN ('user', 'service')),
-    CHECK (scope_kind IN ('platform', 'organization', 'team')),
-    CHECK ((scope_kind = 'platform' AND scope_id IS NULL) OR (scope_kind <> 'platform' AND scope_id IS NOT NULL)),
-    CHECK ((role_kind = 'platform' AND role IN ('member', 'auditor', 'operator', 'admin'))
-        OR (role_kind IN ('organization', 'team') AND role IN ('member', 'operator', 'admin', 'owner'))),
-    CHECK (role_kind = scope_kind),
+    CHECK (scope_key = 'platform' OR scope_key LIKE 'organization:%' OR scope_key LIKE 'team:%'),
+    CHECK ((scope_key = 'platform' AND role IN ('member', 'auditor', 'operator', 'admin'))
+        OR (scope_key <> 'platform' AND role IN ('member', 'operator', 'admin', 'owner'))),
     PRIMARY KEY (principal_kind, principal_id, scope_key)
 );
 CREATE INDEX idx_role_assignments_principal ON role_assignments(principal_kind, principal_id);
 CREATE INDEX idx_role_assignments_scope ON role_assignments(scope_key);
 
 INSERT INTO role_assignments
-    (principal_kind, principal_id, scope_kind, scope_id, scope_key, role_kind, role, created_by, created_at, updated_at)
-SELECT 'user', id, 'platform', NULL, 'platform', 'platform',
+    (principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at)
+SELECT 'user', id, 'platform',
        CASE WHEN is_admin THEN 'admin' ELSE 'member' END, NULL, created_at, updated_at
 FROM users WHERE disabled = 0;
-
-INSERT INTO role_assignments
-SELECT 'user', user_id, 'organization', org_id, 'organization:' || lower(
-       substr(hex(org_id),1,8)||'-'||substr(hex(org_id),9,4)||'-'||substr(hex(org_id),13,4)||'-'||substr(hex(org_id),17,4)||'-'||substr(hex(org_id),21,12)),
-       'organization', role, NULL, created_at, created_at
-FROM org_memberships;
 
 CREATE TABLE service_accounts (
     id BLOB PRIMARY KEY,
@@ -64,25 +53,6 @@ ALTER TABLE users DROP COLUMN is_admin;
 
 ALTER TABLE teams ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'platform';
 ALTER TABLE teams ADD COLUMN scope_id BLOB NULL;
-ALTER TABLE team_members ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
-
-WITH candidates AS (
-    SELECT tm.team_id, om.org_id
-    FROM team_members tm JOIN org_memberships om ON om.user_id = tm.user_id
-    GROUP BY tm.team_id, om.org_id
-    HAVING COUNT(DISTINCT tm.user_id) = (SELECT COUNT(*) FROM team_members all_tm WHERE all_tm.team_id = tm.team_id)
-), unambiguous AS (
-    SELECT team_id, MIN(org_id) AS org_id FROM candidates GROUP BY team_id HAVING COUNT(*) = 1
-)
-UPDATE teams SET scope_kind = 'organization', scope_id = (
-    SELECT org_id FROM unambiguous WHERE unambiguous.team_id = teams.id
-) WHERE id IN (SELECT team_id FROM unambiguous);
-
-INSERT INTO role_assignments
-SELECT 'user', user_id, 'team', team_id, 'team:' || lower(
-       substr(hex(team_id),1,8)||'-'||substr(hex(team_id),9,4)||'-'||substr(hex(team_id),13,4)||'-'||substr(hex(team_id),17,4)||'-'||substr(hex(team_id),21,12)),
-       'team', role, NULL, strftime('%s','now'), strftime('%s','now')
-FROM team_members;
 
 CREATE TABLE resource_ownership (
     resource_type TEXT NOT NULL,

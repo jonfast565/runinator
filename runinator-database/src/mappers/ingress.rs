@@ -1,10 +1,13 @@
 use super::*;
 
 fallible_row_mapper!(row_to_ingress_admission(row) -> IngressAdmission {
-    let target_kind = match row.get::<String, _>("target_kind").as_str() {
-        "workflow" => IngressTargetKind::Workflow,
-        "pipeline" => IngressTargetKind::Pipeline,
-        value => return Err(Box::new(std::io::Error::other(format!("invalid ingress target kind '{value}'")))),
+    let workflow_id = row.get::<Option<Uuid>, _>("workflow_id");
+    let pipeline_id = row.get::<Option<Uuid>, _>("pipeline_id");
+    let org_scope = row.get::<String, _>("org_scope");
+    let target = match (workflow_id, pipeline_id) {
+        (Some(id), None) => IngressTarget { kind: IngressTargetKind::Workflow, id },
+        (None, Some(id)) => IngressTarget { kind: IngressTargetKind::Pipeline, id },
+        _ => return Err(Box::new(std::io::Error::other("invalid ingress target identity"))),
     };
     let status = match row.get::<String, _>("status").as_str() {
         "active" => IngressAdmissionStatus::Active,
@@ -13,11 +16,11 @@ fallible_row_mapper!(row_to_ingress_admission(row) -> IngressAdmission {
     };
     Ok(IngressAdmission {
         id: Some(row.get("id")),
-        org_id: row.get("org_id"),
+        org_id: if org_scope.is_empty() { None } else { Some(Uuid::parse_str(&org_scope)?) },
         scope: row.get("scope"),
         correlation_key: row.get("correlation_key"),
         generation: row.get("generation"),
-        target: IngressTarget { kind: target_kind, id: row.get("target_id") },
+        target,
         status,
         workflow_run_id: row.get("workflow_run_id"),
         pipeline_run_id: row.get("pipeline_run_id"),

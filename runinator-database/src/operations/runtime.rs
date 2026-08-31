@@ -277,11 +277,10 @@ where
         let has_state = state.is_some();
         let mut tx = self.pool().begin().await?;
         let updated = sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = CASE WHEN ? THEN '{}' ELSE state END, state_version = CASE WHEN ? THEN state_version + 1 ELSE state_version END, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')",
+                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state_version = CASE WHEN ? THEN state_version + 1 ELSE state_version END, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')",
                 ))
                 .bind(status.as_str())
                 .bind(active_node_id)
-                .bind(has_state)
                 .bind(has_state)
                 .bind(message)
                 .bind(status.as_str())
@@ -313,7 +312,7 @@ where
         let terminal = status.is_terminal();
         let mut tx = self.pool().begin().await?;
         let result = sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = '{}', state_version = state_version + 1, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND state_version = ?",
+                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state_version = state_version + 1, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND state_version = ?",
                 ))
                 .bind(status.as_str())
                 .bind(active_node_id)
@@ -343,7 +342,7 @@ where
     ) -> Result<bool, SendableError> {
         let mut tx = self.pool().begin().await?;
         let result = sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET state = '{}', state_version = state_version + 1 WHERE id = ? AND state_version = ?",
+                    "UPDATE workflow_runs SET state_version = state_version + 1 WHERE id = ? AND state_version = ?",
                 ))
                 .bind(workflow_run_id)
                 .bind(expected_version)
@@ -1013,7 +1012,7 @@ where
         let created_at = Utc::now().timestamp();
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(
-            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(id)
         .bind(workflow_id)

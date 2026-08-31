@@ -4,40 +4,6 @@
 -- node identifiers or external identity strings stay TEXT/VARCHAR; VARCHAR is used where a column is
 -- a primary key, unique, indexed, or foreign key (MySQL cannot index a bare TEXT without a prefix).
 
-CREATE TABLE IF NOT EXISTS runs (
-    id BINARY(16) PRIMARY KEY,
-    status VARCHAR(64) NOT NULL,
-    parameters LONGTEXT NOT NULL,
-    output_json LONGTEXT NULL,
-    message TEXT NULL,
-    `trigger` TEXT NOT NULL,
-    started_at BIGINT NULL,
-    finished_at BIGINT NULL,
-    created_at BIGINT NOT NULL,
-    workflow_run_id BINARY(16) NULL,
-    workflow_node_id TEXT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_chunks (
-    id BINARY(16) PRIMARY KEY,
-    run_id BINARY(16) NOT NULL REFERENCES runs(id),
-    sequence BIGINT NOT NULL,
-    stream TEXT NOT NULL,
-    content LONGTEXT NOT NULL,
-    created_at BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_artifacts (
-    id BINARY(16) PRIMARY KEY,
-    run_id BINARY(16) NOT NULL REFERENCES runs(id),
-    name TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    size_bytes BIGINT NOT NULL,
-    uri TEXT NOT NULL,
-    metadata LONGTEXT NOT NULL,
-    created_at BIGINT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS workflows (
     id BINARY(16) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -70,7 +36,9 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     status VARCHAR(64) NOT NULL,
     active_node_id TEXT NULL,
     parameters LONGTEXT NOT NULL,
-    state LONGTEXT NOT NULL,
+    watch_fired TINYINT(1) NOT NULL DEFAULT 0,
+    run_metadata_json LONGTEXT NULL,
+    extra_json LONGTEXT NOT NULL DEFAULT '{}',
     created_at BIGINT NOT NULL,
     started_at BIGINT NULL,
     finished_at BIGINT NULL,
@@ -206,8 +174,6 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX idx_notifications_unread ON notifications(read_at, created_at);
-CREATE INDEX idx_runs_status ON runs(status);
-CREATE INDEX idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
 CREATE INDEX idx_workflows_name ON workflows(name);
 CREATE INDEX idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX idx_workflow_runs_scheduler_claim ON workflow_runs(status, scheduler_claimed_until);

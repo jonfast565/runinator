@@ -5,13 +5,6 @@ CREATE TABLE IF NOT EXISTS teams (
     created_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS team_members (
-    team_id BLOB NOT NULL,
-    user_id BLOB NOT NULL,
-    PRIMARY KEY (team_id, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
-
 CREATE TABLE IF NOT EXISTS resource_grants (
     id BLOB PRIMARY KEY,
     resource_type TEXT NOT NULL,

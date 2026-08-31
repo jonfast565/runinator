@@ -22,6 +22,67 @@ use std::collections::BTreeSet;
 const UNINDEXED_ALLOWED: &[(&str, &str, &str)] = &[];
 
 #[tokio::test]
+async fn consolidated_schema_keeps_the_bcnf_table_budget() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-schema-budget-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let schema_tables = tables(&db).await;
+    assert_eq!(
+        schema_tables.len(),
+        79,
+        "the greenfield schema table budget changed"
+    );
+    for removed in [
+        "runs",
+        "run_chunks",
+        "run_artifacts",
+        "org_memberships",
+        "team_members",
+        "org_quotas",
+        "workflow_run_execution_states",
+    ] {
+        assert!(
+            !schema_tables.iter().any(|table| table == removed),
+            "legacy table {removed} was reintroduced"
+        );
+    }
+
+    let admission_columns = table_columns(&db, "ingress_admissions").await;
+    assert!(admission_columns.contains("workflow_id"));
+    assert!(admission_columns.contains("pipeline_id"));
+    assert!(!admission_columns.contains("target_kind"));
+    assert!(!admission_columns.contains("target_id"));
+
+    let binding_columns = table_columns(&db, "orchestration_bindings").await;
+    for derived in ["org_id", "scope", "correlation_key", "pipeline_id"] {
+        assert!(
+            !binding_columns.contains(derived),
+            "derived binding column {derived} was reintroduced"
+        );
+    }
+    assert!(
+        !table_columns(&db, "orchestration_correlation_aliases")
+            .await
+            .contains("generation")
+    );
+
+    let indexes = sqlx::query("PRAGMA index_list(\"pipeline_runs\")")
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+    assert!(indexes.iter().any(|row| {
+        row.get::<String, _>("name") == "idx_pipeline_runs_orchestration"
+            && row.get::<i64, _>("unique") == 1
+    }));
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn every_foreign_key_column_leads_an_index() {
     let path = std::env::temp_dir().join(format!(
         "runinator-schema-{}.db",
@@ -94,6 +155,16 @@ async fn tables(db: &SqliteDb) -> Vec<String> {
     .await
     .unwrap();
     rows.iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect()
+}
+
+async fn table_columns(db: &SqliteDb, table: &str) -> BTreeSet<String> {
+    sqlx::query(&format!("PRAGMA table_info(\"{table}\")"))
+        .fetch_all(db.pool())
+        .await
+        .unwrap()
+        .iter()
         .map(|row| row.get::<String, _>("name"))
         .collect()
 }

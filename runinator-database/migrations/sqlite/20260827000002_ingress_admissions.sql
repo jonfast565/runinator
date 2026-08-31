@@ -3,21 +3,24 @@
 CREATE TABLE IF NOT EXISTS ingress_admissions (
     id BLOB PRIMARY KEY,
     org_scope TEXT NOT NULL,
-    org_id BLOB NULL,
     scope TEXT NOT NULL,
     correlation_key TEXT NOT NULL,
     generation INTEGER NOT NULL,
-    target_kind TEXT NOT NULL,
-    target_id BLOB NOT NULL,
+    workflow_id BLOB NULL,
+    pipeline_id BLOB NULL,
     status TEXT NOT NULL,
     workflow_run_id BLOB NULL,
     pipeline_run_id BLOB NULL,
     policy TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
+    FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+    FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE,
+    CHECK ((workflow_id IS NOT NULL) <> (pipeline_id IS NOT NULL)),
     UNIQUE(org_scope, scope, correlation_key)
 );
-CREATE INDEX IF NOT EXISTS idx_ingress_admissions_target ON ingress_admissions(target_kind, target_id);
+CREATE INDEX IF NOT EXISTS idx_ingress_admissions_workflow ON ingress_admissions(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_ingress_admissions_pipeline ON ingress_admissions(pipeline_id);
 
 CREATE TABLE IF NOT EXISTS ingress_events (
     id BLOB PRIMARY KEY,

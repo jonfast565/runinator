@@ -9,6 +9,15 @@ fn scope_key(scope: ScopeRef) -> String {
     }
 }
 
+fn scope_from_key(key: &str) -> Option<ScopeRef> {
+    if key == "platform" {
+        return Some(ScopeRef::PLATFORM);
+    }
+    let (kind, id) = key.split_once(':')?;
+    let kind = ScopeKind::from_str_lossy(kind)?;
+    ScopeRef::new(kind, Uuid::parse_str(id).ok())
+}
+
 fn invalid_rbac(message: impl Into<String>) -> SendableError {
     Box::new(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
@@ -106,9 +115,9 @@ where
             }
             let orphaned_scopes: i64 = sqlx::query_scalar(&self.render(
                 "SELECT COUNT(*) FROM role_assignments target WHERE target.principal_kind = 'service' AND target.principal_id = ? \
-                 AND ((target.role_kind = 'platform' AND target.role = 'admin') OR (target.role_kind IN ('organization', 'team') AND target.role = 'owner')) \
+                 AND ((target.scope_key = 'platform' AND target.role = 'admin') OR (target.scope_key <> 'platform' AND target.role = 'owner')) \
                  AND NOT EXISTS (SELECT 1 FROM role_assignments other WHERE other.scope_key = target.scope_key \
-                   AND other.role_kind = target.role_kind AND other.role = target.role \
+                   AND other.role = target.role \
                    AND (other.principal_kind <> target.principal_kind OR other.principal_id <> target.principal_id) AND (\
                      (other.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = other.principal_id AND u.disabled = ?)) OR \
                      (other.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = other.principal_id AND s.disabled = ?))))",
@@ -178,7 +187,7 @@ where
             .await?;
         }
         let current = sqlx::query(&self.render(
-            "SELECT role_kind, role FROM role_assignments WHERE principal_kind = ? AND principal_id = ? AND scope_key = ?",
+            "SELECT role FROM role_assignments WHERE principal_kind = ? AND principal_id = ? AND scope_key = ?",
         ))
         .bind(principal_kind.as_str())
         .bind(principal_id)
@@ -186,19 +195,16 @@ where
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(row) = current {
-            let old_kind: String = row.try_get("role_kind")?;
             let old_role: String = row.try_get("role")?;
-            let was_protected = (old_kind == "platform" && old_role == "admin")
-                || (old_kind == "organization" && old_role == "owner")
-                || (old_kind == "team" && old_role == "owner");
-            if was_protected && (old_kind != role.kind_str() || old_role != role.as_str()) {
+            let was_protected = (key == "platform" && old_role == "admin")
+                || (key != "platform" && old_role == "owner");
+            if was_protected && old_role != role.as_str() {
                 let count: i64 = sqlx::query_scalar(&self.render(
-                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role_kind = ? AND role = ? AND (\
+                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role = ? AND (\
                      (r.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = r.principal_id AND u.disabled = ?)) OR \
                      (r.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = r.principal_id AND s.disabled = ?)))",
                 ))
                 .bind(&key)
-                .bind(&old_kind)
                 .bind(&old_role)
                 .bind(false)
                 .bind(false)
@@ -213,18 +219,15 @@ where
         }
         let conflict = self.dialect().on_conflict_update(
             "principal_kind, principal_id, scope_key",
-            &["role_kind", "role", "created_by", "updated_at"],
+            &["role", "created_by", "updated_at"],
         );
         sqlx::query(&self.render(&format!(
-            "INSERT INTO role_assignments (principal_kind, principal_id, scope_kind, scope_id, scope_key, role_kind, role, created_by, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+            "INSERT INTO role_assignments (principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) {conflict}",
         )))
         .bind(principal_kind.as_str())
         .bind(principal_id)
-        .bind(scope.kind.as_str())
-        .bind(scope.id)
         .bind(&key)
-        .bind(role.kind_str())
         .bind(role.as_str())
         .bind(created_by)
         .bind(now)
@@ -233,7 +236,7 @@ where
         .await?;
 
         let row = sqlx::query(&self.render(
-            "SELECT principal_kind, principal_id, scope_kind, scope_id, role_kind, role, created_by, created_at, updated_at \
+            "SELECT principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at \
              FROM role_assignments WHERE principal_kind = ? AND principal_id = ? AND scope_key = ?",
         ))
         .bind(principal_kind.as_str())
@@ -272,7 +275,7 @@ where
             .await?;
         }
         let current = sqlx::query(&self.render(
-            "SELECT role_kind, role FROM role_assignments WHERE principal_kind = ? AND principal_id = ? AND scope_key = ?",
+            "SELECT role FROM role_assignments WHERE principal_kind = ? AND principal_id = ? AND scope_key = ?",
         ))
         .bind(principal_kind.as_str())
         .bind(principal_id)
@@ -280,19 +283,16 @@ where
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(row) = current {
-            let role_kind: String = row.try_get("role_kind")?;
             let role: String = row.try_get("role")?;
-            let protected = (role_kind == "platform" && role == "admin")
-                || (role_kind == "organization" && role == "owner")
-                || (role_kind == "team" && role == "owner");
+            let protected =
+                (key == "platform" && role == "admin") || (key != "platform" && role == "owner");
             if protected {
                 let count: i64 = sqlx::query_scalar(&self.render(
-                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role_kind = ? AND role = ? AND (\
+                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role = ? AND (\
                      (r.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = r.principal_id AND u.disabled = ?)) OR \
                      (r.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = r.principal_id AND s.disabled = ?)))",
                 ))
                 .bind(&key)
-                .bind(&role_kind)
                 .bind(&role)
                 .bind(false)
                 .bind(false)
@@ -323,7 +323,7 @@ where
         principal_id: Uuid,
     ) -> Result<Vec<RoleAssignment>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT principal_kind, principal_id, scope_kind, scope_id, role_kind, role, created_by, created_at, updated_at \
+            "SELECT principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at \
              FROM role_assignments WHERE principal_kind = ? AND principal_id = ? ORDER BY scope_key",
         ))
         .bind(principal_kind.as_str())
@@ -338,7 +338,7 @@ where
         scope: ScopeRef,
     ) -> Result<Vec<RoleAssignment>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT principal_kind, principal_id, scope_kind, scope_id, role_kind, role, created_by, created_at, updated_at \
+            "SELECT principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at \
              FROM role_assignments WHERE scope_key = ? ORDER BY created_at",
         ))
         .bind(scope_key(scope))
@@ -569,20 +569,39 @@ where
         resource_id: Uuid,
         principal_id: Uuid,
     ) -> Result<Vec<Grant>, SendableError> {
+        let memberships = sqlx::query(&self.render(
+            "SELECT scope_key FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ?",
+        ))
+        .bind(principal_id)
+        .fetch_all(self.pool()).await?;
+        let team_ids: Vec<Uuid> = memberships
+            .iter()
+            .filter_map(|row| {
+                scope_from_key(&row.get::<String, _>("scope_key")).and_then(|scope| {
+                    (scope.kind == ScopeKind::Team)
+                        .then_some(scope.id)
+                        .flatten()
+                })
+            })
+            .collect();
         let rows = sqlx::query(&self.render(
             "SELECT g.id, g.resource_type, g.resource_id, g.principal_type, g.principal_id, g.permission, g.created_at \
-             FROM resource_grants g WHERE g.resource_type = ? AND g.resource_id = ? AND (\
-               (g.principal_type = 'user' AND g.principal_id = ?) OR\
-               (g.principal_type = 'team' AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = g.principal_id AND tm.user_id = ?))\
-             )",
+             FROM resource_grants g WHERE g.resource_type = ? AND g.resource_id = ?",
         ))
         .bind(resource_type.as_str())
         .bind(resource_id)
-        .bind(principal_id)
-        .bind(principal_id)
         .fetch_all(self.pool())
         .await?;
-        Ok(rows.iter().map(mappers::row_to_grant).collect())
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_grant)
+            .filter(|grant| {
+                (grant.principal_type == runinator_models::auth::PrincipalType::User
+                    && grant.principal_id == principal_id)
+                    || (grant.principal_type == runinator_models::auth::PrincipalType::Team
+                        && team_ids.contains(&grant.principal_id))
+            })
+            .collect())
     }
 }
 
@@ -621,15 +640,10 @@ where
         &row.get::<String, _>("principal_kind"),
     )
     .ok_or_else(|| invalid_rbac("invalid principal kind"))?;
-    let scope_kind = ScopeKind::from_str_lossy(&row.get::<String, _>("scope_kind"))
-        .ok_or_else(|| invalid_rbac("invalid scope kind"))?;
-    let scope = ScopeRef::new(scope_kind, row.get("scope_id"))
-        .ok_or_else(|| invalid_rbac("invalid scope reference"))?;
-    let role = Role::from_parts(
-        &row.get::<String, _>("role_kind"),
-        &row.get::<String, _>("role"),
-    )
-    .ok_or_else(|| invalid_rbac("invalid role"))?;
+    let scope = scope_from_key(&row.get::<String, _>("scope_key"))
+        .ok_or_else(|| invalid_rbac("invalid scope key"))?;
+    let role = Role::from_parts(scope.kind.as_str(), &row.get::<String, _>("role"))
+        .ok_or_else(|| invalid_rbac("invalid role"))?;
     let created = row.get::<i64, _>("created_at");
     let updated = row.get::<i64, _>("updated_at");
     Ok(RoleAssignment {

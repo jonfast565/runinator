@@ -7,7 +7,6 @@ keep every runtime growth path bounded.
 
 | Data | Default | Eligibility |
 | --- | ---: | --- |
-| task runs, chunks, and artifact metadata | 90 days | terminal task; children archive before the task row |
 | workflow runs, continuations, effects, journal/output/firing history | 90 days | terminal workflow; dependency rows are archived leaf-first |
 | run-scoped files and inactive library/staged file revisions | 90 days | terminal owning workflow, archived/non-current library revision, or abandoned staging row |
 | action dispatch outbox | 7 days | published, or attempted with a persisted error |

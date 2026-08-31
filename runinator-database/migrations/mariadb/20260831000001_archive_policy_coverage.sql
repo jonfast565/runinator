@@ -1,7 +1,4 @@
 -- Retention scans added after the correlated-orchestration and file-history tables landed.
-CREATE INDEX IF NOT EXISTS idx_runs_archive ON runs(status, created_at, id);
-CREATE INDEX IF NOT EXISTS idx_run_chunks_archive ON run_chunks(created_at, run_id, id);
-CREATE INDEX IF NOT EXISTS idx_run_artifacts_archive ON run_artifacts(created_at, run_id, id);
 CREATE INDEX IF NOT EXISTS idx_pipeline_member_attempts_archive
     ON pipeline_member_attempts(created_at, pipeline_run_id, id);
 CREATE INDEX IF NOT EXISTS idx_workflow_files_archive

@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS orchestration_correlation_aliases (
     id UUID PRIMARY KEY,
     binding_id UUID NOT NULL REFERENCES orchestration_bindings(id) ON DELETE CASCADE,
-    generation BIGINT NOT NULL,
     org_scope TEXT NOT NULL,
     source TEXT NOT NULL,
     scope TEXT NOT NULL,

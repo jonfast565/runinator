@@ -172,10 +172,10 @@ where
             // mysql 8 silently discards a column-level `REFERENCES`, so one engine would cascade
             // and another would orphan.
             for sql in [
-                "DELETE FROM workflow_effect_dispatches WHERE effect_id IN (SELECT id FROM workflow_effects WHERE workflow_run_id = ?)",
-                "DELETE FROM workflow_effect_output_events WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_effect_dispatches WHERE effect_id IN (SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id WHERE c.workflow_run_id = ?)",
+                "DELETE FROM workflow_effect_output_events WHERE effect_id IN (SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id WHERE c.workflow_run_id = ?)",
                 "DELETE FROM workflow_journal_entries WHERE workflow_run_id = ?",
-                "DELETE FROM workflow_effects WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_effects WHERE continuation_id IN (SELECT id FROM workflow_continuations WHERE workflow_run_id = ?)",
                 "DELETE FROM workflow_continuations WHERE workflow_run_id = ?",
                 "DELETE FROM workflow_vm_modules WHERE workflow_run_id = ?",
                 "DELETE FROM workflow_cursor_frames WHERE workflow_run_id = ?",
@@ -183,7 +183,6 @@ where
                 "DELETE FROM workflow_run_frames WHERE workflow_run_id = ?",
                 "DELETE FROM workflow_run_pending_interrupts WHERE workflow_run_id = ?",
                 "DELETE FROM workflow_run_event_sources WHERE workflow_run_id = ?",
-                "DELETE FROM workflow_run_execution_states WHERE workflow_run_id = ?",
                 "DELETE FROM workflow_trigger_firings WHERE workflow_run_id = ?",
                 "DELETE FROM pipeline_member_attempts WHERE workflow_run_id = ?",
                 "DELETE FROM automation_records WHERE workflow_run_id = ?",

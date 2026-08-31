@@ -115,8 +115,8 @@ where
             .await?;
         }
         sqlx::query(&self.render(
-            "INSERT INTO role_assignments (principal_kind, principal_id, scope_kind, scope_id, scope_key, role_kind, role, created_by, created_at, updated_at) \
-             VALUES ('user', ?, 'platform', NULL, 'platform', 'platform', ?, ?, ?, ?)",
+            "INSERT INTO role_assignments (principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at) \
+             VALUES ('user', ?, 'platform', ?, ?, ?, ?)",
         ))
         .bind(id)
         .bind(role.as_str())
@@ -227,9 +227,9 @@ where
             }
             let orphaned_scopes: i64 = sqlx::query_scalar(&self.render(
                 "SELECT COUNT(*) FROM role_assignments target WHERE target.principal_kind = 'user' AND target.principal_id = ? \
-                 AND ((target.role_kind = 'platform' AND target.role = 'admin') OR (target.role_kind IN ('organization', 'team') AND target.role = 'owner')) \
+                 AND ((target.scope_key = 'platform' AND target.role = 'admin') OR (target.scope_key <> 'platform' AND target.role = 'owner')) \
                  AND NOT EXISTS (SELECT 1 FROM role_assignments other WHERE other.scope_key = target.scope_key \
-                   AND other.role_kind = target.role_kind AND other.role = target.role \
+                   AND other.role = target.role \
                    AND (other.principal_kind <> target.principal_kind OR other.principal_id <> target.principal_id) AND (\
                      (other.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = other.principal_id AND u.disabled = ?)) OR \
                      (other.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = other.principal_id AND s.disabled = ?))))",
@@ -324,9 +324,9 @@ where
             }
             let orphaned_scopes: i64 = sqlx::query_scalar(&self.render(
                 "SELECT COUNT(*) FROM role_assignments target WHERE target.principal_kind = 'user' AND target.principal_id = ? \
-                 AND ((target.role_kind = 'platform' AND target.role = 'admin') OR (target.role_kind IN ('organization', 'team') AND target.role = 'owner')) \
+                 AND ((target.scope_key = 'platform' AND target.role = 'admin') OR (target.scope_key <> 'platform' AND target.role = 'owner')) \
                  AND NOT EXISTS (SELECT 1 FROM role_assignments other WHERE other.scope_key = target.scope_key \
-                   AND other.role_kind = target.role_kind AND other.role = target.role \
+                   AND other.role = target.role \
                    AND (other.principal_kind <> target.principal_kind OR other.principal_id <> target.principal_id) AND (\
                      (other.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = other.principal_id AND u.disabled = ?)) OR \
                      (other.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = other.principal_id AND s.disabled = ?))))",
@@ -345,7 +345,6 @@ where
             for sql in [
                 "DELETE FROM auth_sessions WHERE user_id = ?",
                 "DELETE FROM user_identities WHERE user_id = ?",
-                "DELETE FROM team_members WHERE user_id = ?",
                 "DELETE FROM resource_grants WHERE principal_type = 'user' AND principal_id = ?",
                 "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ?",
                 "DELETE FROM users WHERE id = ?",
@@ -741,9 +740,11 @@ where
     async fn delete_team(&self, id: Uuid) -> Result<(), SendableError> {
         retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
+            sqlx::query(&self.render("DELETE FROM role_assignments WHERE scope_key = ?"))
+                .bind(format!("team:{id}"))
+                .execute(&mut *tx)
+                .await?;
             for sql in [
-                "DELETE FROM team_members WHERE team_id = ?",
-                "DELETE FROM role_assignments WHERE scope_kind = 'team' AND scope_id = ?",
                 "DELETE FROM resource_grants WHERE principal_type = 'team' AND principal_id = ?",
                 "DELETE FROM teams WHERE id = ?",
             ] {
@@ -778,8 +779,8 @@ where
         if team.scope.kind == ScopeKind::Organization {
             let org_id = team.scope.id.expect("organization scope has id");
             let row = sqlx::query(&self.render(
-                "SELECT COUNT(*) AS member_count FROM org_memberships WHERE org_id = ? AND user_id = ?",
-            )).bind(org_id).bind(user_id).fetch_one(self.pool()).await?;
+                "SELECT COUNT(*) AS member_count FROM role_assignments WHERE scope_key = ? AND principal_kind = 'user' AND principal_id = ?",
+            )).bind(format!("organization:{org_id}")).bind(user_id).fetch_one(self.pool()).await?;
             if row.get::<i64, _>("member_count") == 0 {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
@@ -787,84 +788,61 @@ where
                 )));
             }
         }
-        // delete-then-insert keeps the (team, user) pair idempotent without a dialect-specific upsert.
-        retry_delete(|| async {
-            let mut tx = self.pool().begin().await?;
-            sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
-                .bind(team_id)
-                .bind(user_id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(&self.render("INSERT INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)"))
-                .bind(team_id)
-                .bind(user_id)
-                .bind(role.as_str())
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(&self.render(
-                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_kind = 'team' AND scope_id = ?",
-            )).bind(user_id).bind(team_id).execute(&mut *tx).await?;
-            sqlx::query(&self.render(
-                "INSERT INTO role_assignments (principal_kind, principal_id, scope_kind, scope_id, scope_key, role_kind, role, created_by, created_at, updated_at) \
-                 VALUES ('user', ?, 'team', ?, ?, 'team', ?, NULL, ?, ?)",
-            ))
-            .bind(user_id).bind(team_id).bind(format!("team:{team_id}"))
-            .bind(role.as_str()).bind(Utc::now().timestamp()).bind(Utc::now().timestamp())
-            .execute(&mut *tx).await?;
-            tx.commit().await
-        })
-        .await?;
+        let now = Utc::now().timestamp();
+        let conflict = self.dialect().on_conflict_update(
+            "principal_kind, principal_id, scope_key",
+            &["role", "updated_at"],
+        );
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO role_assignments (principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at) \
+             VALUES ('user', ?, ?, ?, NULL, ?, ?) {conflict}",
+        )))
+        .bind(user_id).bind(format!("team:{team_id}")).bind(role.as_str())
+        .bind(now).bind(now).execute(self.pool()).await?;
         Ok(())
     }
 
     async fn remove_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
-        retry_delete(|| async {
-            let mut tx = self.pool().begin().await?;
-            sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
-                .bind(team_id).bind(user_id).execute(&mut *tx).await?;
-            sqlx::query(&self.render(
-                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_kind = 'team' AND scope_id = ?",
-            )).bind(user_id).bind(team_id).execute(&mut *tx).await?;
-            tx.commit().await
-        })
-        .await?;
+        sqlx::query(&self.render(
+            "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_key = ?",
+        )).bind(user_id).bind(format!("team:{team_id}"))
+            .execute(self.pool()).await?;
         Ok(())
     }
 
     async fn list_user_team_ids(&self, user_id: Uuid) -> Result<Vec<Uuid>, SendableError> {
-        let rows = sqlx::query(&self.render("SELECT team_id FROM team_members WHERE user_id = ?"))
+        let rows = sqlx::query(&self.render("SELECT scope_key FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_key <> 'platform'"))
             .bind(user_id)
             .fetch_all(self.pool())
             .await?;
         Ok(rows
             .iter()
-            .map(|row| row.get::<Uuid, _>("team_id"))
+            .filter_map(|row| {
+                row.get::<String, _>("scope_key")
+                    .strip_prefix("team:")
+                    .and_then(|id| Uuid::parse_str(id).ok())
+            })
             .collect())
     }
 
     async fn list_user_teams(&self, user_id: Uuid) -> Result<Vec<Team>, SendableError> {
-        let rows = sqlx::query(&self.render(
-            "SELECT t.id, t.name, t.scope_kind, t.scope_id, t.created_at \
-             FROM teams t \
-             INNER JOIN team_members tm ON tm.team_id = t.id \
-             WHERE tm.user_id = ? \
-             ORDER BY t.name",
-        ))
-        .bind(user_id)
-        .fetch_all(self.pool())
-        .await?;
-        Ok(rows.iter().map(mappers::row_to_team).collect())
+        let ids = self.list_user_team_ids(user_id).await?;
+        let all = self.list_teams().await?;
+        Ok(all
+            .into_iter()
+            .filter(|team| team.id.is_some_and(|id| ids.contains(&id)))
+            .collect())
     }
 
     async fn list_team_members(&self, team_id: Uuid) -> Result<Vec<User>, SendableError> {
         let rows = sqlx::query(&self.render(
             "SELECT u.id, u.username, u.email, u.disabled, u.created_at, u.updated_at \
              FROM users u \
-             INNER JOIN team_members tm ON tm.user_id = u.id \
-             WHERE tm.team_id = ? \
+             INNER JOIN role_assignments tm ON tm.principal_id = u.id \
+             WHERE tm.principal_kind = 'user' AND tm.scope_key = ? \
              ORDER BY u.username",
         ))
-        .bind(team_id)
+        .bind(format!("team:{team_id}"))
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_user).collect())

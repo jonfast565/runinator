@@ -34,7 +34,7 @@ where
 {
     let mut tx = store.pool().begin().await?;
     let base = sqlx::query(&store.render(
-        "SELECT watch_fired, run_metadata_json, extra_json FROM workflow_run_execution_states WHERE workflow_run_id = ?",
+        "SELECT watch_fired, run_metadata_json, extra_json FROM workflow_runs WHERE id = ?",
     ))
     .bind(workflow_run_id)
     .fetch_optional(&mut *tx)
@@ -197,7 +197,6 @@ where
             "workflow_run_event_sources",
             "workflow_run_cursors",
             "workflow_run_frames",
-            "workflow_run_execution_states",
         ] {
             sqlx::query(&store.render(&format!("DELETE FROM {table} WHERE workflow_run_id = ?")))
                 .bind(workflow_run_id)
@@ -208,12 +207,12 @@ where
 
     let extra = serde_json::to_string(&state.extra).unwrap_or_else(|_| "{}".into());
     sqlx::query(&store.render(
-        "INSERT INTO workflow_run_execution_states (workflow_run_id, watch_fired, run_metadata_json, extra_json) VALUES (?, ?, ?, ?)",
+        "UPDATE workflow_runs SET watch_fired = ?, run_metadata_json = ?, extra_json = ? WHERE id = ?",
     ))
-    .bind(workflow_run_id)
     .bind(state.watch_fired)
     .bind(state.run_metadata.as_ref().map(Value::to_string))
     .bind(extra)
+    .bind(workflow_run_id)
     .execute(&mut *conn)
     .await?;
 

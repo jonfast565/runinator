@@ -16,16 +16,16 @@ DELETE FROM pipeline_member_attempts
 WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs);
 
 DELETE FROM workflow_effect_output_events
-WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL);
+WHERE effect_id IN (SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id WHERE c.workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL));
 DELETE FROM workflow_effect_dispatches
 WHERE effect_id IN (
-    SELECT id FROM workflow_effects
-    WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL)
+    SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id
+    WHERE c.workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL)
 );
 DELETE FROM workflow_journal_entries
 WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL);
 DELETE FROM workflow_effects
-WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL);
+WHERE continuation_id IN (SELECT id FROM workflow_continuations WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL));
 DELETE FROM workflow_continuations
 WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IS NOT NULL);
 DELETE FROM workflow_vm_modules

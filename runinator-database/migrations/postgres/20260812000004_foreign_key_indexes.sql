@@ -35,7 +35,6 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_notification
     ON notification_deliveries(notification_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_run_artifacts_artifact
     ON workflow_run_artifacts(artifact_id);
-CREATE INDEX IF NOT EXISTS idx_run_artifacts_run ON run_artifacts(run_id);
 
 -- and what deleting a pipeline or one of its runs cascades into.
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_pipeline ON pipeline_runs(pipeline_id);

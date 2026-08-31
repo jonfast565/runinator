@@ -1,13 +1,12 @@
 ALTER TABLE pipeline_runs ADD COLUMN orchestration_binding_id UUID NULL;
 ALTER TABLE pipeline_runs ADD COLUMN execution_epoch BIGINT NULL;
 ALTER TABLE pipeline_runs ADD COLUMN start_member TEXT NULL;
-CREATE INDEX idx_pipeline_runs_orchestration
+CREATE UNIQUE INDEX idx_pipeline_runs_orchestration
     ON pipeline_runs(orchestration_binding_id, execution_epoch);
 
 CREATE TABLE orchestration_bindings (
     id UUID PRIMARY KEY, admission_id UUID NOT NULL REFERENCES ingress_admissions(id) ON DELETE CASCADE,
-    org_id UUID NULL, scope TEXT NOT NULL, correlation_key TEXT NOT NULL, generation BIGINT NOT NULL,
-    pipeline_id UUID NOT NULL REFERENCES pipelines(id), pipeline_revision BIGINT NOT NULL,
+    generation BIGINT NOT NULL, pipeline_revision BIGINT NOT NULL,
     pipeline_digest TEXT NOT NULL, policy TEXT NOT NULL, status TEXT NOT NULL, current_phase TEXT NULL,
     current_attempt BIGINT NOT NULL DEFAULT 0, current_epoch BIGINT NOT NULL DEFAULT 0,
     restart_member TEXT NULL, resume_existing_epoch BOOLEAN NOT NULL DEFAULT FALSE,
@@ -18,7 +17,6 @@ CREATE TABLE orchestration_bindings (
     UNIQUE(admission_id, generation)
 );
 CREATE INDEX idx_orchestration_bindings_claim ON orchestration_bindings(status, reducer_leased_until, updated_at);
-CREATE INDEX idx_orchestration_bindings_lookup ON orchestration_bindings(org_id, scope, correlation_key, generation);
 
 CREATE TABLE orchestration_epochs (
     id UUID PRIMARY KEY, binding_id UUID NOT NULL REFERENCES orchestration_bindings(id) ON DELETE CASCADE,

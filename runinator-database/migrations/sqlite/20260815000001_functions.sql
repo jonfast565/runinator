@@ -79,7 +79,6 @@ CREATE TABLE IF NOT EXISTS function_aliases (
     package_id BLOB NOT NULL REFERENCES function_packages(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     version_id BLOB NOT NULL REFERENCES function_versions(id),
-    version INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

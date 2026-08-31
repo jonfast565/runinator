@@ -8,8 +8,6 @@
 -- note for anyone whose database crashed on the original: the statements before the broken one had
 -- already been auto-committed, but the migration was never recorded, so re-running reports a
 -- duplicate key name. drop the idx_*_archive indexes it did create, then migrate again.
-CREATE INDEX idx_runs_archive ON runs(status, created_at);
-CREATE INDEX idx_run_artifacts_archive ON run_artifacts(created_at, id);
 CREATE INDEX idx_workflow_node_runs_archive ON workflow_node_runs(created_at, workflow_run_id);
 CREATE INDEX idx_workflow_node_artifacts_archive ON workflow_node_artifacts(created_at, id);
 CREATE INDEX idx_workflow_run_artifacts_archive ON workflow_run_artifacts(created_at, id);

@@ -28,7 +28,6 @@ CREATE INDEX IF NOT EXISTS idx_workflow_continuations_run
 CREATE TABLE IF NOT EXISTS workflow_effects (
     id UUID PRIMARY KEY,
     version BIGINT NOT NULL,
-    workflow_run_id UUID NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
     continuation_id UUID NOT NULL REFERENCES workflow_continuations(id) ON DELETE CASCADE,
     sequence BIGINT NOT NULL,
     attempt BIGINT NOT NULL DEFAULT 0,
@@ -44,14 +43,9 @@ CREATE TABLE IF NOT EXISTS workflow_effects (
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_effects_pending
     ON workflow_effects(status, created_at, id);
-CREATE INDEX IF NOT EXISTS idx_workflow_effects_run
-    ON workflow_effects(workflow_run_id, created_at);
-
 CREATE TABLE IF NOT EXISTS workflow_effect_output_events (
     event_id UUID PRIMARY KEY,
     effect_id UUID NOT NULL REFERENCES workflow_effects(id) ON DELETE CASCADE,
-    workflow_run_id UUID NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
-    continuation_id UUID NOT NULL REFERENCES workflow_continuations(id) ON DELETE CASCADE,
     attempt BIGINT NOT NULL,
     output_json TEXT NOT NULL,
     created_at BIGINT NOT NULL

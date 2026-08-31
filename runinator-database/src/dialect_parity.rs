@@ -97,7 +97,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_revision_history(db, &after).await;
     assert_trigger_upsert(db, id).await;
     assert_idempotency_keys(db).await;
-    assert_ingress_admission_claim(db).await;
+    assert_ingress_admission_claim(db, id).await;
     assert_correlated_orchestration_lifecycle(db, id).await;
     assert_notifications(db).await;
     assert_settings(db).await;
@@ -1695,7 +1695,7 @@ async fn assert_idempotency_keys<T: DatabaseImpl>(db: &T) {
     );
 }
 
-async fn assert_ingress_admission_claim<T: DatabaseImpl>(db: &T) {
+async fn assert_ingress_admission_claim<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
     let admission = IngressAdmission {
         id: None,
         org_id: None,
@@ -1703,8 +1703,8 @@ async fn assert_ingress_admission_claim<T: DatabaseImpl>(db: &T) {
         correlation_key: "release-42".into(),
         generation: 1,
         target: IngressTarget {
-            kind: IngressTargetKind::Pipeline,
-            id: Uuid::now_v7(),
+            kind: IngressTargetKind::Workflow,
+            id: workflow_id,
         },
         status: IngressAdmissionStatus::Active,
         workflow_run_id: None,
@@ -1727,7 +1727,7 @@ async fn assert_ingress_admission_claim<T: DatabaseImpl>(db: &T) {
         IngressAdmissionClaim::Acquired(_) => panic!("second ingress claim must be rejected"),
     };
     assert_eq!(existing.id, saved.id);
-    assert_eq!(existing.target.kind, IngressTargetKind::Pipeline);
+    assert_eq!(existing.target.kind, IngressTargetKind::Workflow);
 }
 
 async fn assert_notifications<T: DatabaseImpl>(db: &T) {

@@ -77,7 +77,7 @@ use runinator_store::{
     prelude::*,
 };
 
-const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, state_version, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
+const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state_version, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
 const WORKFLOW_COLUMNS: &str = "id, name, resource_key, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at";
 /// every column `mappers::row_to_ready_node` reads. hoisted because this list appeared verbatim in
 /// seven places, and a mapper reading a column one of them forgot to select panics only on that one
@@ -353,14 +353,13 @@ where
         let parameter_value = trigger.trigger_parameters();
         let parameters = parameter_value.to_string();
         let state = WorkflowExecutionState::from_state(&trigger.trigger_state_for_slot(slot));
-        let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
+        let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
         sqlx::query(&self.render(insert_sql))
             .bind(new_run_id)
             .bind(trigger.workflow_id)
             .bind(&snapshot_json)
             .bind(WorkflowStatus::Queued.as_str())
             .bind(&parameters)
-            .bind("{}")
             .bind(now.timestamp())
             .bind("cron")
             .bind("replica")
@@ -577,34 +576,13 @@ pub(crate) fn archived_column_names(table: ArchiveTable) -> Vec<&'static str> {
 impl ArchiveTableSql for ArchiveTable {
     fn archive_candidate_sql(self) -> &'static str {
         match self {
-        ArchiveTable::Runs => {
-            "SELECT id, created_at FROM runs
-             WHERE created_at <= ? AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')
-               AND NOT EXISTS (SELECT 1 FROM run_chunks WHERE run_chunks.run_id = runs.id)
-               AND NOT EXISTS (SELECT 1 FROM run_artifacts WHERE run_artifacts.run_id = runs.id)
-             ORDER BY created_at, id LIMIT ?"
-        }
-        ArchiveTable::RunChunks => {
-            "SELECT run_chunks.id, run_chunks.created_at FROM run_chunks
-             WHERE run_chunks.created_at <= ? AND EXISTS (
-               SELECT 1 FROM runs WHERE runs.id = run_chunks.run_id
-                 AND runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
-             ORDER BY run_chunks.created_at, run_chunks.id LIMIT ?"
-        }
-        ArchiveTable::RunArtifacts => {
-            "SELECT run_artifacts.id, run_artifacts.created_at FROM run_artifacts
-             WHERE run_artifacts.created_at <= ? AND EXISTS (
-               SELECT 1 FROM runs WHERE runs.id = run_artifacts.run_id
-                 AND runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
-             ORDER BY run_artifacts.created_at, run_artifacts.id LIMIT ?"
-        }
         ArchiveTable::WorkflowRuns => {
             "SELECT id, created_at FROM workflow_runs
              WHERE created_at <= ?
                AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')
                AND NOT EXISTS (SELECT 1 FROM workflow_vm_modules WHERE workflow_vm_modules.workflow_run_id = workflow_runs.id)
                AND NOT EXISTS (SELECT 1 FROM workflow_continuations WHERE workflow_continuations.workflow_run_id = workflow_runs.id)
-               AND NOT EXISTS (SELECT 1 FROM workflow_effects WHERE workflow_effects.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_effects JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_continuations.workflow_run_id = workflow_runs.id)
                AND NOT EXISTS (SELECT 1 FROM workflow_journal_entries WHERE workflow_journal_entries.workflow_run_id = workflow_runs.id)
                AND NOT EXISTS (SELECT 1 FROM workflow_trigger_firings WHERE workflow_trigger_firings.workflow_run_id = workflow_runs.id)
                AND NOT EXISTS (SELECT 1 FROM automation_records WHERE automation_records.workflow_run_id = workflow_runs.id)
@@ -620,7 +598,7 @@ impl ArchiveTableSql for ArchiveTable {
                AND EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_vm_modules.workflow_run_id
                  AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
                AND NOT EXISTS (SELECT 1 FROM workflow_continuations WHERE workflow_continuations.workflow_run_id = workflow_vm_modules.workflow_run_id)
-               AND NOT EXISTS (SELECT 1 FROM workflow_effects WHERE workflow_effects.workflow_run_id = workflow_vm_modules.workflow_run_id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_effects JOIN workflow_continuations ON workflow_continuations.id = workflow_effects.continuation_id WHERE workflow_continuations.workflow_run_id = workflow_vm_modules.workflow_run_id)
                AND NOT EXISTS (SELECT 1 FROM workflow_journal_entries WHERE workflow_journal_entries.workflow_run_id = workflow_vm_modules.workflow_run_id)
              ORDER BY workflow_vm_modules.created_at, workflow_vm_modules.workflow_run_id LIMIT ?"
         }
@@ -643,8 +621,8 @@ impl ArchiveTableSql for ArchiveTable {
         ArchiveTable::WorkflowEffectOutputEvents => {
             "SELECT workflow_effect_output_events.event_id AS id, workflow_effect_output_events.created_at FROM workflow_effect_output_events
              WHERE workflow_effect_output_events.created_at <= ?
-               AND EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_effect_output_events.workflow_run_id
-                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+               AND EXISTS (SELECT 1 FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id JOIN workflow_runs r ON r.id = c.workflow_run_id WHERE e.id = workflow_effect_output_events.effect_id
+                 AND r.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
              ORDER BY workflow_effect_output_events.created_at, workflow_effect_output_events.event_id LIMIT ?"
         }
         ArchiveTable::WorkflowEffectDispatches => {
@@ -882,26 +860,11 @@ impl ArchiveTableSql for ArchiveTable {
 
     fn archive_columns(self) -> &'static [ArchiveColumn] {
         match self {
-            ArchiveTable::Runs => archive_columns![
-                "id" => Uuid, "status" => Text, "parameters" => Text,
-                "output_json" => OptionalText, "message" => OptionalText, "trigger" => Text,
-                "started_at" => OptionalInteger, "finished_at" => OptionalInteger,
-                "created_at" => Integer, "workflow_run_id" => OptionalUuid,
-                "workflow_node_id" => OptionalText,
-            ],
-            ArchiveTable::RunChunks => archive_columns![
-                "id" => Uuid, "run_id" => Uuid, "sequence" => Integer, "stream" => Text,
-                "content" => Text, "created_at" => Integer,
-            ],
-            ArchiveTable::RunArtifacts => archive_columns![
-                "id" => Uuid, "run_id" => Uuid, "name" => Text, "mime_type" => Text,
-                "size_bytes" => Integer, "uri" => Text, "metadata" => Text,
-                "created_at" => Integer,
-            ],
             ArchiveTable::WorkflowRuns => archive_columns![
                 "id" => Uuid, "workflow_id" => Uuid, "workflow_snapshot" => OptionalText,
                 "status" => Text, "active_node_id" => OptionalText, "parameters" => Text,
-                "state" => Text, "created_at" => Integer, "started_at" => OptionalInteger,
+                "watch_fired" => Boolean, "run_metadata_json" => OptionalText,
+                "extra_json" => Text, "created_at" => Integer, "started_at" => OptionalInteger,
                 "finished_at" => OptionalInteger, "message" => OptionalText,
                 "name" => OptionalText, "scheduler_claimed_by" => OptionalText,
                 "scheduler_claimed_until" => OptionalInteger, "orchestration_version" => Integer,
@@ -924,8 +887,8 @@ impl ArchiveTableSql for ArchiveTable {
                 "updated_at" => Integer,
             ],
             ArchiveTable::WorkflowEffects => archive_columns![
-                "id" => Uuid, "version" => Integer, "workflow_run_id" => Uuid,
-                "continuation_id" => Uuid, "sequence" => Integer, "attempt" => Integer,
+                "id" => Uuid, "version" => Integer, "continuation_id" => Uuid,
+                "sequence" => Integer, "attempt" => Integer,
                 "request_json" => Text, "status" => Text, "result_json" => OptionalText,
                 "message" => OptionalText, "idempotency_key" => Text, "created_at" => Integer,
                 "updated_at" => Integer, "finished_at" => OptionalInteger,
@@ -933,8 +896,8 @@ impl ArchiveTableSql for ArchiveTable {
                 "last_executor_replica_id" => OptionalUuid,
             ],
             ArchiveTable::WorkflowEffectOutputEvents => archive_columns![
-                "event_id" => Uuid, "effect_id" => Uuid, "workflow_run_id" => Uuid,
-                "continuation_id" => Uuid, "attempt" => Integer, "output_json" => Text,
+                "event_id" => Uuid, "effect_id" => Uuid, "attempt" => Integer,
+                "output_json" => Text,
                 "created_at" => Integer,
             ],
             ArchiveTable::WorkflowEffectDispatches => archive_columns![
@@ -1035,9 +998,10 @@ impl ArchiveTableSql for ArchiveTable {
                 "archived" => Boolean, "created_at" => Integer,
             ],
             ArchiveTable::IngressAdmissions => archive_columns![
-                "id" => Uuid, "org_scope" => Text, "org_id" => OptionalUuid, "scope" => Text,
-                "correlation_key" => Text, "generation" => Integer, "target_kind" => Text,
-                "target_id" => Uuid, "status" => Text, "workflow_run_id" => OptionalUuid,
+                "id" => Uuid, "org_scope" => Text, "scope" => Text,
+                "correlation_key" => Text, "generation" => Integer,
+                "workflow_id" => OptionalUuid, "pipeline_id" => OptionalUuid,
+                "status" => Text, "workflow_run_id" => OptionalUuid,
                 "pipeline_run_id" => OptionalUuid, "policy" => Text, "created_at" => Integer,
                 "updated_at" => Integer,
             ],
@@ -1051,8 +1015,7 @@ impl ArchiveTableSql for ArchiveTable {
                 "pipeline_run_id" => OptionalUuid, "provenance" => Text,
             ],
             ArchiveTable::OrchestrationBindings => archive_columns![
-                "id" => Uuid, "admission_id" => Uuid, "org_id" => OptionalUuid, "scope" => Text,
-                "correlation_key" => Text, "generation" => Integer, "pipeline_id" => Uuid,
+                "id" => Uuid, "admission_id" => Uuid, "generation" => Integer,
                 "pipeline_revision" => Integer, "pipeline_digest" => Text, "policy" => Text,
                 "status" => Text, "current_phase" => OptionalText, "current_attempt" => Integer,
                 "current_epoch" => Integer, "restart_member" => OptionalText,
@@ -1111,8 +1074,8 @@ impl ArchiveTableSql for ArchiveTable {
                 "abandonment_notified_at" => OptionalInteger,
             ],
             ArchiveTable::OrchestrationCorrelationAliases => archive_columns![
-                "id" => Uuid, "binding_id" => Uuid, "generation" => Integer,
-                "org_scope" => Text, "source" => Text, "scope" => Text,
+                "id" => Uuid, "binding_id" => Uuid, "org_scope" => Text,
+                "source" => Text, "scope" => Text,
                 "correlation_key" => Text, "created_at" => Integer, "updated_at" => Integer,
             ],
             ArchiveTable::AgentDirectives => archive_columns![
@@ -1143,20 +1106,11 @@ impl ArchiveTableSql for ArchiveTable {
 
     fn archive_source_predicate(self) -> &'static str {
         match self {
-            ArchiveTable::Runs => {
-                "status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND NOT EXISTS (SELECT 1 FROM run_chunks WHERE run_chunks.run_id = runs.id) AND NOT EXISTS (SELECT 1 FROM run_artifacts WHERE run_artifacts.run_id = runs.id)"
-            }
-            ArchiveTable::RunChunks => {
-                "EXISTS (SELECT 1 FROM runs WHERE runs.id = run_chunks.run_id AND runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))"
-            }
-            ArchiveTable::RunArtifacts => {
-                "EXISTS (SELECT 1 FROM runs WHERE runs.id = run_artifacts.run_id AND runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))"
-            }
             ArchiveTable::WorkflowRuns => {
-                "status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND NOT EXISTS (SELECT 1 FROM workflow_vm_modules WHERE workflow_vm_modules.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_continuations WHERE workflow_continuations.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_effects WHERE workflow_effects.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_journal_entries WHERE workflow_journal_entries.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_trigger_firings WHERE workflow_trigger_firings.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM automation_records WHERE automation_records.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM gates WHERE gates.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_files WHERE workflow_files.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM pipeline_member_attempts WHERE pipeline_member_attempts.workflow_run_id = workflow_runs.id)"
+                "status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND NOT EXISTS (SELECT 1 FROM workflow_vm_modules WHERE workflow_vm_modules.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_continuations WHERE workflow_continuations.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_journal_entries WHERE workflow_journal_entries.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_trigger_firings WHERE workflow_trigger_firings.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM automation_records WHERE automation_records.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM gates WHERE gates.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM workflow_files WHERE workflow_files.workflow_run_id = workflow_runs.id) AND NOT EXISTS (SELECT 1 FROM pipeline_member_attempts WHERE pipeline_member_attempts.workflow_run_id = workflow_runs.id)"
             }
             ArchiveTable::WorkflowVmModules => {
-                "EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_vm_modules.workflow_run_id AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')) AND NOT EXISTS (SELECT 1 FROM workflow_continuations WHERE workflow_continuations.workflow_run_id = workflow_vm_modules.workflow_run_id) AND NOT EXISTS (SELECT 1 FROM workflow_effects WHERE workflow_effects.workflow_run_id = workflow_vm_modules.workflow_run_id) AND NOT EXISTS (SELECT 1 FROM workflow_journal_entries WHERE workflow_journal_entries.workflow_run_id = workflow_vm_modules.workflow_run_id)"
+                "EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_vm_modules.workflow_run_id AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')) AND NOT EXISTS (SELECT 1 FROM workflow_continuations WHERE workflow_continuations.workflow_run_id = workflow_vm_modules.workflow_run_id) AND NOT EXISTS (SELECT 1 FROM workflow_journal_entries WHERE workflow_journal_entries.workflow_run_id = workflow_vm_modules.workflow_run_id)"
             }
             ArchiveTable::WorkflowContinuations => {
                 "EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_continuations.workflow_run_id AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')) AND NOT EXISTS (SELECT 1 FROM workflow_effects WHERE workflow_effects.continuation_id = workflow_continuations.id)"
@@ -1165,7 +1119,7 @@ impl ArchiveTableSql for ArchiveTable {
                 "status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND NOT EXISTS (SELECT 1 FROM workflow_effect_output_events WHERE workflow_effect_output_events.effect_id = workflow_effects.id) AND NOT EXISTS (SELECT 1 FROM workflow_effect_dispatches WHERE workflow_effect_dispatches.effect_id = workflow_effects.id)"
             }
             ArchiveTable::WorkflowEffectOutputEvents => {
-                "EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_effect_output_events.workflow_run_id AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))"
+                "EXISTS (SELECT 1 FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id JOIN workflow_runs r ON r.id = c.workflow_run_id WHERE e.id = workflow_effect_output_events.effect_id AND r.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))"
             }
             ArchiveTable::WorkflowEffectDispatches => {
                 "published_at IS NOT NULL OR (attempts > 0 AND last_error IS NOT NULL)"
@@ -1286,7 +1240,7 @@ impl ArchiveTableSql for ArchiveTable {
     fn archive_source_sql(self, dialect: SqlDialect) -> String {
         match self {
         ArchiveTable::WorkflowRuns => {
-            "SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata FROM workflow_runs WHERE id = ?".to_string()
+            "SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, watch_fired, run_metadata_json, extra_json, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata FROM workflow_runs WHERE id = ?".to_string()
         }
         ArchiveTable::WorkflowVmModules => {
             "SELECT workflow_run_id, version, module_json, created_at FROM workflow_vm_modules WHERE workflow_run_id = ?".to_string()
@@ -1295,10 +1249,10 @@ impl ArchiveTableSql for ArchiveTable {
             "SELECT id, workflow_run_id, module_version, continuation_json, status, version, ready_at, claimed_by, claimed_until, created_at, updated_at FROM workflow_continuations WHERE id = ?".to_string()
         }
         ArchiveTable::WorkflowEffects => {
-            "SELECT id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, result_json, message, idempotency_key, created_at, updated_at, finished_at FROM workflow_effects WHERE id = ? AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')".to_string()
+            "SELECT id, version, continuation_id, sequence, attempt, request_json, status, result_json, message, idempotency_key, created_at, updated_at, finished_at, current_executor_replica_id, last_executor_replica_id FROM workflow_effects WHERE id = ? AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')".to_string()
         }
         ArchiveTable::WorkflowEffectOutputEvents => {
-            "SELECT event_id, effect_id, workflow_run_id, continuation_id, attempt, output_json, created_at FROM workflow_effect_output_events WHERE event_id = ?".to_string()
+            "SELECT event_id, effect_id, attempt, output_json, created_at FROM workflow_effect_output_events WHERE event_id = ?".to_string()
         }
         ArchiveTable::WorkflowEffectDispatches => {
             "SELECT id, effect_id, dedupe_key, command_json, attempts, published_at, created_at, updated_at, last_error, claimed_by, claimed_until FROM workflow_effect_dispatches WHERE id = ? AND (published_at IS NOT NULL OR (attempts > 0 AND last_error IS NOT NULL))".to_string()
@@ -1372,7 +1326,9 @@ impl ArchiveTableSql for ArchiveTable {
                 "status": row.get::<String, _>("status"),
                 "active_node_id": row.get::<Option<String>, _>("active_node_id"),
                 "parameters": row.get::<String, _>("parameters"),
-                "state": row.get::<String, _>("state"),
+                "watch_fired": row.get::<bool, _>("watch_fired"),
+                "run_metadata_json": row.get::<Option<String>, _>("run_metadata_json"),
+                "extra_json": row.get::<String, _>("extra_json"),
                 "created_at": row.get::<i64, _>("created_at"),
                 "started_at": row.get::<Option<i64>, _>("started_at"),
                 "finished_at": row.get::<Option<i64>, _>("finished_at"),
@@ -1408,7 +1364,6 @@ impl ArchiveTableSql for ArchiveTable {
             ArchiveTable::WorkflowEffects => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
                 "version": row.get::<i64, _>("version"),
-                "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
                 "continuation_id": row.get::<Uuid, _>("continuation_id").to_string(),
                 "sequence": row.get::<i64, _>("sequence"),
                 "attempt": row.get::<i64, _>("attempt"),
@@ -1420,12 +1375,12 @@ impl ArchiveTableSql for ArchiveTable {
                 "created_at": row.get::<i64, _>("created_at"),
                 "updated_at": row.get::<i64, _>("updated_at"),
                 "finished_at": row.get::<Option<i64>, _>("finished_at"),
+                "current_executor_replica_id": row.get::<Option<Uuid>, _>("current_executor_replica_id").map(|id| id.to_string()),
+                "last_executor_replica_id": row.get::<Option<Uuid>, _>("last_executor_replica_id").map(|id| id.to_string()),
             }),
             ArchiveTable::WorkflowEffectOutputEvents => runinator_models::json!({
                 "event_id": row.get::<Uuid, _>("event_id").to_string(),
                 "effect_id": row.get::<Uuid, _>("effect_id").to_string(),
-                "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
-                "continuation_id": row.get::<Uuid, _>("continuation_id").to_string(),
                 "attempt": row.get::<i64, _>("attempt"),
                 "output_json": row.get::<String, _>("output_json"),
                 "created_at": row.get::<i64, _>("created_at"),

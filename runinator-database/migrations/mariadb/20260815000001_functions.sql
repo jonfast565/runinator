@@ -94,7 +94,6 @@ CREATE TABLE IF NOT EXISTS function_aliases (
     package_id BINARY(16) NOT NULL,
     name VARCHAR(255) NOT NULL,
     version_id BINARY(16) NOT NULL,
-    version BIGINT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     CONSTRAINT fk_function_aliases_package FOREIGN KEY (package_id)
