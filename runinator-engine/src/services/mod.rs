@@ -37,8 +37,8 @@ pub use pack_operations::PackOperations;
 pub use pipeline_ingress::{PipelineIngressError, PipelineIngressRequest, PipelineIngressResult};
 pub use pipeline_operations::PipelineOperations;
 pub use replica_registry::{
-    DEFAULT_REPLICA_DELETE_SECONDS, DEFAULT_REPLICA_REAP_SECONDS, REPLICA_SAMPLE_RETENTION_SECONDS,
-    REPLICA_STALE_SECONDS, ReplicaRegistry,
+    AgentMachineInvalidation, DEFAULT_REPLICA_DELETE_SECONDS, DEFAULT_REPLICA_REAP_SECONDS,
+    REPLICA_SAMPLE_RETENTION_SECONDS, REPLICA_STALE_SECONDS, ReplicaRegistry,
 };
 pub use run_operations::RunOperations;
 pub use scheduling_operations::SchedulingOperations;

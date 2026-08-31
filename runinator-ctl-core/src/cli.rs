@@ -393,6 +393,8 @@ pub enum AgentCommands {
     Drain { replica_id: Uuid },
     /// Restart one agent's broker worker loop.
     Restart { replica_id: Uuid },
+    /// End one replica activation without invalidating its enrolled machine.
+    Kick { replica_id: Uuid },
     /// Fetch recent desktop-agent log lines.
     Logs {
         replica_id: Uuid,
@@ -427,11 +429,18 @@ pub enum AgentCommands {
         /// Optional base64 SHA-256 SPKI pin for private/self-signed TLS.
         #[arg(long)]
         spki_pin: Option<String>,
+        /// Issue a non-expiring machine credential instead of timed access.
+        #[arg(long)]
+        permanent: bool,
     },
     /// List enrollment-token metadata. Secrets are never returned.
     EnrollmentTokens,
     /// Revoke an unused enrollment token.
     RevokeToken { token_id: String },
+    /// List timed and permanent enrolled machines.
+    Machines,
+    /// Permanently invalidate a machine enrollment and kick its replicas.
+    Invalidate { machine_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

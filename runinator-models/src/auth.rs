@@ -453,6 +453,10 @@ pub struct AgentEnrollmentToken {
     pub service_url: String,
     #[serde(default)]
     pub spki_pin: Option<String>,
+    /// When true, redemption creates a non-expiring machine credential. Otherwise the issued
+    /// credential expires with this enrollment grant.
+    #[serde(default)]
+    pub permanent: bool,
     pub expires_at: DateTime<Utc>,
     #[serde(default)]
     pub consumed_at: Option<DateTime<Utc>>,
@@ -468,9 +472,32 @@ pub struct AgentEnrollmentTokenRecord {
     pub sealed_secret: Vec<u8>,
 }
 
+/// Durable machine identity created by redeeming an agent enrollment token. Timed credentials
+/// expire with their enrollment grant; permanent credentials remain usable until the machine is
+/// invalidated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMachineEnrollment {
+    pub machine_id: Uuid,
+    pub instance_id: String,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    pub permanent: bool,
+    pub disabled: bool,
+    #[serde(default)]
+    pub credential_count: usize,
+    #[serde(default)]
+    pub active_credential_count: usize,
+    #[serde(default)]
+    pub enrolled_by: Option<Uuid>,
+    pub enrolled_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAgentEnrollmentTokenRequest {
-    /// bounded lifetime in seconds.
+    /// Redemption deadline in seconds and, for timed enrollment, the issued credential lifetime.
     pub ttl_seconds: u64,
     #[serde(default)]
     pub org_id: Option<Uuid>,
@@ -482,6 +509,9 @@ pub struct CreateAgentEnrollmentTokenRequest {
     pub cluster_id: Option<Uuid>,
     #[serde(default)]
     pub spki_pin: Option<String>,
+    /// Issue a non-expiring machine credential. Timed access remains the default.
+    #[serde(default)]
+    pub permanent: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -657,6 +687,9 @@ impl Validate for EnrollAgentRequest {
 pub struct EnrollAgentResponse {
     pub api_key: String,
     pub service_url: String,
+    /// Absent for a permanent machine enrollment.
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub org_id: Option<Uuid>,
     #[serde(default)]

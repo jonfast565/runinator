@@ -56,7 +56,10 @@ vi.mock("../../api/commandCenterApi", () => ({
   fetchOrgUsage: vi.fn(),
   listAgentDirectives: vi.fn(),
   listAgentEnrollmentTokens: vi.fn(),
+  listAgentMachines: vi.fn(),
   listMyOrgs: vi.fn(),
+  invalidateAgentMachine: vi.fn(),
+  kickReplica: vi.fn(),
   revokeAgentEnrollmentToken: vi.fn(),
   scaleNodes: vi.fn(),
   scaleOrgNodes: vi.fn(),
@@ -69,6 +72,7 @@ vi.mock("../../api/commandCenterApi", () => ({
 }));
 
 import {
+  createAgentEnrollmentToken,
   createWorkflowRun,
   fetchCredentials,
   fetchReplicas,
@@ -215,7 +219,9 @@ describe("executeCommand", () => {
 
   it("rejects a flag the command does not take", async () => {
     // a mistyped filter used to be ignored, which made `--stauts failed` read as 'every run'.
-    await expect(run("runs list --stauts failed")).rejects.toThrow(/unexpected argument '--stauts'/);
+    await expect(run("runs list --stauts failed")).rejects.toThrow(
+      /unexpected argument '--stauts'/,
+    );
   });
 
   it("rejects a value outside a flag's closed set", async () => {
@@ -256,6 +262,34 @@ describe("executeCommand", () => {
     expect(output.kind === "table" && output.rows).toEqual([
       ["r-1", "worker", "live", "worker-a", "-", "2026-08-01 00:05"],
     ]);
+  });
+
+  it("requests permanent access only when the enrollment flag is present", async () => {
+    vi.mocked(createAgentEnrollmentToken).mockResolvedValue({
+      token: "enroll-token",
+      enrollment_token: {
+        token_id: "token-id",
+        labels: { site: "home" },
+        service_url: "https://runinator.example",
+        permanent: true,
+        expires_at: "2026-08-31T02:00:00Z",
+        created_at: "2026-08-31T00:00:00Z",
+      },
+    });
+
+    await run(
+      "agents enroll-token --permanent --ttl 2h --service-url https://runinator.example --label site=home",
+    );
+
+    expect(createAgentEnrollmentToken).toHaveBeenCalledWith({
+      ttl_seconds: 7200,
+      org_id: null,
+      labels: { site: "home" },
+      service_url: "https://runinator.example",
+      cluster_id: null,
+      spki_pin: null,
+      permanent: true,
+    });
   });
 
   it("says where a local-only command has to run instead", async () => {

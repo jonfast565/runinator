@@ -273,6 +273,10 @@ pub struct ReplicaRecord {
     pub last_seen_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_at: Option<DateTime<Utc>>,
+    /// Operator-enforced end of this activation. A kicked runtime cannot heartbeat or re-register;
+    /// the enrolled machine may start a fresh activation with a new replica id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kicked_at: Option<DateTime<Utc>>,
     /// the identity that registered this replica, captured once at insert and never reassigned by
     /// later heartbeats/upserts. lets a lower-trust external caller (e.g. a desktop-agent connecting
     /// through the WS broker relay) be checked against the replica_id/labels it presents.

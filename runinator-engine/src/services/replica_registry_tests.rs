@@ -90,6 +90,48 @@ async fn missing_replica_returns_no_directive() {
 }
 
 #[tokio::test]
+async fn kicked_replica_is_no_longer_owned_by_its_agent_principal() {
+    let (db, path) = test_db().await;
+    let registry = ReplicaRegistry::new(db);
+    let principal_id = uuid::Uuid::new_v4();
+    let context = AuthContext {
+        principal_id: Some(principal_id),
+        session_id: None,
+        kind: runinator_models::auth::PrincipalKind::Service,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: Some(runinator_models::rbac::SystemRole::Agent),
+        action_ceiling: Vec::new(),
+        org_id: None,
+    };
+    let replica = registry
+        .register(registration("kick-test", "runtime-a"), None, &context)
+        .await
+        .unwrap();
+
+    assert!(
+        registry
+            .agent_owns_replica(&context, replica.replica_id)
+            .await
+            .unwrap()
+    );
+    registry.kick(replica.replica_id).await.unwrap();
+    assert!(
+        !registry
+            .agent_owns_replica(&context, replica.replica_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !registry
+            .agent_owns_runtime_registration(&context, &registration("kick-test", "runtime-a"))
+            .await
+            .unwrap()
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn broker_availability_refuses_webservice_registration() {
     let (db, path) = test_db().await;
     let registry = ReplicaRegistry::new(db);

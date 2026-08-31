@@ -29,7 +29,7 @@ use runinator_models::{
         API_WORKFLOW_TRIGGERS_DUE,
     },
     auth::{
-        AgentEnrollmentToken, CreateAgentEnrollmentTokenRequest,
+        AgentEnrollmentToken, AgentMachineEnrollment, CreateAgentEnrollmentTokenRequest,
         CreateAgentEnrollmentTokenResponse, EnrollAgentRequest, EnrollAgentResponse,
     },
     billing::ScaleOrgNodesRequest,
@@ -709,6 +709,31 @@ where
         let response = self.http_delete(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn list_agent_machines(&self) -> Result<Vec<AgentMachineEnrollment>> {
+        let url = self.build_url("/agents/machines").await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<AgentMachineEnrollment>>().await?)
+    }
+
+    pub async fn invalidate_agent_machine(&self, machine_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/agents/machines/{machine_id}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn kick_replica(&self, replica_id: Uuid) -> Result<ReplicaRecord> {
+        let url = self
+            .build_url(&format!("/replicas/{replica_id}/kick"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
     }
 
     pub async fn create_agent_directive(

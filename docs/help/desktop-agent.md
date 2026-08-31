@@ -59,6 +59,18 @@ cluster. Without a bound token, candidates must be chosen explicitly with `--ser
 never auto-enrolled. Gossip is IPv4 UDP broadcast and normally stays within one subnet; it is not
 a Kubernetes discovery mechanism. Kubernetes keeps `--disable-gossip` and uses stable service DNS.
 
+Create the one-time token with `runinatorctl agents enroll-token`. Timed enrollment is the default:
+the token must be redeemed before `--ttl` elapses, and the machine credential expires at that same
+time. Add `--permanent` to issue a machine credential that remains valid until it is explicitly
+invalidated. Both modes are available to callers authorized for agent enrollment.
+
+Use `runinatorctl agents machines` to list enrolled machines and
+`runinatorctl agents invalidate <machine-id>` to disable one machine, revoke all of its agent
+credentials, and kick every replica registered by it. To stop only one current activation while
+leaving its machine enrollment usable, run `runinatorctl agents kick <replica-id>`. A kicked replica
+id cannot register or heartbeat again; the enrolled machine can start a fresh activation with a new
+replica id. The same operations are available in Command Center and its console as `:agents …`.
+
 Web-service announcements include their `http`/`https` scheme, relay path, version, enrollment
 availability, and optional SPKI pin. Set `RUNINATOR_CLUSTER_ID` to the same stable UUID on every web
 replica when its public enrollment URL differs from the address advertised on the LAN.

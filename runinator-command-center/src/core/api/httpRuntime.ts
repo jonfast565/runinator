@@ -868,6 +868,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   fetch_trigger_kinds: { method: "GET", path: () => "trigger-kinds" },
   fetch_enum_catalogs: { method: "GET", path: () => "catalog/enums" },
   fetch_replicas: { method: "GET", path: () => "replicas" },
+  kick_replica: {
+    method: "POST",
+    path: (args) => `replicas/${escape(arg(args, "replicaId"))}/kick`,
+  },
   create_agent_directive: {
     method: "POST",
     path: (args) => `replicas/${escape(arg(args, "replicaId"))}/directives`,
@@ -887,6 +891,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   revoke_agent_enrollment_token: {
     method: "DELETE",
     path: (args) => `agents/enrollment_tokens/${escape(arg(args, "tokenId"))}`,
+  },
+  list_agent_machines: { method: "GET", path: () => "agents/machines" },
+  invalidate_agent_machine: {
+    method: "DELETE",
+    path: (args) => `agents/machines/${escape(arg(args, "machineId"))}`,
   },
   fetch_node_backends: { method: "GET", path: () => "nodes/backends" },
   fetch_nodes: { method: "GET", path: () => "nodes" },

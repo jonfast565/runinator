@@ -17,6 +17,7 @@ use runinator_models::{
 use runinator_store::{RuntimeStore, roles::ReplicaStore};
 
 use runinator_ws_core::ValidatedJson;
+use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::{ApiResponse, ReplicaQuery, ReplicaSampleQuery};
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, REPLICA_FILTERS, endpoint, json_body,
@@ -103,6 +104,30 @@ pub async fn mark_replica_offline<T: ReplicaStore>(
         Ok(None) => not_found(format!(
             "Replica {replica_id} not found or runtime mismatch"
         )),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// End one activation while leaving the enrolled machine credential available for a future fresh
+/// activation.
+pub async fn kick_replica<T: ReplicaStore>(
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(replica_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NodesOperate,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
+        return reply;
+    }
+    match registry.kick(replica_id).await {
+        Ok(Some(replica)) => {
+            emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
+            (StatusCode::OK, Json(ApiResponse::Replica(replica)))
+        }
+        Ok(None) => not_found(format!("Replica {replica_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -245,6 +270,10 @@ pub fn routes<T: ReplicaStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::
             post(mark_replica_offline::<T>).layer(Extension(registry.clone())),
         )
         .route(
+            "/replicas/{replica_id}/kick",
+            post(kick_replica::<T>).layer(Extension(registry.clone())),
+        )
+        .route(
             "/replicas/{replica_id}/providers",
             get(get_replica_providers::<T>)
                 .post(upsert_replica_provider::<T>)
@@ -310,6 +339,19 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "replica marked offline",
         Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/replicas/{replica_id}/kick",
+        "Replicas",
+        "Kick a replica",
+        "Ends one runtime activation and prevents that replica id from heartbeating or re-registering. The machine enrollment remains valid.",
+        false,
+        None,
+        &[],
+        200,
+        "replica kicked",
+        Example::Replica,
     ),
     endpoint(
         "get",

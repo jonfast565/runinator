@@ -139,7 +139,7 @@
                       'bg-danger-bg text-danger-fg': selectedReplica.status === 'offline',
                     }"
                   >
-                    {{ selectedReplica.status }}
+                    {{ replicaDisplayStatus(selectedReplica) }}
                   </span>
                 </div>
 
@@ -256,6 +256,22 @@
                       >
                         Restart
                       </button>
+                      <button
+                        v-if="canManageAgent && !selectedReplica.kicked_at"
+                        class="btn"
+                        :disabled="directiveBusy"
+                        @click="kickSelectedReplica"
+                      >
+                        Kick replica
+                      </button>
+                      <button
+                        v-if="canEnrollAgents && selectedReplica.registered_by_principal_id"
+                        class="btn btn-danger"
+                        :disabled="directiveBusy"
+                        @click="invalidateSelectedMachine"
+                      >
+                        Invalidate machine
+                      </button>
                     </div>
                     <p v-if="directiveError" class="mb-0 mt-2 text-sm text-danger-fg">
                       {{ directiveError }}
@@ -348,6 +364,12 @@
                       >
                       <div>{{ formatDate(selectedReplica.offline_at) }}</div>
                     </div>
+                    <div>
+                      <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                        >Kicked At</label
+                      >
+                      <div>{{ formatDate(selectedReplica.kicked_at) }}</div>
+                    </div>
                   </div>
 
                   <div class="mt-[18px]">
@@ -438,7 +460,7 @@
     <Modal
       v-if="enrollmentOpen"
       title="Enroll a machine"
-      description="Create a short-lived token that lets a desktop agent securely enroll with this Runinator service."
+      description="Create a one-time token for timed access, or a machine enrollment that remains valid until invalidated."
       width="620px"
       @close="closeEnrollment"
     >
@@ -452,6 +474,16 @@
               required
               type="url"
             />
+          </label>
+          <label class="flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
+            <input v-model="enrollmentPermanent" class="mt-0.5" type="checkbox" />
+            <span>
+              <span class="block font-medium">Permanent machine enrollment</span>
+              <span class="text-fg-muted">
+                Keep the issued machine credential valid until an operator invalidates it. Leave off
+                for access that expires with the lifetime above.
+              </span>
+            </span>
           </label>
           <label class="flex flex-col gap-1 text-sm">
             <span class="font-medium">Lifetime (minutes)</span>
@@ -492,7 +524,8 @@
         <template v-else>
           <div class="rounded-lg border border-warning-border bg-warning-bg p-3 text-sm">
             This token is shown once. Copy it now and pass it to the agent with
-            <code>--enroll</code>.
+            <code>--enroll</code>. The resulting access is
+            {{ enrollmentPermanent ? "permanent until invalidated" : "timed" }}.
           </div>
           <textarea
             class="input min-h-32 font-mono text-xs"
@@ -550,6 +583,7 @@ const enrollmentServiceUrl = ref("");
 const enrollmentTtlMinutes = ref(15);
 const enrollmentLabels = ref("");
 const enrollmentSpkiPin = ref("");
+const enrollmentPermanent = ref(false);
 const enrollmentError = ref("");
 const createdEnrollmentToken = ref("");
 const creatingEnrollment = ref(false);
@@ -590,6 +624,54 @@ async function issueDirective(kind: AgentDirectiveKind) {
   try {
     await agentDirectivesService.issue(replica.replica_id, kind);
     await loadDirectives(replica.replica_id);
+  } catch (error) {
+    directiveError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    directiveBusy.value = false;
+  }
+}
+
+async function kickSelectedReplica() {
+  const replica = selectedReplica.value;
+
+  if (
+    !replica ||
+    !window.confirm("Kick this runtime replica? Its machine enrollment will remain valid.")
+  ) {
+    return;
+  }
+
+  directiveBusy.value = true;
+  directiveError.value = "";
+
+  try {
+    await agentDirectivesService.kick(replica.replica_id);
+    await refresh();
+  } catch (error) {
+    directiveError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    directiveBusy.value = false;
+  }
+}
+
+async function invalidateSelectedMachine() {
+  const machineId = selectedReplica.value?.registered_by_principal_id;
+
+  if (
+    !machineId ||
+    !window.confirm(
+      "Invalidate this enrolled machine? All of its agent credentials will be revoked and every current replica will be kicked.",
+    )
+  ) {
+    return;
+  }
+
+  directiveBusy.value = true;
+  directiveError.value = "";
+
+  try {
+    await agentEnrollmentService.invalidate(machineId);
+    await refresh();
   } catch (error) {
     directiveError.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -719,6 +801,10 @@ function isAgentDegraded(replica: ReplicaRecord): boolean {
 }
 
 function replicaDisplayStatus(replica: ReplicaRecord): string {
+  if (replica.kicked_at) {
+    return "kicked";
+  }
+
   return isAgentDegraded(replica) ? "degraded" : replica.status;
 }
 
@@ -750,6 +836,7 @@ function openEnrollment() {
   enrollmentTtlMinutes.value = 15;
   enrollmentLabels.value = "";
   enrollmentSpkiPin.value = "";
+  enrollmentPermanent.value = false;
   enrollmentError.value = "";
   createdEnrollmentToken.value = "";
   enrollmentOpen.value = true;
@@ -789,6 +876,7 @@ async function createEnrollmentToken() {
       labels: parseEnrollmentLabels(),
       service_url: enrollmentServiceUrl.value,
       spki_pin: enrollmentSpkiPin.value || null,
+      permanent: enrollmentPermanent.value,
     });
     createdEnrollmentToken.value = response.token;
   } catch (error) {

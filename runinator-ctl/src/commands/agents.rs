@@ -35,6 +35,14 @@ pub(super) async fn agents(
             )
             .await
         }
+        AgentCommands::Kick { replica_id } => {
+            let replica = client.kick_replica(*replica_id).await?;
+            if json_output {
+                return output::json(&replica);
+            }
+            println!("Kicked replica {}", replica.replica_id);
+            Ok(())
+        }
         AgentCommands::Logs { replica_id, lines } => {
             issue_and_print(
                 client,
@@ -57,6 +65,7 @@ pub(super) async fn agents(
             service_url,
             cluster_id,
             spki_pin,
+            permanent,
         } => {
             let response = client
                 .create_agent_enrollment_token(&CreateAgentEnrollmentTokenRequest {
@@ -68,13 +77,22 @@ pub(super) async fn agents(
                         .unwrap_or_else(|| default_service_url.to_string()),
                     cluster_id: *cluster_id,
                     spki_pin: spki_pin.clone(),
+                    permanent: *permanent,
                 })
                 .await?;
             if json_output {
                 return output::json(&response);
             }
             println!("{}", response.token);
-            eprintln!("This single-use enrollment token will not be shown again.");
+            if *permanent {
+                eprintln!(
+                    "This single-use token creates permanent machine access until invalidated; it will not be shown again."
+                );
+            } else {
+                eprintln!(
+                    "This single-use token creates timed machine access until the token expiry; it will not be shown again."
+                );
+            }
             Ok(())
         }
         AgentCommands::EnrollmentTokens => {
@@ -83,8 +101,8 @@ pub(super) async fn agents(
                 return output::json(&tokens);
             }
             println!(
-                "{:<14} {:<10} {:<25} labels",
-                "token_id", "state", "expires_at"
+                "{:<14} {:<10} {:<10} {:<25} labels",
+                "token_id", "access", "state", "expires_at"
             );
             for token in tokens {
                 let state = if token.consumed_at.is_some() {
@@ -101,8 +119,13 @@ pub(super) async fn agents(
                     .collect::<Vec<_>>()
                     .join(",");
                 println!(
-                    "{:<14} {:<10} {:<25} {}",
+                    "{:<14} {:<10} {:<10} {:<25} {}",
                     token.token_id,
+                    if token.permanent {
+                        "permanent"
+                    } else {
+                        "timed"
+                    },
                     state,
                     token.expires_at.to_rfc3339(),
                     labels
@@ -112,6 +135,46 @@ pub(super) async fn agents(
         }
         AgentCommands::RevokeToken { token_id } => {
             let response = client.delete_agent_enrollment_token(token_id).await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("{}", response.message);
+            Ok(())
+        }
+        AgentCommands::Machines => {
+            let machines = client.list_agent_machines().await?;
+            if json_output {
+                return output::json(&machines);
+            }
+            println!(
+                "{:<38} {:<24} {:<10} {:<10} last_used",
+                "machine_id", "instance_id", "access", "state"
+            );
+            for machine in machines {
+                println!(
+                    "{:<38} {:<24} {:<10} {:<10} {}",
+                    machine.machine_id,
+                    machine.instance_id,
+                    if machine.permanent {
+                        "permanent"
+                    } else {
+                        "timed"
+                    },
+                    if machine.disabled {
+                        "disabled"
+                    } else {
+                        "active"
+                    },
+                    machine
+                        .last_used_at
+                        .map(|value| value.to_rfc3339())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+            }
+            Ok(())
+        }
+        AgentCommands::Invalidate { machine_id } => {
+            let response = client.invalidate_agent_machine(*machine_id).await?;
             if json_output {
                 return output::json(&response);
             }

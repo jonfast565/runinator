@@ -73,6 +73,7 @@ export type {
 } from "./auth/profile-security";
 export type {
   AgentEnrollmentToken,
+  AgentMachineEnrollment,
   CreateAgentEnrollmentTokenInput,
   CreateAgentEnrollmentTokenResponse,
 } from "./auth/agent-enrollment";

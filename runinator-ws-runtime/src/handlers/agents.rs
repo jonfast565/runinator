@@ -12,13 +12,16 @@ use runinator_models::{
     auth::AuthContext,
     rbac::{Action, ScopeRef},
 };
-use runinator_store::roles::ReplicaStore;
+use runinator_store::{
+    RuntimeStore,
+    roles::{AuthStore, RbacStore, ReplicaStore},
+};
 use runinator_ws_core::{
     ValidatedJson,
     events::{AppEvent, AppEventKind, EventSender, emit, nudge_agent_directives},
     models::{AgentDirectiveQuery, ApiResponse, CreateAgentDirectiveRequest},
     openapi::docs::{EndpointDoc, Example, endpoint, json_body},
-    responses::{api_error, not_found},
+    responses::{api_error, not_found, task_response_success},
 };
 use runinator_ws_middleware::authz::AuthContextExt;
 use uuid::Uuid;
@@ -98,6 +101,51 @@ pub async fn list<T: ReplicaStore>(
     }
 }
 
+pub async fn list_machines<T: AuthStore + RbacStore>(
+    Extension(db): Extension<std::sync::Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(Action::AgentsEnroll, ScopeRef::PLATFORM) {
+        return reply;
+    }
+    match ReplicaRegistry::new(db).agent_machines().await {
+        Ok(machines) => match machines
+            .into_iter()
+            .map(|machine| serde_json::to_value(machine).map(runinator_models::value::Value::from))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+            Err(err) => api_error(err.to_string()),
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn invalidate_machine<T: AuthStore + RbacStore + ReplicaStore + RuntimeStore>(
+    Extension(db): Extension<std::sync::Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(machine_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(Action::AgentsEnroll, ScopeRef::PLATFORM) {
+        return reply;
+    }
+    match ReplicaRegistry::new(db)
+        .invalidate_machine(machine_id, &ctx)
+        .await
+    {
+        Ok(Some(result)) => {
+            emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
+            task_response_success(format!(
+                "Machine invalidated; revoked {} credential(s) and kicked {} replica(s)",
+                result.revoked_credentials, result.kicked_replicas
+            ))
+        }
+        Ok(None) => not_found("Enrolled machine not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, ScopeRef) {
     match kind {
         AgentDirectiveKind::Diagnostics
@@ -117,12 +165,25 @@ fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, Sco
     }
 }
 
-pub fn routes<T: ReplicaStore>(pool: std::sync::Arc<T>) -> axum::Router {
-    use axum::routing::get;
-    axum::Router::new().route(
-        "/replicas/{replica_id}/directives",
-        get(list::<T>).post(create::<T>).layer(Extension(pool)),
-    )
+pub fn routes<T: ReplicaStore + AuthStore + RbacStore + RuntimeStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
+    use axum::routing::{delete, get};
+    axum::Router::new()
+        .route(
+            "/replicas/{replica_id}/directives",
+            get(list::<T>)
+                .post(create::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/agents/machines",
+            get(list_machines::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/agents/machines/{machine_id}",
+            delete(invalidate_machine::<T>).layer(Extension(pool)),
+        )
 }
 
 pub const DOCS: &[EndpointDoc] = &[
@@ -154,5 +215,31 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "directives",
         Example::AgentDirectiveList,
+    ),
+    endpoint(
+        "get",
+        "/agents/machines",
+        "Agents",
+        "List enrolled machines",
+        "Lists timed and permanent agent machine enrollments and their current credential state.",
+        false,
+        None,
+        &[],
+        200,
+        "enrolled machines",
+        Example::None,
+    ),
+    endpoint(
+        "delete",
+        "/agents/machines/{machine_id}",
+        "Agents",
+        "Invalidate an enrolled machine",
+        "Disables the machine principal, revokes every agent credential it owns, and kicks its current replicas.",
+        false,
+        None,
+        &[],
+        200,
+        "machine invalidated",
+        Example::TaskResponse,
     ),
 ];

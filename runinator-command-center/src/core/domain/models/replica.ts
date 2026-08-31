@@ -1,12 +1,7 @@
 import type { JsonRecord } from "../json";
 
 export type ReplicaKind =
-  | "worker"
-  | "waker"
-  | "webservice"
-  | "background"
-  | "postgres"
-  | "archiver";
+  "worker" | "waker" | "webservice" | "background" | "postgres" | "archiver";
 
 export type ReplicaStatus = "live" | "stale" | "offline";
 
@@ -63,6 +58,10 @@ export interface ReplicaRecord {
   last_heartbeat_at: string;
   last_seen_at: string;
   offline_at?: string | null;
+  kicked_at?: string | null;
+  registered_by_principal_id?: string | null;
+  registered_by_kind?: string | null;
+  registered_by_org_id?: string | null;
 }
 
 /// one provider a replica advertises. the metadata is the provider's own, so it is typed loosely
@@ -92,13 +91,7 @@ export interface ReplicaListResponse {
 }
 
 export type AgentDirectiveState =
-  | "pending"
-  | "published"
-  | "accepted"
-  | "completed"
-  | "failed"
-  | "unsupported"
-  | "expired";
+  "pending" | "published" | "accepted" | "completed" | "failed" | "unsupported" | "expired";
 
 export type AgentDirectiveKind =
   | { type: "diagnostics" }

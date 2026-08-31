@@ -1072,6 +1072,7 @@ async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
         )
         .await
         .unwrap();
+    assert!(replica.kicked_at.is_none());
     let now = Utc::now();
     let directive = db
         .enqueue_agent_directive(
@@ -1132,6 +1133,45 @@ async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
     .await
     .unwrap();
     assert_eq!(db.expire_agent_directives(now).await.unwrap(), 1);
+
+    let kicked = db
+        .kick_replica(replica.replica_id, now)
+        .await
+        .unwrap()
+        .expect("registered replica can be kicked");
+    assert_eq!(
+        kicked.status,
+        runinator_models::replicas::ReplicaStatus::Offline
+    );
+    assert!(kicked.kicked_at.is_some());
+    assert!(
+        db.heartbeat_replica(
+            replica.replica_id,
+            runinator_models::replicas::ReplicaHeartbeatRequest {
+                runtime_id: replica.runtime_id.clone(),
+                display_name: None,
+                host: None,
+                port: None,
+                base_path: None,
+                attributes: json!({}),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .is_some(),
+        "the kicked row remains readable"
+    );
+    let after_heartbeat = db
+        .fetch_replica(replica.replica_id)
+        .await
+        .unwrap()
+        .expect("kicked replica remains stored");
+    assert_eq!(
+        after_heartbeat.status,
+        runinator_models::replicas::ReplicaStatus::Offline,
+        "a kicked activation cannot heartbeat back to live"
+    );
 
     db.insert_replica_sample(ReplicaSample {
         replica_id: replica.replica_id,
@@ -1201,6 +1241,7 @@ async fn assert_agent_enrollment_lifecycle<T: DatabaseImpl>(db: &T) {
         labels: BTreeMap::from([("site".to_string(), "parity".to_string())]),
         service_url: "https://runinator.example".to_string(),
         spki_pin: Some("sha256/parity".to_string()),
+        permanent: true,
         expires_at: now + Duration::minutes(5),
         consumed_at: None,
         issued_by: None,

@@ -5,8 +5,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord, ReplicaAvailability};
 use runinator_models::{
-    auth::AuthContext,
+    auth::{AgentMachineEnrollment, AuthContext, PrincipalKind},
     errors::SendableError,
+    rbac::SystemRole,
     replicas::{
         AgentStatusReport, ReplicaHeartbeatRequest, ReplicaKind, ReplicaListResponse,
         ReplicaProviderRegistration, ReplicaProviderRegistrationRequest, ReplicaRecord,
@@ -14,7 +15,10 @@ use runinator_models::{
     },
     telemetry::{ReplicaSample, ReplicaSampleSeries, ResourceTelemetry},
 };
-use runinator_store::roles::ReplicaStore;
+use runinator_store::{
+    RuntimeStore,
+    roles::{AuthStore, RbacStore, ReplicaStore},
+};
 use uuid::Uuid;
 
 // inactivity window after which a replica stops counting as live. shared by replica listing and
@@ -33,6 +37,13 @@ const REPLICA_SAMPLE_MAX_POINTS: i64 = 1_000;
 /// Coordinates the replica persistence slice used by fleet-facing transports and engine loops.
 pub struct ReplicaRegistry<T> {
     store: Arc<T>,
+}
+
+/// Result of permanently invalidating one enrolled machine identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentMachineInvalidation {
+    pub revoked_credentials: usize,
+    pub kicked_replicas: u64,
 }
 
 impl<T> Clone for ReplicaRegistry<T> {
@@ -205,7 +216,9 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
         }
         Ok(matches!(
             self.fetch(replica_id).await?,
-            Some(replica) if replica.registered_by_principal_id == context.principal_id
+            Some(replica)
+                if replica.registered_by_principal_id == context.principal_id
+                    && replica.kicked_at.is_none()
         ))
     }
 
@@ -227,8 +240,15 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
         Ok(!matches!(
             self.fetch_by_runtime(request.instance_id.clone(), request.runtime_id.clone())
                 .await?,
-            Some(replica) if replica.registered_by_principal_id != context.principal_id
+            Some(replica)
+                if replica.registered_by_principal_id != context.principal_id
+                    || replica.kicked_at.is_some()
         ))
+    }
+
+    /// End one activation without invalidating the machine credential behind it.
+    pub async fn kick(&self, replica_id: Uuid) -> Result<Option<ReplicaRecord>, SendableError> {
+        self.store.kick_replica(replica_id, Utc::now()).await
     }
 
     /// List replicas with liveness and running-effect counts derived for the operator surface.
@@ -402,6 +422,118 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
     pub async fn prune_samples_after(&self, seconds: i64) -> Result<u64, SendableError> {
         let cutoff = Utc::now() - Duration::seconds(seconds);
         self.store.prune_replica_samples(cutoff).await
+    }
+}
+
+impl<T: AuthStore + RbacStore> ReplicaRegistry<T> {
+    /// List machine identities derived from their agent service accounts and credentials.
+    pub async fn agent_machines(&self) -> Result<Vec<AgentMachineEnrollment>, SendableError> {
+        let accounts = self.store.list_service_accounts().await?;
+        let keys = self.store.list_api_keys(None).await?;
+        let now = Utc::now();
+        let mut machines = Vec::new();
+        for account in accounts {
+            let credentials = keys
+                .iter()
+                .filter(|key| {
+                    key.principal_kind == PrincipalKind::Service
+                        && key.principal_id == account.id
+                        && key.system_role == Some(SystemRole::Agent)
+                })
+                .collect::<Vec<_>>();
+            if credentials.is_empty() {
+                continue;
+            }
+            let active_credential_count = credentials
+                .iter()
+                .filter(|key| !key.disabled && key.expires_at.is_none_or(|expires| expires > now))
+                .count();
+            let permanent = credentials.iter().any(|key| key.expires_at.is_none());
+            let org_id = credentials.iter().find_map(|key| key.org_id);
+            let last_used_at = credentials.iter().filter_map(|key| key.last_used_at).max();
+            machines.push(AgentMachineEnrollment {
+                machine_id: account.id,
+                instance_id: account
+                    .name
+                    .strip_prefix("agent:")
+                    .unwrap_or(&account.name)
+                    .to_string(),
+                org_id,
+                permanent,
+                disabled: account.disabled || active_credential_count == 0,
+                credential_count: credentials.len(),
+                active_credential_count,
+                enrolled_by: account.created_by,
+                enrolled_at: account.created_at,
+                updated_at: account.updated_at,
+                last_used_at,
+            });
+        }
+        machines.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
+        Ok(machines)
+    }
+}
+
+impl<T: AuthStore + RbacStore + ReplicaStore + RuntimeStore> ReplicaRegistry<T> {
+    /// Disable a machine principal, revoke all of its agent credentials, and kick every replica it
+    /// owns. Returns `None` when the service account is not an enrolled agent machine.
+    pub async fn invalidate_machine(
+        &self,
+        machine_id: Uuid,
+        actor: &AuthContext,
+    ) -> Result<Option<AgentMachineInvalidation>, SendableError> {
+        let Some(account) = self.store.fetch_service_account(machine_id).await? else {
+            return Ok(None);
+        };
+        let agent_keys = self
+            .store
+            .list_api_keys(Some(machine_id))
+            .await?
+            .into_iter()
+            .filter(|key| {
+                key.principal_kind == PrincipalKind::Service
+                    && key.system_role == Some(SystemRole::Agent)
+            })
+            .collect::<Vec<_>>();
+        if agent_keys.is_empty() {
+            return Ok(None);
+        }
+
+        if !account.disabled {
+            self.store
+                .set_service_account_disabled(machine_id, true)
+                .await?;
+        }
+        for key in &agent_keys {
+            if !key.disabled
+                && let Some(key_id) = key.id
+            {
+                self.store.revoke_api_key(key_id).await?;
+            }
+        }
+        let kicked_replicas = self
+            .store
+            .kick_replicas_by_principal(machine_id, Utc::now())
+            .await?;
+        let detail = format!(
+            "revoked {} credential(s); kicked {kicked_replicas} replica(s)",
+            agent_keys.len()
+        );
+        crate::audit::record_audit(
+            self.store.as_ref(),
+            actor.principal_id,
+            actor.kind.as_str(),
+            "agent.machine.invalidate",
+            crate::audit::AuditOutcome::Success,
+            Some("service_account"),
+            Some(machine_id),
+            Some(&detail),
+        )
+        .await;
+        Ok(Some(AgentMachineInvalidation {
+            revoked_credentials: agent_keys.len(),
+            kicked_replicas,
+        }))
     }
 }
 

@@ -12,6 +12,7 @@ import type {
   PersonalApiKeyScope,
   UpdateCurrentUserInput,
   AgentEnrollmentToken,
+  AgentMachineEnrollment,
   AgentDirectiveKind,
   AgentDirectiveRecord,
   CreateAgentEnrollmentTokenInput,
@@ -51,6 +52,7 @@ import type {
   EnumCatalogMetadata,
   ReplicaListResponse,
   ReplicaProviderRegistration,
+  ReplicaRecord,
   RunSummary,
   SettingKind,
   ServiceStatus,
@@ -1673,6 +1675,18 @@ export async function listAgentEnrollmentTokens() {
 
 export async function revokeAgentEnrollmentToken(tokenId: string) {
   return command<TaskResponse>("revoke_agent_enrollment_token", { tokenId });
+}
+
+export async function listAgentMachines() {
+  return command<AgentMachineEnrollment[]>("list_agent_machines");
+}
+
+export async function invalidateAgentMachine(machineId: string) {
+  return command<TaskResponse>("invalidate_agent_machine", { machineId });
+}
+
+export async function kickReplica(replicaId: string) {
+  return command<ReplicaRecord>("kick_replica", { replicaId });
 }
 
 // --- on-demand node provisioning (supervisor / kubernetes backends) ---

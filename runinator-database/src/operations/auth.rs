@@ -490,8 +490,8 @@ where
         let token = record.token;
         let labels = serde_json::to_string(&token.labels)?;
         sqlx::query(&self.render(
-            "INSERT INTO agent_enrollment_tokens (token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, expires_at, consumed_at, issued_by, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO agent_enrollment_tokens (token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, permanent, expires_at, consumed_at, issued_by, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(&token.token_id)
         .bind(record.sealed_secret)
@@ -499,6 +499,7 @@ where
         .bind(labels)
         .bind(&token.service_url)
         .bind(&token.spki_pin)
+        .bind(token.permanent)
         .bind(token.expires_at.timestamp())
         .bind(token.consumed_at.map(|value| value.timestamp()))
         .bind(token.issued_by)
@@ -513,7 +514,7 @@ where
         token_id: String,
     ) -> Result<Option<AgentEnrollmentTokenRecord>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, expires_at, consumed_at, issued_by, created_at \
+            "SELECT token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, permanent, expires_at, consumed_at, issued_by, created_at \
              FROM agent_enrollment_tokens WHERE token_id = ?",
         ))
         .bind(token_id)
@@ -526,7 +527,7 @@ where
         &self,
     ) -> Result<Vec<AgentEnrollmentToken>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, expires_at, consumed_at, issued_by, created_at \
+            "SELECT token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, permanent, expires_at, consumed_at, issued_by, created_at \
              FROM agent_enrollment_tokens ORDER BY created_at DESC",
         ))
         .fetch_all(self.pool())

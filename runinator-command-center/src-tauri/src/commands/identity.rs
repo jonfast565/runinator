@@ -488,6 +488,21 @@ pub async fn revoke_agent_enrollment_token(
 }
 
 #[tauri::command]
+pub async fn list_agent_machines(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "agents/machines").await
+}
+
+#[tauri::command]
+pub async fn invalidate_agent_machine(
+    state: State<'_, CommandCenterState>,
+    machine_id: Uuid,
+) -> CommandResult<Value> {
+    delete(&state, &format!("agents/machines/{machine_id}")).await
+}
+
+#[tauri::command]
 pub async fn list_dead_letters(
     state: State<'_, CommandCenterState>,
     channel: Option<String>,

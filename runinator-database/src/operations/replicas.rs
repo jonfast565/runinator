@@ -332,7 +332,7 @@ where
             .execute(
                 sqlx::query(&self.render(
                     "UPDATE replicas SET status = 'live', display_name = COALESCE(?, display_name), host = COALESCE(?, host), port = COALESCE(?, port), base_path = COALESCE(?, base_path), observed_ip = COALESCE(?, observed_ip), attributes = COALESCE(?, attributes), last_heartbeat_at = ?, last_seen_at = ?, offline_at = NULL
-                     WHERE replica_id = ? AND runtime_id = ?",
+                     WHERE replica_id = ? AND runtime_id = ? AND kicked_at IS NULL",
                 ))
                 .bind(request.display_name.clone())
                 .bind(request.host.clone())
@@ -381,6 +381,48 @@ where
         .fetch_optional(self.pool())
         .await?;
         row.as_ref().map(mappers::row_to_replica).transpose()
+    }
+
+    async fn kick_replica(
+        &self,
+        replica_id: Uuid,
+        kicked_at: DateTime<Utc>,
+    ) -> Result<Option<ReplicaRecord>, SendableError> {
+        let kicked_at = kicked_at.timestamp();
+        sqlx::query(&self.render(
+            "UPDATE replicas SET status = 'offline', offline_at = COALESCE(offline_at, ?), kicked_at = COALESCE(kicked_at, ?), last_seen_at = ? WHERE replica_id = ?",
+        ))
+        .bind(kicked_at)
+        .bind(kicked_at)
+        .bind(kicked_at)
+        .bind(replica_id)
+        .execute(self.pool())
+        .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {REPLICA_COLUMNS} FROM replicas WHERE replica_id = ?",
+        )))
+        .bind(replica_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref().map(mappers::row_to_replica).transpose()
+    }
+
+    async fn kick_replicas_by_principal(
+        &self,
+        principal_id: Uuid,
+        kicked_at: DateTime<Utc>,
+    ) -> Result<u64, SendableError> {
+        let kicked_at = kicked_at.timestamp();
+        let result = sqlx::query(&self.render(
+            "UPDATE replicas SET status = 'offline', offline_at = COALESCE(offline_at, ?), kicked_at = COALESCE(kicked_at, ?), last_seen_at = ? WHERE registered_by_principal_id = ? AND kicked_at IS NULL",
+        ))
+        .bind(kicked_at)
+        .bind(kicked_at)
+        .bind(kicked_at)
+        .bind(principal_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected())
     }
 
     async fn reap_inactive_replicas(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
@@ -462,7 +504,7 @@ where
                             WHEN last_heartbeat_at <= ? THEN 'stale'
                             ELSE 'live'
                         END AS status,
-                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, kicked_at,
                         registered_by_principal_id, registered_by_kind, registered_by_org_id
                  FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"))
             .bind(stale_before.timestamp())
@@ -477,7 +519,7 @@ where
                             WHEN last_heartbeat_at <= ? THEN 'stale'
                             ELSE 'live'
                         END AS status,
-                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, kicked_at,
                         registered_by_principal_id, registered_by_kind, registered_by_org_id
                  FROM replicas ORDER BY replica_type, instance_id, replica_id",
             ))

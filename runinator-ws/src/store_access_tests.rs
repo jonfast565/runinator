@@ -78,6 +78,7 @@ const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
         "runinator-ws-runtime/function_invocations.rs",
         "FunctionInvocations",
     ),
+    ("runinator-ws-runtime/agents.rs", "ReplicaRegistry"),
     ("runinator-ws-runtime/artifacts.rs", "WorkflowFiles"),
     (
         "runinator-ws-runtime/notifications.rs",

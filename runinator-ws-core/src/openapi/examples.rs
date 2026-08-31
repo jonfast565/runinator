@@ -449,13 +449,15 @@ pub fn example_value(example: Example) -> Option<Value> {
             "ttl_seconds": 900,
             "org_id": UUID_EXAMPLE,
             "labels": { "site": "home" },
-            "service_url": "https://runinator.example"
+            "service_url": "https://runinator.example",
+            "permanent": true
         }),
         Example::AgentEnrollmentTokenList => json!([{
             "token_id": "AbCdEfGhIjk",
             "org_id": UUID_EXAMPLE,
             "labels": { "site": "home" },
             "service_url": "https://runinator.example",
+            "permanent": true,
             "expires_at": "2026-08-12T16:15:00Z",
             "consumed_at": null,
             "created_at": "2026-08-12T16:00:00Z"
@@ -472,6 +474,7 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::AgentEnrollmentResponse => json!({
             "api_key": "runi_agent_secret_shown_once",
             "service_url": "https://runinator.example",
+            "expires_at": null,
             "org_id": UUID_EXAMPLE,
             "labels": { "site": "home" }
         }),

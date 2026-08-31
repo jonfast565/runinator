@@ -11,8 +11,11 @@ import {
   fetchReplicaProviders,
   fetchReplicas,
   fetchReplicaSamples,
+  invalidateAgentMachine,
+  kickReplica,
   listAgentDirectives,
   listAgentEnrollmentTokens,
+  listAgentMachines,
   listMyOrgs,
   revokeAgentEnrollmentToken,
   scaleNodes,
@@ -238,16 +241,18 @@ export const replicaCommands: ConsoleCommand[] = [
       print(
         table(
           ["sampled_at", "cpu%", "mem%", "proc_cpu%", "proc_mem", "load1"],
-          series.samples.slice(-limit).map((sample) => [
-            time(sample.sampled_at),
-            sample.cpu_percent.toFixed(1),
-            sample.mem_percent.toFixed(1),
-            sample.process_cpu_percent.toFixed(1),
-            bytes(sample.process_mem_bytes),
-            sample.load_one === null || sample.load_one === undefined
-              ? "-"
-              : sample.load_one.toFixed(2),
-          ]),
+          series.samples
+            .slice(-limit)
+            .map((sample) => [
+              time(sample.sampled_at),
+              sample.cpu_percent.toFixed(1),
+              sample.mem_percent.toFixed(1),
+              sample.process_cpu_percent.toFixed(1),
+              bytes(sample.process_mem_bytes),
+              sample.load_one === null || sample.load_one === undefined
+                ? "-"
+                : sample.load_one.toFixed(2),
+            ]),
         ),
       );
     },
@@ -427,10 +432,26 @@ export const agentCommands: ConsoleCommand[] = [
     },
   },
   {
+    path: ["agents", "kick"],
+    usage: "agents kick <replica-id>",
+    summary: "disconnect one replica without invalidating its enrolled machine",
+    run: async ({ args, json: raw, print }) => {
+      const replica = await kickReplica(requiredArg(args, 0, "replica id"));
+
+      if (raw) {
+        print(json(replica));
+        return;
+      }
+
+      print(done(`kicked ${replica.replica_id}`));
+    },
+  },
+  {
     path: ["agents", "enroll-token"],
     usage:
-      "agents enroll-token [--ttl 15m] [--label KEY=VALUE] [--org ID] [--service-url URL] [--cluster-id ID] [--spki-pin PIN]",
-    summary: "create a single-use enrollment token, shown only once",
+      "agents enroll-token [--ttl 15m] [--permanent] [--label KEY=VALUE] [--org ID] [--service-url URL] [--cluster-id ID] [--spki-pin PIN]",
+    summary: "create a single-use timed or permanent enrollment token, shown only once",
+    booleans: ["permanent"],
     run: async ({ flags, print }) => {
       const response = await createAgentEnrollmentToken({
         ttl_seconds: parseTtl(flag(flags, "ttl") ?? "15m"),
@@ -441,6 +462,7 @@ export const agentCommands: ConsoleCommand[] = [
         service_url: flag(flags, "service-url") ?? getCommandRuntime().apiBaseUrl(),
         cluster_id: flag(flags, "cluster-id") ?? null,
         spki_pin: flag(flags, "spki-pin") ?? null,
+        permanent: flags.permanent !== undefined,
       });
       // shown once and never returned again, so it is printed on its own line rather than buried in
       // the record.
@@ -462,9 +484,10 @@ export const agentCommands: ConsoleCommand[] = [
 
       print(
         table(
-          ["token", "org", "expires", "consumed", "labels"],
+          ["token", "access", "org", "expires", "consumed", "labels"],
           tokens.map((token) => [
             truncate(token.token_id, 14),
+            token.permanent ? "permanent" : "timed",
             truncate(token.org_id, 14),
             time(token.expires_at),
             time(token.consumed_at),
@@ -484,6 +507,43 @@ export const agentCommands: ConsoleCommand[] = [
       const tokenId = requiredArg(args, 0, "token id");
       await revokeAgentEnrollmentToken(tokenId);
       print(done(`revoked ${tokenId}`));
+    },
+  },
+  {
+    path: ["agents", "machines"],
+    usage: "agents machines",
+    summary: "list enrolled machines and the state of their credentials",
+    run: async ({ json: raw, print }) => {
+      const machines = await listAgentMachines();
+
+      if (raw) {
+        print(json(machines));
+        return;
+      }
+
+      print(
+        table(
+          ["machine", "instance", "access", "state", "credentials", "last_used"],
+          machines.map((machine) => [
+            truncate(machine.machine_id, 14),
+            truncate(machine.instance_id, 24),
+            machine.permanent ? "permanent" : "timed",
+            machine.disabled ? "invalidated" : "active",
+            `${String(machine.active_credential_count)}/${String(machine.credential_count)}`,
+            time(machine.last_used_at),
+          ]),
+        ),
+      );
+    },
+  },
+  {
+    path: ["agents", "invalidate"],
+    usage: "agents invalidate <machine-id>",
+    summary: "invalidate an enrolled machine and kick all replicas it owns",
+    run: async ({ args, print }) => {
+      const machineId = requiredArg(args, 0, "machine id");
+      await invalidateAgentMachine(machineId);
+      print(done(`invalidated ${machineId}`));
     },
   },
 ];

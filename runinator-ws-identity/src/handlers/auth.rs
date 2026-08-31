@@ -1526,6 +1526,7 @@ pub async fn create_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeSto
         labels: request.labels,
         service_url: request.service_url,
         spki_pin: request.spki_pin,
+        permanent: request.permanent,
         expires_at: now + Duration::seconds(request.ttl_seconds as i64),
         consumed_at: None,
         issued_by: ctx.principal_id,
@@ -1663,7 +1664,7 @@ async fn authorize_enrollment<T: AuthStore + RbacStore + RuntimeStore>(
         action_ceiling: Vec::new(),
         key_prefix: generated.prefix,
         last_used_at: None,
-        expires_at: None,
+        expires_at: (!stored.token.permanent).then_some(stored.token.expires_at),
         disabled: false,
         created_at: now,
     };
@@ -1680,6 +1681,7 @@ async fn authorize_enrollment<T: AuthStore + RbacStore + RuntimeStore>(
     Ok(Some(EnrollAgentResponse {
         api_key: generated.secret,
         service_url: stored.token.service_url,
+        expires_at: (!stored.token.permanent).then_some(stored.token.expires_at),
         org_id: stored.token.org_id,
         labels: request.request_body.labels,
     }))
@@ -2345,7 +2347,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/agents/enrollment_tokens",
         "Agents",
         "Create an agent enrollment token",
-        "Creates a TTL-bounded, single-use token scoped to one organization and an allowed label set. The encoded token is returned only once.",
+        "Creates a TTL-bounded, single-use token scoped to one organization and an allowed label set. Redemption creates timed machine access by default, or non-expiring access when permanent is true. The encoded token is returned only once.",
         false,
         json_body(
             "Enrollment scope, service identity, and lifetime.",

@@ -400,6 +400,7 @@ async fn store_enrollment_token(
     db: &SqliteDb,
     labels: BTreeMap<String, String>,
     expires_at: chrono::DateTime<Utc>,
+    permanent: bool,
 ) -> EnrollToken {
     let token = EnrollToken::generate("https://runinator.example", None);
     let now = Utc::now();
@@ -410,6 +411,7 @@ async fn store_enrollment_token(
             labels,
             service_url: token.service_url.clone(),
             spki_pin: None,
+            permanent,
             expires_at,
             consumed_at: None,
             issued_by: None,
@@ -420,6 +422,41 @@ async fn store_enrollment_token(
     .await
     .unwrap();
     token
+}
+
+#[tokio::test]
+async fn a_non_admin_enrollment_operator_can_create_permanent_access() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let (status, _) = crate::handlers::auth::create_agent_enrollment_token::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(AuthContext {
+            principal_id: Some(Uuid::new_v4()),
+            session_id: None,
+            platform_role: Some(PlatformRole::Operator),
+            assignments: Vec::new(),
+            system_role: None,
+            action_ceiling: Vec::new(),
+            kind: PrincipalKind::User,
+            org_id: None,
+        }),
+        ValidatedJson(runinator_models::auth::CreateAgentEnrollmentTokenRequest {
+            ttl_seconds: 900,
+            org_id: None,
+            labels: BTreeMap::new(),
+            service_url: "https://runinator.example".to_string(),
+            cluster_id: None,
+            spki_pin: None,
+            permanent: true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let tokens = db.list_agent_enrollment_tokens().await.unwrap();
+    assert_eq!(tokens.len(), 1);
+    assert!(tokens[0].permanent);
+
+    let _ = std::fs::remove_file(path);
 }
 
 fn enrollment_request(token: &EnrollToken, labels: BTreeMap<String, String>) -> EnrollAgentRequest {
@@ -462,6 +499,7 @@ async fn agent_enrollment_is_single_use_and_mints_a_scoped_non_admin_key() {
         db.as_ref(),
         labels.clone(),
         Utc::now() + ChronoDuration::minutes(5),
+        false,
     )
     .await;
     let request = enrollment_request(
@@ -487,6 +525,156 @@ async fn agent_enrollment_is_single_use_and_mints_a_scoped_non_admin_key() {
         Some(runinator_models::rbac::SystemRole::Agent)
     );
     assert!(record.key.org_id.is_some());
+    assert!(record.key.expires_at.is_some());
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn permanent_agent_enrollment_mints_a_non_expiring_key() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let token = store_enrollment_token(
+        db.as_ref(),
+        BTreeMap::new(),
+        Utc::now() + ChronoDuration::minutes(5),
+        true,
+    )
+    .await;
+
+    let (status, body) = redeem(
+        db.clone(),
+        enrollment_request(&token, BTreeMap::new()),
+        [127, 10, 0, 8],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.get("expires_at"), Some(&serde_json::Value::Null));
+    let keys = db.list_api_keys(None).await.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert!(keys[0].expires_at.is_none());
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn invalidating_an_enrolled_machine_revokes_its_key_and_kicks_its_replicas() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let token = store_enrollment_token(
+        db.as_ref(),
+        BTreeMap::new(),
+        Utc::now() + ChronoDuration::minutes(5),
+        true,
+    )
+    .await;
+    let (status, _) = redeem(
+        db.clone(),
+        enrollment_request(&token, BTreeMap::new()),
+        [127, 10, 0, 9],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let key = db.list_api_keys(None).await.unwrap().remove(0);
+    let machine_id = key.principal_id;
+    let agent_ctx = AuthContext {
+        principal_id: Some(machine_id),
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: Some(runinator_models::rbac::SystemRole::Agent),
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::Service,
+        org_id: key.org_id,
+    };
+    let replica = ReplicaRegistry::new(db.clone())
+        .register(
+            ReplicaRegistrationRequest {
+                replica_id: None,
+                replica_type: ReplicaKind::Worker,
+                instance_id: "invalidated-machine".to_string(),
+                runtime_id: "runtime-a".to_string(),
+                display_name: Some("invalidated machine".to_string()),
+                host: None,
+                port: None,
+                base_path: None,
+                version: None,
+                attributes: json!({}),
+            },
+            None,
+            &agent_ctx,
+        )
+        .await
+        .unwrap();
+    let admin_ctx = AuthContext {
+        principal_id: Some(Uuid::new_v4()),
+        session_id: None,
+        platform_role: Some(PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::User,
+        org_id: None,
+    };
+    let (status, body) = crate::handlers::agents::list_machines::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin_ctx.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::JsonList(machines) = body.0 else {
+        panic!("machine list returned the wrong response shape");
+    };
+    assert_eq!(machines.len(), 1);
+    assert_eq!(
+        machines[0]
+            .get("machine_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        Some(machine_id.to_string())
+    );
+    assert_eq!(
+        machines[0]
+            .get("permanent")
+            .and_then(|value| value.as_bool()),
+        Some(true)
+    );
+
+    let (events, _receiver) = tokio::sync::broadcast::channel(8);
+    let event_bus = crate::events::EventBus::new(events, Arc::new(InMemoryBroker::new()));
+    let (status, _) = crate::handlers::agents::invalidate_machine::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(event_bus),
+        Extension(admin_ctx),
+        Path(machine_id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        db.fetch_service_account(machine_id)
+            .await
+            .unwrap()
+            .expect("enrolled machine")
+            .disabled
+    );
+    assert!(db.list_api_keys(Some(machine_id)).await.unwrap()[0].disabled);
+    let kicked = db
+        .fetch_replica(replica.replica_id)
+        .await
+        .unwrap()
+        .expect("registered replica");
+    assert_eq!(
+        kicked.status,
+        runinator_models::replicas::ReplicaStatus::Offline
+    );
+    assert!(kicked.kicked_at.is_some());
+    assert!(
+        !ReplicaRegistry::new(db.clone())
+            .agent_owns_replica(&agent_ctx, replica.replica_id)
+            .await
+            .unwrap()
+    );
 
     let _ = std::fs::remove_file(path);
 }
@@ -501,6 +689,7 @@ async fn agent_enrollment_rejections_are_uniform_and_labels_cannot_be_widened() 
         db.as_ref(),
         allowed.clone(),
         Utc::now() + ChronoDuration::minutes(5),
+        false,
     )
     .await;
     let mut wrong_proof = enrollment_request(&wrong_proof_token, allowed.clone());
@@ -510,6 +699,7 @@ async fn agent_enrollment_rejections_are_uniform_and_labels_cannot_be_widened() 
         db.as_ref(),
         allowed.clone(),
         Utc::now() - ChronoDuration::minutes(1),
+        false,
     )
     .await;
     let expired = enrollment_request(&expired_token, allowed.clone());
@@ -518,6 +708,7 @@ async fn agent_enrollment_rejections_are_uniform_and_labels_cannot_be_widened() 
         db.as_ref(),
         allowed,
         Utc::now() + ChronoDuration::minutes(5),
+        false,
     )
     .await;
     let widened = enrollment_request(

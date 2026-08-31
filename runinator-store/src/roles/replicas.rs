@@ -103,6 +103,21 @@ pub trait ReplicaStore: Send + Sync + 'static {
         runtime_id: String,
     ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
 
+    /// Permanently end one runtime activation. The machine enrollment remains valid, but this
+    /// replica id can no longer heartbeat or re-register.
+    fn kick_replica(
+        &self,
+        replica_id: Uuid,
+        kicked_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Kick every current or historical activation owned by one enrolled machine principal.
+    fn kick_replicas_by_principal(
+        &self,
+        principal_id: Uuid,
+        kicked_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Mark replicas offline that have not sent a heartbeat since the cutoff. returns the count
     /// reaped so callers can log activity.
     fn reap_inactive_replicas(

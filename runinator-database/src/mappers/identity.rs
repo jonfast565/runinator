@@ -72,6 +72,7 @@ row_mapper!(row_to_agent_enrollment_token_record(row) -> AgentEnrollmentTokenRec
                 .unwrap_or_default(),
             service_url: row.get::<String, _>("service_url"),
             spki_pin: row.get::<Option<String>, _>("spki_pin"),
+            permanent: row.get::<bool, _>("permanent"),
             expires_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("expires_at"), 0)
                 .unwrap_or_else(Utc::now),
             consumed_at: row

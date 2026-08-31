@@ -42,6 +42,14 @@ pub async fn fetch_replicas(
 }
 
 #[tauri::command]
+pub async fn kick_replica(
+    state: State<'_, CommandCenterState>,
+    replica_id: String,
+) -> CommandResult<Value> {
+    post_empty(&state, &format!("replicas/{replica_id}/kick")).await
+}
+
+#[tauri::command]
 pub async fn create_agent_directive(
     state: State<'_, CommandCenterState>,
     replica_id: String,
