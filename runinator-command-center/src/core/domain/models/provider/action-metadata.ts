@@ -1,4 +1,5 @@
 import type { JsonValue } from "../../json";
+import type { DeliverySemantics } from "../orchestration/orchestration";
 import type { RuninatorType } from "./runinator-type";
 
 export interface ActionParameterMetadata {
@@ -23,4 +24,6 @@ export interface ActionMetadata {
   description?: string | null;
   parameters: ActionParameterMetadata[];
   results: ActionResultMetadata[];
+  pure?: boolean;
+  delivery_semantics?: DeliverySemantics;
 }

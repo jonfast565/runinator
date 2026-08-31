@@ -42,7 +42,9 @@ export const useAppStore = defineStore("app", () => {
     return authState.value.effectiveActions.includes(action);
   }
 
-  const normalizedSearch = computed(() => appService.normalizedSearch);
+  // Derive from the mirrored state so consumers update while the user types. Reading the service
+  // getter directly would give Vue no reactive dependency and freeze search at its initial value.
+  const normalizedSearch = computed(() => state.value.searchQuery.trim().toLowerCase());
   const lastRefreshText = computed(() =>
     state.value.lastRefreshAt ? state.value.lastRefreshAt.toLocaleTimeString() : "-",
   );
