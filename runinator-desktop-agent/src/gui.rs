@@ -56,7 +56,7 @@ const DOT_GREEN: egui::Color32 = egui::Color32::from_rgb(64, 180, 96);
 const DOT_AMBER: egui::Color32 = egui::Color32::from_rgb(220, 170, 45);
 const DOT_RED: egui::Color32 = egui::Color32::from_rgb(210, 70, 70);
 
-/// How a connection state renders: header dot text + color, and the matching tray badge/tooltip.
+/// How a connection state renders: header dot text + color, and the matching tray logo/tooltip.
 struct StatusPresentation {
     label: String,
     color: egui::Color32,

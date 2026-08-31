@@ -34,8 +34,10 @@ saved GUI configuration. The corresponding environment variables are `RUNINATOR_
 `RUNINATOR_MAX_CONCURRENT_ACTIONS`, `RUNINATOR_SHUTDOWN_GRACE_SECONDS`,
 `RUNINATOR_RECONNECT_MAX_ATTEMPTS`, and `RUNINATOR_LIVENESS_FILE`.
 
-If the web service or broker becomes unreachable, the agent retries with backoff and shows an
-amber **reconnecting** dot (in the window header and the tray icon) carrying the attempt number.
+The tray logo uses its full background as the connection indicator: gray is stopped, blue is
+starting or connecting, green is running, amber is retrying, and red needs operator attention. If
+the web service or broker becomes unreachable, the agent retries with backoff and also shows an
+amber **reconnecting** dot in the window header carrying the attempt number.
 After `--reconnect-max-attempts` consecutive failures — 10 by default, roughly seven minutes of
 capped backoff — it gives up: the dot turns red **disconnected**, a desktop notification fires, the
 replica is marked offline, and the agent stops rather than heartbeating a worker that can never take

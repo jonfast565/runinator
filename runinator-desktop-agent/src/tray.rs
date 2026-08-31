@@ -6,6 +6,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::app_icon;
+pub use crate::app_icon::TrayColor;
 
 pub enum TrayAction {
     Open,
@@ -43,7 +44,7 @@ impl AgentTray {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("Runinator Desktop Agent")
-            .with_icon(app_icon::tray_icon(TrayColor::Idle.rgb()))
+            .with_icon(app_icon::tray_icon(TrayColor::Idle))
             .build()
             .ok()?;
 
@@ -55,10 +56,10 @@ impl AgentTray {
         })
     }
 
-    /// Reflect the agent's connection state with a badge and tooltip while preserving the
-    /// Runinator mark. A failing platform call is ignored rather than propagated.
+    /// Reflect the agent's connection state with a colored-background logo and tooltip. A failing
+    /// platform call is ignored rather than propagated.
     pub fn set_status(&self, color: TrayColor, tooltip: &str) {
-        let _ = self.tray.set_icon(Some(app_icon::tray_icon(color.rgb())));
+        let _ = self.tray.set_icon(Some(app_icon::tray_icon(color)));
         let _ = self.tray.set_tooltip(Some(tooltip));
     }
 
@@ -87,35 +88,5 @@ impl AgentTray {
         }
 
         None
-    }
-}
-
-/// The tray status badge color that maps to an agent connection state.
-///
-/// The amber/red distinction signals whether the agent is still trying to recover or has stopped
-/// and needs operator attention.
-#[derive(Debug, Clone, Copy)]
-pub enum TrayColor {
-    /// Stopped or not started — neutral gray.
-    Idle,
-    /// Bringing the worker loop up — blue.
-    Connecting,
-    /// Running and consuming actions — green.
-    Connected,
-    /// Broker down, retrying within its budget — amber.
-    Reconnecting,
-    /// Disconnected for good, or re-enrollment is required — red.
-    Disconnected,
-}
-
-impl TrayColor {
-    fn rgb(self) -> [u8; 3] {
-        match self {
-            TrayColor::Idle => [130, 130, 130],
-            TrayColor::Connecting => [45, 140, 200],
-            TrayColor::Connected => [64, 180, 96],
-            TrayColor::Reconnecting => [220, 170, 45],
-            TrayColor::Disconnected => [210, 70, 70],
-        }
     }
 }
