@@ -5,8 +5,7 @@
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-/// icon side length in pixels; small tray icons don't benefit from going bigger.
-const ICON_SIZE: u32 = 32;
+use crate::app_icon;
 
 pub enum TrayAction {
     Open,
@@ -44,7 +43,7 @@ impl AgentTray {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("Runinator Desktop Agent")
-            .with_icon(build_icon(TrayColor::Idle.rgb()))
+            .with_icon(app_icon::tray_icon(TrayColor::Idle.rgb()))
             .build()
             .ok()?;
 
@@ -56,11 +55,10 @@ impl AgentTray {
         })
     }
 
-    /// reflect the agent's connection state in the tray icon color and tooltip, so a degraded or
-    /// stopped agent is visible from the menu bar without opening the window. best-effort: a failing
-    /// platform call is ignored rather than propagated.
+    /// Reflect the agent's connection state with a badge and tooltip while preserving the
+    /// Runinator mark. A failing platform call is ignored rather than propagated.
     pub fn set_status(&self, color: TrayColor, tooltip: &str) {
-        let _ = self.tray.set_icon(Some(build_icon(color.rgb())));
+        let _ = self.tray.set_icon(Some(app_icon::tray_icon(color.rgb())));
         let _ = self.tray.set_tooltip(Some(tooltip));
     }
 
@@ -92,23 +90,21 @@ impl AgentTray {
     }
 }
 
-/// the tray-icon color that maps to an agent connection state. kept here rather than in `agent` so
-/// the tray owns its own palette and callers don't reach into rgba details.
+/// The tray status badge color that maps to an agent connection state.
 ///
-/// the amber/red split is the point: amber means the agent is still trying and may well come back,
-/// red means it has stopped and will not come back on its own. an operator glancing at the menu bar
-/// should be able to tell those two apart without opening the window.
+/// The amber/red distinction signals whether the agent is still trying to recover or has stopped
+/// and needs operator attention.
 #[derive(Debug, Clone, Copy)]
 pub enum TrayColor {
-    /// stopped / not started — neutral gray.
+    /// Stopped or not started — neutral gray.
     Idle,
-    /// bringing the worker loop up — blue.
+    /// Bringing the worker loop up — blue.
     Connecting,
-    /// running and consuming actions — green.
+    /// Running and consuming actions — green.
     Connected,
-    /// broker down, retrying within its budget — amber.
+    /// Broker down, retrying within its budget — amber.
     Reconnecting,
-    /// disconnected for good: the reconnect budget is spent, or the credential was rejected — red.
+    /// Disconnected for good, or re-enrollment is required — red.
     Disconnected,
 }
 
@@ -122,30 +118,4 @@ impl TrayColor {
             TrayColor::Disconnected => [210, 70, 70],
         }
     }
-}
-
-// a filled circle on a transparent background in `color`; enough to be recognizable at tray size
-// without shipping an icon asset.
-fn build_icon(color: [u8; 3]) -> Icon {
-    let mut rgba = vec![0u8; (ICON_SIZE * ICON_SIZE * 4) as usize];
-    let center = ICON_SIZE as f32 / 2.0 - 0.5;
-    let radius = ICON_SIZE as f32 / 2.0 - 2.0;
-
-    for y in 0..ICON_SIZE {
-        for x in 0..ICON_SIZE {
-            let dx = x as f32 - center;
-            let dy = y as f32 - center;
-            if dx * dx + dy * dy > radius * radius {
-                continue;
-            }
-            let idx = ((y * ICON_SIZE + x) * 4) as usize;
-            rgba[idx] = color[0];
-            rgba[idx + 1] = color[1];
-            rgba[idx + 2] = color[2];
-            rgba[idx + 3] = 255;
-        }
-    }
-
-    Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE)
-        .expect("tray icon buffer matches ICON_SIZE x ICON_SIZE")
 }

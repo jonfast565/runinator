@@ -1,72 +1,76 @@
 <template>
-  <svg
-    class="brand-mark-glyph"
-    width="26"
-    height="21"
-    viewBox="0 0 30 24"
-    fill="none"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <!-- a waiting node reaching, along an edge, toward the one currently live -->
-    <circle
-      cx="6"
-      cy="17"
-      r="2.6"
-      stroke-width="1.4"
-      style="fill: var(--surface-inverse); stroke: var(--text-inverse-faint)"
-    />
-    <path
-      d="M8.4 15.2 C 13 12.4, 17.5 9.2, 21.6 6.6"
-      stroke-width="1.5"
-      stroke-linecap="round"
-      fill="none"
-      style="stroke: var(--accent)"
-    />
-    <circle
-      class="brand-mark-pulse"
-      cx="23"
-      cy="5.6"
-      r="6"
-      opacity="0.28"
-      style="fill: var(--accent-pulse)"
-    />
-    <circle cx="23" cy="5.6" r="2.9" style="fill: var(--accent-pulse)" />
-  </svg>
+  <span class="brand-mark" aria-hidden="true">
+    <span class="brand-mark-pulse"></span>
+    <img class="brand-mark-glyph" src="/icon.png" width="28" height="28" alt="" />
+  </span>
 </template>
 
 <script setup lang="ts"></script>
 
 <style scoped>
+.brand-mark {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+}
+
 .brand-mark-glyph {
   display: block;
-  flex: 0 0 auto;
-  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: 7px;
+  animation: brand-run 3.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  will-change: transform;
 }
 
 .brand-mark-pulse {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: brand-pulse 2.4s ease-in-out infinite;
+  position: absolute;
+  inset: 3px;
+  border: 1px solid color-mix(in srgb, var(--accent-pulse) 72%, transparent);
+  border-radius: 9px;
+  animation: brand-pulse 3.2s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes brand-run {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  38% {
+    transform: translateY(-1px) scale(1.035);
+  }
+
+  54% {
+    transform: translateY(0) scale(1);
+  }
 }
 
 @keyframes brand-pulse {
   0%,
+  52%,
   100% {
-    opacity: 0.28;
-    transform: scale(0.85);
+    opacity: 0;
+    transform: scale(0.8);
   }
 
-  50% {
+  16% {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+
+  44% {
     opacity: 0;
-    transform: scale(1.7);
+    transform: scale(1.45);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .brand-mark-glyph,
   .brand-mark-pulse {
     animation: none;
-    opacity: 0.16;
   }
 }
 </style>

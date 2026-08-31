@@ -10,6 +10,7 @@
 //! explicit process shutdown path.
 
 mod agent;
+mod app_icon;
 mod cli;
 mod config;
 mod errors;
@@ -95,6 +96,7 @@ fn run_gui(draft: AgentConfig) -> eframe::Result<()> {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1120.0, 760.0])
             .with_min_inner_size([820.0, 580.0])
+            .with_icon(app_icon::window_icon())
             .with_visible(true),
         ..Default::default()
     };

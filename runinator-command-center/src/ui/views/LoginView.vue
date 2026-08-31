@@ -4,7 +4,8 @@
       class="grid w-[min(360px,calc(100vw-32px))] gap-3 rounded-lg border border-border bg-surface p-7 shadow-modal"
       @submit.prevent="submit"
     >
-      <div class="flex items-center gap-1">
+      <div class="flex items-center gap-2">
+        <BrandMark />
         <h1 class="m-0 text-xl text-fg">Runinator</h1>
         <HelpBubble
           text="Sign in with your Runinator account. Your available pages and actions are limited by the roles assigned to that account."
@@ -49,6 +50,7 @@
 import { ref } from "vue";
 import HelpBubble from "../components/shared/HelpBubble.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import BrandMark from "../components/shell/BrandMark.vue";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 
 const auth = useAuthStore();

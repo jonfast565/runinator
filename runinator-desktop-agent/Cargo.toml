@@ -25,6 +25,7 @@ rfd = { version = "0.16", default-features = false, features = [
     "common-controls-v6",
 ] }
 notify-rust = "4"
+png = "0.17"
 
 runinator-api = { path = "../runinator-api" }
 runinator-comm = { path = "../runinator-comm" }
