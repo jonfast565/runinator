@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use clap::Parser;
 use runinator_broker::DEFAULT_BROKER_RELAY_PATH;
 use runinator_db_cli::DatabaseBackend;
-use runinator_models::errors::SendableError;
+use runinator_models::{errors::SendableError, server_settings::ArchiverSettings};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -290,6 +290,36 @@ impl Config {
             advertise_host: cli.advertise_host.filter(|value| !value.trim().is_empty()),
         })
     }
+
+    /// Convert the legacy process flags into the operating policy used until the first persisted
+    /// server policy exists. This preserves existing deployments during the settings migration.
+    pub fn bootstrap_archiver_settings(&self) -> ArchiverSettings {
+        ArchiverSettings {
+            interval_seconds: self.interval.as_secs(),
+            claim_lease_seconds: self.claim_lease.as_secs(),
+            batch_size: self.batch_size.max(1) as u64,
+            dry_run: self.dry_run,
+            workflow_run_retention_seconds: seconds_or_disabled(self.workflow_run_retention),
+            pipeline_run_retention_seconds: seconds_or_disabled(self.pipeline_run_retention),
+            orchestration_retention_seconds: seconds_or_disabled(self.pipeline_run_retention),
+            effect_dispatch_retention_seconds: seconds_or_disabled(self.effect_dispatch_retention),
+            notification_retention_seconds: seconds_or_disabled(self.read_notification_retention),
+            dead_letter_retention_seconds: seconds_or_disabled(self.dead_letter_retention),
+            audit_log_retention_seconds: seconds_or_disabled(self.audit_log_retention),
+            idempotency_retention_seconds: seconds_or_disabled(self.idempotency_retention),
+            automation_retention_seconds: seconds_or_disabled(self.automation_retention),
+            usage_retention_seconds: seconds_or_disabled(self.usage_retention),
+            revision_retention_seconds: seconds_or_disabled(self.revision_retention),
+            agent_directive_retention_seconds: seconds_or_disabled(self.agent_directive_retention),
+            archive_ledger_retention_seconds: seconds_or_disabled(self.archive_ledger_retention),
+            security_retention_seconds: seconds_or_disabled(self.security_retention),
+            coordination_retention_seconds: seconds_or_disabled(self.cooldown_retention),
+        }
+    }
+}
+
+fn seconds_or_disabled(value: Option<Duration>) -> u64 {
+    value.map_or(0, |duration| duration.as_secs())
 }
 
 pub fn parse_optional_duration(value: &str) -> Result<Option<Duration>, SendableError> {

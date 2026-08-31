@@ -293,4 +293,32 @@ where
         }
         Ok(deleted)
     }
+
+    async fn prune_workflow_mutexes(
+        &self,
+        updated_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<u64, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT name FROM workflow_mutexes
+             WHERE holder_run_id IS NULL AND updated_at <= ?
+             ORDER BY updated_at, name LIMIT ?",
+        ))
+        .bind(updated_before.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        let mut deleted = 0;
+        for row in rows {
+            deleted +=
+                sqlx::query(&self.render(
+                    "DELETE FROM workflow_mutexes WHERE name = ? AND holder_run_id IS NULL",
+                ))
+                .bind(row.get::<String, _>("name"))
+                .execute(self.pool())
+                .await?
+                .affected();
+        }
+        Ok(deleted)
+    }
 }

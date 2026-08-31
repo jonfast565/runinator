@@ -142,7 +142,7 @@ export function createAdminSettingsService(app: AppService) {
         serverValues: server.values,
         serverCatalog: server.catalog,
         runtimeCatalog: server.runtime_catalog ?? [],
-        maxRefreshes: server.values.authentication.max_refreshes,
+        maxRefreshes: Number(server.values.authentication.max_refreshes),
       }));
     },
     async refreshAuthSettings() {
@@ -164,12 +164,7 @@ export function createAdminSettingsService(app: AppService) {
       store.setState((state) => ({ ...state, maxRefreshes: saved.max_refreshes }));
       app.setStatus("Authentication settings saved");
     },
-    updateServerSetting(key: string, value: number) {
-      if (!Number.isInteger(value)) {
-        app.setError(`${key} must be an integer`);
-        return;
-      }
-
+    updateServerSetting(key: string, value: number | boolean) {
       const definition = store.getState().serverCatalog.find((item) => item.key === key);
 
       if (!definition) {
@@ -177,11 +172,23 @@ export function createAdminSettingsService(app: AppService) {
         return;
       }
 
-      if (value < definition.minimum || value > definition.maximum) {
-        app.setError(
-          `${key} must be between ${String(definition.minimum)} and ${String(definition.maximum)}`,
-        );
-        return;
+      if (definition.kind === "boolean") {
+        if (typeof value !== "boolean") {
+          app.setError(`${key} must be enabled or disabled`);
+          return;
+        }
+      } else {
+        if (typeof value !== "number" || !Number.isInteger(value)) {
+          app.setError(`${key} must be an integer`);
+          return;
+        }
+
+        if (value < definition.minimum || value > definition.maximum) {
+          app.setError(
+            `${key} must be between ${String(definition.minimum)} and ${String(definition.maximum)}`,
+          );
+          return;
+        }
       }
 
       const [section, name] = key.split(".");
@@ -202,9 +209,9 @@ export function createAdminSettingsService(app: AppService) {
         ...state,
         serverValues: saved.values,
         serverCatalog: saved.catalog,
-        maxRefreshes: saved.values.authentication.max_refreshes,
+        maxRefreshes: Number(saved.values.authentication.max_refreshes),
       }));
-      app.setStatus("Server settings saved; engine replicas will refresh them shortly");
+      app.setStatus("Server settings saved; engine and archiver replicas will refresh them shortly");
     },
     async saveLanguage(language: string) {
       const runtime = store.getState().languages.find((entry) => entry.language === language);

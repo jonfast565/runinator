@@ -13,6 +13,11 @@ use runinator_models::{
 /// Core persistence operations for Runinator.
 /// The unified config/secret store.
 pub trait SettingStore: Send + Sync + 'static {
+    /// List stored settings, including encrypted values, in stable logical order.
+    fn list_stored_settings(
+        &self,
+    ) -> impl Future<Output = Result<Vec<SettingRecord>, SendableError>> + Send;
+
     /// Insert or replace a setting's stored value (encrypted at rest) and modification time.
     fn upsert_setting(
         &self,

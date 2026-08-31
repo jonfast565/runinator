@@ -77,4 +77,11 @@ pub trait ArchiveStore: Send + Sync + 'static {
         used_before: DateTime<Utc>,
         limit: i64,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Delete inactive named mutex keys after their coordination window has elapsed.
+    fn prune_workflow_mutexes(
+        &self,
+        updated_before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 }

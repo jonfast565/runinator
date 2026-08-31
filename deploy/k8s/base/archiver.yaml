@@ -59,6 +59,8 @@ spec:
                 name: runinator-postgres-secret
             - secretRef:
                 name: runinator-rabbitmq-secret
+            - secretRef:
+                name: runinator-app-secret
           env:
             - name: POD_NAME
               valueFrom:

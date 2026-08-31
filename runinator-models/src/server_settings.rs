@@ -26,6 +26,7 @@ pub struct ServerSettings {
     pub orchestration: OrchestrationSettings,
     pub notifications: NotificationSettings,
     pub replicas: ReplicaSettings,
+    pub archiver: ArchiverSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +131,64 @@ impl Default for ReplicaSettings {
     }
 }
 
+/// Hot-reloadable retention and sweep policy used by every archiver replica.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArchiverSettings {
+    pub interval_seconds: u64,
+    pub claim_lease_seconds: u64,
+    pub batch_size: u64,
+    pub dry_run: bool,
+    pub workflow_run_retention_seconds: u64,
+    pub pipeline_run_retention_seconds: u64,
+    pub orchestration_retention_seconds: u64,
+    pub effect_dispatch_retention_seconds: u64,
+    pub notification_retention_seconds: u64,
+    pub dead_letter_retention_seconds: u64,
+    pub audit_log_retention_seconds: u64,
+    pub idempotency_retention_seconds: u64,
+    pub automation_retention_seconds: u64,
+    pub usage_retention_seconds: u64,
+    pub revision_retention_seconds: u64,
+    pub agent_directive_retention_seconds: u64,
+    pub archive_ledger_retention_seconds: u64,
+    pub security_retention_seconds: u64,
+    pub coordination_retention_seconds: u64,
+}
+
+impl Default for ArchiverSettings {
+    fn default() -> Self {
+        Self {
+            interval_seconds: 3_600,
+            claim_lease_seconds: 600,
+            batch_size: 1_000,
+            dry_run: false,
+            workflow_run_retention_seconds: 7_776_000,
+            pipeline_run_retention_seconds: 7_776_000,
+            orchestration_retention_seconds: 7_776_000,
+            effect_dispatch_retention_seconds: 604_800,
+            notification_retention_seconds: 2_592_000,
+            dead_letter_retention_seconds: 7_776_000,
+            audit_log_retention_seconds: 31_536_000,
+            idempotency_retention_seconds: 604_800,
+            automation_retention_seconds: 7_776_000,
+            usage_retention_seconds: 31_536_000,
+            revision_retention_seconds: 31_536_000,
+            agent_directive_retention_seconds: 2_592_000,
+            archive_ledger_retention_seconds: 2_592_000,
+            security_retention_seconds: 604_800,
+            coordination_retention_seconds: 2_592_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerSettingKind {
+    Integer,
+    Boolean,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ServerSettingDefinition {
     pub key: &'static str,
@@ -137,6 +196,7 @@ pub struct ServerSettingDefinition {
     pub label: &'static str,
     pub description: &'static str,
     pub unit: &'static str,
+    pub kind: ServerSettingKind,
     pub default: u64,
     pub minimum: u64,
     pub maximum: u64,
@@ -168,11 +228,30 @@ macro_rules! setting {
             label: $label,
             description: $description,
             unit: $unit,
+            kind: ServerSettingKind::Integer,
             default: $default,
             minimum: $min,
             maximum: $max,
             usual_minimum: $usual_min,
             usual_maximum: $usual_max,
+        }
+    };
+}
+
+macro_rules! boolean_setting {
+    ($key:literal, $section:literal, $label:literal, $description:literal, $default:expr) => {
+        ServerSettingDefinition {
+            key: $key,
+            section: $section,
+            label: $label,
+            description: $description,
+            unit: "",
+            kind: ServerSettingKind::Boolean,
+            default: u64::from($default),
+            minimum: 0,
+            maximum: 1,
+            usual_minimum: 0,
+            usual_maximum: 1,
         }
     };
 }
@@ -516,14 +595,246 @@ pub fn server_setting_catalog() -> Vec<ServerSettingDefinition> {
             100,
             5_000
         ),
+        setting!(
+            "archiver.interval_seconds",
+            "Archiver",
+            "Pass interval",
+            "Delay between retention passes. Archiver replicas re-read this policy while waiting.",
+            "seconds",
+            3_600,
+            10,
+            604_800,
+            60,
+            86_400
+        ),
+        setting!(
+            "archiver.claim_lease_seconds",
+            "Archiver",
+            "Claim lease",
+            "Lease held while one archiver fetches, writes, and deletes a claimed archive batch.",
+            "seconds",
+            600,
+            10,
+            86_400,
+            60,
+            3_600
+        ),
+        setting!(
+            "archiver.batch_size",
+            "Archiver",
+            "Batch size",
+            "Maximum rows marked or claimed for one table in a retention batch.",
+            "rows",
+            1_000,
+            1,
+            100_000,
+            100,
+            10_000
+        ),
+        boolean_setting!(
+            "archiver.dry_run",
+            "Archiver",
+            "Dry run",
+            "Discover eligible rows without writing archives or deleting source data.",
+            false
+        ),
+        setting!(
+            "archiver.workflow_run_retention_seconds",
+            "Archiver",
+            "Workflow run retention",
+            "Retention for terminal workflow runs, task runs, files, and VM history. Zero disables this policy.",
+            "seconds",
+            7_776_000,
+            0,
+            315_360_000,
+            604_800,
+            31_536_000
+        ),
+        setting!(
+            "archiver.pipeline_run_retention_seconds",
+            "Archiver",
+            "Pipeline run retention",
+            "Retention for terminal pipeline runs, member attempts, and trigger firings. Zero disables this policy.",
+            "seconds",
+            7_776_000,
+            0,
+            315_360_000,
+            604_800,
+            31_536_000
+        ),
+        setting!(
+            "archiver.orchestration_retention_seconds",
+            "Archiver",
+            "Correlated orchestration retention",
+            "Retention for terminal ingress admissions and their correlated orchestration history. Zero disables this policy.",
+            "seconds",
+            7_776_000,
+            0,
+            315_360_000,
+            604_800,
+            31_536_000
+        ),
+        setting!(
+            "archiver.effect_dispatch_retention_seconds",
+            "Archiver",
+            "Effect dispatch retention",
+            "Retention for published or permanently failed effect outbox rows. Zero disables this policy.",
+            "seconds",
+            604_800,
+            0,
+            31_536_000,
+            86_400,
+            2_592_000
+        ),
+        setting!(
+            "archiver.notification_retention_seconds",
+            "Archiver",
+            "Notification retention",
+            "Retention for notifications and settled delivery attempts. Zero disables this policy.",
+            "seconds",
+            2_592_000,
+            0,
+            315_360_000,
+            604_800,
+            7_776_000
+        ),
+        setting!(
+            "archiver.dead_letter_retention_seconds",
+            "Archiver",
+            "Dead-letter retention",
+            "Retention for broker dead letters. Zero disables this policy.",
+            "seconds",
+            7_776_000,
+            0,
+            315_360_000,
+            604_800,
+            31_536_000
+        ),
+        setting!(
+            "archiver.audit_log_retention_seconds",
+            "Archiver",
+            "Audit-log retention",
+            "Retention for authorization and sensitive-operation audit records. Zero disables this policy.",
+            "seconds",
+            31_536_000,
+            0,
+            630_720_000,
+            7_776_000,
+            157_680_000
+        ),
+        setting!(
+            "archiver.idempotency_retention_seconds",
+            "Archiver",
+            "Idempotency retention",
+            "Retention for completed or legacy idempotency keys. Zero disables this policy.",
+            "seconds",
+            604_800,
+            0,
+            31_536_000,
+            86_400,
+            2_592_000
+        ),
+        setting!(
+            "archiver.automation_retention_seconds",
+            "Archiver",
+            "Automation retention",
+            "Retention for resolved automation records and gates. Zero disables this policy.",
+            "seconds",
+            7_776_000,
+            0,
+            315_360_000,
+            604_800,
+            31_536_000
+        ),
+        setting!(
+            "archiver.usage_retention_seconds",
+            "Archiver",
+            "Usage-ledger retention",
+            "Retention for organization resource-usage samples. Zero disables this policy.",
+            "seconds",
+            31_536_000,
+            0,
+            630_720_000,
+            2_592_000,
+            157_680_000
+        ),
+        setting!(
+            "archiver.revision_retention_seconds",
+            "Archiver",
+            "Revision retention",
+            "Retention for superseded workflow and pipeline revisions; the newest revision is always kept. Zero disables this policy.",
+            "seconds",
+            31_536_000,
+            0,
+            630_720_000,
+            2_592_000,
+            157_680_000
+        ),
+        setting!(
+            "archiver.agent_directive_retention_seconds",
+            "Archiver",
+            "Agent-directive retention",
+            "Retention for completed, failed, unsupported, and expired agent directives. Zero disables this policy.",
+            "seconds",
+            2_592_000,
+            0,
+            315_360_000,
+            604_800,
+            7_776_000
+        ),
+        setting!(
+            "archiver.archive_ledger_retention_seconds",
+            "Archiver",
+            "Archive-ledger retention",
+            "Retention for completed archive marks after their source rows are removed. Zero disables this policy.",
+            "seconds",
+            2_592_000,
+            0,
+            31_536_000,
+            604_800,
+            7_776_000
+        ),
+        setting!(
+            "archiver.security_retention_seconds",
+            "Archiver",
+            "Expired security-state retention",
+            "Grace period before expired or revoked sessions and enrollment tokens are purged. Zero disables this policy.",
+            "seconds",
+            604_800,
+            0,
+            31_536_000,
+            86_400,
+            2_592_000
+        ),
+        setting!(
+            "archiver.coordination_retention_seconds",
+            "Archiver",
+            "Coordination-state retention",
+            "Retention for inactive workflow cooldown and mutex keys. Zero disables this policy.",
+            "seconds",
+            2_592_000,
+            0,
+            31_536_000,
+            604_800,
+            7_776_000
+        ),
     ]
 }
 
 impl ServerSettings {
     pub fn validate(&self) -> Result<(), String> {
         for definition in server_setting_catalog() {
+            if definition.kind == ServerSettingKind::Boolean {
+                if self.boolean_value(definition.key).is_none() {
+                    return Err(format!(
+                        "{} is missing from the server settings model",
+                        definition.key
+                    ));
+                }
+                continue;
+            }
             let value = self
-                .value(definition.key)
+                .integer_value(definition.key)
                 .expect("catalog key must resolve");
             if !(definition.minimum..=definition.maximum).contains(&value) {
                 return Err(format!(
@@ -547,7 +858,7 @@ impl ServerSettings {
         Ok(())
     }
 
-    fn value(&self, key: &str) -> Option<u64> {
+    fn integer_value(&self, key: &str) -> Option<u64> {
         Some(match key {
             "authentication.max_refreshes" => self.authentication.max_refreshes,
             "orchestration.claim_batch_size" => self.orchestration.claim_batch_size,
@@ -605,8 +916,49 @@ impl ServerSettings {
             "replicas.sample_retention_seconds" => self.replicas.sample_retention_seconds,
             "replicas.sample_window_seconds" => self.replicas.sample_window_seconds,
             "replicas.sample_max_points" => self.replicas.sample_max_points,
+            "archiver.interval_seconds" => self.archiver.interval_seconds,
+            "archiver.claim_lease_seconds" => self.archiver.claim_lease_seconds,
+            "archiver.batch_size" => self.archiver.batch_size,
+            "archiver.workflow_run_retention_seconds" => {
+                self.archiver.workflow_run_retention_seconds
+            }
+            "archiver.pipeline_run_retention_seconds" => {
+                self.archiver.pipeline_run_retention_seconds
+            }
+            "archiver.orchestration_retention_seconds" => {
+                self.archiver.orchestration_retention_seconds
+            }
+            "archiver.effect_dispatch_retention_seconds" => {
+                self.archiver.effect_dispatch_retention_seconds
+            }
+            "archiver.notification_retention_seconds" => {
+                self.archiver.notification_retention_seconds
+            }
+            "archiver.dead_letter_retention_seconds" => self.archiver.dead_letter_retention_seconds,
+            "archiver.audit_log_retention_seconds" => self.archiver.audit_log_retention_seconds,
+            "archiver.idempotency_retention_seconds" => self.archiver.idempotency_retention_seconds,
+            "archiver.automation_retention_seconds" => self.archiver.automation_retention_seconds,
+            "archiver.usage_retention_seconds" => self.archiver.usage_retention_seconds,
+            "archiver.revision_retention_seconds" => self.archiver.revision_retention_seconds,
+            "archiver.agent_directive_retention_seconds" => {
+                self.archiver.agent_directive_retention_seconds
+            }
+            "archiver.archive_ledger_retention_seconds" => {
+                self.archiver.archive_ledger_retention_seconds
+            }
+            "archiver.security_retention_seconds" => self.archiver.security_retention_seconds,
+            "archiver.coordination_retention_seconds" => {
+                self.archiver.coordination_retention_seconds
+            }
             _ => return None,
         })
+    }
+
+    fn boolean_value(&self, key: &str) -> Option<bool> {
+        match key {
+            "archiver.dry_run" => Some(self.archiver.dry_run),
+            _ => None,
+        }
     }
 }
 
@@ -624,11 +976,10 @@ mod tests {
     fn defaults_are_valid_and_every_catalog_key_resolves() {
         let settings = ServerSettings::default();
         assert!(settings.validate().is_ok());
-        assert!(
-            server_setting_catalog()
-                .iter()
-                .all(|item| settings.value(item.key).is_some())
-        );
+        assert!(server_setting_catalog().iter().all(|item| match item.kind {
+            ServerSettingKind::Integer => settings.integer_value(item.key).is_some(),
+            ServerSettingKind::Boolean => settings.boolean_value(item.key).is_some(),
+        }));
     }
 
     #[test]

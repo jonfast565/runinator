@@ -172,6 +172,7 @@ export interface ServerSettingDefinition {
   label: string;
   description: string;
   unit: string;
+  kind?: "integer" | "boolean";
   default: number;
   minimum: number;
   maximum: number;
@@ -179,7 +180,8 @@ export interface ServerSettingDefinition {
   usual_maximum: number;
 }
 
-export type ServerSettingsValues = Record<string, Record<string, number>>;
+export type ServerSettingValue = number | boolean;
+export type ServerSettingsValues = Record<string, Record<string, ServerSettingValue>>;
 
 export interface ServerSettingsResponse {
   values: ServerSettingsValues;

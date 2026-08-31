@@ -1,6 +1,10 @@
 //! archive marks and the sweep that deletes source rows, including stale unread notifications.
 
 use super::*;
+use std::collections::BTreeSet;
+
+use runinator_store::archive::{DATABASE_TABLE_POLICIES, TableDataPolicy};
+use sqlx::Row;
 
 #[tokio::test]
 async fn archive_marks_are_idempotent_and_sweep_deletes_source_rows() {
@@ -186,6 +190,79 @@ async fn every_runtime_growth_table_has_a_valid_archive_candidate_query() {
 }
 
 #[tokio::test]
+async fn every_database_table_has_one_lifecycle_policy() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-archive-policy-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let schema_tables = sqlx::query(
+        "SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'
+         ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|row| row.get::<String, _>("name"))
+    .collect::<BTreeSet<_>>();
+    let policy_tables = DATABASE_TABLE_POLICIES
+        .iter()
+        .map(|entry| entry.table.to_string())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(schema_tables, policy_tables);
+    assert_eq!(policy_tables.len(), DATABASE_TABLE_POLICIES.len());
+
+    let cold_tables = DATABASE_TABLE_POLICIES
+        .iter()
+        .filter(|entry| entry.policy == TableDataPolicy::ColdArchive)
+        .map(|entry| entry.table)
+        .collect::<BTreeSet<_>>();
+    let implemented_tables = ArchiveTable::ALL
+        .iter()
+        .map(|table| table.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(cold_tables, implemented_tables);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn cold_archives_preserve_every_source_column() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-archive-columns-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    for table in ArchiveTable::ALL {
+        let rows = sqlx::query(&format!("PRAGMA table_info({})", table.as_str()))
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+        let schema_columns = rows
+            .into_iter()
+            .map(|row| row.get::<String, _>("name"))
+            .collect::<BTreeSet<_>>();
+        let archive_columns = crate::operations::archived_column_names(table)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            schema_columns, archive_columns,
+            "{table} archive mapping must preserve every column"
+        );
+    }
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn housekeeping_prunes_its_own_ledger_and_ephemeral_security_state() {
     let path = std::env::temp_dir().join(format!(
         "runinator-archive-housekeeping-{}.db",
@@ -212,6 +289,13 @@ async fn housekeeping_prunes_its_own_ledger_and_ephemeral_security_state() {
         .execute(db.pool())
         .await
         .unwrap();
+    sqlx::query(
+        "INSERT INTO workflow_mutexes (name, holder_run_id, holder_continuation_id, acquired_at, hold_deadline, overdue_at, updated_at) VALUES ('old-mutex', NULL, NULL, NULL, NULL, NULL, ?)",
+    )
+    .bind(old)
+    .execute(db.pool())
+    .await
+    .unwrap();
 
     assert_eq!(
         db.prune_completed_archive_marks(Utc::now() - Duration::days(30), 10)
@@ -221,6 +305,12 @@ async fn housekeeping_prunes_its_own_ledger_and_ephemeral_security_state() {
     );
     assert_eq!(
         db.prune_workflow_cooldowns(Utc::now() - Duration::days(30), 10)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.prune_workflow_mutexes(Utc::now() - Duration::days(30), 10)
             .await
             .unwrap(),
         1

@@ -21,7 +21,7 @@ export const useAdminSettingsStore = defineStore("adminSettings", () => {
     saveLanguage: (language: string) => adminSettingsService.saveLanguage(language),
     saveAuthSettings: () => adminSettingsService.saveAuthSettings(),
     saveServerSettings: () => adminSettingsService.saveServerSettings(),
-    updateServerSetting: (key: string, value: number) => {
+    updateServerSetting: (key: string, value: number | boolean) => {
       adminSettingsService.updateServerSetting(key, value);
     },
     updateMaxRefreshes: (value: number) => { adminSettingsService.updateMaxRefreshes(value); },

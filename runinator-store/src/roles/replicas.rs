@@ -110,8 +110,9 @@ pub trait ReplicaStore: Send + Sync + 'static {
         cutoff: DateTime<Utc>,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 
-    /// Hard-delete replicas whose last heartbeat predates the cutoff, clearing historical attribution
-    /// pointers first so restrict-mode foreign keys do not block the delete. returns the count purged.
+    /// Hard-delete replicas whose last heartbeat predates the cutoff once independently retained
+    /// telemetry, directives, and historical attribution no longer reference them. returns the
+    /// count purged.
     fn delete_expired_replicas(
         &self,
         cutoff: DateTime<Utc>,

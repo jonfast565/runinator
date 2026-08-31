@@ -25,14 +25,14 @@ use runinator_broker::{
 };
 use runinator_comm::WsIngressCommand;
 use runinator_db_cli::dispatch_database;
-use runinator_models::errors::SendableError;
 use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
+use runinator_models::{errors::SendableError, server_settings::ArchiverSettings};
 use runinator_observability::resource_telemetry::{
     TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
 };
 use runinator_store::{
     archive::{ArchiveRow, ArchiveTable},
-    roles::ArchiveStore,
+    roles::{ArchiveStore, SettingStore},
 };
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -117,7 +117,7 @@ async fn run() -> Result<(), SendableError> {
     )
 }
 
-async fn run_loop<T: ArchiveStore>(
+async fn run_loop<T: ArchiveStore + SettingStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     config: Config,
@@ -155,26 +155,57 @@ async fn run_loop<T: ArchiveStore>(
         base_attributes,
         shutdown.clone(),
     );
+    let bootstrap_policy = config.bootstrap_archiver_settings();
+    let mut policy = load_archiver_policy(db.as_ref(), &bootstrap_policy).await?;
     loop {
-        if let Err(err) = run_once(db.as_ref(), &config, &archiver_id).await {
+        let pass_started = std::time::Instant::now();
+        if let Err(err) = run_once(db.as_ref(), &config.archive_dir, &policy, &archiver_id).await {
             error!(
                 error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
                 "archiver pass failed: {err}"
             );
         }
-        tokio::select! {
-            result = tokio::signal::ctrl_c() => {
-                if let Err(err) = result {
-                    warn!("failed to listen for shutdown signal: {err}");
-                }
-                info!("archiver shutting down");
-                shutdown.notify_waiters();
-                let _ = heartbeat.await;
-                return Ok(());
+        loop {
+            let elapsed = pass_started.elapsed();
+            let interval = Duration::from_secs(policy.interval_seconds);
+            if elapsed >= interval {
+                break;
             }
-            _ = tokio::time::sleep(config.interval) => {}
+            let remaining = interval.saturating_sub(elapsed);
+            let refresh_delay = remaining.min(Duration::from_secs(30));
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => {
+                    if let Err(err) = result {
+                        warn!("failed to listen for shutdown signal: {err}");
+                    }
+                    info!("archiver shutting down");
+                    shutdown.notify_waiters();
+                    let _ = heartbeat.await;
+                    return Ok(());
+                }
+                _ = tokio::time::sleep(refresh_delay) => {
+                    match load_archiver_policy(db.as_ref(), &bootstrap_policy).await {
+                        Ok(next) => policy = next,
+                        Err(err) => error!(
+                            error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                            "failed to refresh archiver settings: {err}"
+                        ),
+                    }
+                }
+            }
         }
     }
+}
+
+async fn load_archiver_policy<T: SettingStore>(
+    db: &T,
+    bootstrap: &ArchiverSettings,
+) -> Result<ArchiverSettings, SendableError> {
+    Ok(
+        runinator_engine::settings::load_persisted_server_settings(db)
+            .await?
+            .map_or_else(|| bootstrap.clone(), |settings| settings.archiver),
+    )
 }
 
 // Touch the liveness file until shutdown for the Kubernetes exec probe.
@@ -256,14 +287,17 @@ fn spawn_replica_heartbeat(
 
 async fn run_once<T: ArchiveStore>(
     db: &T,
-    config: &Config,
+    archive_dir: &Path,
+    policy: &ArchiverSettings,
     archiver_id: &str,
 ) -> Result<(), SendableError> {
-    prune_housekeeping(db, config).await?;
+    if !policy.dry_run {
+        prune_housekeeping(db, policy).await?;
+    }
     loop {
-        let marked = mark_all(db, config).await?;
-        let processed = archive_one_batch(db, config, archiver_id).await?;
-        if config.dry_run || (!processed && marked == 0) {
+        let marked = mark_all(db, policy).await?;
+        let processed = archive_one_batch(db, archive_dir, policy, archiver_id).await?;
+        if policy.dry_run || (!processed && marked == 0) {
             return Ok(());
         }
     }
@@ -271,13 +305,15 @@ async fn run_once<T: ArchiveStore>(
 
 async fn archive_one_batch<T: ArchiveStore>(
     db: &T,
-    config: &Config,
+    archive_dir: &Path,
+    policy: &ArchiverSettings,
     archiver_id: &str,
 ) -> Result<bool, SendableError> {
     let now = Utc::now();
-    let lease = chrono_from_std(config.claim_lease)?;
+    let lease = ChronoDuration::seconds(policy.claim_lease_seconds as i64);
+    let batch_size = policy.batch_size as i64;
     let marks = db
-        .claim_archive_marks(archiver_id.to_string(), now, now + lease, config.batch_size)
+        .claim_archive_marks(archiver_id.to_string(), now, now + lease, batch_size)
         .await?;
     if marks.is_empty() {
         return Ok(false);
@@ -299,13 +335,13 @@ async fn archive_one_batch<T: ArchiveStore>(
         db.complete_archive_marks(mark_ids).await?;
         return Ok(true);
     }
-    if config.dry_run {
+    if policy.dry_run {
         info!(rows = rows.len(), "dry run: would archive row(s)");
         db.fail_archive_marks(mark_ids, "dry run; no rows deleted".into())
             .await?;
         return Ok(true);
     }
-    if let Err(err) = write_archive_jsonl_files(&config.archive_dir, &rows) {
+    if let Err(err) = write_archive_jsonl_files(archive_dir, &rows) {
         error!(
             rows = rows.len(),
             error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
@@ -314,66 +350,169 @@ async fn archive_one_batch<T: ArchiveStore>(
         db.fail_archive_marks(mark_ids, err.to_string()).await?;
         return Err(err);
     }
-    let archived_mark_ids = rows.iter().map(|row| row.mark_id).collect::<Vec<_>>();
-    let archived_count = archived_mark_ids.len();
+    let archived_count = rows.len();
     db.delete_archive_rows(rows).await?;
-    db.complete_archive_marks(archived_mark_ids).await?;
+    // A claimed source can disappear through an explicit delete or a parent cascade after it was
+    // marked. Complete every claim after the rows that still exist are safely archived so a mixed
+    // present/missing batch cannot leave an immortal mark at the head of the queue.
+    db.complete_archive_marks(mark_ids).await?;
     info!(rows = archived_count, "archived row(s)");
     Ok(true)
 }
 
-async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<u64, SendableError> {
-    let policies = [
+async fn mark_all<T: ArchiveStore>(
+    db: &T,
+    policy: &ArchiverSettings,
+) -> Result<u64, SendableError> {
+    let policies: [(ArchiveTable, Option<Duration>); ArchiveTable::ALL.len()] = [
+        (
+            ArchiveTable::RunChunks,
+            retention(policy.workflow_run_retention_seconds),
+        ),
+        (
+            ArchiveTable::RunArtifacts,
+            retention(policy.workflow_run_retention_seconds),
+        ),
+        (
+            ArchiveTable::Runs,
+            retention(policy.workflow_run_retention_seconds),
+        ),
         (
             ArchiveTable::WorkflowEffectOutputEvents,
-            config.workflow_run_retention,
+            retention(policy.workflow_run_retention_seconds),
         ),
         (
             ArchiveTable::WorkflowEffectDispatches,
-            config.effect_dispatch_retention,
+            retention(policy.effect_dispatch_retention_seconds),
         ),
-        (ArchiveTable::WorkflowEffects, config.workflow_run_retention),
+        (
+            ArchiveTable::WorkflowEffects,
+            retention(policy.workflow_run_retention_seconds),
+        ),
         (
             ArchiveTable::WorkflowJournalEntries,
-            config.workflow_run_retention,
+            retention(policy.workflow_run_retention_seconds),
         ),
         (
             ArchiveTable::WorkflowContinuations,
-            config.workflow_run_retention,
+            retention(policy.workflow_run_retention_seconds),
         ),
         (
             ArchiveTable::WorkflowVmModules,
-            config.workflow_run_retention,
+            retention(policy.workflow_run_retention_seconds),
         ),
-        (ArchiveTable::WorkflowRuns, config.workflow_run_retention),
+        (
+            ArchiveTable::WorkflowFiles,
+            retention(policy.workflow_run_retention_seconds),
+        ),
+        (
+            ArchiveTable::PipelineMemberAttempts,
+            retention(policy.pipeline_run_retention_seconds),
+        ),
+        (
+            ArchiveTable::WorkflowRuns,
+            retention(policy.workflow_run_retention_seconds),
+        ),
         (
             ArchiveTable::WorkflowTriggerFirings,
-            config.workflow_run_retention,
+            retention(policy.workflow_run_retention_seconds),
         ),
         (
             ArchiveTable::PipelineTriggerFirings,
-            config.pipeline_run_retention,
+            retention(policy.pipeline_run_retention_seconds),
         ),
-        (ArchiveTable::PipelineRuns, config.pipeline_run_retention),
+        (
+            ArchiveTable::PipelineRuns,
+            retention(policy.pipeline_run_retention_seconds),
+        ),
+        (
+            ArchiveTable::PipelineRevisions,
+            retention(policy.revision_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationPendingIntents,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationCommands,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationEvidence,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::ExternalOperations,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::WorkspaceLeases,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationCorrelationAliases,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationEventReductions,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationEpochs,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::IngressEvents,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrchestrationBindings,
+            retention(policy.orchestration_retention_seconds),
+        ),
+        (
+            ArchiveTable::IngressAdmissions,
+            retention(policy.orchestration_retention_seconds),
+        ),
         (
             ArchiveTable::NotificationDeliveries,
-            config.read_notification_retention,
+            retention(policy.notification_retention_seconds),
         ),
         (
             ArchiveTable::Notifications,
-            config.read_notification_retention,
+            retention(policy.notification_retention_seconds),
         ),
-        (ArchiveTable::AutomationRecords, config.automation_retention),
-        (ArchiveTable::Gates, config.automation_retention),
-        (ArchiveTable::OrgUsageLedger, config.usage_retention),
-        (ArchiveTable::WorkflowRevisions, config.revision_retention),
+        (
+            ArchiveTable::AutomationRecords,
+            retention(policy.automation_retention_seconds),
+        ),
+        (
+            ArchiveTable::Gates,
+            retention(policy.automation_retention_seconds),
+        ),
+        (
+            ArchiveTable::OrgUsageLedger,
+            retention(policy.usage_retention_seconds),
+        ),
+        (
+            ArchiveTable::WorkflowRevisions,
+            retention(policy.revision_retention_seconds),
+        ),
         (
             ArchiveTable::AgentDirectives,
-            config.agent_directive_retention,
+            retention(policy.agent_directive_retention_seconds),
         ),
-        (ArchiveTable::DeadLetters, config.dead_letter_retention),
-        (ArchiveTable::AuditLog, config.audit_log_retention),
-        (ArchiveTable::IdempotencyKeys, config.idempotency_retention),
+        (
+            ArchiveTable::DeadLetters,
+            retention(policy.dead_letter_retention_seconds),
+        ),
+        (
+            ArchiveTable::AuditLog,
+            retention(policy.audit_log_retention_seconds),
+        ),
+        (
+            ArchiveTable::IdempotencyKeys,
+            retention(policy.idempotency_retention_seconds),
+        ),
     ];
     let mut marked = 0;
     for (table, retention) in policies {
@@ -382,7 +521,7 @@ async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<u64, Senda
         };
         let cutoff = Utc::now() - chrono_from_std(retention)?;
         let count = db
-            .mark_archive_candidates(table, cutoff, config.batch_size)
+            .mark_archive_candidates(table, cutoff, policy.batch_size as i64)
             .await?;
         if count > 0 {
             info!(table = %table, count, "marked row(s) for archival");
@@ -392,51 +531,64 @@ async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<u64, Senda
     Ok(marked)
 }
 
-async fn prune_housekeeping<T: ArchiveStore>(db: &T, config: &Config) -> Result<(), SendableError> {
+async fn prune_housekeeping<T: ArchiveStore>(
+    db: &T,
+    policy: &ArchiverSettings,
+) -> Result<(), SendableError> {
     let now = Utc::now();
-    if let Some(retention) = config.archive_ledger_retention {
+    let batch_size = policy.batch_size as i64;
+    if let Some(retention) = retention(policy.archive_ledger_retention_seconds) {
         loop {
             let count = db
-                .prune_completed_archive_marks(now - chrono_from_std(retention)?, config.batch_size)
+                .prune_completed_archive_marks(now - chrono_from_std(retention)?, batch_size)
                 .await?;
             if count > 0 {
                 info!(count, "pruned completed archive mark(s)");
             }
-            if count < config.batch_size as u64 {
+            if count < policy.batch_size {
                 break;
             }
         }
     }
-    if let Some(retention) = config.security_retention {
+    if let Some(retention) = retention(policy.security_retention_seconds) {
         loop {
             let count = db
-                .prune_expired_security_records(
-                    now - chrono_from_std(retention)?,
-                    config.batch_size,
-                )
+                .prune_expired_security_records(now - chrono_from_std(retention)?, batch_size)
                 .await?;
             if count > 0 {
                 info!(count, "pruned expired security record(s)");
             }
-            if count < config.batch_size as u64 {
+            if count < policy.batch_size {
                 break;
             }
         }
     }
-    if let Some(retention) = config.cooldown_retention {
+    if let Some(retention) = retention(policy.coordination_retention_seconds) {
+        let cutoff = now - chrono_from_std(retention)?;
         loop {
-            let count = db
-                .prune_workflow_cooldowns(now - chrono_from_std(retention)?, config.batch_size)
-                .await?;
+            let count = db.prune_workflow_cooldowns(cutoff, batch_size).await?;
             if count > 0 {
                 info!(count, "pruned workflow cooldown(s)");
             }
-            if count < config.batch_size as u64 {
+            if count < policy.batch_size {
+                break;
+            }
+        }
+        loop {
+            let count = db.prune_workflow_mutexes(cutoff, batch_size).await?;
+            if count > 0 {
+                info!(count, "pruned inactive workflow mutex(es)");
+            }
+            if count < policy.batch_size {
                 break;
             }
         }
     }
     Ok(())
+}
+
+fn retention(seconds: u64) -> Option<Duration> {
+    (seconds > 0).then(|| Duration::from_secs(seconds))
 }
 
 fn write_archive_jsonl_files(root: &Path, rows: &[ArchiveRow]) -> Result<(), SendableError> {

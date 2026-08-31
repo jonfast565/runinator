@@ -190,7 +190,7 @@
                 {{ activeServerSection || "Server" }}
               </h2>
               <HelpBubble
-                text="Platform-wide values are validated by the server and picked up by engine replicas without a restart."
+                text="Platform-wide values are validated by the server and picked up by the replicas that own them without a restart."
                 label="About server settings"
               />
             </header>
@@ -215,6 +215,18 @@
                 <span class="font-semibold text-fg">{{ definition.label }}</span>
                 <span class="text-[0.84rem] text-fg-muted">{{ definition.description }}</span>
                 <input
+                  v-if="definition.kind === 'boolean'"
+                  type="checkbox"
+                  :checked="serverValue(definition.key) === true"
+                  @change="
+                    settings.updateServerSetting(
+                      definition.key,
+                      ($event.target as HTMLInputElement).checked,
+                    )
+                  "
+                />
+                <input
+                  v-else
                   type="number"
                   required
                   step="1"
@@ -228,7 +240,10 @@
                     )
                   "
                 />
-                <span class="text-[0.78rem] text-fg-muted">
+                <span
+                  v-if="definition.kind !== 'boolean'"
+                  class="text-[0.78rem] text-fg-muted"
+                >
                   Usual {{ definition.usual_minimum.toLocaleString() }}–{{
                     definition.usual_maximum.toLocaleString()
                   }}
@@ -425,7 +440,10 @@ function selectServerSection(section: string) {
 // the catalog can name a section the values payload has not loaded yet, so read defensively.
 function serverValue(key: string) {
   const [section, name] = key.split(".");
-  const values = settings.serverValues as Record<string, Record<string, number> | undefined>;
+  const values = settings.serverValues as Record<
+    string,
+    Record<string, number | boolean> | undefined
+  >;
 
   return values[section]?.[name] ?? "";
 }

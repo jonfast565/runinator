@@ -29,6 +29,7 @@ use runinator_models::{
     pipelines::{Pipeline, PipelineGraph, PipelineMember, PipelineMemberFailureMode},
     revisions::{RevisionSource, WorkflowRevision},
     settings::SettingKind,
+    telemetry::ReplicaSample,
     types::RuninatorType,
     value::Value,
     workflow_state::WorkflowExecutionState,
@@ -46,6 +47,7 @@ use uuid::Uuid;
 // `DatabaseImpl` composes every role trait, so bounding on it brings all of their methods into
 // scope without importing the roles one by one.
 use runinator_store::DatabaseImpl;
+use runinator_store::archive::ArchiveTable;
 use runinator_store::roles::{
     ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
     NewOrchestrationEpoch, OrchestrationBindingUpdate, WorkflowVmStore,
@@ -1130,6 +1132,64 @@ async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
     .await
     .unwrap();
     assert_eq!(db.expire_agent_directives(now).await.unwrap(), 1);
+
+    db.insert_replica_sample(ReplicaSample {
+        replica_id: replica.replica_id,
+        sampled_at: now - Duration::hours(2),
+        cpu_percent: 1.0,
+        mem_percent: 2.0,
+        mem_used_bytes: 3,
+        mem_total_bytes: 4,
+        load_one: None,
+        process_cpu_percent: 5.0,
+        process_mem_bytes: 6,
+        net_rx_bytes_per_sec: 7.0,
+        net_tx_bytes_per_sec: 8.0,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        db.delete_expired_replicas(now + Duration::hours(1))
+            .await
+            .unwrap(),
+        0,
+        "independently retained directives and samples must preserve their replica owner"
+    );
+
+    assert_eq!(
+        db.mark_archive_candidates(ArchiveTable::AgentDirectives, now + Duration::hours(1), 10,)
+            .await
+            .unwrap(),
+        2
+    );
+    let marks = db
+        .claim_archive_marks("dialect-parity".into(), now, now + Duration::minutes(1), 10)
+        .await
+        .unwrap();
+    let mark_ids = marks.iter().map(|mark| mark.id).collect::<Vec<_>>();
+    let rows = db.fetch_archive_rows(marks).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    db.delete_archive_rows(rows).await.unwrap();
+    db.complete_archive_marks(mark_ids).await.unwrap();
+    assert_eq!(
+        db.delete_expired_replicas(now + Duration::hours(1))
+            .await
+            .unwrap(),
+        0,
+        "telemetry must outlive the replica row until its own retention pass"
+    );
+    assert_eq!(
+        db.prune_replica_samples(now + Duration::hours(1))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.delete_expired_replicas(now + Duration::hours(1))
+            .await
+            .unwrap(),
+        1
+    );
 }
 
 async fn assert_agent_enrollment_lifecycle<T: DatabaseImpl>(db: &T) {

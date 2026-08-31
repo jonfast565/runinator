@@ -6,11 +6,14 @@ use std::{
 use chrono::{TimeZone, Utc};
 use flate2::read::GzDecoder;
 use runinator_models::json;
+use runinator_models::server_settings::ArchiverSettings;
+use runinator_store::DatabaseImpl;
 use runinator_store::archive::{ArchiveRow, ArchiveTable};
+use runinator_store::roles::{ArchiveStore, DeliveryStore};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{ARCHIVE_FILE_EXTENSION, write_archive_jsonl_files};
+use super::{ARCHIVE_FILE_EXTENSION, archive_one_batch, write_archive_jsonl_files};
 
 #[test]
 fn archive_writer_exports_gzipped_jsonl() {
@@ -63,6 +66,62 @@ fn archive_writer_exports_gzipped_jsonl() {
     }
 
     fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn archive_pass_writes_cold_storage_before_deleting_source_rows() {
+    let database_path =
+        std::env::temp_dir().join(format!("runinator-archiver-pass-{}.db", Uuid::new_v4()));
+    let archive_root =
+        std::env::temp_dir().join(format!("runinator-archiver-pass-{}", Uuid::new_v4()));
+    fs::create_dir_all(&archive_root).unwrap();
+    let db = runinator_database::sqlite::SqliteDb::new(database_path.to_str().unwrap())
+        .await
+        .unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let dead_letter = db
+        .record_dead_letter(json!({
+            "channel": "ingress",
+            "attempts": 3,
+            "error": "old",
+            "payload": {"kind": "test"},
+        }))
+        .await
+        .unwrap();
+    let id = Uuid::parse_str(
+        dead_letter
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap(),
+    )
+    .unwrap();
+    let created_day = Utc::now().format("%F").to_string();
+    db.mark_archive_candidates(
+        ArchiveTable::DeadLetters,
+        Utc::now() + chrono::Duration::days(1),
+        10,
+    )
+    .await
+    .unwrap();
+
+    let policy = ArchiverSettings::default();
+    archive_one_batch(&db, &archive_root, &policy, "archiver-test")
+        .await
+        .unwrap();
+
+    assert!(db.fetch_dead_letters(None, 10).await.unwrap().is_empty());
+    let day = archive_root.join(created_day);
+    let file = fs::read_dir(day).unwrap().next().unwrap().unwrap().path();
+    let mut content = String::new();
+    GzDecoder::new(File::open(file).unwrap())
+        .read_to_string(&mut content)
+        .unwrap();
+    let archived: Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+    assert_eq!(archived["source_table"], "dead_letters");
+    assert_eq!(archived["row"]["id"], id.to_string());
+
+    fs::remove_dir_all(&archive_root).ok();
+    fs::remove_file(database_path).ok();
 }
 
 fn config_with_liveness(liveness_file: &str) -> crate::config::Config {

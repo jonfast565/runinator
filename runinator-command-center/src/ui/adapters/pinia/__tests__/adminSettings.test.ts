@@ -137,4 +137,39 @@ describe("admin settings store", () => {
       authentication: { max_refreshes: 250 },
     });
   });
+
+  it("updates boolean archiver settings without coercing them to numbers", async () => {
+    vi.mocked(fetchServerSettings).mockResolvedValue({
+      values: {
+        authentication: { max_refreshes: 100 },
+        archiver: { dry_run: false },
+      },
+      catalog: [
+        {
+          key: "archiver.dry_run",
+          section: "Archiver",
+          label: "Dry run",
+          description: "Discover eligible rows without deleting them.",
+          unit: "",
+          kind: "boolean",
+          default: 0,
+          minimum: 0,
+          maximum: 1,
+          usual_minimum: 0,
+          usual_maximum: 1,
+        },
+      ],
+    });
+    const settings = useAdminSettingsStore();
+
+    await settings.refreshServerSettings();
+    settings.updateServerSetting("archiver.dry_run", true);
+    await settings.saveServerSettings();
+
+    expect(settings.serverValues.archiver.dry_run).toBe(true);
+    expect(saveServerSettings).toHaveBeenCalledWith({
+      authentication: { max_refreshes: 100 },
+      archiver: { dry_run: true },
+    });
+  });
 });

@@ -16,6 +16,7 @@ runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-comm = { path = "../runinator-comm" }
 runinator-database = { path = "../runinator-database", default-features = false }
 runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
+runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
 runinator-observability = { path = "../runinator-observability" }
 runinator-platform = { path = "../runinator-platform" }

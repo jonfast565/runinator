@@ -343,6 +343,43 @@ pub async fn load_server_settings<T: RuntimeStore>(
     Ok(settings)
 }
 
+/// Load the unified policy only when it has been explicitly persisted. Bootstrap-only services
+/// use this to preserve their command-line defaults until an administrator first saves policy.
+pub async fn load_persisted_server_settings<T: SettingStore>(
+    db: &T,
+) -> Result<Option<ServerSettings>, SendableError> {
+    let records = db.list_stored_settings().await?;
+    let Some(record) = records.iter().find(|record| {
+        record.kind == SettingKind::Config
+            && record.scope == SERVER_SETTINGS_SCOPE
+            && record.name == SERVER_SETTINGS_NAME
+    }) else {
+        return Ok(None);
+    };
+    let plaintext = settings_cipher()
+        .try_decrypt(&record.value)
+        .ok_or_else(|| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "server settings could not be decrypted with the configured credential key",
+            )) as SendableError
+        })?;
+    let decoded = decode_config_value(&plaintext);
+    let settings: ServerSettings = serde_json::from_value(decoded.into()).map_err(|error| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("stored server settings are invalid: {error}"),
+        )) as SendableError
+    })?;
+    settings.validate().map_err(|message| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )) as SendableError
+    })?;
+    Ok(Some(settings))
+}
+
 /// Validate and persist the complete platform operating policy as one atomic config value.
 pub async fn save_server_settings<T: SettingStore>(
     db: &T,

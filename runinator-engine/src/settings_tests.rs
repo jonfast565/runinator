@@ -3,8 +3,9 @@ use runinator_models::value::Value;
 use runinator_store::DatabaseImpl;
 
 use super::{
-    decode_config_schema, decode_config_value, decode_secret, load_server_settings,
-    save_server_settings, validate_and_encode, validate_and_encode_with_expiry,
+    decode_config_schema, decode_config_value, decode_secret, load_persisted_server_settings,
+    load_server_settings, save_server_settings, validate_and_encode,
+    validate_and_encode_with_expiry,
 };
 
 // the schema pinned in a config slot's stored bytes, mirroring how the handler reuses it on a
@@ -27,9 +28,16 @@ async fn server_settings_round_trip_as_one_validated_policy() {
     let mut settings = runinator_models::server_settings::ServerSettings::default();
     settings.orchestration.workflow_vm_poll_interval_ms = 500;
     settings.notifications.delivery_timeout_seconds = 45;
+    settings.archiver.interval_seconds = 120;
+    settings.archiver.dry_run = true;
+    assert!(load_persisted_server_settings(&db).await.unwrap().is_none());
     save_server_settings(&db, &settings).await.unwrap();
 
     assert_eq!(load_server_settings(&db).await.unwrap(), settings);
+    assert_eq!(
+        load_persisted_server_settings(&db).await.unwrap(),
+        Some(settings)
+    );
 }
 
 #[test]

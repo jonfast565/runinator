@@ -37,6 +37,15 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn list_stored_settings(&self) -> Result<Vec<SettingRecord>, SendableError> {
+        let rows = sqlx::query(
+            "SELECT id, kind, scope, name, value, updated_at FROM settings ORDER BY kind, scope, name",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_setting).collect())
+    }
+
     async fn upsert_setting(
         &self,
         kind: SettingKind,

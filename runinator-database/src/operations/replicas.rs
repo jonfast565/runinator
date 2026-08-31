@@ -396,35 +396,19 @@ where
     }
 
     async fn delete_expired_replicas(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
-        // null the historical attribution pointers (restrict-mode foreign keys) before deleting so
-        // the delete does not error; provider registrations cascade. a replica still claimed as an
-        // effect's current executor is excluded from the delete and left until that effect settles.
+        // Historical attribution, telemetry, and directives have independent retention windows.
+        // Keep their replica owner until every referencing row has been archived or pruned rather
+        // than nulling provenance or letting an ON DELETE cascade bypass those policies.
         let cutoff_ts = cutoff.timestamp();
         Ok(retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
 
-            sqlx::query(&self.render(
-                "UPDATE workflow_runs SET trigger_actor_replica_id = NULL
-                 WHERE trigger_actor_replica_id IN
-                     (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
-            ))
-            .bind(cutoff_ts)
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(&self.render(
-                "UPDATE workflow_effects SET last_executor_replica_id = NULL
-                 WHERE last_executor_replica_id IN
-                     (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
-            ))
-            .bind(cutoff_ts)
-            .execute(&mut *tx)
-            .await?;
-
             let deleted = sqlx::query(&self.render(
-                "DELETE FROM replicas WHERE last_heartbeat_at <= ? AND replica_id NOT IN
-                     (SELECT current_executor_replica_id FROM workflow_effects
-                      WHERE current_executor_replica_id IS NOT NULL)",
+                "DELETE FROM replicas WHERE last_heartbeat_at <= ?
+                   AND NOT EXISTS (SELECT 1 FROM workflow_runs WHERE trigger_actor_replica_id = replicas.replica_id)
+                   AND NOT EXISTS (SELECT 1 FROM workflow_effects WHERE current_executor_replica_id = replicas.replica_id OR last_executor_replica_id = replicas.replica_id)
+                   AND NOT EXISTS (SELECT 1 FROM replica_samples WHERE replica_samples.replica_id = replicas.replica_id)
+                   AND NOT EXISTS (SELECT 1 FROM agent_directives WHERE agent_directives.replica_id = replicas.replica_id)",
             ))
             .bind(cutoff_ts)
             .execute(&mut *tx)
