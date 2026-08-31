@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use axum::response::IntoResponse;
 use axum::{Extension, Router, extract::DefaultBodyLimit, middleware::from_fn_with_state};
 use runinator_blob::BlobStore;
@@ -19,7 +20,7 @@ use runinator_engine::services::{
 use runinator_provisioner::ProvisionerRegistry;
 use runinator_store::DatabaseImpl;
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
@@ -34,6 +35,71 @@ use crate::overload::{OverloadConfig, apply_overload_protection};
 use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
 use crate::{openapi, websocket};
 
+/// Browser origins allowed to call the API directly by default.
+///
+/// The hosted Command Center uses a same-origin reverse proxy and therefore needs no CORS entry.
+/// These entries cover the desktop shell and the documented local Vite development server without
+/// exposing an auth-disabled local service to every web page the operator visits.
+pub const DEFAULT_CORS_ALLOWED_ORIGINS: &str = "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:5173,http://127.0.0.1:5173";
+
+#[derive(Debug, Clone)]
+pub struct CorsConfig {
+    allowed_origins: Vec<HeaderValue>,
+}
+
+impl CorsConfig {
+    /// Parse exact origins supplied by the CLI/environment. A wildcard is deliberately rejected:
+    /// when authentication is disabled, allowing every origin turns any visited website into an
+    /// administrator of the operator's local Runinator service.
+    pub fn new(origins: Vec<String>) -> Result<Self, String> {
+        let mut allowed_origins = Vec::new();
+        for raw in origins {
+            let origin = raw.trim();
+            if origin.is_empty() {
+                continue;
+            }
+            if origin == "*" {
+                return Err("CORS allowed origins must be explicit; '*' is not permitted".into());
+            }
+            let uri = origin
+                .parse::<axum::http::Uri>()
+                .map_err(|err| format!("invalid CORS origin '{origin}': {err}"))?;
+            if uri.scheme().is_none()
+                || uri.authority().is_none()
+                || uri
+                    .path_and_query()
+                    .is_some_and(|path| path.as_str() != "/")
+            {
+                return Err(format!(
+                    "invalid CORS origin '{origin}': expected scheme://host[:port] with no path"
+                ));
+            }
+            let value = HeaderValue::from_str(origin)
+                .map_err(|err| format!("invalid CORS origin '{origin}': {err}"))?;
+            if !allowed_origins.contains(&value) {
+                allowed_origins.push(value);
+            }
+        }
+        Ok(Self { allowed_origins })
+    }
+
+    pub fn allowed_origin_count(&self) -> usize {
+        self.allowed_origins.len()
+    }
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self::new(
+            DEFAULT_CORS_ALLOWED_ORIGINS
+                .split(',')
+                .map(str::to_string)
+                .collect(),
+        )
+        .expect("built-in CORS origins are valid")
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // router assembly keeps each injected runtime dependency explicit.
 pub fn build_router<T: DatabaseImpl>(
     pool: Arc<T>,
@@ -42,6 +108,7 @@ pub fn build_router<T: DatabaseImpl>(
     blobs: Arc<dyn BlobStore>,
     provisioner: Arc<ProvisionerRegistry>,
     auth: AuthConfig,
+    cors: CorsConfig,
     rate_limit: RateLimitConfig,
     overload: OverloadConfig,
 ) -> Router {
@@ -95,11 +162,7 @@ pub fn build_router<T: DatabaseImpl>(
         blobs.clone(),
         events.publisher(),
     ));
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-        .expose_headers(Any);
+    let cors = cors_layer(&cors);
 
     let router = Router::new()
         .merge(health::routes(pool.clone()))
@@ -182,6 +245,14 @@ pub fn build_router<T: DatabaseImpl>(
         // outermost layer: open a request span parented to any inbound w3c trace context so logs and
         // otel spans for this request continue the caller's distributed trace.
         .layer(axum::middleware::from_fn(trace_propagation_middleware))
+}
+
+fn cors_layer(config: &CorsConfig) -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(config.allowed_origins.clone()))
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .expose_headers(Any)
 }
 
 const REQUEST_ID_HEADER: &str = "x-request-id";

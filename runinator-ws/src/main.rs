@@ -11,7 +11,7 @@ use runinator_service_bootstrap::{
 use uuid::Uuid;
 
 use runinator_ws::{
-    AuthOptions, OverloadConfig, RateLimitConfig, ReplicaAdvertisement, run_webserver,
+    AuthOptions, CorsConfig, OverloadConfig, RateLimitConfig, ReplicaAdvertisement, run_webserver,
 };
 
 use crate::config::CliArgs;
@@ -66,6 +66,7 @@ async fn run_process() -> Result<(), SendableError> {
         advertise_host,
         instance_id,
         auth_enabled,
+        cors_allowed_origins,
         auth_access_ttl_seconds,
         auth_refresh_ttl_seconds,
         rate_limit_enabled,
@@ -90,6 +91,8 @@ async fn run_process() -> Result<(), SendableError> {
         access_ttl_secs: auth_access_ttl_seconds,
         refresh_ttl_secs: auth_refresh_ttl_seconds,
     };
+    let cors_options =
+        CorsConfig::new(cors_allowed_origins).map_err(|err| -> SendableError { err.into() })?;
     let rate_limit_options = RateLimitConfig {
         enabled: rate_limit_enabled,
         requests_per_second: rate_limit_rps,
@@ -248,6 +251,7 @@ async fn run_process() -> Result<(), SendableError> {
             blobs.clone(),
             advertisement.clone(),
             auth_options.clone(),
+            cors_options.clone(),
             rate_limit_options,
             overload_options,
             run_engine,

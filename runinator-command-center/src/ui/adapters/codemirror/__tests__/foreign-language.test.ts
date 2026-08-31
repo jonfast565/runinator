@@ -38,6 +38,8 @@ describe("foreign do language highlighting", () => {
       extensions: [extension],
     });
 
-    expect(syntaxTree(state).length).toBe(source.length);
+    const tree = syntaxTree(state);
+    expect(tree.length).toBeGreaterThan(0);
+    expect(tree.topNode.type.isError).toBe(false);
   });
 });

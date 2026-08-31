@@ -6,6 +6,7 @@ use runinator_models::pipelines::{
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
+use std::io::Write;
 
 #[test]
 fn pack_zip_round_trips() {
@@ -195,4 +196,43 @@ fn old_unnamespaced_compiled_packs_are_rejected() {
 
     let error = build_pack_zip(&workflows, None, None).expect_err("legacy pack must fail");
     assert!(error.to_string().contains("dotted namespace"));
+}
+
+fn raw_zip(entries: Vec<(String, Vec<u8>)>) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(Cursor::new(&mut buffer));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in entries {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(&bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    buffer
+}
+
+#[test]
+fn rejects_too_many_archive_entries() {
+    let entries = (0..=MAX_PACK_ENTRIES)
+        .map(|index| (format!("unused/{index}"), Vec::new()))
+        .collect();
+    let zipped = raw_zip(entries);
+
+    let error = read_pack_zip(&zipped).err().expect("entry flood must fail");
+    assert!(error.to_string().contains("limit is"));
+}
+
+#[test]
+fn rejects_an_oversized_uncompressed_entry() {
+    let zipped = raw_zip(vec![(
+        WORKFLOWS_ENTRY.into(),
+        vec![b' '; MAX_PACK_ENTRY_BYTES as usize + 1],
+    )]);
+
+    let error = read_pack_zip(&zipped)
+        .err()
+        .expect("oversized entry must fail");
+    assert!(error.to_string().contains("per-entry limit"));
 }

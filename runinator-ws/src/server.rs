@@ -44,6 +44,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     blobs: Arc<dyn runinator_blob::BlobStore>,
     advertisement: ReplicaAdvertisement,
     auth: crate::auth::AuthOptions,
+    cors: crate::router::CorsConfig,
     rate_limit: crate::rate_limit::RateLimitConfig,
     overload: crate::overload::OverloadConfig,
     run_engine: bool,
@@ -62,6 +63,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
     if jwt_secret_previous.is_some() {
         info!("accepting a previous jwt signing secret (key rotation overlap window is open)");
     }
+    info!(
+        allowed_origins = cors.allowed_origin_count(),
+        "HTTP API CORS policy configured"
+    );
     let auth_config = crate::auth::AuthConfig {
         enabled: auth.enabled,
         jwt_secret,
@@ -215,6 +220,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         blobs,
         provisioner,
         auth_config,
+        cors,
         rate_limit,
         overload,
     );

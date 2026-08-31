@@ -157,6 +157,16 @@ pub(crate) struct CliArgs {
     #[arg(long, env = "RUNINATOR_AUTH_ENABLED", default_value_t = false)]
     pub auth_enabled: bool,
 
+    /// Exact browser origins allowed to call the API directly. The hosted Command Center is
+    /// same-origin through its reverse proxy; defaults cover the Tauri shell and local Vite dev.
+    #[arg(
+        long,
+        env = "RUNINATOR_CORS_ALLOWED_ORIGINS",
+        value_delimiter = ',',
+        default_value = "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:5173,http://127.0.0.1:5173"
+    )]
+    pub cors_allowed_origins: Vec<String>,
+
     /// Access-token lifetime in seconds (default 1 hour).
     #[arg(
         long,

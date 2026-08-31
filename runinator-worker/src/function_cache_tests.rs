@@ -88,6 +88,72 @@ fn a_refused_archive_leaves_no_partial_package_behind() {
     // the unpack stages under a temporary name and renames, so a failure cannot leave a directory
     // that a later `stage` would mistake for a complete one.
     assert!(!target.exists());
+    assert!(
+        std::fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("pkg.partial-")),
+        "rejected archives must not leave expanded staging data behind"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn refuses_case_colliding_paths() {
+    let root = scratch("duplicates");
+    let target = root.join("pkg");
+
+    let entries = [("src/File.py", "one"), ("src/file.py", "two")];
+    let error = unpack(&archive(&entries), &target).expect_err("collision must fail");
+    assert!(error.to_string().contains("duplicate or case-colliding"));
+    assert!(!target.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn enforces_entry_count_and_expanded_byte_limits() {
+    let root = scratch("limits");
+    let target = root.join("pkg");
+    let bytes = archive(&[("one.txt", "1234"), ("two.txt", "5678")]);
+
+    let too_many = unpack_with_limits(
+        &bytes,
+        &target,
+        UnpackLimits {
+            entries: 1,
+            entry_bytes: 16,
+            total_bytes: 32,
+        },
+    )
+    .expect_err("entry flood must fail");
+    assert!(too_many.to_string().contains("entries, limit"));
+
+    let too_large = unpack_with_limits(
+        &bytes,
+        &target,
+        UnpackLimits {
+            entries: 4,
+            entry_bytes: 3,
+            total_bytes: 32,
+        },
+    )
+    .expect_err("large entry must fail");
+    assert!(too_large.to_string().contains("per-entry limit"));
+
+    let too_much_total = unpack_with_limits(
+        &bytes,
+        &target,
+        UnpackLimits {
+            entries: 4,
+            entry_bytes: 16,
+            total_bytes: 7,
+        },
+    )
+    .expect_err("large expansion must fail");
+    assert!(too_much_total.to_string().contains("expands to more"));
+
+    assert!(!target.exists());
     let _ = std::fs::remove_dir_all(root);
 }
 

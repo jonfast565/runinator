@@ -13,6 +13,7 @@
 //! bytes by construction, so a hit never needs revalidating and two versions sharing an artifact
 //! share one staged copy.
 
+use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -30,6 +31,15 @@ use crate::errors::{
 
 /// the largest package archive that will be staged.
 pub const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Maximum expanded size of one file inside a packaged-function archive.
+pub const MAX_UNPACKED_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Maximum aggregate expanded size of a packaged-function archive.
+pub const MAX_UNPACKED_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Maximum files/directories one packaged-function archive may contain.
+pub const MAX_ARCHIVE_ENTRIES: usize = 10_000;
 
 /// how much unpacked code one cache may hold before the least recently used entries are evicted.
 pub const DEFAULT_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -212,6 +222,31 @@ pub async fn prepare_invocation(
 
 // unpack a zip into `target`, refusing any entry that would write outside it.
 fn unpack(bytes: &[u8], target: &Path) -> Result<(), SendableError> {
+    unpack_with_limits(bytes, target, UnpackLimits::default())
+}
+
+#[derive(Clone, Copy)]
+struct UnpackLimits {
+    entries: usize,
+    entry_bytes: u64,
+    total_bytes: u64,
+}
+
+impl Default for UnpackLimits {
+    fn default() -> Self {
+        Self {
+            entries: MAX_ARCHIVE_ENTRIES,
+            entry_bytes: MAX_UNPACKED_ENTRY_BYTES,
+            total_bytes: MAX_UNPACKED_ARCHIVE_BYTES,
+        }
+    }
+}
+
+fn unpack_with_limits(
+    bytes: &[u8],
+    target: &Path,
+    limits: UnpackLimits,
+) -> Result<(), SendableError> {
     // staged under a temporary name and renamed, so an interrupted unpack never leaves a directory
     // that looks complete. the ready marker is the second half of that guarantee.
     let staging = target.with_extension(format!("partial-{}", uuid::Uuid::new_v4().simple()));
@@ -220,9 +255,77 @@ fn unpack(bytes: &[u8], target: &Path) -> Result<(), SendableError> {
         FUNCTION_STAGING_FAILED.error(format!("failed to create staging directory: {err}"))
     })?;
 
+    if let Err(err) = unpack_into(bytes, &staging, limits) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    let _ = std::fs::remove_dir_all(target);
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::rename(&staging, target).map_err(|err| {
+        let _ = std::fs::remove_dir_all(&staging);
+        FUNCTION_STAGING_FAILED.error(format!("failed to publish staged package: {err}"))
+    })
+}
+
+fn unpack_into(bytes: &[u8], staging: &Path, limits: UnpackLimits) -> Result<(), SendableError> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|err| {
         FUNCTION_UNTRUSTED_ARCHIVE.error(format!("not a readable archive: {err}"))
     })?;
+    if archive.len() > limits.entries {
+        return Err(FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+            "archive has {} entries, limit is {}",
+            archive.len(),
+            limits.entries
+        )));
+    }
+
+    // Validate the complete central directory before writing a byte. The read loop enforces the
+    // same byte limits again because an attacker controls the advertised sizes too.
+    let mut paths = HashSet::new();
+    let mut advertised_total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).map_err(|err| {
+            FUNCTION_UNTRUSTED_ARCHIVE.error(format!("unreadable archive entry: {err}"))
+        })?;
+        let Some(relative) = entry.enclosed_name() else {
+            return Err(FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+                "archive entry '{}' escapes the package directory",
+                entry.name()
+            )));
+        };
+        let normalized = relative.to_string_lossy().to_ascii_lowercase();
+        if !paths.insert(normalized) {
+            return Err(FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+                "archive contains duplicate or case-colliding path '{}'",
+                relative.display()
+            )));
+        }
+        if entry.is_dir() {
+            continue;
+        }
+        if entry.size() > limits.entry_bytes {
+            return Err(FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+                "archive entry '{}' expands to {} bytes, per-entry limit is {}",
+                relative.display(),
+                entry.size(),
+                limits.entry_bytes
+            )));
+        }
+        advertised_total = advertised_total.checked_add(entry.size()).ok_or_else(|| {
+            FUNCTION_UNTRUSTED_ARCHIVE.error("archive expanded size overflows u64")
+        })?;
+        if advertised_total > limits.total_bytes {
+            return Err(FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+                "archive expands to more than {} bytes",
+                limits.total_bytes
+            )));
+        }
+    }
+
+    let mut remaining = limits.total_bytes;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|err| {
             FUNCTION_UNTRUSTED_ARCHIVE.error(format!("unreadable archive entry: {err}"))
@@ -250,23 +353,26 @@ fn unpack(bytes: &[u8], target: &Path) -> Result<(), SendableError> {
                     .error(format!("failed to create {}: {err}", parent.display()))
             })?;
         }
-        let mut contents = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut contents).map_err(|err| {
-            FUNCTION_UNTRUSTED_ARCHIVE.error(format!("failed to read archive entry: {err}"))
+        let read_limit = remaining.min(limits.entry_bytes);
+        let mut output = std::fs::File::create(&path).map_err(|err| {
+            FUNCTION_STAGING_FAILED.error(format!("failed to create {}: {err}", path.display()))
         })?;
-        std::fs::write(&path, contents).map_err(|err| {
-            FUNCTION_STAGING_FAILED.error(format!("failed to write {}: {err}", path.display()))
-        })?;
+        let copied =
+            std::io::copy(&mut (&mut entry).take(read_limit + 1), &mut output).map_err(|err| {
+                FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+                    "failed to expand archive entry '{}': {err}",
+                    path.display()
+                ))
+            })?;
+        if copied > read_limit {
+            return Err(FUNCTION_UNTRUSTED_ARCHIVE.error(format!(
+                "archive entry '{}' exceeds its remaining expanded-size budget of {read_limit} bytes",
+                entry.name()
+            )));
+        }
+        remaining -= copied;
     }
-
-    let _ = std::fs::remove_dir_all(target);
-    if let Some(parent) = target.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    std::fs::rename(&staging, target).map_err(|err| {
-        let _ = std::fs::remove_dir_all(&staging);
-        FUNCTION_STAGING_FAILED.error(format!("failed to publish staged package: {err}"))
-    })
+    Ok(())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
