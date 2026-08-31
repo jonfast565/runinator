@@ -89,6 +89,7 @@ describe("admin settings store", () => {
       ["cpp", "debian:bookworm-slim"],
       ["fortran", "debian:bookworm-slim"],
       ["ada", "debian:bookworm-slim"],
+      ["haskell", "debian:bookworm-slim"],
       ["ruby", "ruby:3.3"],
       ["perl", "perl:5.40"],
       ["php", "php:8.3-cli"],
@@ -117,6 +118,9 @@ describe("admin settings store", () => {
     expect(
       settings.languages.find((runtime) => runtime.language === "ada")?.setup_script,
     ).toContain("gnat");
+    expect(
+      settings.languages.find((runtime) => runtime.language === "haskell")?.setup_script,
+    ).toContain("libghc-aeson-dev");
     expect(fetchForeignLanguageRuntime).not.toHaveBeenCalled();
   });
 

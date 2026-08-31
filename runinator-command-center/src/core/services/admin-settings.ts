@@ -49,6 +49,10 @@ const ADA_SETUP = `apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnat
 rm -rf /var/lib/apt/lists/*`;
 
+const HASKELL_SETUP = `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ghc libghc-aeson-dev
+rm -rf /var/lib/apt/lists/*`;
+
 const LANGUAGE_DEFINITIONS: readonly {
   language: string;
   label: string;
@@ -100,6 +104,13 @@ const LANGUAGE_DEFINITIONS: readonly {
     aliases: ["adb", "gnat"],
     defaultImage: "debian:bookworm-slim",
     defaultSetupScript: ADA_SETUP,
+  },
+  {
+    language: "haskell",
+    label: "Haskell (GHC)",
+    aliases: ["hs", "ghc"],
+    defaultImage: "debian:bookworm-slim",
+    defaultSetupScript: HASKELL_SETUP,
   },
   { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3" },
   { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40" },

@@ -1118,6 +1118,10 @@ const ADA_SETUP: &str = r#"apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnat
 rm -rf /var/lib/apt/lists/*"#;
 
+const HASKELL_SETUP: &str = r#"apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ghc libghc-aeson-dev
+rm -rf /var/lib/apt/lists/*"#;
+
 struct ForeignLanguageRuntime {
     canonical: &'static str,
     image: &'static str,
@@ -1141,6 +1145,7 @@ fn foreign_language_runtime(language: &str) -> Option<ForeignLanguageRuntime> {
             ("fortran", "debian:bookworm-slim", FORTRAN_SETUP)
         }
         "ada" | "adb" | "gnat" => ("ada", "debian:bookworm-slim", ADA_SETUP),
+        "haskell" | "hs" | "ghc" => ("haskell", "debian:bookworm-slim", HASKELL_SETUP),
         "ruby" | "rb" => ("ruby", "ruby:3.3", ""),
         "perl" | "pl" => ("perl", "perl:5.40", ""),
         "php" => ("php", "php:8.3-cli", ""),
@@ -1977,6 +1982,16 @@ mod tests {
             assert_eq!(runtime.canonical, canonical, "{alias}");
             assert_eq!(runtime.image, "debian:bookworm-slim", "{alias}");
             assert!(runtime.setup_script.contains(package), "{alias}");
+        }
+    }
+
+    #[test]
+    fn haskell_aliases_have_explicit_runtime_defaults() {
+        for alias in ["haskell", "hs", "ghc"] {
+            let runtime = foreign_language_runtime(alias).expect(alias);
+            assert_eq!(runtime.canonical, "haskell", "{alias}");
+            assert_eq!(runtime.image, "debian:bookworm-slim", "{alias}");
+            assert!(runtime.setup_script.contains("libghc-aeson-dev"), "{alias}");
         }
     }
 

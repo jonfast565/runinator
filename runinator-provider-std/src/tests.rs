@@ -98,6 +98,41 @@ begin
 end Runinator_Foreign;
 "#;
 
+const HASKELL_RETURN_SOURCE: &str = r#"{-# LANGUAGE OverloadedStrings #-}
+
+module Foreign (runinatorMain) where
+
+import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseEither)
+
+runinatorMain :: Value -> Value
+runinatorMain context =
+    case parseEither parser context of
+        Left message -> error message
+        Right value -> object ["answer" .= (value + (1 :: Int))]
+  where
+    parser = withObject "context" $ \root -> do
+        input <- root .: "input"
+        input .: "value"
+"#;
+
+const HASKELL_IO_RETURN_SOURCE: &str = r#"{-# LANGUAGE OverloadedStrings #-}
+
+module Foreign (runinatorMain) where
+
+import Data.Aeson (Value, object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseEither)
+
+runinatorMain :: Value -> IO Value
+runinatorMain context = pure $ case parseEither parser context of
+    Left message -> error message
+    Right value -> object ["answer" .= (value + (1 :: Int))]
+  where
+    parser = withObject "context" $ \root -> do
+        input <- root .: "input"
+        input .: "value"
+"#;
+
 fn request_for(
     action_function: &str,
     parameters: runinator_models::value::Value,
@@ -281,6 +316,24 @@ fn code_language_specs_support_restored_languages_and_aliases() {
             "bash /work/runinator_runner.sh",
         ),
         (
+            "haskell",
+            "haskell",
+            "Foreign.hs",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "ghc",
+            "haskell",
+            "Foreign.hs",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
+            "hs",
+            "haskell",
+            "Foreign.hs",
+            "bash /work/runinator_runner.sh",
+        ),
+        (
             "ruby",
             "ruby",
             "foreign.rb",
@@ -381,6 +434,20 @@ fn code_language_specs_support_restored_languages_and_aliases() {
         assert_eq!(adapter.execute(), command, "{input}");
         assert!(!adapter.runner_source().trim().is_empty(), "{input}");
     }
+}
+
+#[test]
+fn haskell_adapter_supports_pure_and_io_results() {
+    let adapter = adapter_for("haskell").unwrap();
+    assert_eq!(adapter.runner_filename(), "runinator_runner.sh");
+
+    let main_source = adapter
+        .additional_files()
+        .iter()
+        .find_map(|(name, source)| (*name == "Main.hs").then_some(*source))
+        .expect("Haskell adapter must provide Main.hs");
+    assert!(main_source.contains("instance IntoRuninatorIO Value"));
+    assert!(main_source.contains("instance IntoRuninatorIO (IO Value)"));
 }
 
 #[test]
@@ -576,6 +643,7 @@ procedure division.
         ("cpp", "g++", "--version", CPP_RETURN_SOURCE),
         ("fortran", "gfortran", "--version", FORTRAN_RETURN_SOURCE),
         ("ada", "gnatmake", "--version", ADA_RETURN_SOURCE),
+        ("haskell", "ghc", "--version", HASKELL_RETURN_SOURCE),
     ];
 
     for (language, executable, version_arg, source) in cases {
@@ -825,6 +893,29 @@ fn gcc_frontend_foreign_compute_returns_output() {
             "{language}"
         );
     }
+}
+
+#[test]
+#[ignore = "requires a running Docker daemon and the GHC + Aeson runtime packages"]
+fn haskell_foreign_compute_returns_output() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "haskell",
+        "source": HASKELL_IO_RETURN_SOURCE,
+        "runtime": {
+            "image": "debian:bookworm-slim",
+            "setup_script": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ghc libghc-aeson-dev"
+        },
+        "context": { "input": { "value": 41 } }
+    });
+    let mut request = request_for("code", parameters);
+    request.timeout_secs = 240;
+
+    let result = provider
+        .execute_service(request, None, CancellationToken::new())
+        .expect("Haskell foreign compute");
+
+    assert_eq!(result.output_json, Some(json!({ "answer": 42 })));
 }
 
 #[test]

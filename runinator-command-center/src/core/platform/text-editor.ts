@@ -11,6 +11,7 @@ export type TextEditorLanguage =
   | "cpp"
   | "fortran"
   | "ada"
+  | "haskell"
   | "ruby"
   | "perl"
   | "php"
