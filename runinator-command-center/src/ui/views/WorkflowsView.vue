@@ -16,6 +16,8 @@
         <div class="panel min-h-0">
           <PanelHeader
             title="Workflows"
+            icon="workflow"
+            eyebrow="Definitions"
             description="Browse definitions, select one to edit, or create a new workflow."
           >
             <button class="btn" @click="importOpen = true">

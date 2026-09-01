@@ -27,14 +27,12 @@
         >
           <template #first>
             <aside class="panel flex min-h-0 flex-col">
-              <div class="panel-toolbar">
-                <div class="flex items-center gap-1">
-                  <h2 class="m-0 text-base font-semibold text-fg">Replicas</h2>
-                  <HelpBubble
-                    text="Inspect registered runtime replicas, health, telemetry, directives, and attached desktop agents."
-                    label="About replicas"
-                  />
-                </div>
+              <PanelHeader
+                title="Replicas"
+                icon="list"
+                eyebrow="Runtime fleet"
+                description="Inspect registered runtime replicas, health, telemetry, directives, and attached desktop agents."
+              >
                 <div class="flex gap-1.5">
                   <button v-if="canEnrollAgents" class="btn" @click="openEnrollment">
                     <Icon name="plus" />
@@ -50,7 +48,7 @@
                     <span>Refresh</span>
                   </button>
                 </div>
-              </div>
+              </PanelHeader>
 
               <div class="mb-2 flex flex-wrap gap-1.5">
                 <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-fg-subtle"
@@ -738,11 +736,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
-import HelpBubble from "../components/shared/HelpBubble.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import Modal from "../components/shared/Modal.vue";
 import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import Sparkline from "../components/shared/Sparkline.vue";

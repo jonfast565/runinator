@@ -3,6 +3,8 @@
     <div class="panel h-full min-h-0">
       <PanelHeader
         title="Files"
+        icon="folder"
+        eyebrow="Immutable library"
         description="Upload a file or folder with relative paths. Each upload creates an immutable revision that runs can pin safely."
       >
         <button class="btn" :disabled="loading" @click="refresh">
@@ -12,7 +14,14 @@
         <label class="btn btn-primary cursor-pointer" :class="{ 'opacity-60': uploading }">
           <Icon name="upload" />
           <span>Upload files</span>
-          <input class="sr-only" type="file" multiple @change="uploadFiles" />
+          <input
+            class="sr-only"
+            type="file"
+            multiple
+            :disabled="uploading > 0"
+            aria-label="Upload files"
+            @change="uploadFiles"
+          />
         </label>
         <label class="btn btn-primary cursor-pointer" :class="{ 'opacity-60': uploading }">
           <Icon name="folder" />
@@ -21,6 +30,8 @@
             class="sr-only"
             type="file"
             multiple
+            :disabled="uploading > 0"
+            aria-label="Upload folder"
             webkitdirectory=""
             directory=""
             @change="uploadFiles"
@@ -31,7 +42,24 @@
       <p v-if="uploading" class="mb-2 text-sm text-fg-muted">
         Uploading {{ uploading }} file{{ uploading === 1 ? "" : "s" }}…
       </p>
-      <div class="table-scroll min-h-0 flex-1">
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <MetricCard label="Visible files" :value="filteredFiles.length" />
+        <MetricCard label="Stored size" :value="formatBytes(totalBytes)" />
+        <MetricCard label="Latest revision" :value="latestRevisionLabel" />
+      </div>
+      <LoadingPanel v-if="loading && !files.length" compact message="Loading file library…" />
+      <EmptyState
+        v-else-if="!filteredFiles.length"
+        compact
+        :icon="files.length ? 'search' : 'folder'"
+        :title="files.length ? 'No matches' : 'No reusable files yet'"
+        :description="
+          files.length
+            ? `No files match “${app.searchQuery}”.`
+            : 'Upload a file or folder to create an immutable revision workflows can pin.'
+        "
+      />
+      <div v-else class="table-scroll min-h-0 flex-1">
         <DataTable bare>
           <thead>
             <tr>
@@ -44,13 +72,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading">
-              <td colspan="6" class="muted">Loading files…</td>
-            </tr>
-            <tr v-else-if="!files.length">
-              <td colspan="6" class="muted">No reusable files yet.</td>
-            </tr>
-            <tr v-for="file in files" :key="file.descriptor.id">
+            <tr v-for="file in filteredFiles" :key="file.descriptor.id">
               <td class="font-mono text-[12px]">{{ file.descriptor.path }}</td>
               <td>v{{ file.revision }}</td>
               <td>{{ file.descriptor.mime_type }}</td>
@@ -73,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   archiveWorkflowFile,
   downloadWorkflowFileContent,
@@ -84,12 +106,37 @@ import type { WorkflowFile } from "../../core/domain/models";
 import { formatDate } from "../../core/utils/format";
 import { downloadBlob } from "../adapters/browser/files";
 import Icon from "../components/shared/Icon.vue";
+import EmptyState from "../components/shared/EmptyState.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import { useAppStore } from "../adapters/pinia/app";
 
+const app = useAppStore();
 const files = ref<WorkflowFile[]>([]);
 const loading = ref(false);
 const uploading = ref(0);
 const error = ref("");
+const filteredFiles = computed(() => {
+  const query = app.normalizedSearch;
+
+  if (!query) {
+    return files.value;
+  }
+
+  return files.value.filter((file) =>
+    [file.descriptor.path, file.descriptor.name, file.descriptor.mime_type].some((value) =>
+      value.toLowerCase().includes(query),
+    ),
+  );
+});
+const totalBytes = computed(() =>
+  filteredFiles.value.reduce((total, file) => total + file.descriptor.size_bytes, 0),
+);
+const latestRevisionLabel = computed(() => {
+  const revision = Math.max(0, ...filteredFiles.value.map((file) => file.revision));
+  return revision ? `v${String(revision)}` : "—";
+});
 
 async function refresh() {
   loading.value = true;
@@ -109,12 +156,41 @@ function relativePath(file: File) {
   return path.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
+function uploadSelectionError(entries: File[]): string {
+  const paths = entries.map(relativePath);
+  const invalidPath = paths.find((path) => {
+    const segments = path.split("/");
+    return (
+      !path ||
+      path.length > 512 ||
+      segments.some((segment) => !segment || segment === "." || segment === "..")
+    );
+  });
+
+  if (invalidPath !== undefined) {
+    return `“${invalidPath || "Unnamed file"}” does not have a valid relative path.`;
+  }
+
+  if (new Set(paths).size !== paths.length) {
+    return "The selection contains duplicate relative file paths.";
+  }
+
+  return "";
+}
+
 async function uploadFiles(event: Event) {
   const input = event.target as HTMLInputElement;
   const entries = [...(input.files ?? [])];
   input.value = "";
 
   if (!entries.length) {
+    return;
+  }
+
+  const selectionError = uploadSelectionError(entries);
+
+  if (selectionError) {
+    error.value = selectionError;
     return;
   }
 

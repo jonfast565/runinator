@@ -3,11 +3,15 @@
     <div class="panel flex min-h-0 flex-col">
       <PanelHeader
         title="Audit Log"
+        icon="list"
+        eyebrow="Administration"
         description="Filter by an exact action such as auth.login, then inspect actor, outcome, resource, and detail together."
       >
         <input
           v-model="action"
           class="input"
+          maxlength="120"
+          data-validation="identifier"
           placeholder="Filter by action (e.g. auth.login)"
           @keyup.enter="refresh"
         />
@@ -16,6 +20,12 @@
           <span>Refresh</span>
         </Button>
       </PanelHeader>
+
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <MetricCard label="Loaded entries" :value="rows.length" />
+        <MetricCard label="Denied or failed" :value="failedCount" />
+        <MetricCard label="Action filter" :value="action || 'All actions'" />
+      </div>
 
       <DataTable
         :columns="columns"
@@ -61,11 +71,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import Button from "../components/shared/Button.vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import { auditLogService } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
@@ -78,6 +89,7 @@ const orgs = useOrgsStore();
 const loading = ref(false);
 const rows = ref<JsonRecord[]>([]);
 const action = ref("");
+const failedCount = computed(() => rows.value.filter((row) => row.outcome !== "success").length);
 
 const columns: DataTableColumn<JsonRecord>[] = [
   { key: "created_at", label: "Time", sortable: true, mobile: true },

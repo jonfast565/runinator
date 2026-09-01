@@ -14,11 +14,12 @@
         <div
           class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto"
         >
-          <header class="flex items-center justify-between gap-3">
-            <div class="flex items-center gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">{{ pageTitle }}</h2>
-              <HelpBubble :text="pageDescription" :label="`About ${pageTitle.toLowerCase()}`" />
-            </div>
+          <PanelHeader
+            :title="pageTitle"
+            :icon="isConfig ? 'settings' : 'key'"
+            :eyebrow="isConfig ? 'Visible values' : 'Write-only values'"
+            :description="pageDescription"
+          >
             <div class="btn-row">
               <button class="btn" :disabled="loadingSecrets" @click="refreshPage">
                 <LoadingSpinner v-if="loadingSecrets" size="sm" label="Refreshing secrets" />
@@ -30,7 +31,7 @@
                 <span>{{ newLabel }}</span>
               </button>
             </div>
-          </header>
+          </PanelHeader>
 
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <MetricCard
@@ -239,6 +240,7 @@ import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";

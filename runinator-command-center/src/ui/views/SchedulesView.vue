@@ -3,6 +3,8 @@
     <div class="panel">
       <PanelHeader
         title="Freeze windows"
+        icon="clock"
+        eyebrow="Operational safety"
         description="Freeze only the scope you intend. The end must be later than the start; times are entered locally and stored in UTC."
       >
         <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
@@ -19,13 +21,29 @@
         </button>
       </PanelHeader>
 
-      <form v-if="draft" class="border-b border-border px-4 py-3" @submit.prevent="save">
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <MetricCard label="Visible windows" :value="filteredWindows.length" />
+        <MetricCard label="Active now" :value="activeWindowCount" />
+        <MetricCard label="Upcoming" :value="upcomingWindowCount" />
+      </div>
+
+      <form
+        v-if="draft"
+        class="rounded-md border border-accent/25 bg-accent-soft px-4 py-3"
+        @submit.prevent="save"
+      >
         <div
           class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&_label]:flex [&_label]:flex-col [&_label]:gap-1 [&_label]:text-xs [&_label]:text-fg-muted"
         >
           <label>
             <span>Name</span>
-            <input v-model="draft.name" required placeholder="December change freeze" />
+            <input
+              v-model.trim="draft.name"
+              required
+              minlength="2"
+              maxlength="100"
+              placeholder="December change freeze"
+            />
           </label>
           <label>
             <span>Starts</span>
@@ -41,7 +59,7 @@
           </label>
           <label class="sm:col-span-2">
             <span>Reason</span>
-            <input v-model="draftReason" placeholder="holiday change freeze" />
+            <input v-model="draftReason" maxlength="500" placeholder="holiday change freeze" />
           </label>
           <label class="!flex-row items-center gap-2 self-end [&>input]:w-auto">
             <input v-model="draft.enabled" type="checkbox" />
@@ -112,6 +130,7 @@ import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useSchedulesStore } from "../../ui/adapters/pinia/schedules";
 import { useAppStore } from "../../ui/adapters/pinia/app";
@@ -174,6 +193,12 @@ const filteredWindows = computed(() => {
     ),
   );
 });
+const activeWindowCount = computed(
+  () => filteredWindows.value.filter((window) => stateLabel(window) === "active").length,
+);
+const upcomingWindowCount = computed(
+  () => filteredWindows.value.filter((window) => stateLabel(window) === "upcoming").length,
+);
 
 // the datetime-local control speaks local wall time; the wire is utc.
 function toLocalInput(iso: string): string {

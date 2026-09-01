@@ -51,12 +51,27 @@
           /></label>
           <label
             ><span>New password</span
-            ><input v-model="newPassword" type="password" required autocomplete="new-password"
+            ><input
+              v-model="newPassword"
+              type="password"
+              required
+              minlength="8"
+              maxlength="256"
+              autocomplete="new-password"
           /></label>
           <label
             ><span>Confirm new password</span
-            ><input v-model="confirmPassword" type="password" required autocomplete="new-password"
-          /></label>
+            ><input
+              v-model="confirmPassword"
+              type="password"
+              required
+              minlength="8"
+              maxlength="256"
+              autocomplete="new-password"
+              :aria-invalid="Boolean(passwordError)"
+            />
+            <small v-if="passwordError" class="field-error" role="alert">{{ passwordError }}</small>
+          </label>
         </div>
         <div class="modal-actions !mt-0">
           <button class="btn btn-primary" type="submit"><Icon name="lock" />Change password</button>
@@ -277,6 +292,13 @@ const email = ref("");
 const currentPassword = ref("");
 const newPassword = ref("");
 const confirmPassword = ref("");
+const passwordError = computed(() => {
+  if (!confirmPassword.value || newPassword.value === confirmPassword.value) {
+    return "";
+  }
+
+  return "New passwords must match.";
+});
 
 watch(
   () => auth.user?.email,
@@ -292,8 +314,8 @@ async function saveProfile() {
 }
 
 async function savePassword() {
-  if (newPassword.value !== confirmPassword.value) {
-    app.setError("New passwords do not match.");
+  if (passwordError.value) {
+    app.setError(passwordError.value);
     return;
   }
 
@@ -426,8 +448,7 @@ async function revokeSelectedKey() {
 
 function scopeName(orgId?: string | null) {
   return (
-    profile.keyScopes.find((scope) => scope.org_id === (orgId ?? null))?.name ??
-    (orgId ?? "Platform")
+    profile.keyScopes.find((scope) => scope.org_id === (orgId ?? null))?.name ?? orgId ?? "Platform"
   );
 }
 

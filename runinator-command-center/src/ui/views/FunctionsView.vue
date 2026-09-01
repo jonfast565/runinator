@@ -14,6 +14,8 @@
         <div class="panel">
           <PanelHeader
             title="Functions"
+            icon="box"
+            eyebrow="Package registry"
             description="A packaged function is immutable code published to the platform and called like any other action. Publish uploads a built archive and its manifest; runinatorctl functions publish &lt;path&gt; builds that archive from a working tree. Versions never change, and only aliases move."
           >
             <div class="btn-row">
@@ -36,6 +38,11 @@
               </button>
             </div>
           </PanelHeader>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <MetricCard label="Visible packages" :value="functions.filteredPackages.length" />
+            <MetricCard label="Versioned packages" :value="versionedPackageCount" />
+            <MetricCard label="Selected aliases" :value="aliases.length" />
+          </div>
           <DataTable>
             <thead>
               <tr>
@@ -135,7 +142,7 @@
               </tbody>
             </DataTable>
 
-            <div class="btn-row items-end">
+            <form class="flex flex-wrap items-end gap-2" @submit.prevent="promote">
               <label class="grid gap-1 text-xs text-fg-muted">
                 Alias
                 <input
@@ -155,11 +162,11 @@
                   </option>
                 </select>
               </label>
-              <button class="btn btn-primary" :disabled="!canPromote" @click="promote">
+              <button class="btn btn-primary" type="submit" :disabled="!canPromote">
                 <Icon name="approve" />
                 <span>Move alias</span>
               </button>
-            </div>
+            </form>
             <p v-if="aliasError" class="error m-0 text-xs" role="alert">{{ aliasError }}</p>
 
             <div class="mt-2 flex items-center gap-1">
@@ -232,6 +239,7 @@ import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import PublishFunctionDialog from "../components/functions/PublishFunctionDialog.vue";
 import { useFunctionsStore } from "../adapters/pinia/functions";
@@ -259,6 +267,9 @@ const versions = computed(() =>
   [...(functions.selectedPackage?.versions ?? [])].sort(
     (left, right) => right.version - left.version,
   ),
+);
+const versionedPackageCount = computed(
+  () => functions.filteredPackages.filter((pkg) => pkg.latest_version != null).length,
 );
 const aliasError = computed(() => {
   const value = promoteAlias.value.trim();

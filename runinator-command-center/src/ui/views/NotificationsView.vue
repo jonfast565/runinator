@@ -3,6 +3,8 @@
     <div class="panel">
       <PanelHeader
         title="Notifications"
+        icon="bell"
+        eyebrow="Inbox"
         description="Review unread alerts first. Deleting a notification removes it permanently from this inbox."
       >
         <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
@@ -22,6 +24,11 @@
           <span>Delete read</span>
         </button>
       </PanelHeader>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <MetricCard label="Unread" :value="store.unreadCount" />
+        <MetricCard label="Visible" :value="filteredNotifications.length" />
+        <MetricCard label="Delivery policies" :value="store.policies.length" />
+      </div>
       <DataTable
         :columns="columns"
         :rows="filteredNotifications"
@@ -69,6 +76,8 @@
     <div v-if="canManagePolicies" class="panel">
       <PanelHeader
         title="Alert policies"
+        icon="settings"
+        eyebrow="Delivery rules"
         description="Choose the failure event, delivery channel, and a valid destination. Pack-managed policies must be changed in REXRAP."
       >
         <Button variant="default" :loading="policiesLoading" @click="refreshPolicies">
@@ -192,6 +201,7 @@ import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useAppStore } from "../../ui/adapters/pinia/app";

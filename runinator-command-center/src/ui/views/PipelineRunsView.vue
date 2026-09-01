@@ -16,6 +16,8 @@
         <div class="panel min-h-0">
           <PanelHeader
             title="Pipeline Runs"
+            icon="runs"
+            eyebrow="Pipeline execution"
             description="First-class pipeline executions and the member workflow runs they orchestrate."
           >
             <button class="btn" :disabled="store.loading" @click="store.refresh">
@@ -24,9 +26,9 @@
               <span>Refresh</span>
             </button>
           </PanelHeader>
-          <div class="flex gap-2">
-            <select v-model="selectedPipelineId" class="input flex-1">
-              <option value="">Start a pipeline…</option>
+          <form class="flex gap-2" @submit.prevent="startRun">
+            <select v-model="selectedPipelineId" class="input flex-1" required>
+              <option value="" disabled>Choose a pipeline…</option>
               <option
                 v-for="pipeline in store.pipelines"
                 :key="pipeline.id ?? ''"
@@ -35,15 +37,11 @@
                 {{ pipeline.name }}
               </option>
             </select>
-            <button
-              class="btn btn-primary"
-              :disabled="!selectedPipelineId || starting"
-              @click="startRun"
-            >
+            <button class="btn btn-primary" type="submit" :disabled="starting">
               <Icon name="runs" />
               <span>Start run</span>
             </button>
-          </div>
+          </form>
           <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
             <MetricCard label="Visible" :value="store.runs.length" />
             <MetricCard label="Active" :value="activeRunCount" />
@@ -234,6 +232,9 @@
                   <input
                     v-model="managedReason"
                     class="input"
+                    required
+                    minlength="3"
+                    maxlength="500"
                     placeholder="Required operator reason"
                   />
                 </label>

@@ -3,6 +3,8 @@
     <div class="panel flex min-h-0 flex-col">
       <PanelHeader
         title="Dead Letters"
+        icon="flag"
+        eyebrow="Broker recovery"
         description="Select a channel, then expand a delivery to inspect the final error and payload before deciding how to recover it."
       >
         <select v-model="channel" class="input" @change="refresh">
@@ -15,6 +17,12 @@
           <span>Refresh</span>
         </Button>
       </PanelHeader>
+
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <MetricCard label="Deliveries" :value="rows.length" />
+        <MetricCard label="Total attempts" :value="attemptCount" />
+        <MetricCard label="Channel" :value="channel || 'All channels'" />
+      </div>
 
       <EmptyState
         v-if="loading && !rows.length"
@@ -83,11 +91,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import Button from "../components/shared/Button.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import { deadLettersService } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
@@ -100,6 +109,9 @@ const loading = ref(false);
 const rows = ref<JsonRecord[]>([]);
 const channel = ref("");
 const expanded = ref<string | null>(null);
+const attemptCount = computed(() =>
+  rows.value.reduce((total, row) => total + Number(row.attempts ?? 0), 0),
+);
 
 function toggle(id: string) {
   expanded.value = expanded.value === id ? null : id;

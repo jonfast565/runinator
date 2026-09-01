@@ -16,6 +16,8 @@
         <div class="panel min-h-0">
           <PanelHeader
             title="Runs"
+            icon="runs"
+            eyebrow="Execution history"
             description="Recent workflow executions, filtered by the current search when present."
           >
             <button

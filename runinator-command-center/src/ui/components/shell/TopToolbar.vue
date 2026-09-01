@@ -15,16 +15,22 @@
         <span class="hamburger-bar"></span>
       </span>
     </button>
-    <div class="view-title">
-      <div class="view-title-heading">
-        <h1>{{ headingFor(app.activeTab) }}</h1>
-        <HelpBubble :text="activeHelp" :label="`About ${headingFor(app.activeTab)}`" />
+    <div class="view-identity">
+      <div class="view-identity-icon" aria-hidden="true">
+        <Icon :name="activeIcon" :size="20" />
       </div>
-      <span v-if="app.loading && app.opLabel" class="view-status loading">
-        <LoadingSpinner size="sm" :label="app.opLabel" />
-        {{ app.opLabel }}…
-      </span>
-      <span v-else-if="activeSubtitle">{{ activeSubtitle }}</span>
+      <div class="view-title">
+        <span class="view-eyebrow">{{ activeSection }}</span>
+        <div class="view-title-heading">
+          <h1>{{ headingFor(app.activeTab) }}</h1>
+          <HelpBubble :text="activeHelp" :label="`About ${headingFor(app.activeTab)}`" />
+        </div>
+        <span v-if="app.loading && app.opLabel" class="view-status loading">
+          <LoadingSpinner size="sm" :label="app.opLabel" />
+          {{ app.opLabel }}…
+        </span>
+        <span v-else>{{ activeContext }}</span>
+      </div>
     </div>
     <div v-if="searchPlaceholder" class="toolbar-search">
       <input
@@ -86,6 +92,7 @@ import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
 import UserMenu from "./UserMenu.vue";
 import { navItemForTab, useAppStore } from "../../../ui/adapters/pinia/app";
+import { navSectionForTab } from "../../../core/navigation/nav-config";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
@@ -117,6 +124,8 @@ function headingFor(tab: AppTab): string {
 // only show the global search box on tabs whose list actually consumes app.searchQuery.
 const searchPlaceholder = computed(() => navItemForTab(app.activeTab)?.searchPlaceholder ?? "");
 const activeHelp = computed(() => navItemForTab(app.activeTab)?.description ?? "");
+const activeIcon = computed(() => navItemForTab(app.activeTab)?.icon ?? "info");
+const activeSection = computed(() => navSectionForTab(app.activeTab));
 
 const activeSubtitle = computed(() => {
   switch (app.activeTab) {
@@ -132,4 +141,6 @@ const activeSubtitle = computed(() => {
       return "";
   }
 });
+
+const activeContext = computed(() => activeSubtitle.value || activeHelp.value);
 </script>

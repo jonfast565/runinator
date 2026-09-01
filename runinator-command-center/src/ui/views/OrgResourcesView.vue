@@ -2,24 +2,22 @@
   <section class="pane h-full overflow-hidden">
     <div class="flex h-full min-h-0 flex-col gap-2.5 overflow-auto">
       <div class="panel shrink-0">
-        <div class="panel-toolbar">
-          <div class="flex items-center gap-1">
-            <h2 class="m-0 text-base font-semibold text-fg">
-              Resources &amp; Billing<template v-if="orgs.activeOrg">
-                — {{ orgs.activeOrg.name }}</template
-              >
-            </h2>
-            <HelpBubble
-              text="Review organization limits, projected cost, recent usage, and dedicated node allocations."
-              label="About resources and billing"
-            />
-          </div>
+        <PanelHeader
+          icon="box"
+          eyebrow="Capacity &amp; cost"
+          description="Review organization limits, projected cost, recent usage, and dedicated node allocations."
+        >
+          <template #title>
+            Resources &amp; Billing<template v-if="orgs.activeOrg">
+              — {{ orgs.activeOrg.name }}</template
+            >
+          </template>
           <button class="btn" :disabled="refreshing || !orgs.activeOrg" @click="refresh">
             <LoadingSpinner v-if="refreshing" size="sm" label="Refreshing org resources" />
             <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
-        </div>
+        </PanelHeader>
 
         <EmptyState
           v-if="!orgs.activeOrg"
@@ -211,6 +209,7 @@ import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import {
   orgResourcesService,

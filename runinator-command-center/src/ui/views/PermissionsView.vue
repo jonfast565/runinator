@@ -3,20 +3,18 @@
     <div
       class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto"
     >
-      <header class="flex items-center justify-between gap-3">
-        <div class="flex items-center gap-1">
-          <h2 class="m-0 text-base font-semibold text-fg">Permissions</h2>
-          <HelpBubble
-            text="Manage platform users, teams, workflow grants, and scoped API keys."
-            label="About permissions"
-          />
-        </div>
+      <PanelHeader
+        title="Permissions"
+        icon="shield"
+        eyebrow="Access control"
+        description="Manage platform users, teams, workflow grants, and scoped API keys."
+      >
         <button class="btn" :disabled="loading" @click="refresh">
           <LoadingSpinner v-if="loading" size="sm" label="Refreshing permissions" />
           <Icon v-else name="refresh" />
           <span>Refresh</span>
         </button>
-      </header>
+      </PanelHeader>
 
       <nav
         class="inline-flex w-fit overflow-hidden rounded-md border border-border max-[920px]:max-w-full max-[920px]:overflow-x-auto"
@@ -51,7 +49,7 @@ import TeamsPermissionsPanel from "../components/permissions/TeamsPermissionsPan
 import UsersPermissionsPanel from "../components/permissions/UsersPermissionsPanel.vue";
 import WorkflowAccessPanel from "../components/permissions/WorkflowAccessPanel.vue";
 import Icon from "../components/shared/Icon.vue";
-import HelpBubble from "../components/shared/HelpBubble.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import { useOperationLoading } from "../composables/useOperationLoading";
 

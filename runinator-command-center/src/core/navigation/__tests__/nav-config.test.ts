@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Action } from "../../domain/models";
-import { navSections, visibleNavSections } from "../nav-config";
+import { navSectionForTab, navSections, visibleNavSections } from "../nav-config";
 
 function labels(sections: ReturnType<typeof visibleNavSections>): string[] {
   return sections.flatMap((section) => section.items.map((item) => item.tab));
@@ -70,5 +70,8 @@ describe("visibleNavSections", () => {
       "Secrets",
       "Dev",
     ]);
+    expect(navSectionForTab("Functions")).toBe("Build");
+    expect(navSectionForTab("Notifications")).toBe("Integrations");
+    expect(navSectionForTab("Profile")).toBe("Account");
   });
 });

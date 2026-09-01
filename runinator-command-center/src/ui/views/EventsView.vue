@@ -14,6 +14,8 @@
         <div class="panel">
           <PanelHeader
             title="Events"
+            icon="flag"
+            eyebrow="Automation stream"
             description="Select an event to inspect its complete payload; use search to narrow by provider, run, node, or message."
           >
             <button class="btn" @click="refresh">
@@ -21,6 +23,17 @@
               <span>Refresh</span>
             </button>
           </PanelHeader>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <MetricCard
+              label="Visible events"
+              :value="resourcesStore.filteredResourceRecords.length"
+            />
+            <MetricCard label="Providers" :value="providerCount" />
+            <MetricCard
+              label="Selected"
+              :value="resourcesStore.selectedResourceRecord ? 'Ready' : '—'"
+            />
+          </div>
           <DataTable>
             <thead>
               <tr>
@@ -89,12 +102,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch } from "vue";
+import { computed, onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useAppStore } from "../../ui/adapters/pinia/app";
@@ -111,6 +125,14 @@ const orgs = useOrgsStore();
 const { isLoading: loadingEvents, loadingMessage: loadingEventsMessage } =
   useOperationLoading("Refreshing resources");
 const endpoint = "automation_events";
+const providerCount = computed(
+  () =>
+    new Set(
+      resourcesStore.filteredResourceRecords
+        .map((record) => (typeof record.provider === "string" ? record.provider : ""))
+        .filter(Boolean),
+    ).size,
+);
 
 async function refresh() {
   resourcesStore.clearResources();

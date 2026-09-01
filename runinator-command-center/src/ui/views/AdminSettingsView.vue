@@ -15,14 +15,18 @@
       <!-- section rail: the sections and their per-item subsections. -->
       <template #first>
         <aside class="panel flex min-h-0 flex-col">
-          <div class="panel-toolbar">
-            <h2 class="m-0 text-base font-semibold text-fg">Settings</h2>
+          <PanelHeader
+            title="Settings"
+            icon="settings"
+            eyebrow="Configuration catalog"
+            description="Choose display, server, or foreign-language runtime settings."
+          >
             <button class="btn" :disabled="loading" @click="refreshAll">
               <LoadingSpinner v-if="loading" size="sm" label="Refreshing settings" />
               <Icon v-else name="refresh" />
               <span>Refresh</span>
             </button>
-          </div>
+          </PanelHeader>
 
           <nav
             class="-mx-1 flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-1"
@@ -240,10 +244,7 @@
                     )
                   "
                 />
-                <span
-                  v-if="definition.kind !== 'boolean'"
-                  class="text-[0.78rem] text-fg-muted"
-                >
+                <span v-if="definition.kind !== 'boolean'" class="text-[0.78rem] text-fg-muted">
                   Usual {{ definition.usual_minimum.toLocaleString() }}–{{
                     definition.usual_maximum.toLocaleString()
                   }}
@@ -372,10 +373,14 @@
                 </label>
               </div>
               <fieldset class="grid gap-3 rounded-md border border-border p-3">
-                <legend class="px-1 text-[0.84rem] font-semibold text-fg-muted">Resource limits</legend>
+                <legend class="px-1 text-[0.84rem] font-semibold text-fg-muted">
+                  Resource limits
+                </legend>
                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <label v-for="limit in languageLimits" :key="limit.field" class="grid gap-1.5">
-                    <span class="text-[0.84rem] font-semibold text-fg-muted">{{ limit.label }}</span>
+                    <span class="text-[0.84rem] font-semibold text-fg-muted">{{
+                      limit.label
+                    }}</span>
                     <input
                       :value="activeLanguage[limit.field]"
                       type="number"
@@ -423,6 +428,7 @@ import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useAdminSettingsStore } from "../../ui/adapters/pinia/adminSettings";
 import {
@@ -511,7 +517,13 @@ function selectLanguage(language: string) {
 }
 
 function onLanguageField(
-  field: "image" | "setup_script" | "environment_text" | "executable" | "build_args_text" | "run_args_text",
+  field:
+    | "image"
+    | "setup_script"
+    | "environment_text"
+    | "executable"
+    | "build_args_text"
+    | "run_args_text",
   event: Event,
 ) {
   if (!activeLanguage.value) {

@@ -14,6 +14,8 @@
         <div class="panel">
           <PanelHeader
             title="Gates"
+            icon="gate"
+            eyebrow="Blocking work"
             description="Select a blocking gate and verify its run before changing the outcome."
           >
             <div class="btn-row">
@@ -22,28 +24,17 @@
                 <Icon v-else name="refresh" />
                 <span>Refresh</span>
               </button>
-              <button
-                class="btn btn-primary"
-                :disabled="!gates.canResolveSelected || !reason.trim()"
-                @click="resolve('open')"
-              >
-                <Icon name="approve" />
-                <span>Open</span>
-              </button>
-              <button
-                class="btn btn-danger"
-                :disabled="!gates.canResolveSelected || !reason.trim()"
-                @click="resolve('close')"
-              >
-                <Icon name="reject" />
-                <span>Close</span>
-              </button>
               <button class="btn" :disabled="!gates.selectedGate" @click="removeSelected">
                 <Icon name="trash" />
                 <span>Delete</span>
               </button>
             </div>
           </PanelHeader>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <MetricCard label="Visible gates" :value="gates.filteredGates.length" />
+            <MetricCard label="Total records" :value="gates.gates.length" />
+            <MetricCard label="Selected" :value="selectedGateLabel" />
+          </div>
           <DataTable>
             <thead>
               <tr>
@@ -105,15 +96,43 @@
               label="About resolving gates"
             />
           </div>
-          <label class="grid gap-1 text-xs text-fg-muted">
-            Reason
-            <input
-              v-model.trim="reason"
-              required
-              maxlength="240"
-              placeholder="Why are you opening or closing this gate?"
-            />
-          </label>
+          <form
+            class="grid gap-2 rounded-md border border-border-subtle bg-surface-subtle p-3"
+            @submit.prevent="submitGateDecision"
+          >
+            <label class="grid gap-1 text-xs text-fg-muted">
+              <span>Decision reason</span>
+              <input
+                v-model.trim="reason"
+                required
+                minlength="3"
+                maxlength="240"
+                placeholder="Why are you opening or closing this gate?"
+              />
+            </label>
+            <div class="btn-row">
+              <button
+                class="btn btn-primary"
+                type="submit"
+                name="action"
+                value="open"
+                :disabled="!gates.canResolveSelected"
+              >
+                <Icon name="approve" />
+                <span>Open gate</span>
+              </button>
+              <button
+                class="btn btn-danger"
+                type="submit"
+                name="action"
+                value="close"
+                :disabled="!gates.canResolveSelected"
+              >
+                <Icon name="reject" />
+                <span>Close gate</span>
+              </button>
+            </div>
+          </form>
           <pre class="output">{{ gates.selectedGate ? pretty(gates.selectedGate) : "" }}</pre>
         </div>
       </template>
@@ -122,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import HelpBubble from "../components/shared/HelpBubble.vue";
@@ -130,6 +149,7 @@ import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
@@ -146,6 +166,17 @@ const app = useAppStore();
 const { isLoading: loadingGates, loadingMessage: loadingGatesMessage } =
   useOperationLoading("Refreshing gates");
 const reason = ref("");
+const selectedGateLabel = computed(() =>
+  gates.selectedGate ? (gates.selectedGate.label ?? gates.selectedGate.id ?? "Selected") : "—",
+);
+
+function submitGateDecision(event: SubmitEvent) {
+  const action = (event.submitter as HTMLButtonElement | null)?.value;
+
+  if (action === "open" || action === "close") {
+    void resolve(action);
+  }
+}
 
 async function resolve(action: "open" | "close") {
   if (!gates.selectedGate || !reason.value.trim()) {

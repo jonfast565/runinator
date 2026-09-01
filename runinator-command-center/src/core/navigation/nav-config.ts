@@ -238,8 +238,16 @@ const navItemByTab = new Map(
   ),
 );
 
+const navSectionByTab = new Map(
+  navSections.flatMap((section) => section.items.map((item) => [item.tab, section.label] as const)),
+);
+
 export function navItemForTab(tab: AppTab) {
   return navItemByTab.get(tab);
+}
+
+export function navSectionForTab(tab: AppTab): string {
+  return navSectionByTab.get(tab) ?? "Account";
 }
 
 export function endpointForTab(tab: AppTab): string | undefined {

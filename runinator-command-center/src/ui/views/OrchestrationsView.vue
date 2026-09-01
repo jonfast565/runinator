@@ -3,6 +3,8 @@
     <div class="panel shrink-0">
       <PanelHeader
         title="Orchestrations"
+        icon="branch"
+        eyebrow="Correlated work"
         description="Generic correlations, immutable execution epochs, adapters, and provider effects."
       >
         <div class="btn-row">

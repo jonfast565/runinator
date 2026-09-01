@@ -16,6 +16,8 @@
         <div class="panel min-h-0">
           <PanelHeader
             title="Pipelines"
+            icon="branch"
+            eyebrow="Workflow composition"
             description="Browse named flows of chained workflows, or create a new pipeline."
           >
             <button class="btn btn-primary" @click="openNewPipeline">

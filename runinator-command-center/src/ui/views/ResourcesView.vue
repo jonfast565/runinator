@@ -12,7 +12,12 @@
     >
       <template #first>
         <div class="panel">
-          <PanelHeader :title="title" :description="paneDescription">
+          <PanelHeader
+            :title="title"
+            :description="paneDescription"
+            :icon="endpoint === 'approvals' ? 'approve' : 'tag'"
+            :eyebrow="endpoint === 'approvals' ? 'Human decisions' : 'Provider records'"
+          >
             <div class="btn-row">
               <button class="btn" :disabled="loadingResources" @click="refresh">
                 <LoadingSpinner v-if="loadingResources" size="sm" label="Refreshing resources" />
@@ -52,6 +57,20 @@
               </button>
             </div>
           </PanelHeader>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <MetricCard
+              label="Visible records"
+              :value="resourcesStore.filteredResourceRecords.length"
+            />
+            <MetricCard
+              :label="endpoint === 'approvals' ? 'Awaiting review' : 'Providers'"
+              :value="endpoint === 'approvals' ? pendingRecordCount : providerCount"
+            />
+            <MetricCard
+              label="Selected"
+              :value="resourcesStore.selectedResourceRecord ? 'Ready' : '—'"
+            />
+          </div>
           <DataTable>
             <thead>
               <tr>
@@ -150,6 +169,7 @@ import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
@@ -178,6 +198,19 @@ const paneDescription = computed(() =>
     : props.endpoint === "automation_events"
       ? "Select a record to inspect the complete payload before deleting it."
       : "Select a record to inspect its provider-owned fields and workflow context.",
+);
+const pendingRecordCount = computed(
+  () =>
+    resourcesStore.filteredResourceRecords.filter((record) => !resourcesStore.isResolved(record))
+      .length,
+);
+const providerCount = computed(
+  () =>
+    new Set(
+      resourcesStore.filteredResourceRecords
+        .map((record) => (typeof record.provider === "string" ? record.provider : ""))
+        .filter(Boolean),
+    ).size,
 );
 
 function labelFor(endpoint: string): string {
