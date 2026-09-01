@@ -17,7 +17,29 @@ pub struct SupervisorConfig {
     #[serde(default = "default_restart_delay_ms")]
     pub restart_delay_ms: u64,
     #[serde(default)]
+    pub log_retention: LogRetentionConfig,
+    #[serde(default)]
     pub processes: Vec<ProcessConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogRetentionConfig {
+    #[serde(default = "default_log_retention_max_age_days")]
+    pub max_age_days: u64,
+    #[serde(default = "default_log_retention_max_files")]
+    pub max_files: usize,
+    #[serde(default = "default_log_retention_max_bytes")]
+    pub max_bytes: u64,
+}
+
+impl Default for LogRetentionConfig {
+    fn default() -> Self {
+        Self {
+            max_age_days: default_log_retention_max_age_days(),
+            max_files: default_log_retention_max_files(),
+            max_bytes: default_log_retention_max_bytes(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +170,18 @@ fn default_shutdown_timeout_secs() -> u64 {
 
 fn default_restart_delay_ms() -> u64 {
     2000
+}
+
+fn default_log_retention_max_age_days() -> u64 {
+    7
+}
+
+fn default_log_retention_max_files() -> usize {
+    200
+}
+
+fn default_log_retention_max_bytes() -> u64 {
+    512 * 1024 * 1024
 }
 
 fn default_max_restarts_per_minute() -> u32 {

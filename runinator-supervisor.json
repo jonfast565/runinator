@@ -1,6 +1,11 @@
 {
   "shutdown_timeout_secs": 12,
   "restart_delay_ms": 2000,
+  "log_retention": {
+    "max_age_days": 7,
+    "max_files": 200,
+    "max_bytes": 536870912
+  },
   "processes": [
     {
       "name": "broker",

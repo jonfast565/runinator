@@ -1,17 +1,17 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use chrono::{DateTime, Utc};
 
 use crate::{
-    config::{Paths, ProcessConfig, SupervisorConfig, resolve_path},
+    config::{LogRetentionConfig, Paths, ProcessConfig, SupervisorConfig, resolve_path},
     control::{ControlCommand, drain as drain_control},
     display::{clear_screen, render_snapshot},
     os::{is_process_running, send_kill, send_terminate},
@@ -30,6 +30,8 @@ enum ProcStatus {
     Stopping,
     Stopped,
 }
+
+const LOG_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 impl ProcStatus {
     fn as_str(self) -> &'static str {
@@ -154,6 +156,8 @@ pub fn run_supervisor(
     let mut processes = build_processes(config, paths)?;
     let started_at = Utc::now();
     let restart_delay = Duration::from_millis(config.restart_delay_ms);
+    prune_logs_nonfatal(&paths.logs_dir, &config.log_retention, &processes);
+    let mut last_log_prune = Instant::now();
 
     // discard any control commands left over from a previous run before honoring new ones.
     let _ = drain_control(&paths.control_dir);
@@ -175,6 +179,11 @@ pub fn run_supervisor(
 
         for process in &mut processes {
             poll_process(process, now, restart_delay)?;
+        }
+
+        if last_log_prune.elapsed() >= LOG_PRUNE_INTERVAL {
+            prune_logs_nonfatal(&paths.logs_dir, &config.log_retention, &processes);
+            last_log_prune = Instant::now();
         }
 
         let snapshot = build_snapshot(paths, started_at, &processes);
@@ -667,6 +676,106 @@ fn append_process_log_event(process: &ManagedProcess, message: &str) {
     }
 }
 
+#[derive(Debug)]
+struct LogFile {
+    path: PathBuf,
+    modified: SystemTime,
+    bytes: u64,
+    protected: bool,
+}
+
+fn prune_logs_nonfatal(
+    logs_dir: &Path,
+    retention: &LogRetentionConfig,
+    processes: &[ManagedProcess],
+) {
+    let protected = processes
+        .iter()
+        .filter(|process| process.child.is_some())
+        .map(|process| process.log_path.clone())
+        .collect();
+    match prune_logs(logs_dir, retention, &protected, SystemTime::now()) {
+        Ok(0) => {}
+        Ok(deleted) => eprintln!("Pruned {deleted} old supervisor log file(s)."),
+        Err(err) => eprintln!(
+            "Unable to prune supervisor logs under {}: {err}",
+            logs_dir.display()
+        ),
+    }
+}
+
+fn prune_logs(
+    logs_dir: &Path,
+    retention: &LogRetentionConfig,
+    protected_paths: &HashSet<PathBuf>,
+    now: SystemTime,
+) -> io::Result<usize> {
+    if retention.max_age_days == 0 && retention.max_files == 0 && retention.max_bytes == 0 {
+        return Ok(0);
+    }
+
+    let mut logs = Vec::new();
+    for entry in fs::read_dir(logs_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("log") {
+            continue;
+        }
+        let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            continue;
+        }
+        logs.push(LogFile {
+            protected: protected_paths.contains(&path),
+            path,
+            modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            bytes: metadata.len(),
+        });
+    }
+
+    logs.sort_by(|left, right| {
+        left.modified
+            .cmp(&right.modified)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+
+    let max_age = (retention.max_age_days > 0)
+        .then(|| Duration::from_secs(retention.max_age_days.saturating_mul(86_400)));
+    let mut total_files = logs.len();
+    let mut total_bytes = logs.iter().map(|log| log.bytes).sum::<u64>();
+    let mut deleted = 0;
+
+    for log in &logs {
+        if log.protected {
+            continue;
+        }
+        let expired = max_age.is_some_and(|age| {
+            now.duration_since(log.modified)
+                .is_ok_and(|elapsed| elapsed >= age)
+        });
+        let over_files = retention.max_files > 0 && total_files > retention.max_files;
+        let over_bytes = retention.max_bytes > 0 && total_bytes > retention.max_bytes;
+        if !expired && !over_files && !over_bytes {
+            continue;
+        }
+
+        match fs::remove_file(&log.path) {
+            Ok(()) => {
+                total_files = total_files.saturating_sub(1);
+                total_bytes = total_bytes.saturating_sub(log.bytes);
+                deleted += 1;
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                total_files = total_files.saturating_sub(1);
+                total_bytes = total_bytes.saturating_sub(log.bytes);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(deleted)
+}
+
 fn read_pid(path: &Path) -> Result<Option<u32>, DynError> {
     if !path.exists() {
         return Ok(None);
@@ -703,4 +812,78 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
         thread::sleep(Duration::from_millis(100));
     }
     !is_process_running(pid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_logs_dir(tag: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!(
+            "runinator-supervisor-log-test-{tag}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn retention(max_age_days: u64, max_files: usize, max_bytes: u64) -> LogRetentionConfig {
+        LogRetentionConfig {
+            max_age_days,
+            max_files,
+            max_bytes,
+        }
+    }
+
+    #[test]
+    fn pruning_enforces_file_count_without_deleting_active_log() {
+        let dir = temp_logs_dir("count");
+        let oldest = dir.join("a.log");
+        let middle = dir.join("b.log");
+        let active = dir.join("c.log");
+        fs::write(&oldest, b"oldest").unwrap();
+        fs::write(&middle, b"middle").unwrap();
+        fs::write(&active, b"active").unwrap();
+        fs::write(dir.join("keep.txt"), b"not a supervisor log").unwrap();
+
+        let deleted = prune_logs(
+            &dir,
+            &retention(0, 2, 0),
+            &HashSet::from([active.clone()]),
+            SystemTime::now(),
+        )
+        .unwrap();
+
+        assert_eq!(deleted, 1);
+        assert!(!oldest.exists());
+        assert!(middle.exists());
+        assert!(active.exists());
+        assert!(dir.join("keep.txt").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pruning_enforces_age_and_byte_limits() {
+        let dir = temp_logs_dir("age-bytes");
+        let old = dir.join("a.log");
+        let excess = dir.join("b.log");
+        let active = dir.join("c.log");
+        fs::write(&old, b"four").unwrap();
+        fs::write(&excess, b"four").unwrap();
+        fs::write(&active, b"four").unwrap();
+        let protected = HashSet::from([active.clone()]);
+
+        let two_days_from_now = SystemTime::now() + Duration::from_secs(2 * 86_400);
+        let deleted = prune_logs(&dir, &retention(1, 0, 5), &protected, two_days_from_now).unwrap();
+
+        assert_eq!(deleted, 2);
+        assert!(!old.exists());
+        assert!(!excess.exists());
+        assert!(active.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

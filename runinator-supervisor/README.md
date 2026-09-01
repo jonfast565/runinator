@@ -84,6 +84,11 @@ When `state_dir` is omitted, supervisor state defaults to
 - `<state_dir>/logs/<process>.log`
 - `<state_dir>/control/` — dynamic add/start/stop/remove command queue
 
+The supervisor prunes inactive process logs at startup and once per minute. The default retention
+limits are seven days, 200 total files, and 512 MiB. Configure them with the optional
+`log_retention.max_age_days`, `log_retention.max_files`, and `log_retention.max_bytes` fields; `0`
+disables an individual limit. An active process's current log is always protected from deletion.
+
 The repository's local supervisor config runs `runinatorctl workflows apply`
 once per configured pack on startup. The checked-in config imports
 `packs/hello-world` and `packs/creds-sync`, compiling their unified `.rrx`

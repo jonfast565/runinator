@@ -317,6 +317,11 @@ YYYY-MM-DDTHH-MM-SS.mmmZ__process-name__attempt-N.log
 ```
 
 Each file includes a supervisor start marker with the exact configured process name, command, and working directory, then the app's normal stdout/stderr output.
+The supervisor prunes this directory at startup and once per minute. By default it keeps logs for
+seven days, with additional caps of 200 files and 512 MiB across inactive and active log files;
+the log files of running processes are never deleted. Configure these bounds with
+`log_retention.max_age_days`, `log_retention.max_files`, and `log_retention.max_bytes` in
+`runinator-supervisor.json`. Set an individual value to `0` to disable that limit.
 
 `watch` refreshes the status table. Use `logs-watch` or `logs --watch` to refresh log tails.
 

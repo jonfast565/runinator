@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::config::ProcessConfig;
+use crate::config::{ProcessConfig, SupervisorConfig};
 use crate::control::{ControlCommand, drain, enqueue};
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -79,4 +79,33 @@ fn drain_skips_malformed_files() {
     assert_eq!(drained.len(), 1);
     assert!(matches!(drained[0], ControlCommand::StopProcess { .. }));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn log_retention_defaults_bound_local_logs() {
+    let config: SupervisorConfig = serde_json::from_str(
+        r#"{
+            "processes": [{"name": "worker", "command": "worker"}]
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(config.log_retention.max_age_days, 7);
+    assert_eq!(config.log_retention.max_files, 200);
+    assert_eq!(config.log_retention.max_bytes, 512 * 1024 * 1024);
+}
+
+#[test]
+fn partial_log_retention_config_keeps_other_defaults() {
+    let config: SupervisorConfig = serde_json::from_str(
+        r#"{
+            "log_retention": {"max_files": 25},
+            "processes": [{"name": "worker", "command": "worker"}]
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(config.log_retention.max_files, 25);
+    assert_eq!(config.log_retention.max_age_days, 7);
+    assert_eq!(config.log_retention.max_bytes, 512 * 1024 * 1024);
 }
