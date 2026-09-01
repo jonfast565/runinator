@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="shellRoot"
     class="app-shell"
     :class="{
       'sidebar-collapsed': app.sidebarCollapsed,
@@ -8,6 +9,11 @@
     }"
     tabindex="0"
     @keydown="onShellKeydown"
+    @invalid.capture="onInvalid"
+    @input.capture="onFormInput"
+    @change.capture="onFormInput"
+    @focusout.capture="onFormInput"
+    @submit.capture="onSubmit"
   >
     <SidebarNav />
     <Transition name="mobile-nav-backdrop">
@@ -28,15 +34,7 @@
           <button type="button" @click="focusInvalidField">Review field</button>
         </div>
       </Transition>
-      <main
-        ref="mainContent"
-        :inert="app.interactionsDisabled"
-        :aria-disabled="app.interactionsDisabled"
-        @invalid.capture="onInvalid"
-        @input.capture="onFormInput"
-        @change.capture="onFormInput"
-        @focusout.capture="onFormInput"
-      >
+      <main :inert="app.interactionsDisabled" :aria-disabled="app.interactionsDisabled">
         <slot />
       </main>
       <div v-if="app.serviceBlocked" class="app-loader-overlay">
@@ -59,12 +57,16 @@ import OutageBanner from "./OutageBanner.vue";
 import SidebarNav from "./SidebarNav.vue";
 import ToastHost from "./ToastHost.vue";
 import TopToolbar from "./TopToolbar.vue";
-import { applyDefaultConstraints, validateFormControl } from "../../composables/form-validation";
+import {
+  applyDefaultConstraints,
+  validateFormControl,
+  validateFormControls,
+} from "../../composables/form-validation";
 
 const app = useAppStore();
 const { handleKeydown, refreshActive } = useKeyboardShortcuts();
 const validationMessage = ref("");
-const mainContent = ref<HTMLElement | null>(null);
+const shellRoot = ref<HTMLElement | null>(null);
 let invalidControl: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null = null;
 let constraintObserver: MutationObserver | null = null;
 
@@ -122,7 +124,7 @@ function onFormInput(event: Event) {
     return;
   }
 
-  applyDefaultConstraints(event.target.closest("form") ?? event.target.parentElement ?? document);
+  applyDefaultConstraints(event.target);
 
   if (!validateFormControl(event.target)) {
     event.target.setAttribute("aria-invalid", "true");
@@ -137,18 +139,38 @@ function onFormInput(event: Event) {
   }
 }
 
-onMounted(() => {
-  if (!mainContent.value) {
+function onSubmit(event: SubmitEvent) {
+  if (!(event.target instanceof HTMLFormElement)) {
     return;
   }
 
-  applyDefaultConstraints(mainContent.value);
+  const invalid = validateFormControls(event.target);
+
+  if (!invalid) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  invalidControl = invalid;
+  invalid.setAttribute("aria-invalid", "true");
+  validationMessage.value = `${fieldLabel(invalid)}: ${invalid.validationMessage}`;
+  invalid.focus();
+  invalid.reportValidity();
+}
+
+onMounted(() => {
+  if (!shellRoot.value) {
+    return;
+  }
+
+  applyDefaultConstraints(shellRoot.value);
   constraintObserver = new MutationObserver(() => {
-    if (mainContent.value) {
-      applyDefaultConstraints(mainContent.value);
+    if (shellRoot.value) {
+      applyDefaultConstraints(shellRoot.value);
     }
   });
-  constraintObserver.observe(mainContent.value, { childList: true, subtree: true });
+  constraintObserver.observe(shellRoot.value, { childList: true, subtree: true });
 });
 
 onBeforeUnmount(() => {
@@ -168,8 +190,8 @@ watch(
     validationMessage.value = "";
     await nextTick();
 
-    if (mainContent.value) {
-      applyDefaultConstraints(mainContent.value);
+    if (shellRoot.value) {
+      applyDefaultConstraints(shellRoot.value);
     }
   },
 );

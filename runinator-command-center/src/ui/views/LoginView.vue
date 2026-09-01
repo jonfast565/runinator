@@ -1,8 +1,10 @@
 <template>
   <div class="flex min-h-screen min-h-dvh items-center justify-center bg-app">
     <form
+      ref="loginForm"
       class="grid w-[min(360px,calc(100vw-32px))] gap-3 rounded-lg border border-border bg-surface p-7 shadow-modal"
-      @submit.prevent="submit"
+      @input.capture="clearFieldError"
+      @submit.prevent="submitValidated"
     >
       <div class="flex items-center gap-2">
         <BrandMark />
@@ -20,7 +22,7 @@
           autocomplete="username"
           autofocus
           required
-          maxlength="254"
+          maxlength="256"
         />
       </label>
       <label class="grid gap-1 text-xs font-semibold text-fg-subtle">
@@ -31,6 +33,7 @@
           type="password"
           autocomplete="current-password"
           required
+          maxlength="16384"
         />
       </label>
       <p v-if="auth.error" class="m-0 text-xs text-danger-fg">{{ auth.error }}</p>
@@ -52,11 +55,38 @@ import HelpBubble from "../components/shared/HelpBubble.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import BrandMark from "../components/shell/BrandMark.vue";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
+import { validateFormControl, validateFormControls } from "../composables/form-validation";
 
 const auth = useAuthStore();
 const username = ref("");
 const password = ref("");
 const submitting = ref(false);
+const loginForm = ref<HTMLFormElement | null>(null);
+
+function clearFieldError(event: Event) {
+  const control = event.target;
+
+  if (!(control instanceof HTMLInputElement)) {
+    return;
+  }
+
+  if (validateFormControl(control)) {
+    control.removeAttribute("aria-invalid");
+  }
+}
+
+async function submitValidated() {
+  const invalid = loginForm.value ? validateFormControls(loginForm.value) : null;
+
+  if (invalid) {
+    invalid.setAttribute("aria-invalid", "true");
+    invalid.focus();
+    invalid.reportValidity();
+    return;
+  }
+
+  await submit();
+}
 
 async function submit() {
   submitting.value = true;
