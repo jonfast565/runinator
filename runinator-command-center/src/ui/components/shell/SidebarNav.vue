@@ -63,7 +63,37 @@
         </section>
       </div>
     </nav>
-    <div v-if="!railMode" class="sidebar-foot">
+    <div v-if="railMode" class="sidebar-theme-rail">
+      <button
+        class="sidebar-theme-rail-button"
+        type="button"
+        :title="themeToggleLabel"
+        :aria-label="themeToggleLabel"
+        :disabled="app.interactionsDisabled"
+        @click="toggleTheme"
+      >
+        <Icon :name="resolvedTheme === 'dark' ? 'sun' : 'moon'" :size="16" />
+      </button>
+    </div>
+    <div v-else class="sidebar-foot">
+      <div class="sidebar-theme-row">
+        <span class="sidebar-theme-label">Theme</span>
+        <div class="sidebar-theme-options" role="group" aria-label="Color theme">
+          <button
+            v-for="theme in themeOptions"
+            :key="theme.value"
+            class="sidebar-theme-option"
+            :class="{ active: resolvedTheme === theme.value }"
+            type="button"
+            :aria-pressed="resolvedTheme === theme.value"
+            :disabled="app.interactionsDisabled"
+            @click="prefs.setTheme(theme.value)"
+          >
+            <Icon :name="theme.icon" :size="13" />
+            <span>{{ theme.label }}</span>
+          </button>
+        </div>
+      </div>
       <div class="sidebar-clock" aria-hidden="true">
         <span class="sidebar-clock-label">Local</span>
         <span class="sidebar-clock-time">{{ localTime }}</span>
@@ -101,6 +131,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
 import { useSidebarWidth } from "../../composables/useSidebarWidth";
 import { buildTooltip, versionLabel } from "../../../core/utils/build-info";
+import { useDisplayPreferencesStore } from "../../../ui/adapters/pinia/displayPreferences";
+import type { IconName } from "../../../core/domain/icons";
 
 const app = useAppStore();
 const { isTablet, isMobile } = useBreakpoint();
@@ -117,19 +149,43 @@ const sections = computed(() => app.visibleNavSections());
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
+const prefs = useDisplayPreferencesStore();
+const themeOptions = [
+  { value: "light" as const, label: "Light", icon: "sun" },
+  { value: "dark" as const, label: "Dark", icon: "moon" },
+] satisfies { value: "light" | "dark"; label: string; icon: IconName }[];
+const resolvedTheme = ref<"light" | "dark">(
+  document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+);
+const themeToggleLabel = computed(() =>
+  resolvedTheme.value === "dark" ? "Switch to light mode" : "Switch to dark mode",
+);
 
 const clockNow = ref(new Date());
 let clockTimer: ReturnType<typeof setInterval> | undefined;
+let themeObserver: MutationObserver | undefined;
 
 onMounted(() => {
   clockTimer = setInterval(() => {
     clockNow.value = new Date();
   }, 1000);
+  themeObserver = new MutationObserver(() => {
+    resolvedTheme.value = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  });
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
 });
 
 onBeforeUnmount(() => {
   clearInterval(clockTimer);
+  themeObserver?.disconnect();
 });
+
+function toggleTheme() {
+  prefs.setTheme(resolvedTheme.value === "dark" ? "light" : "dark");
+}
 
 const localTime = computed(() => clockNow.value.toLocaleTimeString([], { hour12: false }));
 // schedules, cron headers, and every persisted timestamp are utc, so the rail shows both.
