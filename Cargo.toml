@@ -55,6 +55,7 @@ members = [
     "runinator-plugin-console",
     "runinator-observability",
     "runinator-secrets",
+    "runinator-scheduling",
     "runinator-platform",
     "runinator-pack-wire",
     "runinator-data-export",
@@ -76,4 +77,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.8.585"
+version = "0.9.586"

@@ -220,6 +220,7 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("audit_log", ColdArchive),
     table_policy!("auth_sessions", ServiceRetention),
     table_policy!("automation_records", ColdArchive),
+    table_policy!("calendar_subscriptions", ExplicitLifecycle),
     table_policy!("catalog_items", ExplicitLifecycle),
     table_policy!("console_bindings", CascadeWithParent),
     table_policy!("console_cells", CascadeWithParent),

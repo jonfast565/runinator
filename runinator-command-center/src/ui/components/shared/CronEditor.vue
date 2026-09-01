@@ -47,7 +47,7 @@
       />
     </label>
 
-    <div class="cron-summary">
+    <div v-if="showDetails" class="cron-summary">
       <code class="cron-expression">{{ modelValue || "(empty)" }}</code>
       <p v-if="error" class="cron-error">{{ error }}</p>
       <template v-else>
@@ -83,7 +83,9 @@ import {
   type CronFieldName,
 } from "../../../core/workflow/cron";
 
-const props = defineProps<{ modelValue: string }>();
+const props = withDefaults(defineProps<{ modelValue: string; showDetails?: boolean }>(), {
+  showDetails: true,
+});
 const emit = defineEmits<(e: "update:modelValue", value: string) => void>();
 
 // an expression the builder cannot represent (six-field, `@daily`) has to be edited as text, so raw

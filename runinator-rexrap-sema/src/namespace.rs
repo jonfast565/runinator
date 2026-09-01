@@ -153,6 +153,16 @@ pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
                         resolve_expr(end, &scope)?;
                     }
                 }
+                TriggerDeclKind::Schedule {
+                    schedule,
+                    exclusions,
+                    ..
+                } => {
+                    resolve_expr(schedule, &scope)?;
+                    for exclusion in exclusions {
+                        resolve_expr(exclusion, &scope)?;
+                    }
+                }
                 TriggerDeclKind::Chained { target, .. } => {
                     resolve_expr(target, &scope)?;
                 }

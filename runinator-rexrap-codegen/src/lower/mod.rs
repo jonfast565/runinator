@@ -850,6 +850,41 @@ impl Lowerer {
                         spec.insert("catchup".into(), Value::Object(entry));
                     }
                 }
+                TriggerDeclKind::Schedule {
+                    schedule,
+                    exclusions,
+                    catchup,
+                } => {
+                    let schedule = self.lower_expr(schedule)?;
+                    if !schedule.is_object() {
+                        return Err(RexRapError::lower(
+                            "trigger schedule must lower to an object",
+                        ));
+                    }
+                    spec.insert("kind".into(), Value::String("cron".into()));
+                    spec.insert("schedule".into(), schedule);
+                    let exclusions = exclusions
+                        .iter()
+                        .map(|value| self.lower_expr(value))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if !exclusions.is_empty() {
+                        spec.insert("exclusions".into(), Value::Array(exclusions));
+                    }
+                    if let Some(catchup) = catchup {
+                        let mut entry = Map::new();
+                        entry.insert(
+                            "policy".into(),
+                            Value::String(catchup.policy.keyword().into()),
+                        );
+                        if let Some(grace) = catchup.grace_seconds {
+                            entry.insert("grace_seconds".into(), Value::from(grace));
+                        }
+                        if let Some(max_slots) = catchup.max_slots {
+                            entry.insert("max_slots".into(), Value::from(max_slots));
+                        }
+                        spec.insert("catchup".into(), Value::Object(entry));
+                    }
+                }
                 TriggerDeclKind::Chained { event, target } => {
                     let Value::String(target) = self.lower_expr(target)? else {
                         return Err(RexRapError::lower(

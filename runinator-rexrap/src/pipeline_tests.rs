@@ -182,6 +182,39 @@ fn round_trips_pipeline_triggers() {
 }
 
 #[test]
+fn round_trips_portable_pipeline_schedule_and_exclusions() {
+    let source = r#"
+pipeline "Business hours" {
+    trigger schedule {
+        recurrence: { kind: "weekdays", days: ["tuesday", "wednesday"], hour: 3, minute: 0, second: 0 },
+        timezone: "America/New_York",
+        duration_seconds: 0
+    } blackout schedule {
+        recurrence: { kind: "weekdays", days: ["tuesday", "wednesday"], hour: 3, minute: 0, second: 0 },
+        timezone: "America/New_York",
+        duration_seconds: 7200
+    }
+    workflow "acme.jobs.nightly"
+}
+"#;
+    let bundle = parse_pipeline_str(source).expect("parse");
+    let trigger = &bundle.pipelines[0].triggers[0];
+    assert!(trigger.configuration.get("schedule").is_some());
+    assert_eq!(
+        trigger
+            .configuration
+            .get("exclusions")
+            .and_then(|value| value.as_array())
+            .map(Vec::len),
+        Some(1)
+    );
+    let rendered = pipeline_to_rexrapp(&bundle);
+    assert!(rendered.contains("trigger schedule"), "{rendered}");
+    assert!(rendered.contains("blackout schedule"), "{rendered}");
+    assert_eq!(parse_pipeline_str(&rendered).expect("reparse"), bundle);
+}
+
+#[test]
 fn pipeline_ingress_policy_round_trips() {
     let source = r#"
 pipeline "Release" {

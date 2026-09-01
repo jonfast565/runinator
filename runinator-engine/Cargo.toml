@@ -30,6 +30,7 @@ runinator-adapter-contract = { path = "../runinator-adapter-contract" }
 runinator-adapter-client = { path = "../runinator-adapter-client" }
 runinator-rexrap = { path = "../runinator-rexrap" }
 runinator-workflows = { path = "../runinator-workflows" }
+runinator-scheduling = { path = "../runinator-scheduling" }
 
 [features]
 # no broker-backend features here: this crate has no `cfg(feature)` code and depends only on

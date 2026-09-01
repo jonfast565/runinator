@@ -272,8 +272,8 @@ where
 
         let firing_sql = self.render(&self.dialect().insert_ignore(
             "pipeline_trigger_firings",
-            "id, trigger_id, fire_key, scheduler_id, created_at",
-            "?, ?, ?, ?, ?",
+            "id, trigger_id, fire_key, scheduler_id, outcome, created_at",
+            "?, ?, ?, ?, ?, ?",
             "trigger_id, fire_key",
             None,
         ));
@@ -286,14 +286,11 @@ where
             let Some(trigger_id) = trigger.id else {
                 continue;
             };
-            let cron_schedule = trigger
-                .configuration
-                .get("cron")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let schedule = schedule_from_configuration(&trigger.configuration)?;
 
             if trigger.next_execution.is_none() {
-                trigger.next_execution = Some(next_execution_for_cron(cron_schedule, now)?);
+                trigger.next_execution =
+                    Some(trigger.next_allowed_pipeline_execution(&schedule, now)?);
                 sqlx::query(&update_next_sql)
                     .bind(trigger.next_execution.map(|dt| dt.timestamp()))
                     .bind(now.timestamp())
@@ -303,10 +300,25 @@ where
                 continue;
             }
 
-            if trigger.is_pipeline_trigger_in_blackout(now) {
-                if let Some(end) = trigger.blackout_end {
+            let Some(due) = trigger.next_execution else {
+                continue;
+            };
+            if trigger.is_pipeline_trigger_excluded(due)? {
+                // Claim the excluded slot in the same durable ledger so two replicas cannot both
+                // advance it and so the calendar history still explains the missing run.
+                let insert = sqlx::query(&firing_sql)
+                    .bind(Uuid::now_v7())
+                    .bind(trigger_id)
+                    .bind(due.timestamp().to_string())
+                    .bind(scheduler_id.as_str())
+                    .bind("schedule_excluded")
+                    .bind(now.timestamp())
+                    .execute(&mut *tx)
+                    .await?;
+                if insert.affected() != 0 {
+                    let next = trigger.next_allowed_pipeline_execution(&schedule, due)?;
                     sqlx::query(&update_next_sql)
-                        .bind(end.timestamp())
+                        .bind(next.timestamp())
                         .bind(now.timestamp())
                         .bind(trigger_id)
                         .execute(&mut *tx)
@@ -324,6 +336,7 @@ where
                 .bind(trigger_id)
                 .bind(fire_key.as_str())
                 .bind(scheduler_id.as_str())
+                .bind("fired")
                 .bind(now.timestamp())
                 .execute(&mut *tx)
                 .await?;
@@ -394,7 +407,7 @@ where
                 .execute(&mut *tx)
                 .await?;
 
-            let next_execution = next_execution_for_cron(cron_schedule, now)?;
+            let next_execution = trigger.next_allowed_pipeline_execution(&schedule, now)?;
             sqlx::query(&update_next_sql)
                 .bind(next_execution.timestamp())
                 .bind(now.timestamp())
@@ -483,17 +496,12 @@ where
             let Some(trigger_id) = trigger.id else {
                 continue;
             };
-            let cron_schedule = trigger
-                .configuration
-                .get("cron")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+            let schedule = schedule_from_configuration(&trigger.configuration)?;
 
             // first sighting: anchor the schedule without firing, so a freshly created trigger does
             // not read "never ran" as a missed slot.
             if trigger.next_execution.is_none() {
-                trigger.next_execution = Some(next_execution_for_cron(&cron_schedule, now)?);
+                trigger.next_execution = Some(trigger.next_allowed_execution(&schedule, now)?);
                 sqlx::query(&update_next_sql)
                     .bind(trigger.next_execution.map(|dt| dt.timestamp()))
                     .bind(now.timestamp())
@@ -503,21 +511,32 @@ where
                 continue;
             }
 
-            if trigger.is_trigger_in_blackout(now) {
-                if let Some(end) = trigger.blackout_end {
-                    sqlx::query(&update_next_sql)
-                        .bind(end.timestamp())
-                        .bind(now.timestamp())
-                        .bind(trigger_id)
-                        .execute(&mut *tx)
-                        .await?;
-                }
-                continue;
-            }
-
             let Some(due) = trigger.next_execution else {
                 continue;
             };
+            if trigger.is_trigger_excluded(due)? {
+                if self
+                    .claim_firing_slot(
+                        &mut tx,
+                        trigger_id,
+                        &due.timestamp().to_string(),
+                        &scheduler_id,
+                        FiringOutcome::ScheduleExcluded,
+                        now,
+                    )
+                    .await?
+                {
+                    batch.schedule_excluded += 1;
+                }
+                let next = trigger.next_allowed_execution(&schedule, due)?;
+                sqlx::query(&update_next_sql)
+                    .bind(next.timestamp())
+                    .bind(now.timestamp())
+                    .bind(trigger_id)
+                    .execute(&mut *tx)
+                    .await?;
+                continue;
+            }
             let catchup = TriggerCatchup::from_configuration(&trigger.configuration);
 
             // a `skip` catch-up abandons slots that came due while nothing was firing them. the
@@ -539,7 +558,7 @@ where
                     batch.catchup_skipped += 1;
                 }
                 sqlx::query(&update_next_sql)
-                    .bind(next_execution_for_cron(&cron_schedule, now)?.timestamp())
+                    .bind(trigger.next_allowed_execution(&schedule, now)?.timestamp())
                     .bind(now.timestamp())
                     .bind(trigger_id)
                     .execute(&mut *tx)
@@ -552,18 +571,18 @@ where
             // every other policy collapses the backlog into the one due slot.
             let (slots, next_execution) = match catchup.policy {
                 CatchupPolicy::FireAll => {
-                    let (mut slots, _) = cron_slots_between(
-                        &cron_schedule,
+                    let (mut slots, _) = schedule_slots_between(
+                        &schedule,
                         due,
                         now,
                         catchup.max_slots().saturating_sub(1),
                     )?;
                     slots.insert(0, due);
                     let last = slots.last().copied().unwrap_or(due);
-                    let next = next_execution_for_cron(&cron_schedule, last)?;
+                    let next = trigger.next_allowed_execution(&schedule, last)?;
                     (slots, next)
                 }
-                _ => (vec![due], next_execution_for_cron(&cron_schedule, now)?),
+                _ => (vec![due], trigger.next_allowed_execution(&schedule, now)?),
             };
 
             let Some(workflow_vm) = modules.get(&trigger.workflow_id) else {
@@ -589,6 +608,22 @@ where
 
             let mut deferred = false;
             for slot in slots {
+                if trigger.is_trigger_excluded(slot)? {
+                    if self
+                        .claim_firing_slot(
+                            &mut tx,
+                            trigger_id,
+                            &slot.timestamp().to_string(),
+                            &scheduler_id,
+                            FiringOutcome::ScheduleExcluded,
+                            now,
+                        )
+                        .await?
+                    {
+                        batch.schedule_excluded += 1;
+                    }
+                    continue;
+                }
                 if concurrency.is_enforced() && active >= concurrency.max_concurrent_runs {
                     match concurrency.on_conflict {
                         ConcurrencyPolicy::Skip => {
@@ -683,22 +718,23 @@ where
         let Some(trigger) = self.fetch_workflow_trigger(trigger_id).await? else {
             return Err(crate::errors::TRIGGER_NOT_FOUND.error(trigger_id));
         };
-        let cron_schedule = trigger
-            .configuration
-            .get("cron")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if cron_schedule.is_empty() {
-            return Err(crate::errors::TRIGGER_NOT_CRON.error(trigger_id));
-        }
+        let schedule = schedule_from_configuration(&trigger.configuration)
+            .map_err(|_| crate::errors::TRIGGER_NOT_CRON.error(trigger_id))?;
 
         let limit = request
             .limit
             .unwrap_or(DEFAULT_BACKFILL_LIMIT)
             .clamp(1, MAX_BACKFILL_LIMIT);
         let (slots, truncated) =
-            cron_slots_between(&cron_schedule, request.from, request.to, limit)?;
+            schedule_slots_between(&schedule, request.from, request.to, limit)?;
+        let slots = slots
+            .into_iter()
+            .filter_map(|slot| match trigger.is_trigger_excluded(slot) {
+                Ok(false) => Some(Ok(slot)),
+                Ok(true) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, SendableError>>()?;
         let mut response = BackfillResponse {
             trigger_id,
             workflow_id: trigger.workflow_id,
@@ -812,22 +848,62 @@ where
         Ok(rows.iter().map(mappers::row_to_freeze_window).collect())
     }
 
+    async fn refresh_freeze_windows(&self, now: DateTime<Utc>) -> Result<(), SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows WHERE enabled = {} AND schedule IS NOT NULL AND ends_at <= ?",
+            self.dialect().bool_true(),
+        )))
+        .bind(now.timestamp())
+        .fetch_all(self.pool())
+        .await?;
+        for row in rows {
+            let window = mappers::row_to_freeze_window(&row);
+            let Some(schedule) = window.schedule else {
+                continue;
+            };
+            let (starts_at, ends_at) =
+                match runinator_scheduling::current_or_next_window(&schedule, now) {
+                    Ok(window) => window,
+                    // A one-time window or bounded RRULE remains expired after its final occurrence.
+                    Err(runinator_scheduling::ScheduleError::Exhausted) => continue,
+                    Err(error) => return Err(Box::new(error)),
+                };
+            sqlx::query(&self.render(
+                "UPDATE freeze_windows SET starts_at = ?, ends_at = ?, updated_at = ? WHERE id = ?",
+            ))
+            .bind(starts_at.timestamp())
+            .bind(ends_at.timestamp())
+            .bind(now.timestamp())
+            .bind(window.id)
+            .execute(self.pool())
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn create_freeze_window(
         &self,
         window: &NewFreezeWindow,
     ) -> Result<FreezeWindow, SendableError> {
         let id = Uuid::now_v7();
-        let now = Utc::now().timestamp();
+        let now_value = Utc::now();
+        let (starts_at, ends_at) = match &window.schedule {
+            Some(schedule) => runinator_scheduling::current_or_next_window(schedule, now_value)
+                .map_err(|error| -> SendableError { Box::new(error) })?,
+            None => (window.starts_at, window.ends_at),
+        };
+        let now = now_value.timestamp();
         sqlx::query(&self.render(&format!(
-            "INSERT INTO freeze_windows ({FREEZE_WINDOW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO freeze_windows ({FREEZE_WINDOW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )))
         .bind(id)
         .bind(window.org_id)
         .bind(window.workflow_id)
         .bind(window.name.as_str())
         .bind(window.reason.clone())
-        .bind(window.starts_at.timestamp())
-        .bind(window.ends_at.timestamp())
+        .bind(starts_at.timestamp())
+        .bind(ends_at.timestamp())
+        .bind(window.schedule.as_ref().map(serde_json::to_string).transpose()?)
         .bind(window.enabled)
         .bind(now)
         .bind(now)
@@ -847,17 +923,24 @@ where
         window_id: Uuid,
         window: &NewFreezeWindow,
     ) -> Result<Option<FreezeWindow>, SendableError> {
+        let now = Utc::now();
+        let (starts_at, ends_at) = match &window.schedule {
+            Some(schedule) => runinator_scheduling::current_or_next_window(schedule, now)
+                .map_err(|error| -> SendableError { Box::new(error) })?,
+            None => (window.starts_at, window.ends_at),
+        };
         let result = sqlx::query(&self.render(
-            "UPDATE freeze_windows SET org_id = ?, workflow_id = ?, name = ?, reason = ?, starts_at = ?, ends_at = ?, enabled = ?, updated_at = ? WHERE id = ?",
+            "UPDATE freeze_windows SET org_id = ?, workflow_id = ?, name = ?, reason = ?, starts_at = ?, ends_at = ?, schedule = ?, enabled = ?, updated_at = ? WHERE id = ?",
         ))
         .bind(window.org_id)
         .bind(window.workflow_id)
         .bind(window.name.as_str())
         .bind(window.reason.clone())
-        .bind(window.starts_at.timestamp())
-        .bind(window.ends_at.timestamp())
+        .bind(starts_at.timestamp())
+        .bind(ends_at.timestamp())
+        .bind(window.schedule.as_ref().map(serde_json::to_string).transpose()?)
         .bind(window.enabled)
-        .bind(Utc::now().timestamp())
+        .bind(now.timestamp())
         .bind(window_id)
         .execute(self.pool())
         .await?;
@@ -883,5 +966,66 @@ where
                 .map(|result| result.affected() > 0)
         })
         .await?)
+    }
+
+    async fn create_calendar_subscription(
+        &self,
+        record: &NewCalendarSubscriptionRecord,
+    ) -> Result<CalendarSubscription, SendableError> {
+        sqlx::query(&self.render(
+            "INSERT INTO calendar_subscriptions (id, principal_id, scope_kind, scope_id, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(record.id)
+        .bind(record.principal_id)
+        .bind(record.scope.kind.as_str())
+        .bind(record.scope.id)
+        .bind(record.token_hash.as_str())
+        .bind(record.created_at.timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(CalendarSubscription {
+            id: record.id,
+            principal_id: record.principal_id,
+            scope: record.scope,
+            created_at: record.created_at,
+        })
+    }
+
+    async fn fetch_calendar_subscription_by_hash(
+        &self,
+        token_hash: String,
+    ) -> Result<Option<CalendarSubscription>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, principal_id, scope_kind, scope_id, created_at FROM calendar_subscriptions WHERE token_hash = ?",
+        ))
+        .bind(token_hash)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.and_then(|row| {
+            let kind = ScopeKind::from_str_lossy(row.get::<String, _>("scope_kind").as_str())?;
+            let scope = ScopeRef::new(kind, row.get::<Option<Uuid>, _>("scope_id"))?;
+            Some(CalendarSubscription {
+                id: row.get("id"),
+                principal_id: row.get("principal_id"),
+                scope,
+                created_at: DateTime::<Utc>::from_timestamp(row.get("created_at"), 0)
+                    .unwrap_or_else(Utc::now),
+            })
+        }))
+    }
+
+    async fn delete_calendar_subscription(
+        &self,
+        subscription_id: Uuid,
+        principal_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(
+            &self.render("DELETE FROM calendar_subscriptions WHERE id = ? AND principal_id = ?"),
+        )
+        .bind(subscription_id)
+        .bind(principal_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
     }
 }

@@ -225,7 +225,18 @@ export type {
 } from "./notification";
 export { DURATION_NOTIFICATION_EVENTS } from "./notification";
 
-export type { BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow } from "./schedule";
+export type {
+  BackfillRequest,
+  BackfillResponse,
+  CalendarScope,
+  CalendarSubscription,
+  CalendarSubscriptionSecret,
+  FreezeWindow,
+  NewFreezeWindow,
+  ScheduleRecurrence,
+  ScheduleSpec,
+  ScheduleWeekday,
+} from "./schedule";
 
 export type {
   RexRapCompletionItem,

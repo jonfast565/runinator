@@ -1,4 +1,5 @@
 import type { JsonRecord } from "../../json";
+import type { ScheduleSpec } from "../schedule";
 
 export type WorkflowTriggerKind = "cron" | "manual" | "chained";
 
@@ -14,4 +15,9 @@ export interface WorkflowTrigger {
   metadata: JsonRecord;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface ScheduledTriggerConfiguration extends JsonRecord {
+  schedule?: ScheduleSpec;
+  exclusions?: ScheduleSpec[];
 }

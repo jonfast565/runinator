@@ -74,6 +74,26 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     ),
     ("get", "/catalog/enums", docs::EndpointPolicy::Authenticated),
     ("get", "/metrics", docs::EndpointPolicy::Public),
+    (
+        "get",
+        "/calendar/{token}/runinator.ics",
+        docs::EndpointPolicy::Public,
+    ),
+    (
+        "get",
+        "/schedules/calendar.ics",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/schedules/calendar-subscriptions",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/schedules/calendar-subscriptions/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
     ("get", "/node-kinds", docs::EndpointPolicy::Authenticated),
     ("get", "/trigger-kinds", docs::EndpointPolicy::Authenticated),
     (
@@ -865,6 +885,7 @@ mod policy_tests {
             ("get", "/metrics"),
             ("get", "/openapi.json"),
             ("get", "/docs"),
+            ("get", "/calendar/{token}/runinator.ics"),
         ]);
         assert_eq!(actual, expected);
     }

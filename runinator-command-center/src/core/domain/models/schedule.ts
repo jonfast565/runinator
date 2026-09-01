@@ -1,5 +1,32 @@
-// scheduling policy: what suspends trigger firing, and what replays slots that were missed.
+// scheduling policy: portable recurrence plus what suspends/replays scheduled work.
 // mirrors runinator-models/src/schedules.rs.
+
+export type ScheduleWeekday =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+export type ScheduleRecurrence =
+  | { kind: "once"; at: string }
+  | { kind: "cron"; expression: string }
+  | {
+      kind: "weekdays";
+      days: ScheduleWeekday[];
+      hour: number;
+      minute: number;
+      second: number;
+    }
+  | { kind: "rrule"; rule: string; dtstart: string };
+
+export interface ScheduleSpec {
+  recurrence: ScheduleRecurrence;
+  timezone: string;
+  duration_seconds: number;
+}
 
 // a scheduled suspension of trigger firing. a window with no workflow_id freezes every workflow in
 // its org; one with no org_id freezes the whole platform.
@@ -11,6 +38,7 @@ export interface FreezeWindow {
   reason?: string | null;
   starts_at: string;
   ends_at: string;
+  schedule?: ScheduleSpec | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -39,4 +67,18 @@ export interface BackfillResponse {
   dry_run: boolean;
   run_ids: string[];
   slots: string[];
+}
+
+export type CalendarScope = "user" | "organization" | "platform";
+
+export interface CalendarSubscription {
+  id: string;
+  principal_id: string;
+  scope: { kind: "platform" | "organization" | "team" | "user"; id?: string | null };
+  created_at: string;
+}
+
+export interface CalendarSubscriptionSecret {
+  subscription: CalendarSubscription;
+  token: string;
 }

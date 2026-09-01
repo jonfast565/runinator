@@ -11,6 +11,7 @@ metrics = "0.24"
 mime_guess = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
@@ -26,6 +27,7 @@ runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-supervisor = { path = "../runinator-supervisor" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-workflows = { path = "../runinator-workflows" }
+runinator-scheduling = { path = "../runinator-scheduling" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }
 

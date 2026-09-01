@@ -29,6 +29,7 @@ pub(super) async fn freeze(
                     reason: reason.clone(),
                     starts_at: *from,
                     ends_at: *to,
+                    schedule: None,
                     enabled: true,
                 })
                 .await?;

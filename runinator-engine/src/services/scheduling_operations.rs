@@ -7,16 +7,20 @@ use runinator_broker_core::{
     emit_workflows_changed,
 };
 use runinator_models::{
+    auth::User,
     errors::SendableError,
+    pipelines::{Pipeline, PipelineTrigger},
+    rbac::RoleAssignment,
     schedules::{
-        BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,
+        BackfillRequest, BackfillResponse, CalendarSubscription, FreezeWindow,
+        NewCalendarSubscriptionRecord, NewFreezeWindow, TriggerFiringBatch,
     },
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowRun, WorkflowTrigger},
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, ScheduleStore},
+    roles::{AuthStore, DefinitionStore, RbacStore, ScheduleStore},
 };
 use uuid::Uuid;
 
@@ -58,6 +62,44 @@ impl<T> SchedulingOperations<T> {
 }
 
 impl<T: RuntimeStore + DefinitionStore + ScheduleStore> SchedulingOperations<T> {
+    pub async fn workflows(&self) -> Result<Vec<WorkflowDefinition>, SendableError> {
+        repository::fetch_calendar_workflows(self.store.as_ref()).await
+    }
+
+    pub async fn pipelines(&self) -> Result<Vec<Pipeline>, SendableError> {
+        repository::fetch_calendar_pipelines(self.store.as_ref()).await
+    }
+
+    pub async fn list_pipeline_triggers(
+        &self,
+        pipeline_id: Uuid,
+    ) -> Result<Vec<PipelineTrigger>, SendableError> {
+        repository::fetch_calendar_pipeline_triggers(self.store.as_ref(), pipeline_id).await
+    }
+
+    pub async fn create_calendar_subscription(
+        &self,
+        record: &NewCalendarSubscriptionRecord,
+    ) -> Result<CalendarSubscription, SendableError> {
+        repository::create_calendar_subscription(self.store.as_ref(), record).await
+    }
+
+    pub async fn fetch_calendar_subscription_by_hash(
+        &self,
+        token_hash: String,
+    ) -> Result<Option<CalendarSubscription>, SendableError> {
+        repository::fetch_calendar_subscription_by_hash(self.store.as_ref(), token_hash).await
+    }
+
+    pub async fn delete_calendar_subscription(
+        &self,
+        subscription_id: Uuid,
+        principal_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        repository::delete_calendar_subscription(self.store.as_ref(), subscription_id, principal_id)
+            .await
+    }
+
     pub async fn list_freeze_windows(
         &self,
         org_id: Option<Uuid>,
@@ -192,5 +234,18 @@ impl<T: RuntimeStore + DefinitionStore + ScheduleStore> SchedulingOperations<T> 
             self.nudge_workflow_vm();
         }
         Ok(response)
+    }
+}
+
+impl<T: AuthStore + RbacStore> SchedulingOperations<T> {
+    pub async fn calendar_user(&self, user_id: Uuid) -> Result<Option<User>, SendableError> {
+        repository::fetch_calendar_user(self.store.as_ref(), user_id).await
+    }
+
+    pub async fn calendar_role_assignments(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<RoleAssignment>, SendableError> {
+        repository::fetch_calendar_role_assignments(self.store.as_ref(), user_id).await
     }
 }

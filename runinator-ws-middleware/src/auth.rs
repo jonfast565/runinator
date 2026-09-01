@@ -88,6 +88,7 @@ impl<T: AuthStore + RbacStore> runinator_auth::CredentialStore for AuthState<T> 
 /// paths reachable without a credential.
 fn is_public_path(path: &str) -> bool {
     path.starts_with("/webhooks/orchestration/")
+        || path.starts_with("/calendar/")
         || matches!(
             path,
             "/health"

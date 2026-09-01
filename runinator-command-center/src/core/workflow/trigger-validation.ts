@@ -6,6 +6,8 @@ import type {
 } from "../domain/models";
 import { parseRequiredObject } from "../utils/json";
 import { splitCron, validateCron } from "./cron";
+import { validateSchedule } from "./schedule";
+import type { ScheduleSpec } from "../domain/models";
 
 export interface TriggerEditorErrors {
   configuration: string;
@@ -42,6 +44,21 @@ export function validateTriggerEditor(
   };
 
   if (configuration && draft.kind === "cron") {
+    const schedule = configuration.schedule as ScheduleSpec | undefined;
+
+    if (schedule?.recurrence) {
+      errors.fields.schedule = validateSchedule(schedule, false);
+    }
+
+    const exclusions = configuration.exclusions;
+
+    if (Array.isArray(exclusions)) {
+      const exclusionError = exclusions
+        .map((value) => validateSchedule(value as ScheduleSpec, true))
+        .find(Boolean);
+      errors.fields.exclusions = exclusionError ?? "";
+    }
+
     const cron = configuration.cron;
 
     if (typeof cron === "string" && splitCron(cron)) {

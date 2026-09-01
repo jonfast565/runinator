@@ -41,6 +41,16 @@ fn collect_workflow(
                     collect_expr(value, source_dir, paths)?;
                 }
             }
+            TriggerDeclKind::Schedule {
+                schedule,
+                exclusions,
+                ..
+            } => {
+                collect_expr(schedule, source_dir, paths)?;
+                for exclusion in exclusions {
+                    collect_expr(exclusion, source_dir, paths)?;
+                }
+            }
             TriggerDeclKind::Chained { target, .. } => {
                 collect_expr(target, source_dir, paths)?;
             }

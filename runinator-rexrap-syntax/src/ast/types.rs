@@ -68,6 +68,8 @@ pub struct PipelineJoinDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineTriggerDecl {
     pub cron: Option<String>,
+    pub schedule: Option<Expr>,
+    pub exclusions: Vec<Expr>,
     pub event: Option<String>,
     pub source_kind: Option<String>,
     pub source: Option<String>,

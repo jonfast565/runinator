@@ -622,6 +622,9 @@ pub async fn upsert_pipeline_trigger<T: DefinitionStore + ScheduleStore>(
     trigger: &PipelineTrigger,
 ) -> Result<PipelineTrigger, SendableError> {
     let mut trigger = trigger.clone();
+    if trigger.kind == runinator_models::workflows::WorkflowTriggerKind::Cron {
+        super::triggers::validate_trigger_schedules(&trigger.configuration)?;
+    }
     if trigger.kind == runinator_models::workflows::WorkflowTriggerKind::Chained {
         let workflows = db.fetch_workflows().await?;
         let pipelines = db.fetch_pipelines().await?;
@@ -748,6 +751,7 @@ pub async fn claim_due_pipeline_trigger_firings<
     scheduler_id: String,
     limit: i64,
 ) -> Result<Vec<PipelineRun>, SendableError> {
+    db.refresh_freeze_windows(Utc::now()).await?;
     let runs = db
         .claim_due_pipeline_trigger_firings(scheduler_id, Utc::now(), limit)
         .await?;

@@ -51,9 +51,10 @@ use runinator_models::{
     },
     revisions::{PipelineRevision, WorkflowRevision},
     schedules::{
-        BackfillRequest, BackfillResponse, CatchupPolicy, ConcurrencyPolicy,
-        DEFAULT_BACKFILL_LIMIT, FiringOutcome, FreezeWindow, MAX_BACKFILL_LIMIT, NewFreezeWindow,
-        TriggerCatchup, TriggerFiringBatch, WorkflowConcurrency,
+        BackfillRequest, BackfillResponse, CalendarSubscription, CatchupPolicy, ConcurrencyPolicy,
+        DEFAULT_BACKFILL_LIMIT, FiringOutcome, FreezeWindow, MAX_BACKFILL_LIMIT,
+        NewCalendarSubscriptionRecord, NewFreezeWindow, TriggerCatchup, TriggerFiringBatch,
+        WorkflowConcurrency,
     },
     settings::{SettingKind, SettingRecord},
     telemetry::ReplicaSample,
@@ -66,8 +67,8 @@ use uuid::Uuid;
 use crate::{
     backend::{RowsAffected, SqlBackend, SqlStore, retry_delete},
     common::{
-        PipelineTriggerExt, WorkflowTriggerExt, cron_slots_between, json_metadata, json_opt_i64,
-        json_opt_str, json_opt_uuid, json_str, next_execution_for_cron, status_list,
+        PipelineTriggerExt, WorkflowTriggerExt, json_metadata, json_opt_i64, json_opt_str,
+        json_opt_uuid, json_str, schedule_from_configuration, schedule_slots_between, status_list,
     },
     mappers,
     queries::SqlDialect,
@@ -152,8 +153,7 @@ where
     }
 }
 
-const FREEZE_WINDOW_COLUMNS: &str =
-    "id, org_id, workflow_id, name, reason, starts_at, ends_at, enabled, created_at, updated_at";
+const FREEZE_WINDOW_COLUMNS: &str = "id, org_id, workflow_id, name, reason, starts_at, ends_at, schedule, enabled, created_at, updated_at";
 
 /// which freeze windows apply to a `workflow_triggers` row: the ones naming its workflow, plus the
 /// blanket windows for its org and for the platform.
@@ -938,7 +938,7 @@ impl ArchiveTableSql for ArchiveTable {
             ArchiveTable::PipelineTriggerFirings => archive_columns![
                 "id" => Uuid, "trigger_id" => Uuid, "fire_key" => Text,
                 "pipeline_run_id" => OptionalUuid, "scheduler_id" => Text,
-                "created_at" => Integer,
+                "created_at" => Integer, "outcome" => Text,
             ],
             ArchiveTable::PipelineRevisions => archive_columns![
                 "id" => Uuid, "pipeline_id" => Uuid, "revision" => Integer, "digest" => Text,
@@ -1267,7 +1267,7 @@ impl ArchiveTableSql for ArchiveTable {
             "SELECT id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata FROM pipeline_runs WHERE id = ?".to_string()
         }
         ArchiveTable::PipelineTriggerFirings => {
-            "SELECT id, trigger_id, fire_key, pipeline_run_id, scheduler_id, created_at FROM pipeline_trigger_firings WHERE id = ?".to_string()
+            "SELECT id, trigger_id, fire_key, pipeline_run_id, scheduler_id, created_at, outcome FROM pipeline_trigger_firings WHERE id = ?".to_string()
         }
         ArchiveTable::Notifications => {
             "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE id = ?".to_string()
@@ -1432,6 +1432,7 @@ impl ArchiveTableSql for ArchiveTable {
                 "fire_key": row.get::<String, _>("fire_key"),
                 "pipeline_run_id": row.get::<Option<Uuid>, _>("pipeline_run_id").map(|id| id.to_string()),
                 "scheduler_id": row.get::<String, _>("scheduler_id"), "created_at": row.get::<i64, _>("created_at"),
+                "outcome": row.get::<String, _>("outcome"),
             }),
             ArchiveTable::Notifications => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),

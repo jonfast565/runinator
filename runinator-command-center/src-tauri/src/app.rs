@@ -216,7 +216,15 @@ pub fn run() {
             crate::commands::list_audit_log,
             crate::commands::fetch_notifications,
             crate::commands::mark_notification_read,
-            crate::commands::mark_all_notifications_read
+            crate::commands::mark_all_notifications_read,
+            crate::commands::fetch_freeze_windows,
+            crate::commands::create_freeze_window,
+            crate::commands::update_freeze_window,
+            crate::commands::delete_freeze_window,
+            crate::commands::backfill_workflow_trigger,
+            crate::commands::create_calendar_subscription,
+            crate::commands::delete_calendar_subscription,
+            crate::commands::download_schedule_calendar
         ])
         .run(tauri::generate_context!())
         .expect("failed to run command center");

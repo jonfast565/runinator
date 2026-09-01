@@ -19,6 +19,7 @@ runinator-models = { path = "../runinator-models" }
 runinator-store = { path = "../runinator-store" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-secrets = { path = "../runinator-secrets" }
+runinator-scheduling = { path = "../runinator-scheduling" }
 
 [features]
 # Production binaries select only the driver they need.

@@ -153,6 +153,26 @@ pub(super) fn analyze(
                     );
                 }
             }
+            TriggerDeclKind::Schedule {
+                schedule,
+                exclusions,
+                ..
+            } => {
+                if !matches!(schedule.kind, ExprKind::Object(_)) {
+                    diagnostics.push(Diagnostic::error(
+                        schedule.span,
+                        "trigger schedule must be an object literal",
+                    ));
+                }
+                for exclusion in exclusions {
+                    if !matches!(exclusion.kind, ExprKind::Object(_)) {
+                        diagnostics.push(Diagnostic::error(
+                            exclusion.span,
+                            "blackout schedule must be an object literal",
+                        ));
+                    }
+                }
+            }
             TriggerDeclKind::Chained { target, .. } => {
                 require_literal(
                     target,

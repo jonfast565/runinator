@@ -12,7 +12,8 @@ use runinator_models::{
     errors::SendableError,
     pipelines::{PipelineRun, PipelineTrigger},
     schedules::{
-        BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,
+        BackfillRequest, BackfillResponse, CalendarSubscription, FreezeWindow,
+        NewCalendarSubscriptionRecord, NewFreezeWindow, TriggerFiringBatch,
     },
     workflow_vm::WorkflowModule,
     workflows::{WorkflowDefinition, WorkflowRun, WorkflowTrigger},
@@ -130,6 +131,12 @@ pub trait ScheduleStore: Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<Vec<FreezeWindow>, SendableError>> + Send;
 
+    /// Advance recurring freeze rows to the interval active at `now`, or their next interval.
+    fn refresh_freeze_windows(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     fn create_freeze_window(
         &self,
         window: &NewFreezeWindow,
@@ -144,5 +151,21 @@ pub trait ScheduleStore: Send + Sync + 'static {
     fn delete_freeze_window(
         &self,
         window_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn create_calendar_subscription(
+        &self,
+        record: &NewCalendarSubscriptionRecord,
+    ) -> impl Future<Output = Result<CalendarSubscription, SendableError>> + Send;
+
+    fn fetch_calendar_subscription_by_hash(
+        &self,
+        token_hash: String,
+    ) -> impl Future<Output = Result<Option<CalendarSubscription>, SendableError>> + Send;
+
+    fn delete_calendar_subscription(
+        &self,
+        subscription_id: Uuid,
+        principal_id: Uuid,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 }

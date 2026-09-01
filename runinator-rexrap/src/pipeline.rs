@@ -433,6 +433,38 @@ fn lower_trigger(decl: &PipelineTriggerDecl) -> Result<PipelineTriggerSpec, RexR
             configuration: runinator_models::json!({ "cron": cron, "parameters": {} }),
         });
     }
+    if let Some(schedule) = &decl.schedule {
+        let schedule = lower_mapping(Some(schedule))?;
+        if contains_dynamic_expression(&schedule) {
+            return Err(RexRapError::syntax(
+                decl.span,
+                "a pipeline schedule must be a static object literal",
+            ));
+        }
+        let exclusions = decl
+            .exclusions
+            .iter()
+            .map(|value| {
+                let value = lower_mapping(Some(value))?;
+                if contains_dynamic_expression(&value) {
+                    return Err(RexRapError::syntax(
+                        decl.span,
+                        "a pipeline schedule exclusion must be a static object literal",
+                    ));
+                }
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>, RexRapError>>()?;
+        return Ok(PipelineTriggerSpec {
+            kind: WorkflowTriggerKind::Cron,
+            enabled: !decl.disabled,
+            configuration: runinator_models::json!({
+                "schedule": schedule,
+                "exclusions": exclusions,
+                "parameters": {},
+            }),
+        });
+    }
     let source = decl.source.clone().ok_or_else(|| {
         RexRapError::syntax(decl.span, "a chained pipeline trigger needs a source name")
     })?;
@@ -982,6 +1014,22 @@ fn render_trigger(trigger: &PipelineTriggerSpec) -> String {
     let config = &trigger.configuration;
     let disabled = if trigger.enabled { "" } else { " disabled" };
     if trigger.kind == WorkflowTriggerKind::Cron {
+        if let Some(schedule) = config.get("schedule") {
+            let schedule = runinator_rexrap_codegen::decompile::render_expression(schedule)
+                .unwrap_or_else(|_| "{}".into());
+            let mut rendered = format!("    trigger schedule {schedule}");
+            if let Some(exclusions) = config.get("exclusions").and_then(Value::as_array) {
+                for exclusion in exclusions {
+                    let exclusion =
+                        runinator_rexrap_codegen::decompile::render_expression(exclusion)
+                            .unwrap_or_else(|_| "{}".into());
+                    rendered.push_str(&format!(" blackout schedule {exclusion}"));
+                }
+            }
+            rendered.push_str(disabled);
+            rendered.push('\n');
+            return rendered;
+        }
         let cron = config.get("cron").and_then(|v| v.as_str()).unwrap_or("");
         return format!("    trigger cron {}{}\n", quote(cron), disabled);
     }

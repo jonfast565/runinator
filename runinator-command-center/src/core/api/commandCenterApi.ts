@@ -32,6 +32,8 @@ import type {
   DevPackApplyResult,
   BackfillRequest,
   BackfillResponse,
+  CalendarScope,
+  CalendarSubscriptionSecret,
   DevPackInspectResult,
   DevPackTextFile,
   FreezeWindow,
@@ -1545,6 +1547,36 @@ export async function deleteFreezeWindow(windowId: string) {
 
 export async function backfillWorkflowTrigger(triggerId: string, request: BackfillRequest) {
   return command<BackfillResponse>("backfill_workflow_trigger", { triggerId, request });
+}
+
+export async function createCalendarSubscription(scope: CalendarScope, orgId?: string | null) {
+  return command<CalendarSubscriptionSecret>("create_calendar_subscription", { scope, orgId });
+}
+
+export async function deleteCalendarSubscription(subscriptionId: string): Promise<void> {
+  await command<unknown>("delete_calendar_subscription", { subscriptionId });
+}
+
+export function calendarSubscriptionUrl(token: string, serviceUrl?: string | null): string {
+  const base = (serviceUrl?.trim() ? serviceUrl : apiBaseUrl()).replace(/\/+$/, "");
+  const path = `${base}/calendar/${encodeURIComponent(token)}/runinator.ics`;
+  return typeof window === "undefined" ? path : new URL(path, window.location.origin).toString();
+}
+
+export function downloadScheduleCalendar(scope: CalendarScope, orgId?: string | null) {
+  if (isTauriRuntime()) {
+    return command<number[]>("download_schedule_calendar", { scope, orgId }).then(
+      (bytes) => new Blob([new Uint8Array(bytes)], { type: "text/calendar;charset=utf-8" }),
+    );
+  }
+
+  const query = new URLSearchParams({ scope });
+
+  if (orgId) {
+    query.set("org_id", orgId);
+  }
+
+  return downloadBinary(`schedules/calendar.ics?${query.toString()}`);
 }
 
 export async function deleteArtifact(artifactId: string) {

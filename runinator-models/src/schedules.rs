@@ -1,6 +1,7 @@
 //! scheduling policy: how many runs of a workflow may overlap, what happens to cron slots missed
 //! while the engine was down, and the freeze windows that suspend firing entirely.
 
+use crate::rbac::ScopeRef;
 use crate::value::Value;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,147 @@ use crate::validation::{
     LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, optional_text, positive_limit,
     required_text,
 };
+
+/// A portable calendar schedule. Consumers decide whether an occurrence fires work (duration zero)
+/// or opens a window (positive duration); recurrence only answers *when*.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleSpec {
+    pub recurrence: ScheduleRecurrence,
+    #[serde(default = "default_schedule_timezone")]
+    pub timezone: String,
+    #[serde(default)]
+    pub duration_seconds: i64,
+}
+
+impl ScheduleSpec {
+    pub fn once(starts_at: DateTime<Utc>, ends_at: DateTime<Utc>) -> Self {
+        Self {
+            recurrence: ScheduleRecurrence::Once { at: starts_at },
+            timezone: default_schedule_timezone(),
+            duration_seconds: (ends_at - starts_at).num_seconds(),
+        }
+    }
+}
+
+impl Validate for ScheduleSpec {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("timezone", &self.timezone, SHORT_TEXT_MAX)?;
+        if self.duration_seconds < 0 {
+            return Err(ValidationError::new(
+                "duration_seconds",
+                "must not be negative",
+            ));
+        }
+        match &self.recurrence {
+            ScheduleRecurrence::Cron { expression } => {
+                required_text("recurrence.expression", expression, SHORT_TEXT_MAX)?;
+            }
+            ScheduleRecurrence::Weekdays {
+                days,
+                hour,
+                minute,
+                second,
+            } => {
+                if days.is_empty() {
+                    return Err(ValidationError::new(
+                        "recurrence.days",
+                        "select at least one weekday",
+                    ));
+                }
+                if *hour > 23 || *minute > 59 || *second > 59 {
+                    return Err(ValidationError::new(
+                        "recurrence.time",
+                        "must be a valid wall-clock time",
+                    ));
+                }
+            }
+            ScheduleRecurrence::Rrule { rule, .. } => {
+                required_text("recurrence.rule", rule, LONG_TEXT_MAX)?;
+            }
+            ScheduleRecurrence::Once { .. } => {}
+        }
+        Ok(())
+    }
+}
+
+fn default_schedule_timezone() -> String {
+    "UTC".to_string()
+}
+
+/// Supported recurrence languages. `Weekdays` is the ergonomic form for the most common weekly
+/// rule; `Rrule` accepts an RFC 5545 RRULE body and keeps DTSTART separate for safer editing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduleRecurrence {
+    Once {
+        at: DateTime<Utc>,
+    },
+    Cron {
+        expression: String,
+    },
+    Weekdays {
+        days: Vec<ScheduleWeekday>,
+        hour: u8,
+        minute: u8,
+        #[serde(default)]
+        second: u8,
+    },
+    Rrule {
+        /// RFC 5545 rule body, for example `FREQ=WEEKLY;BYDAY=TU,WE`.
+        rule: String,
+        /// The first occurrence and its local wall-clock time after conversion to `timezone`.
+        dtstart: DateTime<Utc>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleWeekday {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl ScheduleWeekday {
+    pub const ALL: [Self; 7] = [
+        Self::Monday,
+        Self::Tuesday,
+        Self::Wednesday,
+        Self::Thursday,
+        Self::Friday,
+        Self::Saturday,
+        Self::Sunday,
+    ];
+}
+
+/// A revocable, purpose-specific calendar subscription. The secret is returned only at creation;
+/// persistence keeps its SHA-256 hash so a database read cannot reveal a live feed URL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarSubscription {
+    pub id: Uuid,
+    pub principal_id: Uuid,
+    pub scope: ScopeRef,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewCalendarSubscriptionRecord {
+    pub id: Uuid,
+    pub principal_id: Uuid,
+    pub scope: ScopeRef,
+    pub token_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarSubscriptionSecret {
+    pub subscription: CalendarSubscription,
+    pub token: String,
+}
 
 /// what the trigger loop does when a workflow is already at its concurrency limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -202,6 +344,10 @@ pub struct FreezeWindow {
     pub reason: Option<String>,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+    /// Recurring definition. Absent rows are legacy one-shot windows represented by the concrete
+    /// `starts_at`/`ends_at` pair above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<ScheduleSpec>,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -218,6 +364,8 @@ pub struct NewFreezeWindow {
     pub reason: Option<String>,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<ScheduleSpec>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -231,6 +379,15 @@ impl Validate for NewFreezeWindow {
                 "ends_at",
                 "must be later than starts_at",
             ));
+        }
+        if let Some(schedule) = &self.schedule {
+            schedule.validate()?;
+            if schedule.duration_seconds <= 0 {
+                return Err(ValidationError::new(
+                    "schedule.duration_seconds",
+                    "a freeze window needs a positive duration",
+                ));
+            }
         }
         Ok(())
     }
@@ -251,6 +408,8 @@ pub enum FiringOutcome {
     ConcurrencySkipped,
     /// the catch-up policy abandoned the slot as too far past.
     CatchupSkipped,
+    /// A recurring or one-shot blackout excluded the scheduled occurrence.
+    ScheduleExcluded,
 }
 
 impl FiringOutcome {
@@ -259,6 +418,7 @@ impl FiringOutcome {
             FiringOutcome::Fired => "fired",
             FiringOutcome::ConcurrencySkipped => "concurrency_skipped",
             FiringOutcome::CatchupSkipped => "catchup_skipped",
+            FiringOutcome::ScheduleExcluded => "schedule_excluded",
         }
     }
 }
@@ -273,6 +433,7 @@ pub struct TriggerFiringBatch<R> {
     pub concurrency_skipped: u64,
     pub concurrency_deferred: u64,
     pub catchup_skipped: u64,
+    pub schedule_excluded: u64,
 }
 
 // hand-written so an empty batch does not require the run type to be `Default`.
@@ -284,6 +445,7 @@ impl<R> Default for TriggerFiringBatch<R> {
             concurrency_skipped: 0,
             concurrency_deferred: 0,
             catchup_skipped: 0,
+            schedule_excluded: 0,
         }
     }
 }
@@ -300,7 +462,10 @@ impl<R> TriggerFiringBatch<R> {
     /// true when the pass declined at least one slot, so the caller knows there is something worth
     /// logging even though no runs were created.
     pub fn declined_any(&self) -> bool {
-        self.concurrency_skipped > 0 || self.concurrency_deferred > 0 || self.catchup_skipped > 0
+        self.concurrency_skipped > 0
+            || self.concurrency_deferred > 0
+            || self.catchup_skipped > 0
+            || self.schedule_excluded > 0
     }
 }
 

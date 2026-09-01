@@ -95,6 +95,69 @@ fn round_trips_cron_triggers() {
         "triggers diverged:\n{rexrap}"
     );
 }
+
+#[test]
+fn portable_schedule_and_recurring_blackouts_round_trip() {
+    let src = r#"
+        workflow "Scheduled" v1 {
+            trigger schedule {
+                recurrence: {
+                    kind: "weekdays",
+                    days: ["tuesday", "wednesday"],
+                    hour: 3,
+                    minute: 0,
+                    second: 0
+                },
+                timezone: "America/New_York",
+                duration_seconds: 0
+            } blackout schedule {
+                recurrence: {
+                    kind: "weekdays",
+                    days: ["tuesday", "wednesday"],
+                    hour: 3,
+                    minute: 0,
+                    second: 0
+                },
+                timezone: "America/New_York",
+                duration_seconds: 7200
+            } catchup fire_all max 12
+
+            do {
+                Console.run(command: "echo hi")
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let trigger = definition
+        .definition
+        .metadata
+        .pointer("/triggers/0")
+        .expect("trigger in metadata");
+    assert_eq!(
+        trigger.pointer("/schedule/recurrence/kind"),
+        Some(&Value::from("weekdays"))
+    );
+    assert_eq!(
+        trigger
+            .get("exclusions")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        trigger.pointer("/catchup/policy"),
+        Some(&Value::from("fire_all"))
+    );
+
+    let rexrap = decompile(&definition).expect("decompile");
+    assert!(rexrap.contains("trigger schedule"), "{rexrap}");
+    assert!(rexrap.contains("blackout schedule"), "{rexrap}");
+    let second = compile_str(&rexrap, &CompileOptions::default()).expect("recompile");
+    assert_eq!(
+        definition.definition.metadata.pointer("/triggers"),
+        second.definition.metadata.pointer("/triggers")
+    );
+}
 #[test]
 fn lowers_chained_triggers_into_metadata() {
     let src = r#"

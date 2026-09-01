@@ -1093,13 +1093,14 @@ async fn materialize_workflow_triggers<T: ScheduleStore + RuntimeStore>(
             }
             // absent kind ⇒ cron for back-compat with packs compiled before the kind discriminator.
             _ => {
-                let Some(cron) = spec
+                let cron = spec
                     .get("cron")
                     .and_then(Value::as_str)
-                    .filter(|c| !c.is_empty())
-                else {
+                    .filter(|c| !c.is_empty());
+                let schedule = spec.get("schedule").filter(|value| value.is_object());
+                if cron.is_none() && schedule.is_none() {
                     continue;
-                };
+                }
                 let blackout_start = spec
                     .get("blackout_start")
                     .and_then(Value::as_str)
@@ -1110,8 +1111,18 @@ async fn materialize_workflow_triggers<T: ScheduleStore + RuntimeStore>(
                     .and_then(Value::as_str)
                     .map(parse_trigger_datetime)
                     .transpose()?;
-                let mut configuration =
-                    runinator_models::json!({ "cron": cron, "parameters": parameters });
+                let mut configuration = runinator_models::json!({ "parameters": parameters });
+                if let Some(object) = configuration.as_object_mut() {
+                    if let Some(cron) = cron {
+                        object.insert("cron".into(), Value::String(cron.to_string()));
+                    }
+                    if let Some(schedule) = schedule {
+                        object.insert("schedule".into(), schedule.clone());
+                    }
+                    if let Some(exclusions) = spec.get("exclusions") {
+                        object.insert("exclusions".into(), exclusions.clone());
+                    }
+                }
                 // the catch-up policy travels in the trigger's configuration, so a pack that drops
                 // the `catchup` clause reverts the trigger to the default on the next import.
                 if let (Some(catchup), Some(object)) =

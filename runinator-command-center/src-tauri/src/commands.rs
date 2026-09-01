@@ -20,8 +20,8 @@ use uuid::Uuid;
 
 use crate::{
     client::{
-        build_state_url, delete, get_json, handle_response, patch_json, post_bytes, post_empty,
-        post_json, put_json,
+        build_state_url, delete, get_bytes, get_json, handle_response, patch_json, post_bytes,
+        post_empty, post_json, put_json,
     },
     discovery::start_discovery_thread,
     error::{CommandError, CommandResult},
@@ -88,3 +88,5 @@ mod interactions;
 pub use interactions::*;
 mod functions;
 pub use functions::*;
+mod schedules;
+pub use schedules::*;

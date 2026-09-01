@@ -209,6 +209,13 @@ pub enum TriggerDeclKind {
         blackout_end: Option<Expr>,
         catchup: Option<CatchupDecl>,
     },
+    /// `trigger schedule { ... }`: a portable `ScheduleSpec` object, with zero or more recurring
+    /// schedule objects excluding occurrences.
+    Schedule {
+        schedule: Expr,
+        exclusions: Vec<Expr>,
+        catchup: Option<CatchupDecl>,
+    },
     /// `trigger on_<event> workflow <target>`: start `target` when this workflow run reaches the
     /// matching terminal state.
     Chained { event: ChainEvent, target: Expr },

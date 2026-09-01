@@ -431,6 +431,9 @@ impl Formatter {
             TriggerDeclKind::Cron { schedule, .. } => {
                 format!("trigger cron {}", format_expr(schedule))
             }
+            TriggerDeclKind::Schedule { schedule, .. } => {
+                format!("trigger schedule {}", format_expr(schedule))
+            }
             TriggerDeclKind::Chained { event, target } => {
                 format!(
                     "trigger {} workflow {}",
@@ -457,7 +460,25 @@ impl Formatter {
                 format_expr(end)
             ));
         }
+        if let TriggerDeclKind::Schedule { exclusions, .. } = &trigger.kind {
+            for exclusion in exclusions {
+                text.push_str(&format!(" blackout schedule {}", format_expr(exclusion)));
+            }
+        }
         if let TriggerDeclKind::Cron {
+            catchup: Some(catchup),
+            ..
+        } = &trigger.kind
+        {
+            text.push_str(&format!(" catchup {}", catchup.policy.keyword()));
+            if let Some(grace) = catchup.grace_seconds {
+                text.push_str(&format!(" grace {}", format_duration(grace)));
+            }
+            if let Some(max_slots) = catchup.max_slots {
+                text.push_str(&format!(" max {max_slots}"));
+            }
+        }
+        if let TriggerDeclKind::Schedule {
             catchup: Some(catchup),
             ..
         } = &trigger.kind

@@ -7,7 +7,34 @@ pub async fn upsert_workflow_trigger<T: ScheduleStore>(
     db: &T,
     trigger: &WorkflowTrigger,
 ) -> Result<WorkflowTrigger, SendableError> {
+    validate_trigger_schedules(&trigger.configuration)?;
     db.upsert_workflow_trigger(trigger).await
+}
+
+pub(crate) fn validate_trigger_schedules(configuration: &Value) -> Result<(), SendableError> {
+    if let Some(value) = configuration.get("schedule") {
+        let schedule: runinator_models::schedules::ScheduleSpec =
+            serde_json::from_value(value.clone().into())?;
+        runinator_scheduling::validate(&schedule)
+            .map_err(|error| crate::errors::FREEZE_WINDOW_INVALID.error(error))?;
+        if schedule.duration_seconds != 0 {
+            return Err(crate::errors::FREEZE_WINDOW_INVALID
+                .error("a firing schedule must have zero duration"));
+        }
+    }
+    if let Some(value) = configuration.get("exclusions") {
+        let exclusions: Vec<runinator_models::schedules::ScheduleSpec> =
+            serde_json::from_value(value.clone().into())?;
+        for exclusion in exclusions {
+            runinator_scheduling::validate(&exclusion)
+                .map_err(|error| crate::errors::FREEZE_WINDOW_INVALID.error(error))?;
+            if exclusion.duration_seconds <= 0 {
+                return Err(crate::errors::FREEZE_WINDOW_INVALID
+                    .error("a schedule exclusion needs a positive duration"));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn fetch_workflow_triggers<T: ScheduleStore + RuntimeStore>(
@@ -35,6 +62,7 @@ pub async fn claim_due_workflow_trigger_firings<T: ScheduleStore + RuntimeStore>
     scheduler_id: String,
     limit: i64,
 ) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
+    db.refresh_freeze_windows(Utc::now()).await?;
     let mut modules = std::collections::HashMap::new();
     for trigger in db.fetch_due_workflow_triggers(Utc::now()).await? {
         if modules.contains_key(&trigger.workflow_id) {
@@ -91,6 +119,7 @@ pub async fn fetch_freeze_window<T: ScheduleStore>(
 pub async fn fetch_active_freeze_windows<T: ScheduleStore>(
     db: &T,
 ) -> Result<Vec<FreezeWindow>, SendableError> {
+    db.refresh_freeze_windows(Utc::now()).await?;
     db.fetch_active_freeze_windows(Utc::now()).await
 }
 
@@ -133,6 +162,10 @@ fn validate_freeze_window(window: &NewFreezeWindow) -> Result<(), SendableError>
     }
     if window.ends_at <= window.starts_at {
         return Err(crate::errors::FREEZE_WINDOW_INVALID.error("ends_at must be after starts_at"));
+    }
+    if let Some(schedule) = &window.schedule {
+        runinator_scheduling::validate(schedule)
+            .map_err(|error| crate::errors::FREEZE_WINDOW_INVALID.error(error))?;
     }
     Ok(())
 }

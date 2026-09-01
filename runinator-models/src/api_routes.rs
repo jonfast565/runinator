@@ -23,6 +23,8 @@ pub const API_REXRAP_EVALUATE: &str = "/rexrap/evaluate";
 pub const API_REXRAP_IMPORT: &str = "/rexrap/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_FREEZE_WINDOWS: &str = "/freeze_windows";
+pub const API_SCHEDULE_CALENDAR: &str = "/schedules/calendar.ics";
+pub const API_CALENDAR_SUBSCRIPTIONS: &str = "/schedules/calendar-subscriptions";
 pub const API_PIPELINES: &str = "/pipelines";
 /// packaged function packages: list and publish.
 pub const API_FUNCTIONS: &str = "/functions";
@@ -101,6 +103,14 @@ pub fn api_workflow_trigger_backfill(trigger_id: Uuid) -> String {
 
 pub fn api_freeze_window(window_id: Uuid) -> String {
     format!("{API_FREEZE_WINDOWS}/{window_id}")
+}
+
+pub fn api_calendar_subscription(subscription_id: Uuid) -> String {
+    format!("{API_CALENDAR_SUBSCRIPTIONS}/{subscription_id}")
+}
+
+pub fn api_subscribed_calendar(token: &str) -> String {
+    format!("/calendar/{token}/runinator.ics")
 }
 
 pub fn api_pipeline(pipeline_id: Uuid) -> String {

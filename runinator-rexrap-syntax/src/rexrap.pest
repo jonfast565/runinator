@@ -69,8 +69,9 @@ pipeline_join_mode      = { "first_success" | "all" | "any" }
 // pipeline-level triggers. `trigger cron "<expr>"` schedules a pipeline run; `trigger on_success
 // workflow "<name>"` (or on_failure/on_complete, workflow|pipeline) starts this pipeline when the
 // named source reaches that terminal state (chained-to-pipeline).
-pipeline_trigger          = { "trigger" ~ (pipeline_cron_trigger | pipeline_chained_trigger) }
+pipeline_trigger          = { "trigger" ~ (pipeline_cron_trigger | pipeline_schedule_trigger | pipeline_chained_trigger) }
 pipeline_cron_trigger     = { "cron" ~ string ~ trigger_disabled? }
+pipeline_schedule_trigger = { "schedule" ~ object ~ ("blackout" ~ "schedule" ~ object)* ~ trigger_disabled? }
 pipeline_chained_trigger  = { chain_event ~ pipeline_chain_source ~ string ~ trigger_disabled? }
 pipeline_chain_source     = { "workflow" | "pipeline" }
 
@@ -224,13 +225,16 @@ workspace_labels = { "labels" ~ object }
 
 // a `trigger cron "<expr>"` schedules this workflow; a `trigger on_success workflow "<name>"`
 // (or on_failure/on_complete) starts another workflow when this one reaches that terminal state.
-trigger_decl = { "trigger" ~ (cron_trigger | chained_trigger) }
+trigger_decl = { "trigger" ~ (cron_trigger | scheduled_trigger | chained_trigger) }
 cron_trigger = { "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
+scheduled_trigger = { "schedule" ~ object ~ ("with" ~ object)? ~ scheduled_trigger_option* }
 chained_trigger = { chain_event ~ "workflow" ~ expr ~ ("with" ~ object)? ~ trigger_disabled? }
 chain_event = { "on_success" | "on_failure" | "on_complete" }
 trigger_option = { trigger_disabled | trigger_blackout | trigger_catchup }
+scheduled_trigger_option = { trigger_disabled | trigger_blackout_schedule | trigger_catchup }
 trigger_disabled = { "disabled" }
 trigger_blackout = { "blackout" ~ expr ~ "to" ~ expr }
+trigger_blackout_schedule = { "blackout" ~ "schedule" ~ object }
 
 // what happens to cron slots that came due while nothing was firing them. `fire_once` (the default)
 // collapses the backlog into one run, `fire_all` replays each missed slot up to `max`, and `skip`

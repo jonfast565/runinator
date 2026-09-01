@@ -19,6 +19,7 @@ import type {
   WorkflowDefinition,
   WorkflowTrigger,
   WorkflowTriggerKind,
+  ScheduleSpec,
 } from "../../domain/models";
 import { artifactIdentityError, artifactIdentityPath } from "../../domain/models";
 import { isJsonObject } from "../../domain/json";
@@ -29,6 +30,7 @@ import { cloneJson } from "../../utils/json";
 import { createZip, type ZipEntry } from "../../utils/zip";
 import { normalizeWorkflowDefinition } from "../../workflow/index";
 import { validateTriggerEditor } from "../../workflow/trigger-validation";
+import { describeSchedule } from "../../workflow/schedule";
 
 import {
   boundedIndex,
@@ -429,6 +431,12 @@ export function createWorkflowCatalogService(
   }
 
   function triggerCronSummary(trigger: WorkflowTrigger): string {
+    const schedule = trigger.configuration.schedule as ScheduleSpec | undefined;
+
+    if (schedule?.recurrence) {
+      return describeSchedule(schedule);
+    }
+
     const cron = trigger.configuration.cron;
     return typeof cron === "string" && cron.trim() ? cron : "";
   }

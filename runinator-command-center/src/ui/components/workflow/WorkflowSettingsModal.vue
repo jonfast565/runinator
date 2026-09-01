@@ -344,11 +344,35 @@
                 <p>Keep it disabled while you finish configuring it.</p>
               </div>
             </div>
+            <div v-if="workflows.triggerDraft.kind === 'cron'" class="grid gap-3">
+              <ScheduleEditor
+                :model-value="triggerSchedule"
+                title="Run schedule"
+                description="Choose a one-time, cron, weekday, or RFC 5545 recurrence."
+                @update:model-value="setTriggerSchedule"
+              />
+              <div class="rounded-lg border border-border p-3">
+                <label class="checkbox">
+                  <input :checked="blackoutEnabled" type="checkbox" @change="toggleBlackout" />
+                  <span>Add a recurring blackout</span>
+                </label>
+                <p class="mb-0 mt-1 text-xs text-fg-muted">Occurrences inside a blackout are skipped permanently and recorded as excluded.</p>
+                <ScheduleEditor
+                  v-if="blackoutEnabled"
+                  class="mt-3"
+                  :model-value="triggerBlackout"
+                  window
+                  title="Blackout schedule"
+                  description="Define the recurring interval in which this trigger must not fire."
+                  @update:model-value="setTriggerBlackout"
+                />
+              </div>
+            </div>
             <div class="trigger-window">
               <div class="trigger-window-heading">
                 <div>
                   <h4>Timing window</h4>
-                  <p>Optionally set the next run or pause runs during a blackout period.</p>
+                  <p>Optionally override the next materialized execution.</p>
                 </div>
                 <span>Local time</span>
               </div>
@@ -369,38 +393,6 @@
                     {{ triggerValidation.errors.nextExecution }}
                   </small>
                 </label>
-                <label :class="{ 'has-error': triggerValidation.errors.blackoutStart }">
-                  <span>Blackout starts</span>
-                  <input
-                    v-model="workflows.triggerDraft.blackout_start"
-                    type="datetime-local"
-                    :aria-invalid="Boolean(triggerValidation.errors.blackoutStart)"
-                    aria-describedby="trigger-blackout-start-error"
-                  />
-                  <small
-                    v-if="triggerValidation.errors.blackoutStart"
-                    id="trigger-blackout-start-error"
-                    class="field-error"
-                  >
-                    {{ triggerValidation.errors.blackoutStart }}
-                  </small>
-                </label>
-                <label :class="{ 'has-error': triggerValidation.errors.blackoutEnd }">
-                  <span>Blackout ends</span>
-                  <input
-                    v-model="workflows.triggerDraft.blackout_end"
-                    type="datetime-local"
-                    :aria-invalid="Boolean(triggerValidation.errors.blackoutEnd)"
-                    aria-describedby="trigger-blackout-end-error"
-                  />
-                  <small
-                    v-if="triggerValidation.errors.blackoutEnd"
-                    id="trigger-blackout-end-error"
-                    class="field-error"
-                  >
-                    {{ triggerValidation.errors.blackoutEnd }}
-                  </small>
-                </label>
               </div>
             </div>
             <div class="trigger-json-grid">
@@ -412,7 +404,7 @@
                 <template v-if="triggerKindMeta && triggerKindMeta.fields.length">
                   <div class="trigger-field-list">
                     <div
-                      v-for="field in triggerKindMeta.fields"
+                      v-for="field in triggerConfigFields"
                       :key="field.name"
                       class="trigger-catalog-field"
                       :class="{ 'has-error': triggerValidation.errors.fields[field.name] }"
@@ -521,6 +513,7 @@ import type {
   UiField,
   WorkflowDefinition,
   WorkflowTriggerKind,
+  ScheduleSpec,
 } from "../../../core/domain/models";
 import {
   artifactIdentityPath,
@@ -530,10 +523,12 @@ import {
   WORKFLOW_VERSION_PATTERN,
 } from "../../../core/domain/models";
 import { validateTriggerEditor } from "../../../core/workflow/trigger-validation";
+import { defaultSchedule } from "../../../core/workflow/schedule";
 import JsonEditor from "../shared/JsonEditor.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import Icon from "../shared/Icon.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
+import ScheduleEditor from "../shared/ScheduleEditor.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import WorkflowRevisionsPanel from "./WorkflowRevisionsPanel.vue";
 
@@ -599,6 +594,49 @@ const configDraft = computed<Record<string, unknown>>(() => {
     return {};
   }
 });
+
+const triggerConfigFields = computed(() =>
+  (triggerKindMeta.value?.fields ?? []).filter(
+    (field) => workflows.triggerDraft.kind !== "cron" || field.name !== "cron",
+  ),
+);
+const triggerSchedule = computed<ScheduleSpec>(() => {
+  const schedule = configDraft.value.schedule as ScheduleSpec | undefined;
+  if (schedule?.recurrence) {return schedule;}
+  const cron = typeof configDraft.value.cron === "string" ? configDraft.value.cron : "0 9 * * 1-5";
+  return { recurrence: { kind: "cron", expression: cron }, timezone: "UTC", duration_seconds: 0 };
+});
+const blackoutEnabled = computed(() => Array.isArray(configDraft.value.exclusions) && configDraft.value.exclusions.length > 0);
+const triggerBlackout = computed<ScheduleSpec>(() => {
+  const exclusions = configDraft.value.exclusions;
+  return Array.isArray(exclusions) && exclusions[0] && typeof exclusions[0] === "object"
+    ? (exclusions[0] as ScheduleSpec)
+    : defaultSchedule(true);
+});
+
+function writeConfig(next: Record<string, unknown>) {
+  workflows.triggerJson.configuration = JSON.stringify(next, null, 2);
+}
+
+function setTriggerSchedule(schedule: ScheduleSpec) {
+  const next: Record<string, unknown> = { ...configDraft.value, schedule };
+  if (schedule.recurrence.kind === "cron") {next.cron = schedule.recurrence.expression;}
+  writeConfig(next);
+}
+
+function setTriggerBlackout(schedule: ScheduleSpec) {
+  writeConfig({ ...configDraft.value, exclusions: [schedule] });
+}
+
+function toggleBlackout(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked;
+  const next = { ...configDraft.value };
+
+  if (enabled) {next.exclusions = [defaultSchedule(true)];}
+  else {delete next.exclusions;}
+
+  writeConfig(next);
+}
 
 function setConfigField(name: string, value: unknown) {
   workflows.triggerJson.configuration = JSON.stringify(

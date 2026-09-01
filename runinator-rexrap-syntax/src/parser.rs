@@ -995,6 +995,8 @@ fn parse_orchestration_workspace(
 fn parse_pipeline_trigger(pair: Pair<Rule>) -> Result<PipelineTriggerDecl, RexRapError> {
     let span = span_of(&pair);
     let mut cron = None;
+    let mut schedule = None;
+    let mut exclusions = Vec::new();
     let mut event = None;
     let mut source_kind = None;
     let mut source = None;
@@ -1008,6 +1010,16 @@ fn parse_pipeline_trigger(pair: Pair<Rule>) -> Result<PipelineTriggerDecl, RexRa
             for part in inner.into_inner() {
                 match part.as_rule() {
                     Rule::string => cron = Some(plain_string(part)?),
+                    Rule::trigger_disabled => disabled = true,
+                    _ => {}
+                }
+            }
+        }
+        Rule::pipeline_schedule_trigger => {
+            for part in inner.into_inner() {
+                match part.as_rule() {
+                    Rule::object if schedule.is_none() => schedule = Some(parse_object(part)?),
+                    Rule::object => exclusions.push(parse_object(part)?),
                     Rule::trigger_disabled => disabled = true,
                     _ => {}
                 }
@@ -1028,6 +1040,8 @@ fn parse_pipeline_trigger(pair: Pair<Rule>) -> Result<PipelineTriggerDecl, RexRa
     }
     Ok(PipelineTriggerDecl {
         cron,
+        schedule,
+        exclusions,
         event,
         source_kind,
         source,
@@ -1497,12 +1511,58 @@ fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, RexRapError> {
     let inner = first_inner(pair)?;
     match inner.as_rule() {
         Rule::cron_trigger => parse_cron_trigger(inner, span),
+        Rule::scheduled_trigger => parse_scheduled_trigger(inner, span),
         Rule::chained_trigger => parse_chained_trigger(inner, span),
         _ => Err(RexRapError::syntax(
             span,
             "unrecognized trigger declaration",
         )),
     }
+}
+
+fn parse_scheduled_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, RexRapError> {
+    let mut schedule = None;
+    let mut params = None;
+    let mut enabled = true;
+    let mut exclusions = Vec::new();
+    let mut catchup = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::object if schedule.is_none() => schedule = Some(parse_object(inner)?),
+            Rule::object => params = Some(parse_object(inner)?),
+            Rule::scheduled_trigger_option => {
+                let option = first_inner(inner)?;
+                match option.as_rule() {
+                    Rule::trigger_disabled => enabled = false,
+                    Rule::trigger_blackout_schedule => {
+                        let object = option
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::object)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "blackout schedule is missing its object")
+                            })?;
+                        exclusions.push(parse_object(object)?);
+                    }
+                    Rule::trigger_catchup => catchup = Some(parse_trigger_catchup(option, span)?),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(TriggerDecl {
+        kind: TriggerDeclKind::Schedule {
+            schedule: schedule.ok_or_else(|| {
+                RexRapError::syntax(span, "trigger schedule is missing its schedule object")
+            })?,
+            exclusions,
+            catchup,
+        },
+        params,
+        enabled,
+        span,
+        comments: CommentSet::default(),
+    })
 }
 
 fn parse_cron_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, RexRapError> {

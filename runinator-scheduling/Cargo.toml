@@ -1,0 +1,12 @@
+[package]
+name = "runinator-scheduling"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+chrono = "0.4"
+chrono-tz = "0.10.4"
+croner = "3.0.1"
+rrule = "0.14.0"
+thiserror = "2"
+runinator-models = { path = "../runinator-models" }

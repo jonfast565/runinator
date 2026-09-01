@@ -1000,6 +1000,16 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}/backfill`,
     body: (args) => arg(args, "request"),
   },
+  create_calendar_subscription: {
+    method: "POST",
+    path: () => "schedules/calendar-subscriptions",
+    body: (args) => ({ scope: arg(args, "scope"), org_id: argOpt(args, "orgId") ?? null }),
+  },
+  delete_calendar_subscription: {
+    method: "DELETE",
+    path: (args) =>
+      `schedules/calendar-subscriptions/${escape(arg(args, "subscriptionId"))}`,
+  },
   delete_artifact: {
     method: "DELETE",
     path: (args) => `artifacts/${escape(arg(args, "artifactId"))}`,

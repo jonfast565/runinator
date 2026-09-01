@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
-use croner::Cron;
 use runinator_models::errors::SendableError;
 use runinator_models::pipelines::PipelineTrigger;
+use runinator_models::schedules::{ScheduleRecurrence, ScheduleSpec};
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowStatus, WorkflowTrigger};
 
@@ -37,44 +37,55 @@ pub(crate) fn json_metadata(value: &Value) -> String {
         .to_string()
 }
 
-pub(crate) fn next_execution_for_cron(
-    cron_schedule: &str,
+pub(crate) fn schedule_from_configuration(
+    configuration: &Value,
+) -> Result<ScheduleSpec, SendableError> {
+    if let Some(schedule) = configuration.get("schedule") {
+        return serde_json::from_value(schedule.clone().into())
+            .map_err(|error| -> SendableError { Box::new(error) });
+    }
+    Ok(ScheduleSpec {
+        recurrence: ScheduleRecurrence::Cron {
+            expression: configuration
+                .get("cron")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        },
+        timezone: "UTC".to_string(),
+        duration_seconds: 0,
+    })
+}
+
+pub(crate) fn exclusion_schedules(
+    configuration: &Value,
+) -> Result<Vec<ScheduleSpec>, SendableError> {
+    let Some(value) = configuration.get("exclusions") else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_value(value.clone().into())
+        .map_err(|error| -> SendableError { Box::new(error) })
+}
+
+pub(crate) fn next_execution_for_schedule(
+    schedule: &ScheduleSpec,
     now: DateTime<Utc>,
 ) -> Result<DateTime<Utc>, SendableError> {
-    let cron = cron_schedule
-        .parse::<Cron>()
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    cron.find_next_occurrence(&now, false)
-        .map_err(|err| -> SendableError { Box::new(err) })
+    runinator_scheduling::next_after(schedule, now)
+        .map_err(|error| -> SendableError { Box::new(error) })
 }
 
 /// every cron occurrence strictly after `after` and at or before `until`, capped at `max`. the
 /// second tuple element is true when the cap cut the range short, which tells the caller there is
 /// still backlog to drain on the next pass.
-pub(crate) fn cron_slots_between(
-    cron_schedule: &str,
+pub(crate) fn schedule_slots_between(
+    schedule: &ScheduleSpec,
     after: DateTime<Utc>,
     until: DateTime<Utc>,
     max: i64,
 ) -> Result<(Vec<DateTime<Utc>>, bool), SendableError> {
-    let cron = cron_schedule
-        .parse::<Cron>()
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    let mut slots = Vec::new();
-    let mut cursor = after;
-    loop {
-        let next = cron
-            .find_next_occurrence(&cursor, false)
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-        if next > until {
-            return Ok((slots, false));
-        }
-        if slots.len() as i64 >= max {
-            return Ok((slots, true));
-        }
-        slots.push(next);
-        cursor = next;
-    }
+    runinator_scheduling::between(schedule, after, until, max)
+        .map_err(|error| -> SendableError { Box::new(error) })
 }
 
 /// helpers over a workflow trigger's json configuration/blackout window. a local trait since
@@ -83,7 +94,12 @@ pub(crate) trait WorkflowTriggerExt {
     fn trigger_parameters(&self) -> Value;
     fn trigger_state(&self) -> Value;
     fn trigger_state_for_slot(&self, slot: DateTime<Utc>) -> Value;
-    fn is_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool;
+    fn is_trigger_excluded(&self, slot: DateTime<Utc>) -> Result<bool, SendableError>;
+    fn next_allowed_execution(
+        &self,
+        schedule: &ScheduleSpec,
+        after: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, SendableError>;
 }
 
 impl WorkflowTriggerExt for WorkflowTrigger {
@@ -121,11 +137,40 @@ impl WorkflowTriggerExt for WorkflowTrigger {
         state
     }
 
-    fn is_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool {
-        if let (Some(start), Some(end)) = (self.blackout_start, self.blackout_end) {
-            return now >= start && now <= end;
+    fn is_trigger_excluded(&self, slot: DateTime<Utc>) -> Result<bool, SendableError> {
+        if let (Some(start), Some(end)) = (self.blackout_start, self.blackout_end)
+            && slot >= start
+            && slot < end
+        {
+            return Ok(true);
         }
-        false
+        for exclusion in exclusion_schedules(&self.configuration)? {
+            if runinator_scheduling::is_excluded(&exclusion, slot)
+                .map_err(|error| -> SendableError { Box::new(error) })?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn next_allowed_execution(
+        &self,
+        schedule: &ScheduleSpec,
+        after: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, SendableError> {
+        let mut cursor = after;
+        for _ in 0..10_000 {
+            let next = next_execution_for_schedule(schedule, cursor)?;
+            if !self.is_trigger_excluded(next)? {
+                return Ok(next);
+            }
+            cursor = next;
+        }
+        Err(
+            std::io::Error::other("schedule exclusions contain too many consecutive occurrences")
+                .into(),
+        )
     }
 }
 
@@ -134,7 +179,12 @@ impl WorkflowTriggerExt for WorkflowTrigger {
 pub(crate) trait PipelineTriggerExt {
     fn pipeline_trigger_parameters(&self) -> Value;
     fn pipeline_trigger_state(&self) -> Value;
-    fn is_pipeline_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool;
+    fn is_pipeline_trigger_excluded(&self, slot: DateTime<Utc>) -> Result<bool, SendableError>;
+    fn next_allowed_pipeline_execution(
+        &self,
+        schedule: &ScheduleSpec,
+        after: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, SendableError>;
 }
 
 impl PipelineTriggerExt for PipelineTrigger {
@@ -155,11 +205,40 @@ impl PipelineTriggerExt for PipelineTrigger {
         })
     }
 
-    fn is_pipeline_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool {
-        if let (Some(start), Some(end)) = (self.blackout_start, self.blackout_end) {
-            return now >= start && now <= end;
+    fn is_pipeline_trigger_excluded(&self, slot: DateTime<Utc>) -> Result<bool, SendableError> {
+        if let (Some(start), Some(end)) = (self.blackout_start, self.blackout_end)
+            && slot >= start
+            && slot < end
+        {
+            return Ok(true);
         }
-        false
+        for exclusion in exclusion_schedules(&self.configuration)? {
+            if runinator_scheduling::is_excluded(&exclusion, slot)
+                .map_err(|error| -> SendableError { Box::new(error) })?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn next_allowed_pipeline_execution(
+        &self,
+        schedule: &ScheduleSpec,
+        after: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, SendableError> {
+        let mut cursor = after;
+        for _ in 0..10_000 {
+            let next = next_execution_for_schedule(schedule, cursor)?;
+            if !self.is_pipeline_trigger_excluded(next)? {
+                return Ok(next);
+            }
+            cursor = next;
+        }
+        Err(
+            std::io::Error::other("schedule exclusions contain too many consecutive occurrences")
+                .into(),
+        )
     }
 }
 

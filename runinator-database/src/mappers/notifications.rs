@@ -109,6 +109,9 @@ macro_rules! freeze_window_from_row {
                 .unwrap_or_else(Utc::now),
             ends_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("ends_at"), 0)
                 .unwrap_or_else(Utc::now),
+            schedule: $row
+                .get::<Option<String>, _>("schedule")
+                .and_then(|raw| serde_json::from_str(&raw).ok()),
             enabled: $row.get("enabled"),
             created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
                 .unwrap_or_else(Utc::now),

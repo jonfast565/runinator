@@ -435,6 +435,8 @@ impl<'a> Decompiler<'a> {
                     _ => "on_success",
                 };
                 format!("trigger {keyword} workflow {}", quote(target))
+            } else if let Some(schedule) = trigger.get("schedule") {
+                format!("trigger schedule {}", self.expr(schedule)?)
             } else {
                 let cron = trigger.get("cron").and_then(Value::as_str).ok_or_else(|| {
                     RexRapError::Decompile("trigger missing cron expression".into())
@@ -453,6 +455,11 @@ impl<'a> Decompiler<'a> {
                 text.push_str(" disabled");
             }
             if !is_chained {
+                if let Some(exclusions) = trigger.get("exclusions").and_then(Value::as_array) {
+                    for exclusion in exclusions {
+                        text.push_str(&format!(" blackout schedule {}", self.expr(exclusion)?));
+                    }
+                }
                 if let (Some(start), Some(end)) = (
                     trigger.get("blackout_start").and_then(Value::as_str),
                     trigger.get("blackout_end").and_then(Value::as_str),
