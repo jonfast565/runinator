@@ -93,6 +93,9 @@ type CollapsedSide = "first" | "second" | "";
 
 // width (horizontal split) or height (vertical split) of a folded pane's rail tab.
 const TAB_SIZE = 30;
+// a real gutter keeps adjacent functional regions from reading as one crowded box while still
+// leaving enough hit area for the resize handle.
+const GUTTER_SIZE = 14;
 
 const props = withDefaults(
   defineProps<{
@@ -186,11 +189,11 @@ const splitStyle = computed(() => {
   let tracks: string;
 
   if (collapsedSide.value === "first") {
-    tracks = `${String(TAB_SIZE)}px 10px minmax(0, 1fr)`;
+    tracks = `${String(TAB_SIZE)}px ${String(GUTTER_SIZE)}px minmax(0, 1fr)`;
   } else if (collapsedSide.value === "second") {
-    tracks = `minmax(0, 1fr) 10px ${String(TAB_SIZE)}px`;
+    tracks = `minmax(0, 1fr) ${String(GUTTER_SIZE)}px ${String(TAB_SIZE)}px`;
   } else {
-    tracks = `${String(firstSize.value)}px 10px minmax(${String(props.minSecond)}px, 1fr)`;
+    tracks = `${String(firstSize.value)}px ${String(GUTTER_SIZE)}px minmax(${String(props.minSecond)}px, 1fr)`;
   }
 
   return { [dimension]: tracks };

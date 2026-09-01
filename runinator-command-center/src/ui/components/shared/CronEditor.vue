@@ -3,7 +3,10 @@
     <div class="cron-top">
       <label class="cron-preset">
         <span>Schedule</span>
-        <select :value="presetId" @change="selectPreset(($event.target as HTMLSelectElement).value)">
+        <select
+          :value="presetId"
+          @change="selectPreset(($event.target as HTMLSelectElement).value)"
+        >
           <option v-for="preset in CRON_PRESETS" :key="preset.id" :value="preset.id">
             {{ preset.label }}
           </option>
@@ -16,25 +19,43 @@
       </label>
     </div>
 
-    <!-- the field builder, for the five-field form it can represent faithfully. -->
-    <div v-if="!rawMode && fields" class="cron-fields">
-      <label v-for="name in CRON_FIELD_ORDER" :key="name" class="cron-field">
-        <span>{{ cronFieldLabel(name) }}</span>
-        <input
-          :value="fields[name]"
-          :class="{ invalid: fieldError(name) }"
-          spellcheck="false"
-          @input="setField(name, ($event.target as HTMLInputElement).value)"
-        />
-        <select class="cron-field-pick" :value="''" @change="pickField(name, $event)">
-          <option value="">every</option>
-          <option v-for="option in cronFieldOptions(name)" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
-        <small v-if="fieldError(name)" class="cron-field-error">{{ fieldError(name) }}</small>
-      </label>
-    </div>
+    <!-- Most schedules are completely described by a preset. Keep the five-field builder nearby,
+         without making every operator parse it before they can move on. -->
+    <details
+      v-if="!rawMode && fields"
+      class="cron-fine-tune"
+      :open="fineTuneOpen || presetId === CUSTOM_PRESET_ID"
+      @toggle="fineTuneOpen = ($event.target as HTMLDetailsElement).open"
+    >
+      <summary>
+        <span>Fine-tune cron fields</span>
+        <code>{{ modelValue }}</code>
+      </summary>
+      <div class="cron-fields">
+        <label v-for="name in CRON_FIELD_ORDER" :key="name" class="cron-field">
+          <span>{{ cronFieldLabel(name) }}</span>
+          <div class="cron-field-control">
+            <input
+              :value="fields[name]"
+              :class="{ invalid: fieldError(name) }"
+              spellcheck="false"
+              @input="setField(name, ($event.target as HTMLInputElement).value)"
+            />
+            <select class="cron-field-pick" :value="''" @change="pickField(name, $event)">
+              <option value="">Every</option>
+              <option
+                v-for="option in cronFieldOptions(name)"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+          <small v-if="fieldError(name)" class="cron-field-error">{{ fieldError(name) }}</small>
+        </label>
+      </div>
+    </details>
 
     <!-- raw mode, and the only mode for the six-field and @alias forms the builder cannot model. -->
     <label v-else class="cron-raw">
@@ -91,6 +112,7 @@ const emit = defineEmits<(e: "update:modelValue", value: string) => void>();
 // an expression the builder cannot represent (six-field, `@daily`) has to be edited as text, so raw
 // mode is forced there rather than offered — dropping into the builder would rewrite it.
 const rawRequested = ref(false);
+const fineTuneOpen = ref(false);
 const fields = computed(() => splitCron(props.modelValue));
 const rawMode = computed(() => rawRequested.value || fields.value === null);
 
@@ -172,7 +194,7 @@ function fieldError(name: CronFieldName): string | null {
 .cron-editor {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 .cron-top {
@@ -186,13 +208,44 @@ function fieldError(name: CronFieldName): string | null {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  min-width: 12rem;
+  min-width: min(24rem, 100%);
+  flex: 1;
+}
+
+.cron-fine-tune {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.cron-fine-tune > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.75rem;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.cron-fine-tune > summary code {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.cron-fine-tune[open] > summary {
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .cron-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0.75rem;
 }
 
 .cron-field,
@@ -201,6 +254,20 @@ function fieldError(name: CronFieldName): string | null {
   flex-direction: column;
   gap: 0.15rem;
   min-width: 0;
+}
+
+.cron-field > span,
+.cron-raw > span,
+.cron-preset > span {
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.cron-field-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7rem, 0.65fr);
+  gap: 0.4rem;
 }
 
 .cron-field-pick {
@@ -241,5 +308,17 @@ function fieldError(name: CronFieldName): string | null {
   padding-left: 1rem;
   font-size: 0.72rem;
   opacity: 0.8;
+}
+
+@media (max-width: 640px) {
+  .cron-top,
+  .cron-fine-tune > summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cron-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

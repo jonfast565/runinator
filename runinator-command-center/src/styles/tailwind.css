@@ -150,17 +150,27 @@
   }
 
   .table-scroll {
-    @apply min-h-0 flex-1 overflow-auto rounded-md border border-border-faint;
+    @apply min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-md border border-border-faint;
+    scrollbar-gutter: stable;
   }
 
   .table-scroll table {
-    @apply w-full table-fixed border-collapse bg-surface;
+    @apply min-w-full border-collapse bg-surface;
+    width: max-content;
+    table-layout: auto;
+  }
+
+  /* User-resized tables deliberately keep their explicit widths. All other tables size columns
+     from their content and grow into the horizontal scroll region when they need more room. */
+  .table-scroll table.resizable-table {
+    width: 100%;
+    table-layout: fixed;
   }
 
   .table-scroll th,
   .table-scroll td {
-    @apply overflow-hidden text-ellipsis whitespace-nowrap border-b border-border-subtle px-2.5 py-1.5
-      text-left transition-[background-color,color] duration-150 ease-out;
+    @apply whitespace-nowrap border-b border-border-subtle px-2.5 py-1.5 text-left
+      transition-[background-color,color] duration-150 ease-out;
   }
 
   .table-scroll th {
@@ -333,19 +343,6 @@
   .compact th,
   .compact td {
     @apply px-1.5 py-[5px] text-xs;
-  }
-
-  @media (max-width: 760px) {
-    /* DataTable keeps a deliberately small, configured slice of every table on phones. The
-       source table stays intact, so widening the viewport restores every column immediately. */
-    table.data-table-mobile-columns-1 > :is(thead, tbody, tfoot) > tr > :nth-child(n + 2),
-    table.data-table-mobile-columns-2 > :is(thead, tbody, tfoot) > tr > :nth-child(n + 3),
-    th.col-mobile-hidden,
-    td.col-mobile-hidden,
-    th.col-low,
-    td.col-low {
-      @apply hidden;
-    }
   }
 
   .data-table-empty-row:hover td {

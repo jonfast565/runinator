@@ -54,9 +54,8 @@ const props = withDefaults(
     initialSortDir?: "asc" | "desc";
     // 'cards' renders label:value cards on mobile; 'scroll' keeps the compact table layout.
     responsive?: "scroll" | "cards";
-    // Number of leading table columns to retain at phone widths. Slot tables use their visible
-    // source order; column-mode tables use the declared `columns` order. Keep this deliberately
-    // small so every table remains readable without horizontal scrolling.
+    // Number of leading fields to retain in opt-in mobile card mode. Scroll-mode tables keep every
+    // column and expose horizontal overflow instead of dropping information.
     mobileColumns?: 1 | 2;
     // render a leading checkbox column. selection state is owned by the caller (useBulkSelection),
     // so this component only displays it and reports intent.
@@ -97,7 +96,9 @@ const props = withDefaults(
 const { isMobile } = useBreakpoint();
 // switch to a stacked card layout on phones when the caller opts in via responsive="cards".
 const cardMode = computed(() => props.responsive === "cards" && isMobile.value);
-const hasExplicitMobileColumns = computed(() => props.columns?.some((column) => column.mobile) ?? false);
+const hasExplicitMobileColumns = computed(
+  () => props.columns?.some((column) => column.mobile) ?? false,
+);
 const mobileVisibleColumns = computed(() => {
   if (hasExplicitMobileColumns.value) {
     return props.columns?.filter((column) => column.mobile) ?? [];

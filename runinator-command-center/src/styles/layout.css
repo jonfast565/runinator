@@ -414,33 +414,33 @@
 .topbar {
   display: flex;
   align-items: center;
-  min-height: 68px;
-  gap: 12px;
+  min-height: 52px;
+  gap: 10px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(110deg, var(--accent-soft), transparent 34%), var(--surface);
-  padding: 8px 14px;
+  background: linear-gradient(110deg, var(--accent-soft), transparent 24%), var(--surface);
+  padding: 6px 12px;
   box-shadow:
-    inset 0 2px 0 0 var(--accent),
+    inset 0 1px 0 0 var(--accent),
     0 1px 0 rgba(0, 0, 0, 0.02);
 }
 
 .view-identity {
   display: flex;
-  min-width: 250px;
-  max-width: 420px;
+  min-width: 200px;
+  max-width: 320px;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .view-identity-icon {
   display: inline-flex;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   align-items: center;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 11px;
+  border-radius: 9px;
   background: var(--surface);
   color: var(--accent-text);
   box-shadow: var(--shadow-control);
@@ -448,26 +448,25 @@
 
 .view-title {
   min-width: 0;
-  max-width: 360px;
+  max-width: 280px;
   overflow: hidden;
 }
 
 .view-eyebrow {
-  display: block;
+  flex: 0 0 auto;
   color: var(--accent-text);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.1em;
-  line-height: 1.1;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .view-title h1 {
   margin: 0;
   overflow: hidden;
-  font-size: 17px;
-  line-height: 1.15;
+  font-size: 14px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -476,7 +475,12 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
+}
+
+.view-title-divider {
+  color: var(--border-strong);
+  font-size: 12px;
 }
 
 .view-title > span,
@@ -488,20 +492,16 @@
   letter-spacing: 0.01em;
 }
 
-.view-title > span {
-  display: block;
-  overflow: hidden;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.view-title > span.view-status.loading {
+.view-status.loading {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--accent);
-  white-space: normal;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar-search {
@@ -566,7 +566,7 @@ main[inert] {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 10px;
+  padding: 14px;
 }
 
 .split,
@@ -734,14 +734,14 @@ main[inert] {
 
 .split-handle {
   position: relative;
-  width: 10px;
+  width: 14px;
   cursor: col-resize;
   touch-action: none;
 }
 
 .split-pane-vertical > .split-handle {
   width: auto;
-  height: 10px;
+  height: 14px;
   cursor: row-resize;
 }
 
@@ -782,7 +782,7 @@ main[inert] {
   position: absolute;
   top: 8px;
   bottom: 8px;
-  left: 4px;
+  left: 6px;
   width: 2px;
   border-radius: var(--radius-pill);
   background: var(--border);
@@ -794,7 +794,7 @@ main[inert] {
 }
 
 .split-pane-vertical > .split-handle::before {
-  top: 4px;
+  top: 6px;
   right: 8px;
   bottom: auto;
   left: 8px;
@@ -804,14 +804,14 @@ main[inert] {
 
 .split-handle:hover::before,
 .split-handle:focus-visible::before {
-  left: 3px;
+  left: 5px;
   width: 4px;
   background: var(--accent);
 }
 
 .split-pane-vertical > .split-handle:hover::before,
 .split-pane-vertical > .split-handle:focus-visible::before {
-  top: 3px;
+  top: 5px;
   left: 8px;
   width: auto;
   height: 4px;

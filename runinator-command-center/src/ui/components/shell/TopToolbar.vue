@@ -20,16 +20,15 @@
         <Icon :name="activeIcon" :size="20" />
       </div>
       <div class="view-title">
-        <span class="view-eyebrow">{{ activeSection }}</span>
         <div class="view-title-heading">
+          <span class="view-eyebrow">{{ activeSection }}</span>
+          <span class="view-title-divider" aria-hidden="true">/</span>
           <h1>{{ headingFor(app.activeTab) }}</h1>
-          <HelpBubble :text="activeHelp" :label="`About ${headingFor(app.activeTab)}`" />
+          <span v-if="app.loading && app.opLabel" class="view-status loading">
+            <LoadingSpinner size="sm" :label="app.opLabel" />
+            {{ app.opLabel }}…
+          </span>
         </div>
-        <span v-if="app.loading && app.opLabel" class="view-status loading">
-          <LoadingSpinner size="sm" :label="app.opLabel" />
-          {{ app.opLabel }}…
-        </span>
-        <span v-else>{{ activeContext }}</span>
       </div>
     </div>
     <div v-if="searchPlaceholder" class="toolbar-search">
@@ -87,7 +86,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Icon from "../shared/Icon.vue";
-import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
 import UserMenu from "./UserMenu.vue";
@@ -95,7 +93,6 @@ import { navItemForTab, useAppStore } from "../../../ui/adapters/pinia/app";
 import { navSectionForTab } from "../../../core/navigation/nav-config";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
-import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import type { AppTab } from "../../../core/navigation/app";
@@ -106,7 +103,6 @@ const app = useAppStore();
 const auth = useAuthStore();
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
-const secrets = useSecretsStore();
 const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
 
 function onSwitchOrg(event: Event) {
@@ -123,24 +119,6 @@ function headingFor(tab: AppTab): string {
 
 // only show the global search box on tabs whose list actually consumes app.searchQuery.
 const searchPlaceholder = computed(() => navItemForTab(app.activeTab)?.searchPlaceholder ?? "");
-const activeHelp = computed(() => navItemForTab(app.activeTab)?.description ?? "");
 const activeIcon = computed(() => navItemForTab(app.activeTab)?.icon ?? "info");
 const activeSection = computed(() => navSectionForTab(app.activeTab));
-
-const activeSubtitle = computed(() => {
-  switch (app.activeTab) {
-    case "Runs":
-      return workflows.selectedWorkflowRunId ? `Run ${workflows.selectedWorkflowRunId}` : "";
-    case "Workflows":
-      return workflows.selectedWorkflow?.name ?? "";
-    case "Replicas":
-      return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy`;
-    case "Secrets":
-      return `${String(secrets.secrets.length)} secrets`;
-    default:
-      return "";
-  }
-});
-
-const activeContext = computed(() => activeSubtitle.value || activeHelp.value);
 </script>

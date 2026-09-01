@@ -192,273 +192,7 @@
           </template>
         </section>
 
-        <section class="form-section workflow-settings-section trigger-section">
-          <div class="workflow-settings-section-heading">
-            <div>
-              <p class="workflow-settings-eyebrow">Automation</p>
-              <h3>Triggers</h3>
-              <p class="hint">Choose when this workflow should start automatically.</p>
-            </div>
-            <div class="trigger-controls">
-              <button
-                type="button"
-                class="btn"
-                :disabled="!workflows.canManageWorkflowTriggers"
-                @click="workflows.refreshWorkflowTriggers"
-              >
-                Refresh
-              </button>
-              <select
-                v-model="newTriggerKind"
-                aria-label="Trigger type to add"
-                :disabled="!workflows.canManageWorkflowTriggers || !catalogMetadata.loaded"
-              >
-                <option
-                  v-for="kind in catalogMetadata.triggerKinds"
-                  :key="kind.kind"
-                  :value="kind.kind"
-                >
-                  {{ kind.label }} trigger
-                </option>
-              </select>
-              <button
-                type="button"
-                class="btn btn-primary"
-                :disabled="!workflows.canManageWorkflowTriggers || !catalogMetadata.loaded"
-                @click="addWorkflowTrigger"
-              >
-                Add trigger
-              </button>
-            </div>
-          </div>
-
-          <p v-if="!workflows.canManageWorkflowTriggers" class="hint">
-            Save the workflow before adding triggers.
-          </p>
-          <p v-else-if="!catalogMetadata.loaded" class="hint catalog-loading-hint">
-            <LoadingSpinner size="sm" label="Loading trigger types" />
-            Loading trigger types…
-          </p>
-          <p
-            v-else-if="workflows.workflowTriggers.length === 0"
-            class="hint workflow-settings-empty-state"
-          >
-            No automatic triggers yet. Add one to schedule this workflow or start it after another
-            workflow finishes.
-          </p>
-
-          <div v-else class="trigger-table-wrap">
-            <DataTable bare compact>
-              <thead>
-                <tr>
-                  <th>Kind</th>
-                  <th>State</th>
-                  <th>Schedule</th>
-                  <th>Next run</th>
-                  <th><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="trigger in workflows.workflowTriggers"
-                  :key="trigger.id ?? `${trigger.kind}-${trigger.workflow_id}`"
-                  :class="{ muted: !trigger.enabled }"
-                >
-                  <td>
-                    <span class="trigger-kind-pill">{{ triggerKindLabel(trigger.kind) }}</span>
-                  </td>
-                  <td>
-                    <span
-                      class="workflow-state-pill"
-                      :class="trigger.enabled ? 'is-enabled' : 'is-disabled'"
-                    >
-                      {{ trigger.enabled ? "Enabled" : "Disabled" }}
-                    </span>
-                  </td>
-                  <td>{{ workflows.triggerCronSummary(trigger) || "Runs on demand" }}</td>
-                  <td>{{ trigger.next_execution ?? "—" }}</td>
-                  <td class="row-actions">
-                    <button
-                      type="button"
-                      class="btn"
-                      @click="workflows.editWorkflowTrigger(trigger)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-danger"
-                      @click="workflows.deleteSelectedWorkflowTrigger(trigger)"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </DataTable>
-          </div>
-
-          <section
-            v-if="workflows.triggerEditorOpen"
-            class="trigger-editor"
-            aria-labelledby="trigger-editor-title"
-          >
-            <header class="trigger-editor-header">
-              <div>
-                <p class="workflow-settings-eyebrow">
-                  {{ workflows.triggerEditorCreating ? "New trigger" : "Edit trigger" }}
-                </p>
-                <h3 id="trigger-editor-title">
-                  {{ triggerKindLabel(workflows.triggerDraft.kind) }} trigger
-                </h3>
-              </div>
-              <button type="button" class="btn" @click="workflows.closeTriggerEditor">
-                Cancel
-              </button>
-            </header>
-            <div class="trigger-editor-grid">
-              <label>
-                <span>Trigger type</span>
-                <select
-                  v-model="workflows.triggerDraft.kind"
-                  :disabled="!catalogMetadata.loaded"
-                  @change="workflows.setTriggerKind(workflows.triggerDraft.kind)"
-                >
-                  <option v-if="!catalogMetadata.loaded" value="" disabled>
-                    Loading trigger types…
-                  </option>
-                  <option
-                    v-for="kind in catalogMetadata.triggerKinds"
-                    :key="kind.kind"
-                    :value="kind.kind"
-                  >
-                    {{ kind.label }}
-                  </option>
-                </select>
-              </label>
-              <div class="workflow-enabled-control trigger-enabled-control">
-                <label class="checkbox"
-                  ><input v-model="workflows.triggerDraft.enabled" type="checkbox" />
-                  <span>Enable trigger</span></label
-                >
-                <p>Keep it disabled while you finish configuring it.</p>
-              </div>
-            </div>
-            <div v-if="workflows.triggerDraft.kind === 'cron'" class="grid gap-3">
-              <ScheduleEditor
-                :model-value="triggerSchedule"
-                title="Run schedule"
-                description="Choose a one-time, cron, weekday, or RFC 5545 recurrence."
-                @update:model-value="setTriggerSchedule"
-              />
-              <div class="rounded-lg border border-border p-3">
-                <label class="checkbox">
-                  <input :checked="blackoutEnabled" type="checkbox" @change="toggleBlackout" />
-                  <span>Add a recurring blackout</span>
-                </label>
-                <p class="mb-0 mt-1 text-xs text-fg-muted">Occurrences inside a blackout are skipped permanently and recorded as excluded.</p>
-                <ScheduleEditor
-                  v-if="blackoutEnabled"
-                  class="mt-3"
-                  :model-value="triggerBlackout"
-                  window
-                  title="Blackout schedule"
-                  description="Define the recurring interval in which this trigger must not fire."
-                  @update:model-value="setTriggerBlackout"
-                />
-              </div>
-            </div>
-            <div class="trigger-window">
-              <div class="trigger-window-heading">
-                <div>
-                  <h4>Timing window</h4>
-                  <p>Optionally override the next materialized execution.</p>
-                </div>
-                <span>Local time</span>
-              </div>
-              <div class="trigger-datetime-grid">
-                <label :class="{ 'has-error': triggerValidation.errors.nextExecution }">
-                  <span>Next execution</span>
-                  <input
-                    v-model="workflows.triggerDraft.next_execution"
-                    type="datetime-local"
-                    :aria-invalid="Boolean(triggerValidation.errors.nextExecution)"
-                    aria-describedby="trigger-next-error"
-                  />
-                  <small
-                    v-if="triggerValidation.errors.nextExecution"
-                    id="trigger-next-error"
-                    class="field-error"
-                  >
-                    {{ triggerValidation.errors.nextExecution }}
-                  </small>
-                </label>
-              </div>
-            </div>
-            <div class="trigger-json-grid">
-              <div
-                class="form-field"
-                :class="{ 'has-error': triggerValidation.errors.configuration }"
-              >
-                <span class="form-field-label">Configuration</span>
-                <template v-if="triggerKindMeta && triggerKindMeta.fields.length">
-                  <div class="trigger-field-list">
-                    <div
-                      v-for="field in triggerConfigFields"
-                      :key="field.name"
-                      class="trigger-catalog-field"
-                      :class="{ 'has-error': triggerValidation.errors.fields[field.name] }"
-                    >
-                      <CatalogFieldEditor
-                        :field="toNodeField(field)"
-                        :model-value="configDraft[field.name]"
-                        :workflows="workflows.workflows"
-                        @update:model-value="setConfigField(field.name, $event)"
-                      />
-                      <small v-if="triggerValidation.errors.fields[field.name]" class="field-error">
-                        {{ triggerValidation.errors.fields[field.name] }}
-                      </small>
-                    </div>
-                  </div>
-                </template>
-                <p
-                  v-else-if="catalogMetadata.loading || !catalogMetadata.loaded"
-                  class="hint catalog-loading-hint"
-                >
-                  <LoadingSpinner size="sm" label="Loading trigger metadata" />
-                  Loading trigger metadata…
-                </p>
-                <JsonEditor v-else v-model="workflows.triggerJson.configuration" />
-                <small v-if="triggerValidation.errors.configuration" class="field-error">
-                  {{ triggerValidation.errors.configuration }}
-                </small>
-              </div>
-              <div class="form-field" :class="{ 'has-error': triggerValidation.errors.metadata }">
-                <span class="form-field-label">Metadata</span>
-                <JsonEditor v-model="workflows.triggerJson.metadata" />
-                <small v-if="triggerValidation.errors.metadata" class="field-error">
-                  {{ triggerValidation.errors.metadata }}
-                </small>
-              </div>
-            </div>
-            <p v-if="workflows.triggerEditorError" class="error m-0 text-xs" role="alert">
-              {{ workflows.triggerEditorError }}
-            </p>
-            <div class="modal-actions trigger-editor-actions">
-              <button type="button" class="btn" @click="workflows.closeTriggerEditor">
-                Cancel
-              </button>
-              <button
-                type="button"
-                class="btn btn-primary"
-                :disabled="Boolean(triggerValidation.error)"
-                @click="workflows.submitWorkflowTrigger"
-              >
-                Save trigger
-              </button>
-            </div>
-          </section>
-        </section>
+        <WorkflowTriggersPanel />
 
         <WorkflowRevisionsPanel
           :workflow-id="workflows.workflowDraft.id ?? null"
@@ -466,7 +200,7 @@
         />
       </div>
 
-      <footer class="modal-actions workflow-settings-actions">
+      <footer v-if="!workflows.triggerEditorOpen" class="modal-actions workflow-settings-actions">
         <p v-if="workflowSettingsError" class="workflow-settings-validation-summary" role="alert">
           Review the highlighted workflow fields before saving.
         </p>
@@ -506,15 +240,8 @@ import { ref, watch, computed } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
-import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { workflowSharingService } from "../../../core/services";
-import type {
-  NodeFieldMetadata,
-  UiField,
-  WorkflowDefinition,
-  WorkflowTriggerKind,
-  ScheduleSpec,
-} from "../../../core/domain/models";
+import type { WorkflowDefinition } from "../../../core/domain/models";
 import {
   artifactIdentityPath,
   REXRAP_IDENTIFIER_PATTERN,
@@ -522,20 +249,15 @@ import {
   workflowSettingsErrors,
   WORKFLOW_VERSION_PATTERN,
 } from "../../../core/domain/models";
-import { validateTriggerEditor } from "../../../core/workflow/trigger-validation";
-import { defaultSchedule } from "../../../core/workflow/schedule";
-import JsonEditor from "../shared/JsonEditor.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import Icon from "../shared/Icon.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
-import ScheduleEditor from "../shared/ScheduleEditor.vue";
-import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import WorkflowRevisionsPanel from "./WorkflowRevisionsPanel.vue";
+import WorkflowTriggersPanel from "./WorkflowTriggersPanel.vue";
 
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
-const catalogMetadata = useCatalogMetadataStore();
 const namespacePattern = `${REXRAP_IDENTIFIER_PATTERN}(\\.${REXRAP_IDENTIFIER_PATTERN})*`;
 const workflowSettingsValidation = computed(() => {
   const errors = workflowSettingsErrors(workflows.workflowDraft);
@@ -569,95 +291,6 @@ const workflowSettingsError = computed(() => {
 
 const ownerOrgId = ref<string>(workflows.workflowDraft.org_id ?? "");
 const ownerSaving = ref(false);
-const newTriggerKind = ref<WorkflowTriggerKind>("cron");
-
-const triggerKindMeta = computed(() => catalogMetadata.triggerKind(workflows.triggerDraft.kind));
-const triggerValidation = computed(() =>
-  validateTriggerEditor(
-    workflows.triggerDraft,
-    workflows.triggerJson.configuration,
-    workflows.triggerJson.metadata,
-    triggerKindMeta.value,
-  ),
-);
-
-// the trigger json is the single copy of the configuration; the per-field editors read it back out
-// on every render rather than keeping a snapshot, so opening a second trigger cannot show — or save
-// — the first one's values.
-const configDraft = computed<Record<string, unknown>>(() => {
-  try {
-    const parsed = JSON.parse(workflows.triggerJson.configuration) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-});
-
-const triggerConfigFields = computed(() =>
-  (triggerKindMeta.value?.fields ?? []).filter(
-    (field) => workflows.triggerDraft.kind !== "cron" || field.name !== "cron",
-  ),
-);
-const triggerSchedule = computed<ScheduleSpec>(() => {
-  const schedule = configDraft.value.schedule as ScheduleSpec | undefined;
-  if (schedule?.recurrence) {return schedule;}
-  const cron = typeof configDraft.value.cron === "string" ? configDraft.value.cron : "0 9 * * 1-5";
-  return { recurrence: { kind: "cron", expression: cron }, timezone: "UTC", duration_seconds: 0 };
-});
-const blackoutEnabled = computed(() => Array.isArray(configDraft.value.exclusions) && configDraft.value.exclusions.length > 0);
-const triggerBlackout = computed<ScheduleSpec>(() => {
-  const exclusions = configDraft.value.exclusions;
-  return Array.isArray(exclusions) && exclusions[0] && typeof exclusions[0] === "object"
-    ? (exclusions[0] as ScheduleSpec)
-    : defaultSchedule(true);
-});
-
-function writeConfig(next: Record<string, unknown>) {
-  workflows.triggerJson.configuration = JSON.stringify(next, null, 2);
-}
-
-function setTriggerSchedule(schedule: ScheduleSpec) {
-  const next: Record<string, unknown> = { ...configDraft.value, schedule };
-  if (schedule.recurrence.kind === "cron") {next.cron = schedule.recurrence.expression;}
-  writeConfig(next);
-}
-
-function setTriggerBlackout(schedule: ScheduleSpec) {
-  writeConfig({ ...configDraft.value, exclusions: [schedule] });
-}
-
-function toggleBlackout(event: Event) {
-  const enabled = (event.target as HTMLInputElement).checked;
-  const next = { ...configDraft.value };
-
-  if (enabled) {next.exclusions = [defaultSchedule(true)];}
-  else {delete next.exclusions;}
-
-  writeConfig(next);
-}
-
-function setConfigField(name: string, value: unknown) {
-  workflows.triggerJson.configuration = JSON.stringify(
-    { ...configDraft.value, [name]: value },
-    null,
-    2,
-  );
-}
-
-// adapts a UiField to NodeFieldMetadata for CatalogFieldEditor (location is unused by the editor).
-function toNodeField(f: UiField): NodeFieldMetadata {
-  return { ...f, location: { base: "parameters", path: [] } };
-}
-
-function triggerKindLabel(kind: WorkflowTriggerKind): string {
-  return catalogMetadata.triggerKind(kind)?.label ?? kind;
-}
-
-function addWorkflowTrigger() {
-  workflows.addWorkflowTrigger(newTriggerKind.value);
-}
 
 // keep the owner select in sync when the edited workflow changes.
 watch(
@@ -665,16 +298,6 @@ watch(
   () => {
     ownerOrgId.value = workflows.workflowDraft.org_id ?? "";
   },
-);
-
-watch(
-  () => catalogMetadata.triggerKinds,
-  (kinds) => {
-    if (kinds.length && !kinds.some((kind) => kind.kind === newTriggerKind.value)) {
-      newTriggerKind.value = kinds[0].kind;
-    }
-  },
-  { immediate: true },
 );
 
 // name, version, and enabled only mark the draft dirty; the triggers beside them save through their
