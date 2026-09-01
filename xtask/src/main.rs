@@ -35,6 +35,9 @@ enum Command {
     },
     /// Kubernetes build + deploy.
     K8s {
+        /// seconds to wait for another xtask Kubernetes mutation to release the cluster lease.
+        #[arg(long, global = true, default_value_t = 900)]
+        deploy_lock_timeout_secs: u64,
         #[command(subcommand)]
         command: K8sCommand,
     },
@@ -92,6 +95,26 @@ enum K8sCommand {
     RedeployDatabase(K8sDatabaseArgs),
     /// Tear down the runinator stack from a cluster.
     Delete(K8sDeleteArgs),
+}
+
+impl K8sCommand {
+    fn kube_context(&self) -> Option<&str> {
+        match self {
+            Self::Deploy(args) => args.kube_context.as_deref(),
+            Self::RedeployGrafana(args) => args.kube_context.as_deref(),
+            Self::RedeployDatabase(args) => args.kube_context.as_deref(),
+            Self::Delete(args) => args.kube_context.as_deref(),
+        }
+    }
+
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Deploy(_) => "deploy",
+            Self::RedeployGrafana(_) => "redeploy-grafana",
+            Self::RedeployDatabase(_) => "redeploy-database",
+            Self::Delete(_) => "delete",
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -203,12 +226,35 @@ fn run_process() -> anyhow::Result<()> {
         Command::Local { command } => match command {
             LocalCommand::Up(args) => run_local_up(&workspace_root, &args),
         },
-        Command::K8s { command } => match command {
-            K8sCommand::Deploy(args) => run_k8s_deploy(&workspace_root, &args),
-            K8sCommand::RedeployGrafana(args) => run_k8s_redeploy_grafana(&workspace_root, &args),
-            K8sCommand::RedeployDatabase(args) => run_k8s_redeploy_database(&workspace_root, &args),
-            K8sCommand::Delete(args) => run_k8s_delete(&workspace_root, &args),
-        },
+        Command::K8s {
+            deploy_lock_timeout_secs,
+            command,
+        } => {
+            let kube_context = command.kube_context().map(str::to_owned);
+            let operation = command.operation();
+            let deploy_lock = k8s::lock::DeploymentLock::acquire(
+                &workspace_root,
+                kube_context.as_deref(),
+                operation,
+                std::time::Duration::from_secs(deploy_lock_timeout_secs),
+            )?;
+
+            let result = match command {
+                K8sCommand::Deploy(args) => run_k8s_deploy(&workspace_root, &args),
+                K8sCommand::RedeployGrafana(args) => {
+                    run_k8s_redeploy_grafana(&workspace_root, &args)
+                }
+                K8sCommand::RedeployDatabase(args) => {
+                    run_k8s_redeploy_database(&workspace_root, &args)
+                }
+                K8sCommand::Delete(args) => run_k8s_delete(&workspace_root, &args),
+            };
+
+            if result.is_ok() {
+                deploy_lock.ensure_held()?;
+            }
+            result
+        }
     }
 }
 

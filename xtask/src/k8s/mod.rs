@@ -1,6 +1,7 @@
 pub mod deploy;
 pub mod images;
 pub mod kustomize;
+pub mod lock;
 pub mod registry;
 pub mod yaml_docs;
 

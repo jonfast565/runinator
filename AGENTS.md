@@ -16,6 +16,11 @@ Redeploy the cluster after every change, with two exceptions:
   desktop agent runs locally; deploy the cluster only when its shared runtime dependencies or a
   cluster-owned artifact changed.
 
+All agent-driven Kubernetes mutations must go through `cargo run -p xtask -- k8s ...`. Do not call
+`kubectl`, Helm, or `scripts/deploy-k8s.sh` directly for a deployment. Every mutating `xtask k8s`
+command holds the cluster-backed deployment Lease across image build/push, apply, and rollout, so
+separate worktrees and local agent processes cannot deploy concurrently.
+
 ## Local Cluster Debugging
 
 When debugging a Kubernetes cluster with a locally running Command Center or `runinatorctl`, first

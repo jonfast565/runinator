@@ -249,6 +249,24 @@ after editing their manifests):
 cargo run -p xtask -- k8s deploy --recreate-infra
 ```
 
+Every mutating `xtask k8s` command is serialized by the `runinator-xtask`
+Kubernetes Lease in the persistent `runinator-deploy-lock` namespace. The Lease
+is acquired before image build and push, renewed through apply and rollout, and
+released when the command exits. This coordinates deployments from separate
+worktrees and separate machines targeting the same cluster. If a process is
+killed, its Lease expires after five minutes. A contender waits up to 15 minutes
+by default; change that limit with `--deploy-lock-timeout-secs <seconds>`:
+
+```bash
+cargo run -p xtask -- k8s deploy --deploy-lock-timeout-secs 1800
+```
+
+The lock namespace intentionally survives `k8s delete`, because deleting the
+coordination object during teardown would allow another deploy to enter before
+the first one finished. Use the `xtask` commands rather than invoking `kubectl`
+or `scripts/deploy-k8s.sh` directly when multiple operators or agents share a
+cluster.
+
 To redeploy only the web interface, rebuild and apply just the
 `runinator-command-center-web` resources with:
 
