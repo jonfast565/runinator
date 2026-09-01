@@ -21,6 +21,7 @@ export type IconName =
   | "check"
   | "alert"
   | "info"
+  | "monitor"
   | "sun"
   | "moon"
   | "help"

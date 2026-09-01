@@ -103,6 +103,11 @@
       <line x1="12" y1="11" x2="12" y2="16" />
       <line x1="12" y1="7" x2="12" y2="8" />
     </template>
+    <template v-else-if="name === 'monitor'">
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </template>
     <template v-else-if="name === 'sun'">
       <circle cx="12" cy="12" r="4" />
       <line x1="12" y1="2" x2="12" y2="4" />

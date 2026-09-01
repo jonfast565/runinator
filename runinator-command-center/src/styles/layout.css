@@ -25,10 +25,28 @@
   background: var(--surface-inverse);
   color: var(--text-inverse);
   padding: 16px 12px 0;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
 
-  /* the rail is a dark surface in both themes, so its scrollbars take the inverse thumb. */
+  /* dark mode uses the inverse thumb; light mode remaps it with the rail tokens below. */
   --scrollbar-thumb: rgba(246, 244, 251, 0.16);
   --scrollbar-thumb-hover: rgba(246, 244, 251, 0.32);
+}
+
+/* In light mode the navigation is a true light surface. Scoping the remap to the sidebar keeps
+   terminals and other intentionally-inverse surfaces dark while allowing all existing rail
+   components and Tailwind inverse utilities to follow the selected theme together. */
+:root[data-theme="light"] .sidebar {
+  --surface-inverse: var(--surface);
+  --surface-inverse-hover: var(--surface-hover);
+  --surface-inverse-accent: var(--accent-soft);
+  --text-inverse: var(--text);
+  --text-inverse-muted: var(--text-subtle);
+  --text-inverse-faint: var(--text-muted);
+  --scrollbar-thumb: rgba(23, 32, 42, 0.2);
+  --scrollbar-thumb-hover: rgba(23, 32, 42, 0.38);
 }
 
 /* The collapsed shell is an icon rail, not a narrow version of the full navigation. Its
@@ -315,7 +333,10 @@
 .sidebar-theme-rail {
   display: flex;
   flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 2px;
   padding: 8px 0 calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--surface-inverse-hover);
 }
@@ -351,6 +372,11 @@
   transform: scale(0.92);
 }
 
+.sidebar-theme-rail-button.active {
+  background: var(--accent);
+  color: var(--surface-inverse);
+}
+
 /* quiet ticking readout: the product's job is waking nodes on a clock, so the rail shows one —
    local for the operator, utc because that is what every schedule and timestamp is stored in. */
 .sidebar-foot {
@@ -363,10 +389,8 @@
 }
 
 .sidebar-theme-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  gap: 5px;
   margin-bottom: 6px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--surface-inverse-hover);
@@ -382,6 +406,7 @@
 
 .sidebar-theme-options {
   display: inline-flex;
+  width: 100%;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--surface-inverse-hover);
@@ -393,8 +418,11 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 0;
+  justify-content: center;
+  min-width: 0;
   min-height: 26px;
-  padding: 0 7px;
+  padding: 0 4px;
   border: 0;
   border-radius: calc(var(--radius-md) - 2px);
   background: transparent;
@@ -418,7 +446,7 @@
 
 .sidebar-theme-option.active {
   background: var(--accent);
-  color: white;
+  color: var(--surface-inverse);
 }
 
 .sidebar-theme-option:active:not(:disabled) {
