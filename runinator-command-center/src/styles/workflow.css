@@ -516,6 +516,22 @@
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+/* Graph edge labels share one compact pill across workflow and pipeline canvases. Keeping the
+   colors on semantic tokens makes the label surface and text follow the active theme. */
+.graph-edge-label {
+  position: absolute;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-control);
+  color: var(--text-subtle);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  user-select: none;
+}
+
 .vue-flow__node.node-success,
 .workflow-node-content.node-success {
   background: var(--success-bg);

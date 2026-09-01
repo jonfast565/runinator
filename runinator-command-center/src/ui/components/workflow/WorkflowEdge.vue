@@ -14,7 +14,7 @@
   </g>
   <EdgeLabelRenderer v-if="labelText">
     <div
-      class="workflow-edge-label nodrag nopan"
+      class="graph-edge-label workflow-edge-label nodrag nopan"
       :class="[
         severityClass,
         { 'is-interactive': interactive, 'is-manual': hasManualOffset, 'is-dragging': dragging },
@@ -388,20 +388,6 @@ onBeforeUnmount(stopDragging);
 .workflow-edge-label-connector.error circle {
   stroke: var(--danger-solid);
   fill: var(--danger-solid);
-}
-
-.workflow-edge-label {
-  position: absolute;
-  padding: 1px 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text-subtle);
-  font-size: 10px;
-  line-height: 1.5;
-  white-space: nowrap;
-  box-shadow: var(--shadow-control);
-  user-select: none;
 }
 
 .workflow-edge-label.is-interactive {

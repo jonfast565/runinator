@@ -18,6 +18,9 @@
       <template #node-pipeline="nodeProps">
         <PipelineNode v-bind="nodeProps" />
       </template>
+      <template #edge-pipeline="edgeProps">
+        <PipelineEdge v-bind="edgeProps" />
+      </template>
     </VueFlow>
   </div>
 </template>
@@ -34,6 +37,7 @@ import {
 } from "@vue-flow/core";
 import { usePipelineStore } from "../../adapters/pinia/pipeline";
 import { useAppStore } from "../../adapters/pinia/app";
+import PipelineEdge from "./PipelineEdge.vue";
 import PipelineNode from "./PipelineNode.vue";
 import type { PipelineRunDetail } from "../../../core/domain/models";
 import type { PipelineEdgeModel, PipelineNodeData, PipelineNodeModel } from "../../../core/workflow/pipeline-graph";
