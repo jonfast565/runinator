@@ -29,8 +29,8 @@ use crate::events::{AppEventKind, EventSender};
 use crate::models;
 use crate::openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy};
 use crate::repository;
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 use runinator_ws_middleware::auth::WEBSOCKET_AUTH_PROTOCOL;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 
 fn event_scope_visible(ctx: &AuthContext, org_id: Option<Uuid>) -> bool {
     let scope = org_id
@@ -265,123 +265,129 @@ fn upgrade_broker_relay<T: DatabaseImpl>(
     relay_role: RelayRole,
 ) -> Response {
     log::info!("WebSocket upgrade request for broker relay as {relay_role:?}");
-    ws.protocols([WEBSOCKET_AUTH_PROTOCOL]).on_upgrade(move |socket| async move {
-        let _connection = crate::metrics::websocket_connected("broker_relay");
-        log::info!("WebSocket connection established for broker relay as {relay_role:?}");
-        let (tx, mut rx_ws) = socket.split();
-        let tx = Arc::new(tokio::sync::Mutex::new(tx));
-        let in_flight = Arc::new(tokio::sync::Semaphore::new(RELAY_MAX_IN_FLIGHT));
+    ws.protocols([WEBSOCKET_AUTH_PROTOCOL])
+        .on_upgrade(move |socket| async move {
+            let _connection = crate::metrics::websocket_connected("broker_relay");
+            log::info!("WebSocket connection established for broker relay as {relay_role:?}");
+            let (tx, mut rx_ws) = socket.split();
+            let tx = Arc::new(tokio::sync::Mutex::new(tx));
+            let in_flight = Arc::new(tokio::sync::Semaphore::new(RELAY_MAX_IN_FLIGHT));
 
-        // server-side keepalive. the client pings too, but only this side can prove *its* writes
-        // still reach the agent — and an agent that vanished without a close frame otherwise leaves
-        // this connection, and every broker consumer parked behind it, alive indefinitely.
-        let ping_tx = tx.clone();
-        let ping = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(RELAY_PING_INTERVAL);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            ticker.tick().await; // the first tick fires immediately; skip it.
-            loop {
-                ticker.tick().await;
-                if ping_tx
-                    .lock()
-                    .await
-                    .send(Message::Ping(Default::default()))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-
-        loop {
-            // bounded read, mirroring the client: a half-open connection (an agent whose route
-            // disappeared) never produces a close frame or an error, so waiting on `next()` alone
-            // holds this task and its broker consumers open forever.
-            let msg = match tokio::time::timeout(RELAY_IDLE_TIMEOUT, rx_ws.next()).await {
-                Ok(Some(msg)) => msg,
-                Ok(None) => break,
-                Err(_) => {
-                    log::warn!(
-                        "broker relay idle for {}s with no frame; closing",
-                        RELAY_IDLE_TIMEOUT.as_secs()
-                    );
-                    break;
-                }
-            };
-            let text = match msg {
-                Ok(Message::Text(text)) => text,
-                Ok(Message::Close(_)) | Err(_) => break,
-                Ok(_) => continue,
-            };
-            let Ok(frame) = serde_json::from_str::<WsRequestFrame>(&text) else {
-                continue;
-            };
-
-            // `try_acquire`, never an awaited acquire: parked `receive_for` calls hold their permit
-            // for as long as they wait, so blocking the read loop on a permit would stop us reading
-            // the very `ack` frames that would free one. refusing is safe — every client op retries.
-            let Ok(permit) = Arc::clone(&in_flight).try_acquire_owned() else {
-                let response = TcpResponse::Error {
-                    message: crate::errors::RELAY_BUSY
-                        .error(format!(
-                            "more than {RELAY_MAX_IN_FLIGHT} requests in flight"
-                        ))
-                        .to_string(),
-                };
-                let Ok(payload) =
-                    serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
-                else {
-                    continue;
-                };
-                if tx
-                    .lock()
-                    .await
-                    .send(Message::Text(payload.into()))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-                continue;
-            };
-
-            let db = db.clone();
-            let broker = broker.clone();
-            let ctx = ctx.clone();
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                let _permit = permit;
-                // held so a delivery can be handed back if the reply never lands.
-                let stranded = StrandedDelivery::consumer_for(&frame.body);
-                let response =
-                    handle_broker_relay_request(db, broker.as_ref(), &ctx, relay_role, frame.body)
-                        .await;
-                let stranded = stranded.zip_response(&response);
-                let Ok(payload) =
-                    serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
-                else {
-                    return;
-                };
-                if tx
-                    .lock()
-                    .await
-                    .send(Message::Text(payload.into()))
-                    .await
-                    .is_err()
-                {
-                    // the socket died between the broker handing us a delivery and us forwarding it.
-                    // the agent never saw it, so nobody will ever ack it — hand it straight back
-                    // rather than leaving it leased to a consumer that no longer exists.
-                    if let Some(stranded) = stranded {
-                        stranded.nack(broker.as_ref()).await;
+            // server-side keepalive. the client pings too, but only this side can prove *its* writes
+            // still reach the agent — and an agent that vanished without a close frame otherwise leaves
+            // this connection, and every broker consumer parked behind it, alive indefinitely.
+            let ping_tx = tx.clone();
+            let ping = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(RELAY_PING_INTERVAL);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                ticker.tick().await; // the first tick fires immediately; skip it.
+                loop {
+                    ticker.tick().await;
+                    if ping_tx
+                        .lock()
+                        .await
+                        .send(Message::Ping(Default::default()))
+                        .await
+                        .is_err()
+                    {
+                        break;
                     }
                 }
             });
-        }
-        ping.abort();
-        log::info!("WebSocket connection closed for broker relay as {relay_role:?}");
-    })
+
+            loop {
+                // bounded read, mirroring the client: a half-open connection (an agent whose route
+                // disappeared) never produces a close frame or an error, so waiting on `next()` alone
+                // holds this task and its broker consumers open forever.
+                let msg = match tokio::time::timeout(RELAY_IDLE_TIMEOUT, rx_ws.next()).await {
+                    Ok(Some(msg)) => msg,
+                    Ok(None) => break,
+                    Err(_) => {
+                        log::warn!(
+                            "broker relay idle for {}s with no frame; closing",
+                            RELAY_IDLE_TIMEOUT.as_secs()
+                        );
+                        break;
+                    }
+                };
+                let text = match msg {
+                    Ok(Message::Text(text)) => text,
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(_) => continue,
+                };
+                let Ok(frame) = serde_json::from_str::<WsRequestFrame>(&text) else {
+                    continue;
+                };
+
+                // `try_acquire`, never an awaited acquire: parked `receive_for` calls hold their permit
+                // for as long as they wait, so blocking the read loop on a permit would stop us reading
+                // the very `ack` frames that would free one. refusing is safe — every client op retries.
+                let Ok(permit) = Arc::clone(&in_flight).try_acquire_owned() else {
+                    let response = TcpResponse::Error {
+                        message: crate::errors::RELAY_BUSY
+                            .error(format!(
+                                "more than {RELAY_MAX_IN_FLIGHT} requests in flight"
+                            ))
+                            .to_string(),
+                    };
+                    let Ok(payload) =
+                        serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
+                    else {
+                        continue;
+                    };
+                    if tx
+                        .lock()
+                        .await
+                        .send(Message::Text(payload.into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                };
+
+                let db = db.clone();
+                let broker = broker.clone();
+                let ctx = ctx.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    // held so a delivery can be handed back if the reply never lands.
+                    let stranded = StrandedDelivery::consumer_for(&frame.body);
+                    let response = handle_broker_relay_request(
+                        db,
+                        broker.as_ref(),
+                        &ctx,
+                        relay_role,
+                        frame.body,
+                    )
+                    .await;
+                    let stranded = stranded.zip_response(&response);
+                    let Ok(payload) =
+                        serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
+                    else {
+                        return;
+                    };
+                    if tx
+                        .lock()
+                        .await
+                        .send(Message::Text(payload.into()))
+                        .await
+                        .is_err()
+                    {
+                        // the socket died between the broker handing us a delivery and us forwarding it.
+                        // the agent never saw it, so nobody will ever ack it — hand it straight back
+                        // rather than leaving it leased to a consumer that no longer exists.
+                        if let Some(stranded) = stranded {
+                            stranded.nack(broker.as_ref()).await;
+                        }
+                    }
+                });
+            }
+            ping.abort();
+            log::info!("WebSocket connection closed for broker relay as {relay_role:?}");
+        })
 }
 
 /// how many relay requests one connection may have in flight at once. a legitimate agent holds at
