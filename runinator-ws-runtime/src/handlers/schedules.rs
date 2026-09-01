@@ -611,7 +611,10 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleS
                 .post(create_freeze_window::<T>)
                 .layer(Extension(pool.clone())),
         )
-        .route("/schedules/calendar.ics", get(schedule_calendar::<T>))
+        .route(
+            "/schedules/calendar.ics",
+            get(schedule_calendar::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/schedules/calendar-subscriptions",
             post(create_calendar_subscription::<T>),
@@ -622,7 +625,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleS
         )
         .route(
             "/calendar/{token}/runinator.ics",
-            get(subscribed_calendar::<T>),
+            get(subscribed_calendar::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/freeze_windows/{id}",

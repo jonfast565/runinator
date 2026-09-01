@@ -16,6 +16,7 @@ mod packs;
 mod revisions;
 mod rexrap;
 mod runs;
+mod schedules;
 mod users;
 mod validation;
 
