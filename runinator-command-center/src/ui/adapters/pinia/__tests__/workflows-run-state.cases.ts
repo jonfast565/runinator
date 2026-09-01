@@ -9,12 +9,36 @@ import {
 } from "../../../../core/api/commandCenterApi";
 import {
   RUN_ID,
+  WORKFLOW_ID,
   flushWorkflowSync,
+  workflowDefinition,
   workflowDetail,
   waitingGateWorkflowDetail,
 } from "./workflows-fixtures";
 
 export function registerWorkflowRunStateTests() {
+  it("opens the debug run input dialog immediately", async () => {
+    const workflows = useWorkflowsStore();
+    const workflow = workflowDefinition(WORKFLOW_ID, "typed input");
+    workflow.input_type = {
+      type: "struct",
+      fields: {
+        environment: { required: true, ty: { type: "string" } },
+      },
+    };
+    workflows.workflows = [workflow];
+    await workflows.selectWorkflow(workflow);
+
+    // Prime the computed binding as the mounted view does before the click.
+    expect(workflows.runInputOpen).toBe(false);
+
+    await workflows.runSelectedWorkflowDebug();
+
+    expect(workflows.runInputOpen).toBe(true);
+    expect(workflows.runInputDebug).toBe(true);
+    expect(workflows.runInputDraft).toEqual({ environment: "" });
+  });
+
   it("does not let older HTTP fetches overwrite a WebSocket push", async () => {
     const workflows = useWorkflowsStore();
     let resolveFetch: (detail: WorkflowRunDetail) => void = () => undefined;

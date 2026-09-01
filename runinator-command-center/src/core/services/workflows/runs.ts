@@ -120,6 +120,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       host.state.runInputDraft = buildInputSkeleton(host.getSelectedWorkflowInputType());
       host.state.runInputDebug = debug;
       host.state.runInputOpen = true;
+      host.notify();
       return;
     }
 
