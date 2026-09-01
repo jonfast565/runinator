@@ -904,6 +904,11 @@ main[inert] {
   overflow: hidden;
 }
 
+/* settings forms can exceed the available detail track; this pane owns that scroll. */
+.settings-details {
+  overflow: auto;
+}
+
 .output {
   flex: 1;
   min-height: 120px;

@@ -125,7 +125,7 @@
       </template>
 
       <template #second>
-        <div class="panel details flex min-h-0 flex-col gap-4 overflow-auto">
+        <div class="panel details settings-details flex min-h-0 flex-col gap-4">
           <MobileBackBar label="Back to settings" @back="detailActive = false" />
 
           <!-- display preferences panel -->

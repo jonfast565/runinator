@@ -107,7 +107,7 @@ const adminSettings = useAdminSettingsStore();
 const consoleStore = useConsoleStore();
 const functions = useFunctionsStore();
 const gates = useGatesStore();
-// initialize early so the theme data-theme attribute is set before first render.
+// instantiate the preference adapter for display controls; bootstrap owns DOM theme application.
 useDisplayPreferencesStore();
 // track viewport size and publish it as document[data-viewport] for css + layout logic.
 useBreakpoint();
