@@ -82,10 +82,10 @@
               @run="runBulkAction"
               @clear="selection.clear"
             />
-            <DataTable>
+            <DataTable table-class="entity-banner-table table-resize-disabled">
               <thead>
                 <tr>
-                  <th class="w-9" scope="col">
+                  <th class="entity-banner-select" scope="col">
                     <SelectCheckbox
                       :checked="selection.allSelected.value"
                       :indeterminate="selection.someSelected.value"
@@ -93,15 +93,14 @@
                       @toggle="selection.toggleAll"
                     />
                   </th>
-                  <th>Name</th>
-                  <th>Version</th>
-                  <th>State</th>
+                  <th>Workflow</th>
+                  <th class="entity-banner-status">State</th>
                 </tr>
               </thead>
               <tbody>
                 <template v-for="group in workflowNamespaceGroups" :key="group.namespace">
-                  <tr class="bg-surface-muted text-xs font-semibold text-fg-muted">
-                    <td colspan="4">
+                  <tr class="entity-banner-group">
+                    <td colspan="3">
                       <button
                         class="flex w-full items-center gap-2 text-left"
                         type="button"
@@ -130,21 +129,28 @@
                     }"
                     @click="chooseWorkflow(workflow)"
                   >
-                    <td class="w-9">
+                    <td class="entity-banner-select">
                       <SelectCheckbox
                         :checked="selection.isSelected(workflow)"
                         :label="`Select workflow ${workflow.name}`"
                         @toggle="selection.toggle(workflow, $event)"
                       />
                     </td>
-                    <td>
-                      <div>{{ workflow.name }}</div>
-                      <div class="text-xs text-fg-muted">
-                        {{ workflowPath(workflow) }} · {{ workflow.id?.slice(0, 8) ?? "new" }}
+                    <td
+                      :title="`${workflow.name}\n${workflowPath(workflow)}\n${workflow.id ?? 'New workflow'}`"
+                    >
+                      <div class="entity-banner-content">
+                        <span class="entity-banner-title">{{ workflow.name }}</span>
+                        <span class="entity-banner-meta">
+                          {{ workflowPath(workflow) }} · v{{ workflow.version }} · #{{
+                            workflow.id?.slice(0, 8) ?? "new"
+                          }}
+                        </span>
                       </div>
                     </td>
-                    <td>{{ workflow.version }}</td>
-                    <td><StatusBadge :status="workflow.enabled" /></td>
+                    <td class="entity-banner-status">
+                      <StatusBadge :status="workflow.enabled" />
+                    </td>
                   </tr>
                 </template>
               </tbody>

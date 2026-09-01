@@ -66,12 +66,10 @@
                 : 'No pipelines match the current scope filter.'
             "
           />
-          <DataTable v-else>
+          <DataTable v-else table-class="entity-banner-table table-resize-disabled">
             <thead>
               <tr>
-                <th>Path</th>
-                <th>Members</th>
-                <th>Scope</th>
+                <th>Pipeline</th>
               </tr>
             </thead>
             <tbody>
@@ -82,12 +80,17 @@
                 :class="{ selected: item.id === pipeline.selectedPipelineId }"
                 @click="choosePipeline(item)"
               >
-                <td>
-                  <div>{{ pipelinePath(item) }}</div>
-                  <div class="text-xs text-fg-muted">{{ item.name }}</div>
+                <td :title="`${item.name}\n${pipelinePath(item)}`">
+                  <div class="entity-banner-content">
+                    <span class="entity-banner-title">{{ item.name }}</span>
+                    <span class="entity-banner-meta">
+                      {{ pipelinePath(item) }} · {{ item.graph.members.length }} member{{
+                        item.graph.members.length === 1 ? "" : "s"
+                      }}
+                      · {{ item.org_id ? "Organization" : "Global" }}
+                    </span>
+                  </div>
                 </td>
-                <td>{{ item.graph.members.length }}</td>
-                <td>{{ item.org_id ? "Org" : "Global" }}</td>
               </tr>
             </tbody>
           </DataTable>

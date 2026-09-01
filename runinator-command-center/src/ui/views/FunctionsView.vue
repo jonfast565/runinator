@@ -43,22 +43,20 @@
             <MetricCard label="Versioned packages" :value="versionedPackageCount" />
             <MetricCard label="Selected aliases" :value="aliases.length" />
           </div>
-          <DataTable>
+          <DataTable table-class="entity-banner-table table-resize-disabled">
             <thead>
               <tr>
                 <th>Package</th>
-                <th>Latest</th>
-                <th>Description</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="loading && !functions.packages.length">
-                <td colspan="3" class="px-3.5 py-3.5 text-center text-fg-muted">
+                <td class="px-3.5 py-3.5 text-center text-fg-muted">
                   <LoadingPanel compact :message="loadingMessage || 'Refreshing functions…'" />
                 </td>
               </tr>
               <tr v-else-if="!functions.filteredPackages.length">
-                <td colspan="3" class="!p-0 hover:!bg-transparent">
+                <td class="!p-0 hover:!bg-transparent">
                   <EmptyState
                     class="functions-empty-state"
                     compact
@@ -79,9 +77,19 @@
                 :class="{ selected: functions.selectedPackage?.id === pkg.id }"
                 @click="functions.selectPackage(pkg)"
               >
-                <td class="font-mono text-[12px]">{{ qualifiedPackageName(pkg) }}</td>
-                <td>{{ pkg.latest_version ?? "—" }}</td>
-                <td>{{ pkg.description ?? "" }}</td>
+                <td :title="`${qualifiedPackageName(pkg)}\n${pkg.description ?? ''}`">
+                  <div class="entity-banner-content">
+                    <span class="entity-banner-title font-mono text-[12px]">
+                      {{ qualifiedPackageName(pkg) }}
+                    </span>
+                    <span class="entity-banner-meta">
+                      {{
+                        pkg.latest_version ? `Latest v${String(pkg.latest_version)}` : "No version"
+                      }}
+                      <template v-if="pkg.description"> · {{ pkg.description }}</template>
+                    </span>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </DataTable>

@@ -55,7 +55,7 @@ const props = withDefaults(
     // 'cards' renders label:value cards on mobile; 'scroll' keeps the compact table layout.
     responsive?: "scroll" | "cards";
     // Number of leading fields to retain in opt-in mobile card mode. Scroll-mode tables keep every
-    // column and expose horizontal overflow instead of dropping information.
+    // column and ellipsize values that exceed the available column width.
     mobileColumns?: 1 | 2;
     // render a leading checkbox column. selection state is owned by the caller (useBulkSelection),
     // so this component only displays it and reports intent.

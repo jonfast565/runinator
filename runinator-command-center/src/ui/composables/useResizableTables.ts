@@ -123,7 +123,24 @@ function addResizeHandle(table: ResizableTable, header: HTMLTableCellElement, in
   header.append(handle);
 }
 
+function clearResizeBehavior(table: HTMLTableElement) {
+  table.querySelector(":scope > colgroup[data-resizable-columns]")?.remove();
+  table.querySelectorAll(".table-column-resize-handle").forEach((handle) => {
+    handle.remove();
+  });
+  table.classList.remove("resizable-table");
+  table.style.removeProperty("table-layout");
+  tables.delete(table);
+}
+
 function makeResizable(table: HTMLTableElement) {
+  // Domain tables with a deliberately constrained master-list layout must track their pane width.
+  // Pixel columns captured before a split pane settles would otherwise push status/actions away.
+  if (table.classList.contains("table-resize-disabled")) {
+    clearResizeBehavior(table);
+    return;
+  }
+
   const headers = headerCells(table);
 
   if (!headers.length) {

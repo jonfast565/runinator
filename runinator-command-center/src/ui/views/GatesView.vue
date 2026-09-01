@@ -35,24 +35,21 @@
             <MetricCard label="Total records" :value="gates.gates.length" />
             <MetricCard label="Selected" :value="selectedGateLabel" />
           </div>
-          <DataTable>
+          <DataTable table-class="entity-banner-table table-resize-disabled">
             <thead>
               <tr>
-                <th>Status</th>
-                <th>Kind</th>
-                <th>Label</th>
-                <th>Node</th>
-                <th>Run</th>
+                <th>Gate</th>
+                <th class="entity-banner-status">Status</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="loadingGates && !gates.gates.length">
-                <td colspan="5" class="px-3.5 py-3.5 text-center text-fg-muted">
+                <td colspan="2" class="px-3.5 py-3.5 text-center text-fg-muted">
                   <LoadingPanel compact :message="loadingGatesMessage || 'Refreshing gates…'" />
                 </td>
               </tr>
               <tr v-else-if="!gates.filteredGates.length">
-                <td colspan="5" class="!p-0 hover:!bg-transparent">
+                <td colspan="2" class="!p-0 hover:!bg-transparent">
                   <EmptyState
                     compact
                     :icon="gates.gates.length ? 'search' : 'lock'"
@@ -76,11 +73,15 @@
                 }"
                 @click="gates.selectedGate = gate"
               >
-                <td><StatusBadge :status="gate.status" /></td>
-                <td>{{ gate.kind ?? "" }}</td>
-                <td>{{ gate.label ?? "" }}</td>
-                <td>{{ gate.node_id ?? "" }}</td>
-                <td class="font-mono text-[11px]">{{ gate.workflow_run_id ?? "" }}</td>
+                <td :title="gateTooltip(gate)">
+                  <div class="entity-banner-content">
+                    <span class="entity-banner-title">
+                      {{ gate.label ?? gate.kind ?? "Gate" }}
+                    </span>
+                    <span class="entity-banner-meta">{{ gateMeta(gate) }}</span>
+                  </div>
+                </td>
+                <td class="entity-banner-status"><StatusBadge :status="gate.status" /></td>
               </tr>
             </tbody>
           </DataTable>
@@ -159,6 +160,7 @@ import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import { pretty } from "../../core/utils/format";
 import { isBadStatus, isGoodStatus } from "../../core/utils/status";
+import type { GateRecord } from "../../core/domain/models";
 
 const gates = useGatesStore();
 const orgs = useOrgsStore();
@@ -169,6 +171,22 @@ const reason = ref("");
 const selectedGateLabel = computed(() =>
   gates.selectedGate ? (gates.selectedGate.label ?? gates.selectedGate.id ?? "Selected") : "—",
 );
+
+function gateMeta(gate: GateRecord): string {
+  return [gate.kind, `Node #${shortId(gate.node_id)}`, `Run #${shortId(gate.workflow_run_id)}`]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function gateTooltip(gate: GateRecord): string {
+  return [gate.label, gate.kind, gate.node_id, gate.workflow_run_id]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join("\n");
+}
+
+function shortId(value: string): string {
+  return value.length > 8 ? value.slice(0, 8) : value;
+}
 
 function submitGateDecision(event: SubmitEvent) {
   const action = (event.submitter as HTMLButtonElement | null)?.value;

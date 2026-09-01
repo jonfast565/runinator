@@ -60,25 +60,28 @@
         "
       />
       <div v-else class="table-scroll min-h-0 flex-1">
-        <DataTable bare>
+        <DataTable bare table-class="entity-banner-table table-resize-disabled">
           <thead>
             <tr>
-              <th>Path</th>
-              <th>Version</th>
-              <th>MIME</th>
-              <th>Size</th>
-              <th>Updated</th>
-              <th></th>
+              <th>File</th>
+              <th class="entity-banner-actions"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="file in filteredFiles" :key="file.descriptor.id">
-              <td class="font-mono text-[12px]">{{ file.descriptor.path }}</td>
-              <td>v{{ file.revision }}</td>
-              <td>{{ file.descriptor.mime_type }}</td>
-              <td>{{ formatBytes(file.descriptor.size_bytes) }}</td>
-              <td>{{ formatDate(file.created_at) }}</td>
-              <td class="whitespace-nowrap">
+              <td :title="file.descriptor.path">
+                <div class="entity-banner-content">
+                  <span class="entity-banner-title font-mono text-[12px]">
+                    {{ file.descriptor.path }}
+                  </span>
+                  <span class="entity-banner-meta">
+                    v{{ file.revision }} · {{ file.descriptor.mime_type }} ·
+                    {{ formatBytes(file.descriptor.size_bytes) }} ·
+                    {{ formatDate(file.created_at) }}
+                  </span>
+                </div>
+              </td>
+              <td class="entity-banner-actions whitespace-nowrap">
                 <button class="btn btn-sm" type="button" @click="download(file)">
                   <Icon name="download" :size="13" /> Download
                 </button>

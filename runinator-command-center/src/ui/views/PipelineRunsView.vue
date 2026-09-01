@@ -81,6 +81,7 @@
                 :workflow-names="pipelineNames"
                 show-workflow
                 entity-label="Pipeline"
+                list-mode
                 selectable
                 :selected-run-ids="selection.selectedKeys.value as string[]"
                 :all-selected="selection.allSelected.value"

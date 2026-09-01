@@ -72,6 +72,7 @@
                 :selected-run-id="workflows.selectedWorkflowRunId"
                 :workflow-names="workflowNames"
                 show-workflow
+                list-mode
                 selectable
                 :selected-run-ids="selection.selectedKeys.value as string[]"
                 :all-selected="selection.allSelected.value"
