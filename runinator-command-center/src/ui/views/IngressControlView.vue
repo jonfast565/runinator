@@ -8,7 +8,7 @@
         description="Observe traffic in flight, hold it at a durable boundary, and release or drop individual messages without changing the delivery path."
       >
         <label class="dwell-control">
-          <span>Completed dwell</span>
+          <span>Fresh completion</span>
           <input
             v-model.number="dwellDurationSeconds"
             class="input"
@@ -212,6 +212,7 @@ import { useOrgsStore } from "../adapters/pinia/orgs";
 import type { JsonRecord } from "../../core/domain/models";
 import type { ScopeRefInput } from "../../core/api/commandCenterApi";
 import { formatDate, pretty } from "../../core/utils/format";
+import { recordsForIngressLane, type IngressLane } from "../../core/utils/ingress-control";
 import {
   approveBrokerIngress,
   approveExternalIngress,
@@ -554,28 +555,12 @@ const FlowBoard = defineComponent({
       { id: "applied", label: "Applied" },
       { id: "dropped", label: "Dropped" },
     ];
-    // Keep cards in their actual state lane. Previously, a new held or approved message first
-    // rendered in Incoming, then was re-created in its final lane after 450ms. Apart from being
-    // visually misleading, separate transition groups cannot animate that re-parenting smoothly.
-    const lane = (record: JsonRecord) =>
-      record.state === "held"
-        ? "held"
-        : record.state === "dropped"
-          ? "dropped"
-          : ["approved", "applying", "applied", "failed"].includes(scalarText(record.state))
-            ? "applied"
-            : "incoming";
-    const visible = (id: string) =>
-      props.records
-        .filter((record) => lane(record) === id)
-        .filter((record) => {
-          if (id !== "applied" && id !== "dropped") {
-            return true;
-          }
+    const visible = (id: string) => recordsForIngressLane(props.records, id as IngressLane);
 
-          const resolved = Date.parse(scalarText(record.resolved_at));
-          return Number.isFinite(resolved) && Date.now() - resolved <= props.dwellSeconds * 1000;
-        });
+    const isFreshCompletion = (record: JsonRecord) => {
+      const resolved = Date.parse(scalarText(record.resolved_at));
+      return Number.isFinite(resolved) && Date.now() - resolved <= props.dwellSeconds * 1000;
+    };
 
     const title = (record: JsonRecord) => {
       const event = record.event as JsonRecord | undefined;
@@ -652,6 +637,11 @@ const FlowBoard = defineComponent({
                       class: [
                         "message-card",
                         { "message-card-fresh": props.incomingIds.has(String(record.id)) },
+                        {
+                          "message-card-fresh-completion":
+                            (definition.id === "applied" || definition.id === "dropped") &&
+                            isFreshCompletion(record),
+                        },
                       ],
                       role: "button",
                       tabindex: 0,
@@ -949,6 +939,9 @@ const FlowBoard = defineComponent({
 }
 :deep(.lane-applied .message-card) {
   border-left-color: var(--success-fg);
+}
+:deep(.message-card-fresh-completion) {
+  background: color-mix(in srgb, var(--success-fg) 6%, var(--surface));
 }
 :deep(.card-top),
 :deep(.card-meta),
