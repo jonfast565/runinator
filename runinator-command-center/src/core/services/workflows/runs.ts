@@ -14,6 +14,7 @@ import {
   requestRunInterrupt,
   settleWorkflowEffect,
   resumeWorkflowRun,
+  setWorkflowRunBreakpoints,
   stepWorkflowRun,
 } from "../../api/commandCenterApi";
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
@@ -239,6 +240,52 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.ctx.setStatus(response.message || `Workflow run ${runId} continued`);
     await fetchWorkflowRunDetail(runId, true);
     host.notify();
+  }
+
+  async function setBreakpoints(breakpoints: string[]) {
+    if (!host.state.workflowRunDetail || !host.isDebugRun()) {
+      return;
+    }
+
+    const runId = host.state.workflowRunDetail.run.id;
+    const normalized = [...new Set(breakpoints)].sort();
+    const response = await host.ctx.runOperation(
+      `Updating breakpoints for workflow run ${runId}`,
+      () => setWorkflowRunBreakpoints(runId, normalized),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to update breakpoints");
+      return;
+    }
+
+    const detail = host.state.workflowRunDetail;
+
+    if (detail.run.id === runId) {
+      detail.execution_state ??= {};
+
+      const debug = coerceDebugFrame(detail.execution_state.debug);
+
+      if (debug) {
+        detail.execution_state.debug = { ...debug, breakpoints: normalized };
+      }
+    }
+
+    host.ctx.setStatus(response.message || `Updated breakpoints for workflow run ${runId}`);
+    host.notify();
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function toggleBreakpoint(nodeId: string) {
+    const current = host.getCurrentBreakpoints();
+    const next = current.includes(nodeId)
+      ? current.filter((breakpoint) => breakpoint !== nodeId)
+      : [...current, nodeId];
+    await setBreakpoints(next);
+  }
+
+  async function clearBreakpoints() {
+    await setBreakpoints([]);
   }
 
   async function cancelSelectedWorkflowRun() {
@@ -1086,7 +1133,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     );
 
     return continuation?.awaiting_effect_id
-      ? detail.effects?.find((effect) => effect.id === continuation.awaiting_effect_id) ?? null
+      ? (detail.effects?.find((effect) => effect.id === continuation.awaiting_effect_id) ?? null)
       : null;
   }
 
@@ -1192,6 +1239,8 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     launchWorkflowRun,
     stepSelectedWorkflowRun,
     continueSelectedWorkflowRun,
+    toggleBreakpoint,
+    clearBreakpoints,
     selectCursor,
     cancelSelectedWorkflowRun,
     deleteSelectedWorkflowRun,

@@ -13,8 +13,8 @@ use runinator_ws_core::responses::bad_request;
 use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-/// Unified VM debugger entrypoint. The VM supports continuation-scoped Step and Continue only;
-/// reducer-era node mutation, breakpoint, and speculative-cursor commands were removed.
+/// Unified VM debugger entrypoint. Step and Continue are continuation-scoped; breakpoint updates
+/// replace the run-scoped set shared by every continuation.
 pub async fn debug_command<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(debug): Extension<Arc<DebugOperations<T>>>,
@@ -119,7 +119,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/workflow_runs/{id}/debug/command",
         "Debug",
         "Run a VM debugger command",
-        "Applies a continuation-scoped Step or Continue command to a workflow VM run.",
+        "Applies Step, Continue, or a run-scoped breakpoint update to a workflow VM run.",
         false,
         json_body("Debugger command payload.", Example::AutomationRecord),
         &[],

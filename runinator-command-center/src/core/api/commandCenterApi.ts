@@ -1424,6 +1424,13 @@ export async function continueWorkflowRun(workflowRunId: string, cursor?: string
   return command<TaskResponse>("continue_workflow_run", { workflowRunId, cursor });
 }
 
+export async function setWorkflowRunBreakpoints(workflowRunId: string, breakpoints: string[]) {
+  return command<TaskResponse>("set_workflow_run_breakpoints", {
+    workflowRunId,
+    breakpoints,
+  });
+}
+
 export async function cancelWorkflowRun(
   workflowRunId: string,
   override?: ManagedRunOverrideOptions,

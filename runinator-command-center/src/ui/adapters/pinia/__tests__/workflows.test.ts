@@ -10,11 +10,16 @@ vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   fetchWorkflows: vi.fn(),
   fetchWorkflowRun: vi.fn(),
   openGate: vi.fn(),
+  setWorkflowRunBreakpoints: vi.fn(),
   saveWorkflowRexRap: vi.fn(),
   decompileToRexRap: vi.fn(),
 }));
 
-import { decompileToRexRap, fetchGates } from "../../../../core/api/commandCenterApi";
+import {
+  decompileToRexRap,
+  fetchGates,
+  setWorkflowRunBreakpoints,
+} from "../../../../core/api/commandCenterApi";
 import { setWorkflowCatalogs } from "../../../../core/workflow/catalog-registry";
 import { testNodeKindCatalog } from "../../../../core/workflow/__tests__/catalog-fixtures";
 import { registerWorkflowAuthoringTests } from "./workflows-authoring.cases";
@@ -36,6 +41,7 @@ describe("workflow store adapter", () => {
     vi.clearAllMocks();
     vi.mocked(fetchGates).mockResolvedValue([]);
     vi.mocked(decompileToRexRap).mockResolvedValue("workflow stub { start -> end }");
+    vi.mocked(setWorkflowRunBreakpoints).mockResolvedValue({ success: true, message: "updated" });
   });
 
   afterEach(() => {

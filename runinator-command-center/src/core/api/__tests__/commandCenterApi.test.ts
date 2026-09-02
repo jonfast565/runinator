@@ -725,6 +725,30 @@ describe("command center permissions API in web mode", () => {
     );
   });
 
+  it("keeps the run execution state when fetching details in web mode", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        run: { id: "run-debug", status: "debug_paused" },
+        nodes: [],
+        execution_state: {
+          debug: { enabled: true, mode: "breakpoints", breakpoints: ["greeting"] },
+        },
+      }),
+    } as unknown as Response);
+
+    await expect(
+      invokeViaHttp("fetch_workflow_run", { workflowRunId: "run-debug" }),
+    ).resolves.toEqual({
+      run: { id: "run-debug", status: "debug_paused" },
+      nodes: [],
+      execution_state: {
+        debug: { enabled: true, mode: "breakpoints", breakpoints: ["greeting"] },
+      },
+    });
+  });
+
   it("uploads a compiled pack archive with its overwrite choice", async () => {
     const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]).buffer;
 

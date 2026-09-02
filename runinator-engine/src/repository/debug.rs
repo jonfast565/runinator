@@ -67,7 +67,66 @@ pub async fn apply_debug_command<T: RuntimeStore + WorkflowVmStore>(
     match verb {
         DebugVerb::Step { cursor } => step_debug_cursor(db, workflow_run_id, cursor).await,
         DebugVerb::Continue { cursor } => continue_debug_cursor(db, workflow_run_id, cursor).await,
+        DebugVerb::SetBreakpoints { breakpoints } => {
+            set_debug_breakpoints(db, workflow_run_id, breakpoints).await
+        }
     }
+}
+
+/// Replace the breakpoint configuration without disturbing any continuation's current position.
+pub async fn set_debug_breakpoints<T: RuntimeStore + WorkflowVmStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    breakpoints: Vec<String>,
+) -> Result<TaskResponse, SendableError> {
+    let module = db
+        .fetch_workflow_module(workflow_run_id)
+        .await?
+        .ok_or_else(|| crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id))?;
+    let valid = module
+        .source_map
+        .iter()
+        .map(|entry| entry.node_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut normalized = breakpoints
+        .into_iter()
+        .filter(|node_id| valid.contains(node_id.as_str()))
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+
+    for _ in 0..8 {
+        let Some(mut run) = db.fetch_workflow_run(workflow_run_id).await? else {
+            return Err(crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id));
+        };
+        if run.status.is_terminal() {
+            return Err(crate::errors::DEBUG_TERMINAL.error(workflow_run_id));
+        }
+        let Some(debug) = run.execution_state.debug.as_mut() else {
+            return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
+        };
+        if !debug.config.enabled {
+            return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
+        }
+        debug.config.breakpoints = normalized.clone();
+        let expected_version = run.state_version;
+        if db
+            .update_workflow_run_execution_state_cas(
+                workflow_run_id,
+                expected_version,
+                run.execution_state,
+            )
+            .await?
+        {
+            return Ok(TaskResponse {
+                success: true,
+                message: format!("Updated {} breakpoint(s)", normalized.len()),
+            });
+        }
+    }
+
+    Err(crate::errors::DEBUG_INVALID_PATCH
+        .error("workflow state changed repeatedly while updating breakpoints"))
 }
 
 /// advance one thread of control by exactly one node.

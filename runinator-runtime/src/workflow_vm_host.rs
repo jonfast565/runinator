@@ -16,13 +16,13 @@ use runinator_models::{
     workflows::WorkflowStatus,
     workspaces::{WORKSPACE_INSTANCE_LABEL, WorkspaceAffinity},
 };
-use runinator_store::roles::WorkflowVmStore;
+use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
 use uuid::Uuid;
 
 use crate::{
     WorkflowVmStep,
     errors::{WORKFLOW_VM_EFFECT_MISSING, WORKFLOW_VM_MODULE_MISSING},
-    resume_workflow_vm, step_workflow_vm,
+    resume_workflow_vm_with_debug, step_workflow_vm_with_debug,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,11 +74,11 @@ impl WorkflowVmDriveOutcome {
 }
 
 /// Drives continuations leased by a scheduler through their snapshotted workflow modules.
-pub struct WorkflowVmHost<'a, S: WorkflowVmStore> {
+pub struct WorkflowVmHost<'a, S: WorkflowVmStore + RuntimeStore> {
     store: &'a S,
 }
 
-impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
+impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
     pub fn new(store: &'a S) -> Self {
         Self { store }
     }
@@ -115,6 +115,12 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
             .fetch_workflow_module(continuation.workflow_run_id)
             .await?
             .ok_or_else(|| WORKFLOW_VM_MODULE_MISSING.error(continuation.workflow_run_id))?;
+        let debug = self
+            .store
+            .fetch_workflow_run(continuation.workflow_run_id)
+            .await?
+            .and_then(|run| run.execution_state.debug)
+            .map(|frame| frame.config);
         let step = if let Some(effect_id) = continuation.awaiting_effect_id {
             let effect = self
                 .store
@@ -149,9 +155,15 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                         .error(format!("effect {effect_id} was claimed before settlement")));
                 }
             };
-            resume_workflow_vm(&module, continuation, Some(&effect.request), result)
+            resume_workflow_vm_with_debug(
+                &module,
+                continuation,
+                Some(&effect.request),
+                result,
+                debug.as_ref(),
+            )
         } else {
-            step_workflow_vm(&module, continuation)
+            step_workflow_vm_with_debug(&module, continuation, debug.as_ref())
         };
         self.apply(step).await
     }

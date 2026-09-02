@@ -4,8 +4,10 @@
 //! atomically persisting the returned continuation and effect receipt.
 
 use runinator_models::{
+    debug::should_break_at,
     interrupt::{InterruptMode, InterruptSource},
     value::Value,
+    workflow_state::{DebugConfig, DebugRuntime},
     workflow_vm::{
         WorkflowCompensationFrame, WorkflowContinuation, WorkflowContinuationStatus,
         WorkflowEffectRequest, WorkflowFailure, WorkflowFailureKind, WorkflowForkFrame,
@@ -65,9 +67,21 @@ pub enum WorkflowVmStep {
 /// interrupt sources are detected without a host re-reading graph ancestry.
 pub fn resume(
     module: &WorkflowModule,
+    continuation: WorkflowContinuation,
+    request: Option<&WorkflowEffectRequest>,
+    result: Result<Value, WorkflowFailure>,
+) -> WorkflowVmStep {
+    resume_with_debug(module, continuation, request, result, None)
+}
+
+/// Resume with the run-scoped debugger configuration that was current when the host claimed this
+/// continuation.
+pub fn resume_with_debug(
+    module: &WorkflowModule,
     mut continuation: WorkflowContinuation,
     request: Option<&WorkflowEffectRequest>,
     result: Result<Value, WorkflowFailure>,
+    debug: Option<&DebugConfig>,
 ) -> WorkflowVmStep {
     // Persisted effect settlement makes the row runnable so a scheduler can claim it, while the
     // effect id remains available for the durable host to load its immutable receipt.
@@ -118,7 +132,7 @@ pub fn resume(
         Ok(value) => continuation.stack.push(value),
         Err(failure) => return handle_classified_failure(module, continuation, failure),
     }
-    step(module, continuation)
+    step_with_debug(module, continuation, debug)
 }
 
 /// The interrupt source a settled effect represents, in [`InterruptSource::ALL`] precedence.
@@ -210,7 +224,17 @@ fn timer_discriminator(
 }
 
 /// Run a continuation until it reaches its next durable boundary.
-pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> WorkflowVmStep {
+pub fn step(module: &WorkflowModule, continuation: WorkflowContinuation) -> WorkflowVmStep {
+    step_with_debug(module, continuation, None)
+}
+
+/// Run a continuation until its next durable boundary while honoring the supplied run-scoped
+/// debugger configuration.
+pub fn step_with_debug(
+    module: &WorkflowModule,
+    mut continuation: WorkflowContinuation,
+    debug: Option<&DebugConfig>,
+) -> WorkflowVmStep {
     if let Err(error) = module.ensure_supported() {
         return fail(continuation, error.to_string());
     }
@@ -396,7 +420,12 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                 return resolve_interrupt(module, continuation, *mode);
             }
             WorkflowInstruction::DebugBoundary { label } => {
-                let mut park_after_boundary = false;
+                let breakpoint_matches = label.as_deref().is_some_and(|label| {
+                    debug.is_some_and(|config| {
+                        config.enabled && should_break_at(config, &DebugRuntime::default(), label)
+                    })
+                });
+                let mut park_after_boundary = breakpoint_matches;
                 if let Some(position) = continuation
                     .frames
                     .iter()
@@ -408,12 +437,14 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                             frame.step_requested = false;
                             frame.paused = true;
                             park_after_boundary = true;
+                        } else if breakpoint_matches {
+                            frame.paused = true;
                         }
                     }
                 } else {
                     continuation.frames.push(WorkflowFrame::Debug(
                         runinator_models::workflow_vm::WorkflowDebugFrame {
-                            paused: false,
+                            paused: breakpoint_matches,
                             step_requested: false,
                             breakpoint: label.clone(),
                             last_output: None,
@@ -2725,6 +2756,59 @@ mod tests {
             Some(&Value::String("finished".into()))
         );
         assert!(continuation.frames.iter().any(|frame| matches!(frame, WorkflowFrame::Debug(frame) if frame.breakpoint.as_deref() == Some("after-output"))));
+    }
+
+    #[test]
+    fn configured_breakpoint_parks_before_the_matching_boundary() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::DebugBoundary {
+                label: Some("pass".into()),
+            },
+            WorkflowInstruction::DebugBoundary {
+                label: Some("stop".into()),
+            },
+            WorkflowInstruction::Return,
+        ]);
+        let config = DebugConfig {
+            enabled: true,
+            mode: Some(runinator_models::workflow_state::DebugMode::Breakpoints),
+            breakpoints: vec!["stop".into()],
+        };
+
+        let WorkflowVmStep::Joined {
+            continuation,
+            join_key,
+            ..
+        } = step_with_debug(&module, continuation(), Some(&config))
+        else {
+            panic!("matching breakpoint should park the continuation");
+        };
+
+        assert_eq!(join_key, "debug-step");
+        assert_eq!(continuation.status, WorkflowContinuationStatus::Paused);
+        assert!(continuation.operator_paused);
+        assert!(continuation.frames.iter().any(|frame| matches!(frame, WorkflowFrame::Debug(frame) if frame.paused && frame.breakpoint.as_deref() == Some("stop"))));
+    }
+
+    #[test]
+    fn empty_breakpoint_set_runs_through_debug_boundaries() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::DebugBoundary {
+                label: Some("pass".into()),
+            },
+            WorkflowInstruction::Return,
+        ]);
+        let config = DebugConfig {
+            enabled: true,
+            mode: Some(runinator_models::workflow_state::DebugMode::Breakpoints),
+            breakpoints: vec![],
+        };
+
+        let WorkflowVmStep::Complete { .. } =
+            step_with_debug(&module, continuation(), Some(&config))
+        else {
+            panic!("an unset breakpoint should not park the continuation");
+        };
     }
 
     fn vm_node(id: &str, kind: WorkflowNodeKind, next: Option<&str>) -> WorkflowNode {

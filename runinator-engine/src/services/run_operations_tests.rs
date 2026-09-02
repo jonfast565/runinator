@@ -95,3 +95,57 @@ async fn create_persists_and_nudges_the_embedded_engine() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn debug_breakpoints_are_deduplicated_and_persisted_on_the_run() {
+    let (db, path) = test_db().await;
+    let saved = repository::upsert_workflow(
+        db.as_ref(),
+        &workflow(),
+        &RevisionAuthor::system(RevisionSource::Api),
+    )
+    .await
+    .unwrap();
+    let workflow_id = saved.id.expect("saved workflow receives an id");
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = RunOperations::new(
+        db.clone(),
+        broker.clone(),
+        UiEventPublisher::new(broker),
+        None,
+    );
+    let run = service
+        .create(
+            workflow_id,
+            json!({}),
+            true,
+            None,
+            WorkflowRunProvenance::default(),
+            Vec::new(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let response = repository::set_debug_breakpoints(
+        db.as_ref(),
+        run.id,
+        vec!["end".into(), "missing".into(), "end".into()],
+    )
+    .await
+    .unwrap();
+    assert!(response.success);
+    let refreshed = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
+    assert_eq!(
+        refreshed
+            .execution_state
+            .debug
+            .expect("debug run has a debug frame")
+            .config
+            .breakpoints,
+        vec!["end"]
+    );
+
+    let _ = std::fs::remove_file(path);
+}

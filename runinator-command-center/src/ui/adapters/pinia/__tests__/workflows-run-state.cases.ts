@@ -6,6 +6,7 @@ import {
   fetchGates,
   fetchWorkflowRun,
   openGate,
+  setWorkflowRunBreakpoints,
 } from "../../../../core/api/commandCenterApi";
 import {
   RUN_ID,
@@ -57,6 +58,26 @@ export function registerWorkflowRunStateTests() {
 
     expect(workflows.workflowRunDetail?.run.status).toBe("running");
     expect(workflows.workflowRunDetail?.run.message).toBe("ws");
+  });
+
+  it("sets, removes, and clears debug breakpoints from the run graph", async () => {
+    const workflows = useWorkflowsStore();
+    vi.mocked(fetchWorkflowRun)
+      .mockResolvedValueOnce(workflowDetail(RUN_ID, "debug_paused", "set", ["end"]))
+      .mockResolvedValueOnce(workflowDetail(RUN_ID, "debug_paused", "removed", []))
+      .mockResolvedValueOnce(workflowDetail(RUN_ID, "debug_paused", "cleared", []));
+    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "debug_paused", "ready"));
+
+    await workflows.toggleBreakpoint("end");
+    expect(setWorkflowRunBreakpoints).toHaveBeenNthCalledWith(1, RUN_ID, ["end"]);
+    expect(workflows.currentBreakpoints).toEqual(["end"]);
+
+    await workflows.toggleBreakpoint("end");
+    expect(setWorkflowRunBreakpoints).toHaveBeenNthCalledWith(2, RUN_ID, []);
+    expect(workflows.currentBreakpoints).toEqual([]);
+
+    await workflows.clearBreakpoints();
+    expect(setWorkflowRunBreakpoints).toHaveBeenNthCalledWith(3, RUN_ID, []);
   });
 
   it("retains projected VM node history when the run stream sends its lightweight envelope", () => {

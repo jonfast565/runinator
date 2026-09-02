@@ -831,6 +831,8 @@ pub enum DebugVerb {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cursor: CursorTarget,
     },
+    /// Replace the run-scoped breakpoint set used by every continuation.
+    SetBreakpoints { breakpoints: Vec<String> },
 }
 
 impl runinator_models::validation::Validate for DebugVerb {

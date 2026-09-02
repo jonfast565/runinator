@@ -12,7 +12,22 @@
     ]"
   >
     <span v-if="isNodeRunning" class="node-sheen" aria-hidden="true" />
-    <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
+    <button
+      v-if="canToggleBreakpoint"
+      type="button"
+      class="breakpoint-toggle nodrag nopan"
+      :class="{ active: data.debugBreakpoint }"
+      :title="data.debugBreakpoint ? `Remove breakpoint from ${id}` : `Set breakpoint on ${id}`"
+      :aria-label="
+        data.debugBreakpoint ? `Remove breakpoint from ${id}` : `Set breakpoint on ${id}`
+      "
+      :aria-pressed="data.debugBreakpoint"
+      @click.stop="workflows.toggleBreakpoint(id)"
+      @dblclick.stop
+    >
+      <span aria-hidden="true" />
+    </button>
+    <span v-else-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
     <span v-if="data.locked" class="lock-dot" title="Locked node"
       ><Icon name="lock" :size="11"
     /></span>
@@ -311,6 +326,9 @@ const isNodeRunning = computed(() => {
 // the node card; the card only needs to know whether one of them is parked on it.
 const nodeCursors = computed(() => props.data.cursors ?? []);
 const isDebugActive = computed(() => nodeCursors.value.some((cursor) => cursor.paused));
+const canToggleBreakpoint = computed(
+  () => props.data.readOnly === true && workflows.isDebugRun && workflows.canCancelWorkflowRun,
+);
 
 const isInlineEditing = computed(() => workflows.inlineEditNodeId === props.id);
 // surface the step id in the topline whenever a custom display name hides it from the title.

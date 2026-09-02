@@ -151,11 +151,14 @@ pub fn compile_workflow_module(
 
     let mut blocks = Vec::with_capacity(ordered.len());
     for node in ordered {
-        let mut instructions = vec![PendingInstruction::Instruction(
-            WorkflowInstruction::EnterNode {
+        let mut instructions = vec![
+            PendingInstruction::Instruction(WorkflowInstruction::DebugBoundary {
+                label: Some(node.id.clone()),
+            }),
+            PendingInstruction::Instruction(WorkflowInstruction::EnterNode {
                 node_id: node.id.clone(),
-            },
-        )];
+            }),
+        ];
         if node.reentry.enabled {
             let max_visits = u64::try_from(node.reentry.max_visits).map_err(|_| {
                 WorkflowValidationError::InvalidReentry(format!(
@@ -349,9 +352,10 @@ pub fn compile_workflow_module(
                 WorkflowInstruction::Reenter {
                     reentry_key,
                     // The instruction itself treats this target as the continuation point after
-                    // the guard. The symbolic label preserves graph validation and source-map
-                    // ownership even though the offset is finalized by the VM.
-                    target: resolve(&target)? + 2,
+                    // the debug boundary, node-entry marker, and guard. The symbolic label
+                    // preserves graph validation and source-map ownership even though the offset
+                    // is finalized by the VM.
+                    target: resolve(&target)? + 3,
                     exhausted: exhausted.as_ref().map(resolve).transpose()?,
                     max_visits,
                 }
@@ -1151,7 +1155,7 @@ mod tests {
         // to the next instruction emitted while lowering `start`.
         assert_eq!(
             serde_json::to_string(&module).unwrap(),
-            r#"{"version":1,"instructions":[{"op":"enter_node","node_id":"start"},{"op":"jump","target":2},{"op":"enter_node","node_id":"end"},{"op":"return"}],"source_map":[{"version":1,"instruction_start":0,"instruction_end":2,"node_id":"start","exit_instruction_pointer":1},{"version":1,"instruction_start":2,"instruction_end":4,"node_id":"end"}]}"#
+            r#"{"version":1,"instructions":[{"op":"debug_boundary","label":"start"},{"op":"enter_node","node_id":"start"},{"op":"jump","target":3},{"op":"debug_boundary","label":"end"},{"op":"enter_node","node_id":"end"},{"op":"return"}],"source_map":[{"version":1,"instruction_start":0,"instruction_end":3,"node_id":"start","exit_instruction_pointer":2},{"version":1,"instruction_start":3,"instruction_end":6,"node_id":"end"}]}"#
         );
         let decoded: WorkflowModule =
             serde_json::from_str(&serde_json::to_string(&module).unwrap()).unwrap();
@@ -1184,14 +1188,14 @@ mod tests {
 
         let module = compile_workflow_module(&definition).unwrap();
         assert!(matches!(
-            module.instructions[1],
-            WorkflowInstruction::Jump { target: 2 }
+            module.instructions[2],
+            WorkflowInstruction::Jump { target: 3 }
         ));
         assert!(matches!(
-            module.instructions[3],
+            module.instructions[5],
             WorkflowInstruction::Fail { .. }
         ));
-        assert_eq!(module.graph_location(3).unwrap().node_id, "fail");
+        assert_eq!(module.graph_location(5).unwrap().node_id, "fail");
     }
 
     #[test]
@@ -1977,9 +1981,9 @@ mod tests {
         };
         let module = compile_workflow_module(&definition).unwrap();
         assert!(matches!(
-            module.instructions.get(1),
+            module.instructions.get(2),
             Some(WorkflowInstruction::Reenter {
-                target: 2,
+                target: 3,
                 max_visits: 2,
                 ..
             })

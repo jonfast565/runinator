@@ -416,17 +416,55 @@
   color: #ffffff;
 }
 
-.breakpoint-dot {
+.breakpoint-dot,
+.breakpoint-toggle {
   position: absolute;
   top: 4px;
   left: 4px;
+  z-index: 3;
+}
+
+.breakpoint-dot {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: var(--danger-solid);
   border: 1px solid var(--surface);
   box-shadow: 0 0 0 1px var(--danger-solid);
-  z-index: 2;
+}
+
+.breakpoint-toggle {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.breakpoint-toggle > span {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--danger-solid);
+  border-radius: 50%;
+  background: var(--surface);
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.breakpoint-toggle:hover > span,
+.breakpoint-toggle:focus-visible > span {
+  transform: scale(1.2);
+}
+
+.breakpoint-toggle.active > span {
+  background: var(--danger-solid);
+  box-shadow: 0 0 0 1px var(--surface) inset;
 }
 
 .lock-dot {

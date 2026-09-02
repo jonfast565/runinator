@@ -310,6 +310,23 @@ where
         let now = Utc::now().timestamp();
         let state = WorkflowExecutionState::from_state(&state);
         let mut continuation = WorkflowContinuation::start(run_id, module.version);
+        if state
+            .debug
+            .as_ref()
+            .is_some_and(|debug| debug.config.enabled)
+        {
+            // Every debug launch stops before its first node. This gives the operator a stable
+            // chance to place breakpoints before Continue lets the run advance.
+            continuation.frames.push(WorkflowFrame::Debug(
+                runinator_models::workflow_vm::WorkflowDebugFrame {
+                    paused: false,
+                    step_requested: true,
+                    breakpoint: None,
+                    last_output: None,
+                    speculative: false,
+                },
+            ));
+        }
         continuation.instruction_pointer = instruction_pointer;
         continuation
             .locals

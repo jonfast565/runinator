@@ -630,6 +630,14 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   step_workflow_run: workflowRunDebugAction("step"),
   continue_workflow_run: workflowRunDebugAction("continue"),
+  set_workflow_run_breakpoints: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/command`,
+    body: (args) => ({
+      verb: "set_breakpoints",
+      breakpoints: arg(args, "breakpoints"),
+    }),
+  },
   cancel_workflow_run: {
     ...workflowRunAction("cancel"),
     body: (args) => ({
@@ -702,13 +710,17 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}`,
     transform: (raw) => {
-      const body = raw as { run?: unknown; nodes?: unknown };
+      const body = raw as { run?: unknown; nodes?: unknown; execution_state?: unknown };
 
       if (body.run == null) {
         throw new Error("missing workflow run");
       }
 
-      return { run: body.run, nodes: body.nodes ?? [] };
+      return {
+        run: body.run,
+        nodes: body.nodes ?? [],
+        execution_state: body.execution_state,
+      };
     },
   },
   delete_workflow_run: {
@@ -1007,8 +1019,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   delete_calendar_subscription: {
     method: "DELETE",
-    path: (args) =>
-      `schedules/calendar-subscriptions/${escape(arg(args, "subscriptionId"))}`,
+    path: (args) => `schedules/calendar-subscriptions/${escape(arg(args, "subscriptionId"))}`,
   },
   delete_artifact: {
     method: "DELETE",
