@@ -108,6 +108,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
         docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
     ),
     (
+        "post",
+        "/ingress_control/broker/session/heartbeat",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
+    ),
+    (
         "get",
         "/ingress_control/broker",
         docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
@@ -130,6 +135,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "get",
         "/dead_letters",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::DeadLettersRead),
+    ),
+    (
+        "get",
+        "/broker_messages",
         docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::DeadLettersRead),
     ),
     ("get", "/catalog/enums", docs::EndpointPolicy::Authenticated),
@@ -547,6 +557,7 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         crate::handlers::provisioning::get_node_backends,
         crate::handlers::provisioning::get_nodes,
         crate::handlers::observability::get_dead_letters,
+        crate::handlers::observability::get_broker_messages,
         crate::handlers::observability::get_audit_log,
     ),
     components(schemas(ApiError)),

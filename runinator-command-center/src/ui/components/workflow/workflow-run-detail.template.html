@@ -69,11 +69,14 @@
     </div>
     <div v-if="managedWorkspaces.length" class="summary-row">
       <span class="summary-label">Workspace affinity</span>
-      <span>{{ managedWorkspaces.map((workspace) => `${workspace.scope}:${workspace.status}`).join(", ") }}</span>
+      <span>{{ managedWorkspaceSummary }}</span>
     </div>
     <div v-if="managedOperations.length" class="summary-row">
       <span class="summary-label">External operations</span>
-      <span>{{ managedOperations.map((operation) => `${operation.provider}.${operation.action}:${operation.status}`).join(", ") }}</span>
+      <span
+        >{{ managedOperations.map((operation) =>
+        `${operation.provider}.${operation.action}:${operation.status}`).join(", ") }}</span
+      >
     </div>
     <div class="summary-row">
       <span class="text-xs text-fg-muted"
@@ -234,6 +237,13 @@
       </template>
     </RunTimeline>
   </section>
+
+  <BrokerMessageLog
+    v-if="workflows.workflowRunDetail"
+    class="run-detail-section"
+    :workflow-run-id="workflows.workflowRunDetail.run.id"
+    title="Broker messages for this workflow run"
+  />
 
   <details v-if="flatSteps.length" class="run-detail-section flat-steps-group">
     <summary>Flat step log (debug) · {{ flatSteps.length }} step(s)</summary>

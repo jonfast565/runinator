@@ -85,6 +85,9 @@ pub async fn run_ingress_consumer_with_orchestration_nudge<
                     if let Err(error) = db.purge_broker_ingress_records_before(cutoff).await {
                         warn!(error = %error, "failed to purge expired broker ingress records");
                     }
+                    if let Err(error) = db.purge_broker_messages_before(cutoff).await {
+                        warn!(error = %error, "failed to purge expired broker message traces");
+                    }
                     last_cleanup = chrono::Utc::now();
                 }
                 continue;

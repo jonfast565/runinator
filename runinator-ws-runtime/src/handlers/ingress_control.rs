@@ -15,8 +15,8 @@ use runinator_engine::{
 use runinator_models::{
     auth::{AuthContext, Permission},
     ingress_control::{
-        BrokerIngressSession, BrokerIngressSessionMode, ExternalIngressGate,
-        ExternalIngressGateMode, ExternalIngressRecord, IngressControlState,
+        BROKER_INGRESS_SESSION_TTL_SECONDS, BrokerIngressSession, BrokerIngressSessionMode,
+        ExternalIngressGate, ExternalIngressGateMode, ExternalIngressRecord, IngressControlState,
     },
     orchestration::{IngressTarget, IngressTargetKind},
     rbac::{Action, ScopeKind, ScopeRef},
@@ -49,6 +49,11 @@ pub struct SessionRequest {
     mode: BrokerIngressSessionMode,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SessionHeartbeatRequest {
+    scope: ScopeRef,
+}
+
 impl Validate for GateRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         Ok(())
@@ -56,6 +61,12 @@ impl Validate for GateRequest {
 }
 
 impl Validate for SessionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+impl Validate for SessionHeartbeatRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         Ok(())
     }
@@ -535,6 +546,7 @@ pub async fn put_broker_session<T: IngressControlStore>(
         mode: request.mode,
         updated_by: ctx.principal_id,
         updated_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::seconds(BROKER_INGRESS_SESSION_TTL_SECONDS),
     };
     match ingress.set_broker_session(session).await {
         Ok(session) => {
@@ -584,6 +596,39 @@ pub async fn get_broker_session<T: IngressControlStore>(
             Json(ApiResponse::BrokerIngressSession(value)),
         ),
         Ok(None) => not_found("broker ingress session not configured"),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+/// Renew the short-lived inspector lease without creating an audit entry for every browser
+/// heartbeat. Once these renewals stop, the engine treats the session as off.
+pub async fn heartbeat_broker_session<T: IngressControlStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<SessionHeartbeatRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = require_broker_scope(&ctx, request.scope) {
+        return reply;
+    }
+    let ingress = IngressOperations::new(db.clone());
+    let current = match ingress.broker_session(request.scope).await {
+        Ok(Some(session)) => session,
+        Ok(None) => return not_found("broker ingress session is no longer active"),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let now = Utc::now();
+    let session = BrokerIngressSession {
+        scope: current.scope,
+        mode: current.mode,
+        updated_by: ctx.principal_id,
+        updated_at: now,
+        expires_at: now + chrono::Duration::seconds(BROKER_INGRESS_SESSION_TTL_SECONDS),
+    };
+    match ingress.set_broker_session(session).await {
+        Ok(session) => (
+            StatusCode::OK,
+            Json(ApiResponse::BrokerIngressSession(session)),
+        ),
         Err(error) => api_error(error.to_string()),
     }
 }
@@ -742,6 +787,10 @@ pub fn routes<T: IngressControlStore>(pool: Arc<T>) -> axum::Router {
         .route(
             "/ingress_control/broker/session",
             get(get_broker_session::<T>).put(put_broker_session::<T>),
+        )
+        .route(
+            "/ingress_control/broker/session/heartbeat",
+            post(heartbeat_broker_session::<T>),
         )
         .route("/ingress_control/broker", get(list_broker::<T>))
         .route(

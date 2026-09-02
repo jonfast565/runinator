@@ -19,8 +19,9 @@ use runinator_models::{
         FunctionExport, FunctionPackage, FunctionRuntimeSpec, FunctionVersion,
     },
     ingress_control::{
-        BrokerIngressRecord, BrokerIngressSession, BrokerIngressSessionMode, ExternalIngressGate,
-        ExternalIngressGateMode, ExternalIngressRecord, IngressControlState,
+        BrokerIngressRecord, BrokerIngressSession, BrokerIngressSessionMode,
+        BrokerMessageDirection, BrokerMessageRecord, ExternalIngressGate, ExternalIngressGateMode,
+        ExternalIngressRecord, IngressControlState,
     },
     notifications::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,

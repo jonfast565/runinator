@@ -520,6 +520,31 @@ pub async fn list_dead_letters(
 }
 
 #[tauri::command]
+pub async fn list_broker_messages(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Option<Uuid>,
+    pipeline_run_id: Option<Uuid>,
+    channel: Option<String>,
+    limit: Option<i64>,
+) -> CommandResult<Vec<Value>> {
+    let mut params: Vec<String> = Vec::new();
+    if let Some(workflow_run_id) = workflow_run_id {
+        params.push(format!("workflow_run_id={workflow_run_id}"));
+    }
+    if let Some(pipeline_run_id) = pipeline_run_id {
+        params.push(format!("pipeline_run_id={pipeline_run_id}"));
+    }
+    if let Some(channel) = channel.filter(|channel| !channel.is_empty()) {
+        params.push(format!("channel={channel}"));
+    }
+    if let Some(limit) = limit {
+        params.push(format!("limit={limit}"));
+    }
+    let path = with_query("broker_messages", &params);
+    get_json(&state, &path).await
+}
+
+#[tauri::command]
 pub async fn list_audit_log(
     state: State<'_, CommandCenterState>,
     actor_id: Option<Uuid>,

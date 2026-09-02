@@ -155,6 +155,7 @@ fallible_row_mapper!(row_to_broker_ingress_session(row) -> BrokerIngressSession 
         scope: owner_scope(row.get("scope_kind"), row.get("scope_id"))?,
         mode: broker_session_mode(row.get("mode"))?, updated_by: row.get("updated_by"),
         updated_at: DateTime::<Utc>::from_timestamp(row.get("updated_at"), 0).unwrap_or_else(Utc::now),
+        expires_at: DateTime::<Utc>::from_timestamp(row.get("expires_at"), 0).unwrap_or_else(Utc::now),
     })
 });
 
@@ -167,5 +168,26 @@ fallible_row_mapper!(row_to_broker_ingress_record(row) -> BrokerIngressRecord {
         last_error: row.get("last_error"),
         received_at: DateTime::<Utc>::from_timestamp(row.get("received_at"), 0).unwrap_or_else(Utc::now),
         resolved_at: row.get::<Option<i64>, _>("resolved_at").and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+    })
+});
+
+fn broker_message_direction(value: String) -> Result<BrokerMessageDirection, SendableError> {
+    match value.as_str() {
+        "published" => Ok(BrokerMessageDirection::Published),
+        "received" => Ok(BrokerMessageDirection::Received),
+        value => Err(Box::new(std::io::Error::other(format!(
+            "invalid broker message direction '{value}'"
+        )))),
+    }
+}
+
+fallible_row_mapper!(row_to_broker_message_record(row) -> BrokerMessageRecord {
+    Ok(BrokerMessageRecord {
+        id: row.get("id"), channel: row.get("channel"),
+        direction: broker_message_direction(row.get("direction"))?,
+        message_kind: row.get("message_kind"), workflow_run_id: row.get("workflow_run_id"),
+        delivery_id: row.get("delivery_id"), dedupe_key: row.get("dedupe_key"),
+        trace_id: row.get("trace_id"), payload: parse_json(row.get("payload")),
+        occurred_at: DateTime::<Utc>::from_timestamp(row.get("occurred_at"), 0).unwrap_or_else(Utc::now),
     })
 });

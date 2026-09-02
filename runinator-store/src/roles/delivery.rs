@@ -14,7 +14,7 @@ use runinator_models::{
     errors::SendableError,
     ingress_control::{
         BrokerIngressCapture, BrokerIngressCaptureRequest, BrokerIngressRecord,
-        BrokerIngressSession, IngressControlState,
+        BrokerIngressSession, BrokerMessageRecord, IngressControlState,
     },
     orchestration::IdempotencyClaim,
     rbac::ScopeRef,
@@ -72,6 +72,29 @@ pub trait DeliveryStore: Send + Sync + 'static {
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     fn purge_broker_ingress_records_before(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Append an engine-side observation of a broker message. This is a best-effort diagnostic
+    /// trail; the caller must not fail the live broker operation when the trace cannot be stored.
+    fn record_broker_message(
+        &self,
+        record: BrokerMessageRecord,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch broker observations, newest first. A pipeline-run filter includes all of its member
+    /// workflow runs, while a workflow-run filter is exact.
+    fn fetch_broker_messages(
+        &self,
+        workflow_run_id: Option<Uuid>,
+        pipeline_run_id: Option<Uuid>,
+        channel: Option<String>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<BrokerMessageRecord>, SendableError>> + Send;
+
+    /// Bound the diagnostic trace independently of the execution history it explains.
+    fn purge_broker_messages_before(
         &self,
         cutoff: DateTime<Utc>,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;

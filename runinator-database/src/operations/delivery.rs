@@ -6,7 +6,7 @@
 use super::*;
 use runinator_models::ingress_control::{
     BrokerIngressCapture, BrokerIngressCaptureRequest, BrokerIngressRecord, BrokerIngressSession,
-    BrokerIngressSessionMode, IngressControlState,
+    BrokerIngressSessionMode, BrokerMessageDirection, BrokerMessageRecord, IngressControlState,
 };
 
 const BROKER_CONTROL_COLUMNS: &str = "id, scope_kind, scope_id, delivery_id, dedupe_key, command_kind, command, state, reviewed_by, last_error, received_at, resolved_at";
@@ -73,8 +73,8 @@ where
         &self,
         scope: ScopeRef,
     ) -> Result<Option<BrokerIngressSession>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT scope_kind, scope_id, mode, updated_by, updated_at FROM broker_ingress_sessions WHERE scope_key = ?"))
-            .bind(scope_key(scope)).fetch_optional(self.pool()).await?;
+        let row = sqlx::query(&self.render("SELECT scope_kind, scope_id, mode, updated_by, updated_at, expires_at FROM broker_ingress_sessions WHERE scope_key = ? AND expires_at > ?"))
+            .bind(scope_key(scope)).bind(Utc::now().timestamp()).fetch_optional(self.pool()).await?;
         row.as_ref()
             .map(mappers::row_to_broker_ingress_session)
             .transpose()
@@ -85,10 +85,17 @@ where
         session: BrokerIngressSession,
     ) -> Result<BrokerIngressSession, SendableError> {
         let key = scope_key(session.scope);
+        if session.mode == BrokerIngressSessionMode::Off {
+            sqlx::query(&self.render("DELETE FROM broker_ingress_sessions WHERE scope_key = ?"))
+                .bind(key)
+                .execute(self.pool())
+                .await?;
+            return Ok(session);
+        }
         let sql = if self.dialect() == SqlDialect::MariaDb {
-            "INSERT INTO broker_ingress_sessions (scope_key, scope_kind, scope_id, mode, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE mode = VALUES(mode), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)"
+            "INSERT INTO broker_ingress_sessions (scope_key, scope_kind, scope_id, mode, updated_by, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE mode = VALUES(mode), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at), expires_at = VALUES(expires_at)"
         } else {
-            "INSERT INTO broker_ingress_sessions (scope_key, scope_kind, scope_id, mode, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(scope_key) DO UPDATE SET mode = excluded.mode, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
+            "INSERT INTO broker_ingress_sessions (scope_key, scope_kind, scope_id, mode, updated_by, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope_key) DO UPDATE SET mode = excluded.mode, updated_by = excluded.updated_by, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
         };
         sqlx::query(&self.render(sql))
             .bind(key)
@@ -97,6 +104,7 @@ where
             .bind(broker_mode_name(session.mode))
             .bind(session.updated_by)
             .bind(session.updated_at.timestamp())
+            .bind(session.expires_at.timestamp())
             .execute(self.pool())
             .await?;
         self.fetch_broker_ingress_session(session.scope)
@@ -292,6 +300,77 @@ where
         .execute(self.pool())
         .await?
         .affected())
+    }
+
+    async fn record_broker_message(
+        &self,
+        record: BrokerMessageRecord,
+    ) -> Result<(), SendableError> {
+        let direction = match record.direction {
+            BrokerMessageDirection::Published => "published",
+            BrokerMessageDirection::Received => "received",
+        };
+        sqlx::query(&self.render("INSERT INTO broker_messages (id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+            .bind(record.id).bind(record.channel).bind(direction).bind(record.message_kind)
+            .bind(record.workflow_run_id).bind(record.delivery_id).bind(record.dedupe_key)
+            .bind(record.trace_id).bind(record.payload.to_string()).bind(record.occurred_at.timestamp())
+            .execute(self.pool()).await?;
+        Ok(())
+    }
+
+    async fn fetch_broker_messages(
+        &self,
+        workflow_run_id: Option<Uuid>,
+        pipeline_run_id: Option<Uuid>,
+        channel: Option<String>,
+        limit: i64,
+    ) -> Result<Vec<BrokerMessageRecord>, SendableError> {
+        let mut sql = String::from(
+            "SELECT id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at FROM broker_messages WHERE 1 = 1",
+        );
+        if workflow_run_id.is_some() {
+            sql.push_str(" AND workflow_run_id = ?");
+        }
+        if pipeline_run_id.is_some() {
+            sql.push_str(
+                " AND workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+            );
+        }
+        if channel.is_some() {
+            sql.push_str(" AND channel = ?");
+        }
+        sql.push_str(" ORDER BY occurred_at DESC, id DESC LIMIT ?");
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered);
+        if let Some(id) = workflow_run_id {
+            query = query.bind(id);
+        }
+        if let Some(id) = pipeline_run_id {
+            query = query.bind(id);
+        }
+        if let Some(channel) = channel {
+            query = query.bind(channel);
+        }
+        let rows = query
+            .bind(limit.clamp(1, 1000))
+            .fetch_all(self.pool())
+            .await?;
+        rows.iter()
+            .map(mappers::row_to_broker_message_record)
+            .collect()
+    }
+
+    async fn purge_broker_messages_before(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<u64, SendableError> {
+        Ok(
+            sqlx::query(&self.render("DELETE FROM broker_messages WHERE occurred_at < ?"))
+                .bind(cutoff.timestamp())
+                .execute(self.pool())
+                .await?
+                .affected(),
+        )
     }
 
     async fn record_dead_letter(&self, record: Value) -> Result<Value, SendableError> {

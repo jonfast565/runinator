@@ -14,6 +14,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
+use crate::broker_trace::TracingBroker;
 use crate::events::EventSender;
 use crate::loops::{
     run_agent_directive_publisher, run_notification_effect_dispatcher,
@@ -129,6 +130,9 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     runinator_observability::tui::activity("engine", "starting durable orchestration loops", None);
     // A standalone engine owns no HTTP-side signals; its durable loops continue polling normally.
     let local_signals = local_signals.unwrap_or_default();
+    // Trace at the engine boundary so an operator can follow real broker traffic by the workflow
+    // or pipeline run it belongs to, without giving workers database access.
+    let broker: Arc<dyn Broker> = Arc::new(TracingBroker::new(broker, pool.clone()));
     let server_settings = ServerSettingsHandle::load(pool.as_ref()).await?;
     let orchestration_nudge = Arc::new(Notify::new());
 

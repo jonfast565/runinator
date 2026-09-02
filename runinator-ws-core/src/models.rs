@@ -10,7 +10,8 @@ use runinator_models::{
         FunctionPackage, FunctionPackageDetail, FunctionVersion,
     },
     ingress_control::{
-        BrokerIngressRecord, BrokerIngressSession, ExternalIngressGate, ExternalIngressRecord,
+        BrokerIngressRecord, BrokerIngressSession, BrokerMessageRecord, ExternalIngressGate,
+        ExternalIngressRecord,
     },
     notifications::{Notification, NotificationDelivery, NotificationPolicy},
     pipelines::{Pipeline, PipelineMemberAttempt, PipelineRun, PipelineRunDetail, PipelineTrigger},
@@ -135,6 +136,7 @@ pub enum ApiResponse {
     BrokerIngressSession(BrokerIngressSession),
     BrokerIngressRecord(BrokerIngressRecord),
     BrokerIngressRecordList(Vec<BrokerIngressRecord>),
+    BrokerMessageList(Vec<BrokerMessageRecord>),
     OrchestrationBinding(runinator_models::orchestration::OrchestrationBinding),
     OrchestrationBindingList(Vec<runinator_models::orchestration::OrchestrationBinding>),
     OrchestrationCorrelationAlias(runinator_models::orchestration::OrchestrationCorrelationAlias),
@@ -548,6 +550,18 @@ pub struct GateQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct DeadLetterQuery {
+    #[serde(default)]
+    pub channel: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BrokerMessageQuery {
+    #[serde(default)]
+    pub workflow_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub pipeline_run_id: Option<Uuid>,
     #[serde(default)]
     pub channel: Option<String>,
     #[serde(default)]

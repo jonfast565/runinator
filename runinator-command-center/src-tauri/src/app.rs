@@ -214,6 +214,7 @@ pub fn run() {
             crate::commands::list_agent_machines,
             crate::commands::invalidate_agent_machine,
             crate::commands::list_dead_letters,
+            crate::commands::list_broker_messages,
             crate::commands::list_audit_log,
             crate::commands::fetch_notifications,
             crate::commands::mark_notification_read,

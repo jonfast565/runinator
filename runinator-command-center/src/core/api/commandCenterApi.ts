@@ -160,9 +160,12 @@ export async function releaseExternalIngress(
   targetKind: "workflow" | "pipeline",
   targetId: string,
 ) {
-  return fetchIngressJson<JsonRecord[]>(`ingress_control/targets/${targetKind}/${targetId}/release`, {
-    method: "POST",
-  });
+  return fetchIngressJson<JsonRecord[]>(
+    `ingress_control/targets/${targetKind}/${targetId}/release`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function listBrokerIngressControl(params: URLSearchParams) {
@@ -172,7 +175,11 @@ export async function listBrokerIngressControl(params: URLSearchParams) {
 
 export async function fetchBrokerIngressSession(scope: ScopeRefInput) {
   const params = new URLSearchParams({ scope_kind: scope.kind });
-  if (scope.id) {params.set("scope_id", scope.id);}
+
+  if (scope.id) {
+    params.set("scope_id", scope.id);
+  }
+
   return fetchIngressJson<JsonRecord>(`ingress_control/broker/session?${params}`);
 }
 
@@ -183,6 +190,13 @@ export async function configureBrokerIngressSession(
   return fetchIngressJson<JsonRecord>("ingress_control/broker/session", {
     method: "PUT",
     body: JSON.stringify({ scope, mode }),
+  });
+}
+
+export async function renewBrokerIngressSession(scope: ScopeRefInput) {
+  return fetchIngressJson<JsonRecord>("ingress_control/broker/session/heartbeat", {
+    method: "POST",
+    body: JSON.stringify({ scope }),
   });
 }
 
@@ -492,6 +506,17 @@ export async function revokeApiKey(keyId: string) {
 
 export async function listDeadLetters(channel?: string, limit?: number) {
   return command<JsonRecord[]>("list_dead_letters", { channel, limit });
+}
+
+export interface BrokerMessageFilter extends Record<string, unknown> {
+  workflowRunId?: string;
+  pipelineRunId?: string;
+  channel?: string;
+  limit?: number;
+}
+
+export async function listBrokerMessages(filter: BrokerMessageFilter = {}) {
+  return command<JsonRecord[]>("list_broker_messages", filter);
 }
 
 export async function listAuditLog(actorId?: string, action?: string, limit?: number) {

@@ -11,6 +11,7 @@ import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 import Icon from "../shared/Icon.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
+import BrokerMessageLog from "../shared/BrokerMessageLog.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
 import RunTimeline from "../shared/RunTimeline.vue";
 import RunGantt from "../shared/RunGantt.vue";
@@ -85,6 +86,9 @@ const managedBinding = computed<{
 });
 const managedWorkspaces = computed<ManagedWorkspaceSummary[]>(() =>
   orchestrations.selectedId === managedBindingId.value ? orchestrationRuntime.workspaces : [],
+);
+const managedWorkspaceSummary = computed(() =>
+  managedWorkspaces.value.map((workspace) => `${workspace.scope}:${workspace.status}`).join(", "),
 );
 const managedOperations = computed<ManagedOperationSummary[]>(() => {
   const runId = workflows.workflowRunDetail?.run.id;

@@ -80,7 +80,7 @@
         <div class="control-strip">
           <label
             >Exact scope
-            <select v-model="scopeKind" class="input">
+            <select v-model="scopeKind" class="input" :disabled="brokerSessionActive">
               <option value="platform">Platform</option>
               <option value="organization">Organization</option>
               <option value="team">Team</option>
@@ -92,26 +92,36 @@
               v-model.trim="scopeId"
               class="input w-full font-mono"
               placeholder="Exact scope UUID"
+              :disabled="brokerSessionActive"
           /></label>
           <label
-            >Inspector
-            <select v-model="brokerMode" class="input">
-              <option value="off">Off</option>
+            >Mode
+            <select v-model="brokerMode" class="input" :disabled="brokerSessionActive">
               <option value="observe">Observe</option>
               <option value="hold_orchestration_nudges">Hold orchestration nudges</option>
             </select>
           </label>
           <Button
+            v-if="!brokerSessionActive"
             variant="primary"
             :disabled="scopeKind !== 'platform' && !scopeId"
-            @click="saveBrokerSession"
-            >Apply session</Button
+            @click="startBrokerSession"
+            >Start inspection</Button
           >
+          <Button v-else variant="danger" @click="stopBrokerSession()">Stop inspection</Button>
         </div>
         <p class="m-0 text-xs text-fg-muted">
-          Scope matching is exact. Hold mode observes every matching command but stages only
-          <code>orchestration_intent</code> messages.
+          <template v-if="brokerSessionActive">
+            Inspection is active and renews automatically while this page is connected. Leaving the
+            page, losing connectivity, or pressing Stop ends it; hold mode stages only
+            <code>orchestration_intent</code> messages.
+          </template>
+          <template v-else>
+            Scope matching is exact. Start inspection to observe broker ingress or hold
+            orchestration nudges for review.
+          </template>
         </p>
+        <BrokerMessageLog v-if="scopeKind === 'platform'" title="Platform broker messages" />
         <FlowBoard
           stream="broker"
           :records="brokerRecords"
@@ -193,10 +203,12 @@ import {
 import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import BrokerMessageLog from "../components/shared/BrokerMessageLog.vue";
 import DeadLettersView from "./DeadLettersView.vue";
 import { useAppStore } from "../adapters/pinia/app";
 import { useOrgsStore } from "../adapters/pinia/orgs";
 import type { JsonRecord } from "../../core/domain/models";
+import type { ScopeRefInput } from "../../core/api/commandCenterApi";
 import { formatDate, pretty } from "../../core/utils/format";
 import {
   approveBrokerIngress,
@@ -205,9 +217,11 @@ import {
   configureExternalIngressGate,
   dropBrokerIngress,
   dropExternalIngress,
+  fetchBrokerIngressSession,
   listBrokerIngressControl,
   listExternalIngressControl,
   releaseExternalIngress,
+  renewBrokerIngressSession,
 } from "../../core/api/commandCenterApi";
 
 type Section = "external" | "broker" | "dead";
@@ -231,13 +245,16 @@ const targetId = ref("");
 const gateMode = ref<"disabled" | "paused" | "review">("disabled");
 const scopeKind = ref<ScopeKind>(orgs.activeOrgId ? "organization" : "platform");
 const scopeId = ref(orgs.activeOrgId ?? "");
-const brokerMode = ref<"off" | "observe" | "hold_orchestration_nudges">("off");
+const brokerMode = ref<"observe" | "hold_orchestration_nudges">("observe");
+const brokerSessionActive = ref(false);
+const brokerSessionScope = ref<ScopeRefInput | null>(null);
 const dwellDurationSeconds = ref(
   Math.min(30, Math.max(1, Number(localStorage.getItem("runinator.ingressDwellSeconds") ?? 5))),
 );
 let initialized = false;
 let refreshTimer = 0;
 let pollTimer = 0;
+let brokerHeartbeatTimer = 0;
 
 function idOf(record: JsonRecord) {
   return String(record.id);
@@ -330,13 +347,106 @@ function releaseFifo() {
   return mutate(() => releaseExternalIngress(targetKind.value, targetId.value));
 }
 
-function saveBrokerSession() {
-  return mutate(() =>
-    configureBrokerIngressSession(
-      { kind: scopeKind.value, id: scopeKind.value === "platform" ? null : scopeId.value },
-      brokerMode.value,
-    ),
-  );
+function selectedBrokerScope(): ScopeRefInput | null {
+  if (scopeKind.value !== "platform" && !scopeId.value) {
+    return null;
+  }
+
+  return {
+    kind: scopeKind.value,
+    id: scopeKind.value === "platform" ? null : scopeId.value,
+  };
+}
+
+function applyBrokerSession(session: JsonRecord) {
+  const scope = session.scope as JsonRecord | undefined;
+  const kind = scalarText(scope?.kind);
+  const mode = scalarText(session.mode);
+
+  if (
+    !["platform", "organization", "team", "user"].includes(kind) ||
+    !["observe", "hold_orchestration_nudges"].includes(mode)
+  ) {
+    brokerSessionActive.value = false;
+    brokerSessionScope.value = null;
+    return;
+  }
+
+  brokerMode.value = mode as "observe" | "hold_orchestration_nudges";
+  brokerSessionScope.value = {
+    kind: kind as ScopeKind,
+    id: scalarText(scope?.id) || null,
+  };
+  brokerSessionActive.value = true;
+}
+
+async function loadBrokerSession() {
+  const scope = selectedBrokerScope();
+
+  if (!scope || brokerSessionActive.value) {
+    return;
+  }
+
+  try {
+    applyBrokerSession(await fetchBrokerIngressSession(scope));
+  } catch {
+    // A missing or expired session is the expected stopped state.
+    brokerSessionActive.value = false;
+    brokerSessionScope.value = null;
+  }
+}
+
+async function startBrokerSession() {
+  const scope = selectedBrokerScope();
+
+  if (!scope) {
+    return;
+  }
+
+  try {
+    applyBrokerSession(await configureBrokerIngressSession(scope, brokerMode.value));
+    scheduleRefresh();
+  } catch (error) {
+    app.setError(String(error));
+  }
+}
+
+async function stopBrokerSession(silent = false) {
+  const scope = brokerSessionScope.value;
+
+  if (!scope) {
+    return;
+  }
+
+  try {
+    await configureBrokerIngressSession(scope, "off");
+  } catch (error) {
+    if (!silent) {
+      app.setError(String(error));
+    }
+
+    return;
+  }
+
+  brokerSessionActive.value = false;
+  brokerSessionScope.value = null;
+  scheduleRefresh();
+}
+
+async function renewBrokerSession() {
+  const scope = brokerSessionScope.value;
+
+  if (!scope || !brokerSessionActive.value) {
+    return;
+  }
+
+  try {
+    applyBrokerSession(await renewBrokerIngressSession(scope));
+  } catch {
+    // The server lease has ended or the transport disappeared. Do not silently restart a session.
+    brokerSessionActive.value = false;
+    brokerSessionScope.value = null;
+  }
 }
 
 function approveExternal(record: JsonRecord) {
@@ -373,12 +483,17 @@ function onVisibility() {
   }
 }
 
+function stopInspectionOnExit() {
+  void stopBrokerSession(true);
+}
+
 function onIngressChanged() {
   scheduleRefresh();
 }
 
 watch([scopeKind, scopeId], () => {
   scheduleRefresh(true);
+  void loadBrokerSession();
 });
 watch(dwellDurationSeconds, (value) => {
   const clamped = Math.min(30, Math.max(1, Math.round(value || 5)));
@@ -401,17 +516,25 @@ watch(
 );
 onMounted(() => {
   scheduleRefresh(true);
+  void loadBrokerSession();
   pollTimer = window.setInterval(() => {
     scheduleRefresh();
   }, 1500);
+  brokerHeartbeatTimer = window.setInterval(() => void renewBrokerSession(), 5000);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("runinator:ingress-control-changed", onIngressChanged);
+  window.addEventListener("pagehide", stopInspectionOnExit);
+  window.addEventListener("offline", stopInspectionOnExit);
 });
 onBeforeUnmount(() => {
   window.clearInterval(pollTimer);
+  window.clearInterval(brokerHeartbeatTimer);
   window.clearTimeout(refreshTimer);
   document.removeEventListener("visibilitychange", onVisibility);
   window.removeEventListener("runinator:ingress-control-changed", onIngressChanged);
+  window.removeEventListener("pagehide", stopInspectionOnExit);
+  window.removeEventListener("offline", stopInspectionOnExit);
+  void stopBrokerSession(true);
 });
 
 const FlowBoard = defineComponent({

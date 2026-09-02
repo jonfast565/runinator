@@ -2,8 +2,8 @@ use super::*;
 use runinator_models::{
     ingress_control::{
         BrokerIngressCapture, BrokerIngressCaptureRequest, BrokerIngressSession,
-        BrokerIngressSessionMode, ExternalIngressCapture, ExternalIngressGate,
-        ExternalIngressGateMode, IngressControlState,
+        BrokerIngressSessionMode, BrokerMessageDirection, BrokerMessageRecord,
+        ExternalIngressCapture, ExternalIngressGate, ExternalIngressGateMode, IngressControlState,
     },
     orchestration::{IngressEvent, IngressTarget, IngressTargetKind},
     rbac::{ScopeKind, ScopeRef},
@@ -109,6 +109,7 @@ async fn broker_sessions_are_exact_scoped_and_decisions_are_single_use() {
         mode: BrokerIngressSessionMode::HoldOrchestrationNudges,
         updated_by: None,
         updated_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::seconds(15),
     })
     .await
     .unwrap();
@@ -154,5 +155,47 @@ async fn broker_sessions_are_exact_scoped_and_decisions_are_single_use() {
             .unwrap()
             .id,
         id
+    );
+}
+
+#[tokio::test]
+async fn broker_message_trace_filters_by_run_and_prunes_old_rows() {
+    let db = ingress_db().await;
+    let matching_run = Uuid::now_v7();
+    let older_run = Uuid::now_v7();
+    let now = Utc::now();
+
+    for (workflow_run_id, occurred_at) in [
+        (matching_run, now),
+        (older_run, now - chrono::Duration::days(8)),
+    ] {
+        db.record_broker_message(BrokerMessageRecord {
+            id: Uuid::now_v7(),
+            channel: "effect".into(),
+            direction: BrokerMessageDirection::Published,
+            message_kind: "effect_command".into(),
+            workflow_run_id: Some(workflow_run_id),
+            delivery_id: None,
+            dedupe_key: Some(workflow_run_id.to_string()),
+            trace_id: None,
+            payload: runinator_models::json!({"workflow_run_id": workflow_run_id}),
+            occurred_at,
+        })
+        .await
+        .unwrap();
+    }
+
+    let matching = db
+        .fetch_broker_messages(Some(matching_run), None, Some("effect".into()), 20)
+        .await
+        .unwrap();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].workflow_run_id, Some(matching_run));
+
+    assert_eq!(
+        db.purge_broker_messages_before(now - chrono::Duration::days(7))
+            .await
+            .unwrap(),
+        1
     );
 }

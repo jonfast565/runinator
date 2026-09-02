@@ -220,6 +220,7 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("audit_log", ColdArchive),
     table_policy!("auth_sessions", ServiceRetention),
     table_policy!("automation_records", ColdArchive),
+    table_policy!("broker_messages", ServiceRetention),
     table_policy!("broker_ingress_messages", ServiceRetention),
     table_policy!("broker_ingress_sessions", BoundedState),
     table_policy!("calendar_subscriptions", ExplicitLifecycle),

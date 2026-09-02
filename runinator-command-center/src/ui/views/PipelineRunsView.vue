@@ -296,6 +296,11 @@
               </div>
             </section>
 
+            <BrokerMessageLog
+              :pipeline-run-id="store.detail.run.id"
+              title="Broker messages for this pipeline run"
+            />
+
             <section
               v-if="pendingInquiry"
               class="grid gap-2 rounded-md border border-warning-fg/30 bg-warning-bg px-3 py-2.5"
@@ -436,6 +441,7 @@ import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import BrokerMessageLog from "../components/shared/BrokerMessageLog.vue";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";

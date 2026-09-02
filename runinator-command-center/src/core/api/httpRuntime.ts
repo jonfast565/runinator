@@ -167,6 +167,35 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       return query ? `dead_letters?${query}` : "dead_letters";
     },
   },
+  list_broker_messages: {
+    method: "GET",
+    path: (args) => {
+      const params = new URLSearchParams();
+      const workflowRunId = argOpt(args, "workflowRunId");
+      const pipelineRunId = argOpt(args, "pipelineRunId");
+      const channel = argOpt(args, "channel");
+      const limit = argOpt(args, "limit");
+
+      if (typeof workflowRunId === "string" && workflowRunId) {
+        params.set("workflow_run_id", workflowRunId);
+      }
+
+      if (typeof pipelineRunId === "string" && pipelineRunId) {
+        params.set("pipeline_run_id", pipelineRunId);
+      }
+
+      if (typeof channel === "string" && channel) {
+        params.set("channel", channel);
+      }
+
+      if (limit != null) {
+        params.set("limit", displayValue(limit));
+      }
+
+      const query = params.toString();
+      return query ? `broker_messages?${query}` : "broker_messages";
+    },
+  },
   list_audit_log: {
     method: "GET",
     path: (args) => {

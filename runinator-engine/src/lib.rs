@@ -18,6 +18,7 @@ pub mod simulate;
 pub mod stability;
 
 mod adapter_polling;
+mod broker_trace;
 mod effect_consumer;
 mod effect_deadline;
 mod effect_retry;
