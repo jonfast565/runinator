@@ -1,6 +1,6 @@
 <template>
-  <section class="pane">
-    <div class="panel flex min-h-0 flex-col">
+  <section class="pane h-full overflow-hidden" :class="{ 'dead-letters-embedded': embedded }">
+    <div class="panel flex h-full min-h-0 flex-col">
       <PanelHeader
         title="Dead Letters"
         icon="flag"
@@ -136,3 +136,9 @@ async function refresh() {
 onMounted(refresh);
 watch(() => orgs.activeOrgId, refresh);
 </script>
+
+<style scoped>
+.dead-letters-embedded {
+  padding: 0;
+}
+</style>

@@ -4,13 +4,21 @@
       <div>
         <h3 class="m-0 text-base font-semibold text-fg">{{ title }}</h3>
         <p class="m-0 mt-0.5 text-xs text-fg-muted">
-          Engine-side broker traffic is captured automatically and correlated to this run.
+          Engine-side broker traffic is captured automatically and correlated to this scope.
         </p>
       </div>
-      <button class="btn btn-sm" :disabled="loading" @click="refresh">
-        <Icon name="refresh" />
-        <span>Refresh</span>
-      </button>
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs text-fg-muted" aria-live="polite">
+          {{ liveUpdates ? "Live updates" : "Updates paused" }}
+        </span>
+        <button class="btn btn-sm" @click="toggleLiveUpdates">
+          {{ liveUpdates ? "Pause" : "Resume" }}
+        </button>
+        <button class="btn btn-sm" :disabled="loading" @click="refresh()">
+          <Icon name="refresh" />
+          <span>Refresh</span>
+        </button>
+      </div>
     </div>
 
     <p v-if="error" class="error m-0 text-xs">{{ error }}</p>
@@ -20,10 +28,11 @@
     <p v-else-if="!records.length" class="m-0 text-xs text-fg-muted">
       No broker messages have reached the engine for this scope yet.
     </p>
-    <div v-else class="grid gap-1.5">
+    <div v-else ref="messageViewport" class="broker-message-scroll grid gap-1.5">
       <details
         v-for="record in records"
         :key="String(record.id)"
+        :data-message-id="String(record.id)"
         class="rounded-md border border-border-subtle bg-surface-subtle px-2.5 py-2"
       >
         <summary class="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fg">
@@ -57,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { listBrokerMessages } from "../../../core/api/commandCenterApi";
 import type { JsonRecord } from "../../../core/domain/models";
 import { formatDate, pretty } from "../../../core/utils/format";
@@ -75,9 +84,65 @@ const props = withDefaults(
 const records = ref<JsonRecord[]>([]);
 const loading = ref(false);
 const error = ref("");
+const liveUpdates = ref(true);
+const messageViewport = ref<HTMLElement | null>(null);
 let pollTimer = 0;
 
-async function refresh(): Promise<void> {
+interface MessageScrollAnchor {
+  atTop: boolean;
+  id: string | null;
+  offset: number;
+  fallbackTop: number;
+}
+
+function captureScrollAnchor(): MessageScrollAnchor | null {
+  const viewport = messageViewport.value;
+
+  if (!viewport) {
+    return null;
+  }
+
+  const atTop = viewport.scrollTop <= 2;
+  const viewportTop = viewport.getBoundingClientRect().top;
+  const firstVisible = Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+    (element) => element.getBoundingClientRect().bottom > viewportTop,
+  );
+
+  return {
+    atTop,
+    id: firstVisible?.dataset.messageId ?? null,
+    offset: firstVisible ? firstVisible.getBoundingClientRect().top - viewportTop : 0,
+    fallbackTop: viewport.scrollTop,
+  };
+}
+
+function restoreScrollAnchor(anchor: MessageScrollAnchor | null, resetScroll: boolean): void {
+  const viewport = messageViewport.value;
+
+  if (!viewport) {
+    return;
+  }
+
+  if (resetScroll || anchor?.atTop) {
+    viewport.scrollTop = 0;
+    return;
+  }
+
+  const anchoredRow = Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+    (element) => element.dataset.messageId === anchor?.id,
+  );
+
+  if (!anchor || !anchoredRow) {
+    viewport.scrollTop = anchor?.fallbackTop ?? 0;
+    return;
+  }
+
+  const currentOffset =
+    anchoredRow.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+  viewport.scrollTop += currentOffset - anchor.offset;
+}
+
+async function refresh(resetScroll = false): Promise<void> {
   if (loading.value) {
     return;
   }
@@ -86,11 +151,15 @@ async function refresh(): Promise<void> {
   error.value = "";
 
   try {
-    records.value = await listBrokerMessages({
+    const nextRecords = await listBrokerMessages({
       workflowRunId: props.workflowRunId ?? undefined,
       pipelineRunId: props.pipelineRunId ?? undefined,
-      limit: 100,
+      limit: 250,
     });
+    const anchor = resetScroll ? null : captureScrollAnchor();
+    records.value = nextRecords;
+    await nextTick();
+    restoreScrollAnchor(anchor, resetScroll);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -98,17 +167,39 @@ async function refresh(): Promise<void> {
   }
 }
 
+function toggleLiveUpdates(): void {
+  liveUpdates.value = !liveUpdates.value;
+
+  if (liveUpdates.value) {
+    void refresh();
+  }
+}
+
 watch(
   () => [props.workflowRunId, props.pipelineRunId],
-  () => void refresh(),
+  () => void refresh(true),
   { immediate: true },
 );
 
 onMounted(() => {
-  pollTimer = window.setInterval(() => void refresh(), 1500);
+  pollTimer = window.setInterval(() => {
+    if (liveUpdates.value) {
+      void refresh();
+    }
+  }, 1500);
 });
 
 onBeforeUnmount(() => {
   window.clearInterval(pollTimer);
 });
 </script>
+
+<style scoped>
+.broker-message-scroll {
+  max-height: min(52dvh, 520px);
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+</style>

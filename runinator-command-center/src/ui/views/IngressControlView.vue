@@ -1,6 +1,6 @@
 <template>
-  <section class="pane ingress-control">
-    <div class="panel flex min-h-0 flex-col gap-3">
+  <section class="pane ingress-control h-full overflow-hidden">
+    <div class="panel flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       <PanelHeader
         title="Ingress Control"
         icon="flag"
@@ -37,103 +37,105 @@
         </button>
       </div>
 
-      <template v-if="section === 'external'">
-        <div class="control-strip">
-          <label
-            >Target
-            <select v-model="targetKind" class="input">
-              <option value="workflow">Workflow</option>
-              <option value="pipeline">Pipeline</option>
-            </select>
-          </label>
-          <label class="grow"
-            >Resource ID<input
-              v-model.trim="targetId"
-              class="input w-full font-mono"
-              placeholder="Workflow or pipeline UUID"
-          /></label>
-          <label
-            >Gate
-            <select v-model="gateMode" class="input">
-              <option value="disabled">Disabled</option>
-              <option value="paused">Paused · FIFO</option>
-              <option value="review">Review · selected order</option>
-            </select>
-          </label>
-          <Button variant="primary" :disabled="!targetId" @click="saveGate">Apply gate</Button>
-          <Button :disabled="!targetId || gateMode !== 'paused'" @click="releaseFifo"
-            >Release FIFO</Button
-          >
-        </div>
-        <FlowBoard
-          stream="external"
-          :records="externalRecords"
-          :incoming-ids="incomingIds"
-          :dwell-seconds="dwellDurationSeconds"
-          @select="selected = $event"
-          @approve="approveExternal"
-          @drop="dropExternal"
-        />
-      </template>
+      <div class="ingress-content">
+        <template v-if="section === 'external'">
+          <div class="control-strip">
+            <label
+              >Target
+              <select v-model="targetKind" class="input">
+                <option value="workflow">Workflow</option>
+                <option value="pipeline">Pipeline</option>
+              </select>
+            </label>
+            <label class="grow"
+              >Resource ID<input
+                v-model.trim="targetId"
+                class="input w-full font-mono"
+                placeholder="Workflow or pipeline UUID"
+            /></label>
+            <label
+              >Gate
+              <select v-model="gateMode" class="input">
+                <option value="disabled">Disabled</option>
+                <option value="paused">Paused · FIFO</option>
+                <option value="review">Review · selected order</option>
+              </select>
+            </label>
+            <Button variant="primary" :disabled="!targetId" @click="saveGate">Apply gate</Button>
+            <Button :disabled="!targetId || gateMode !== 'paused'" @click="releaseFifo"
+              >Release FIFO</Button
+            >
+          </div>
+          <FlowBoard
+            stream="external"
+            :records="externalRecords"
+            :incoming-ids="incomingIds"
+            :dwell-seconds="dwellDurationSeconds"
+            @select="selected = $event"
+            @approve="approveExternal"
+            @drop="dropExternal"
+          />
+        </template>
 
-      <template v-else-if="section === 'broker'">
-        <div class="control-strip">
-          <label
-            >Exact scope
-            <select v-model="scopeKind" class="input" :disabled="brokerSessionActive">
-              <option value="platform">Platform</option>
-              <option value="organization">Organization</option>
-              <option value="team">Team</option>
-              <option value="user">User</option>
-            </select>
-          </label>
-          <label v-if="scopeKind !== 'platform'" class="grow"
-            >Scope ID<input
-              v-model.trim="scopeId"
-              class="input w-full font-mono"
-              placeholder="Exact scope UUID"
-              :disabled="brokerSessionActive"
-          /></label>
-          <label
-            >Mode
-            <select v-model="brokerMode" class="input" :disabled="brokerSessionActive">
-              <option value="observe">Observe</option>
-              <option value="hold_orchestration_nudges">Hold orchestration nudges</option>
-            </select>
-          </label>
-          <Button
-            v-if="!brokerSessionActive"
-            variant="primary"
-            :disabled="scopeKind !== 'platform' && !scopeId"
-            @click="startBrokerSession"
-            >Start inspection</Button
-          >
-          <Button v-else variant="danger" @click="stopBrokerSession()">Stop inspection</Button>
-        </div>
-        <p class="m-0 text-xs text-fg-muted">
-          <template v-if="brokerSessionActive">
-            Inspection is active and renews automatically while this page is connected. Leaving the
-            page, losing connectivity, or pressing Stop ends it; hold mode stages only
-            <code>orchestration_intent</code> messages.
-          </template>
-          <template v-else>
-            Scope matching is exact. Start inspection to observe broker ingress or hold
-            orchestration nudges for review.
-          </template>
-        </p>
-        <BrokerMessageLog v-if="scopeKind === 'platform'" title="Platform broker messages" />
-        <FlowBoard
-          stream="broker"
-          :records="brokerRecords"
-          :incoming-ids="incomingIds"
-          :dwell-seconds="dwellDurationSeconds"
-          @select="selected = $event"
-          @approve="approveBroker"
-          @drop="dropBroker"
-        />
-      </template>
+        <template v-else-if="section === 'broker'">
+          <div class="control-strip">
+            <label
+              >Exact scope
+              <select v-model="scopeKind" class="input" :disabled="brokerSessionActive">
+                <option value="platform">Platform</option>
+                <option value="organization">Organization</option>
+                <option value="team">Team</option>
+                <option value="user">User</option>
+              </select>
+            </label>
+            <label v-if="scopeKind !== 'platform'" class="grow"
+              >Scope ID<input
+                v-model.trim="scopeId"
+                class="input w-full font-mono"
+                placeholder="Exact scope UUID"
+                :disabled="brokerSessionActive"
+            /></label>
+            <label
+              >Mode
+              <select v-model="brokerMode" class="input" :disabled="brokerSessionActive">
+                <option value="observe">Observe</option>
+                <option value="hold_orchestration_nudges">Hold orchestration nudges</option>
+              </select>
+            </label>
+            <Button
+              v-if="!brokerSessionActive"
+              variant="primary"
+              :disabled="scopeKind !== 'platform' && !scopeId"
+              @click="startBrokerSession"
+              >Start inspection</Button
+            >
+            <Button v-else variant="danger" @click="stopBrokerSession()">Stop inspection</Button>
+          </div>
+          <p class="m-0 text-xs text-fg-muted">
+            <template v-if="brokerSessionActive">
+              Inspection is active and renews automatically while this page is connected. Leaving
+              the page, losing connectivity, or pressing Stop ends it; hold mode stages only
+              <code>orchestration_intent</code> messages.
+            </template>
+            <template v-else>
+              Scope matching is exact. Start inspection to observe broker ingress or hold
+              orchestration nudges for review.
+            </template>
+          </p>
+          <BrokerMessageLog v-if="scopeKind === 'platform'" title="Platform broker messages" />
+          <FlowBoard
+            stream="broker"
+            :records="brokerRecords"
+            :incoming-ids="incomingIds"
+            :dwell-seconds="dwellDurationSeconds"
+            @select="selected = $event"
+            @approve="approveBroker"
+            @drop="dropBroker"
+          />
+        </template>
 
-      <DeadLettersView v-else embedded />
+        <DeadLettersView v-else embedded />
+      </div>
 
       <Transition name="drawer">
         <aside
@@ -629,7 +631,6 @@ const FlowBoard = defineComponent({
         },
         laneDefs.map((definition, index) => {
           const records = visible(definition.id);
-          const rendered = records.slice(0, 8);
           return h("div", { class: ["flow-lane", `lane-${definition.id}`] }, [
             h("div", { class: "lane-header" }, [
               h("span", { class: "lane-title" }, [
@@ -643,7 +644,7 @@ const FlowBoard = defineComponent({
                 ? h("div", { class: "flow-connector", "aria-hidden": "true" })
                 : null,
               h(TransitionGroup, { name: "queue", tag: "div", class: "lane-cards" }, () =>
-                rendered.map((record) =>
+                records.map((record) =>
                   h(
                     "article",
                     {
@@ -726,13 +727,6 @@ const FlowBoard = defineComponent({
                   ),
                 ),
               ),
-              records.length > rendered.length
-                ? h(
-                    "div",
-                    { class: "more-card" },
-                    `+${String(records.length - rendered.length)} more`,
-                  )
-                : null,
             ]),
           ]);
         }),
@@ -742,9 +736,15 @@ const FlowBoard = defineComponent({
 </script>
 
 <style scoped>
-.ingress-control .panel {
-  overflow-x: hidden;
-  overflow-y: auto;
+.ingress-content {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
 }
 .ingress-tabs {
   display: flex;
@@ -906,7 +906,11 @@ const FlowBoard = defineComponent({
 }
 :deep(.lane-cards) {
   display: grid;
+  max-height: min(52dvh, 520px);
   gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 :deep(.message-card) {
   position: relative;
@@ -1068,15 +1072,6 @@ const FlowBoard = defineComponent({
 }
 :deep(.mini-action.approve:hover) {
   background: var(--accent-hover);
-}
-:deep(.more-card) {
-  margin-top: 8px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  color: var(--fg-muted);
-  text-align: center;
-  font-size: 11px;
 }
 .message-drawer {
   position: fixed;
