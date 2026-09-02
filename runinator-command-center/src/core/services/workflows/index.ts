@@ -382,6 +382,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     getControlState,
     canStepWorkflowRun,
     canContinueWorkflowRun,
+    isSelectedCursorPaused,
     canPauseWorkflowRun,
     canResumeWorkflowRun,
     canCancelWorkflowRun,

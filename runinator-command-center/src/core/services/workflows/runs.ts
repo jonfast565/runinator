@@ -14,7 +14,9 @@ import {
   requestRunInterrupt,
   settleWorkflowEffect,
   resumeWorkflowRun,
+  runWorkflowToNode,
   setWorkflowRunBreakpoints,
+  setWorkflowRunPauseOnFailure,
   stepWorkflowRun,
 } from "../../api/commandCenterApi";
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
@@ -46,6 +48,37 @@ const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
 // worker status/chunk events often arrive in bursts; coalesce detail refetches so the UI tracks the
 // latest node status without stampeding /workflow_runs/:id on every broker result.
 const WORKFLOW_RUN_DETAIL_REFRESH_DEBOUNCE_MS = 75;
+const DEBUG_PRESET_PREFIX = "runinator.debug.";
+
+interface DebugPreset {
+  breakpoints: string[];
+  pauseOnFailure: boolean;
+}
+
+function loadDebugPreset(workflowId: string): DebugPreset {
+  if (typeof window === "undefined") {return { breakpoints: [], pauseOnFailure: false };}
+
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(`${DEBUG_PRESET_PREFIX}${workflowId}`) ?? "{}",
+    );
+    const record = isJsonRecord(value) ? value : {};
+    return {
+      breakpoints: (Array.isArray(record.breakpoints) ? record.breakpoints : []).filter(
+        (entry): entry is string => typeof entry === "string",
+      ),
+      pauseOnFailure: record.pauseOnFailure === true,
+    };
+  } catch {
+    return { breakpoints: [], pauseOnFailure: false };
+  }
+}
+
+function saveDebugPreset(workflowId: string, preset: DebugPreset) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(`${DEBUG_PRESET_PREFIX}${workflowId}`, JSON.stringify(preset));
+  }
+}
 
 /** Pick typed file descriptors out of nested form data without mistaking ordinary JSON for files. */
 function collectFileIds(value: unknown): string[] {
@@ -166,6 +199,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.state.selectedWorkflowRunId = response.id;
     host.ctx.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);
     await fetchWorkflowRunDetail(response.id);
+    if (debug) {await applyDebugPreset(workflowId);}
     await fetchRecentWorkflowRuns();
     host.ctx.activeTab = "Runs";
     host.notify();
@@ -272,6 +306,13 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     host.ctx.setStatus(response.message || `Updated breakpoints for workflow run ${runId}`);
+    const workflowId = host.getWorkflowRunWorkflow()?.id;
+
+    if (workflowId) {
+      const preset = loadDebugPreset(workflowId);
+      saveDebugPreset(workflowId, { ...preset, breakpoints: normalized });
+    }
+
     host.notify();
     await fetchWorkflowRunDetail(runId, true);
   }
@@ -286,6 +327,65 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   async function clearBreakpoints() {
     await setBreakpoints([]);
+  }
+
+  async function setPauseOnFailure(enabled: boolean) {
+    const detail = host.state.workflowRunDetail;
+    if (!detail || !host.isDebugRun()) {return;}
+    const response = await host.ctx.runOperation("Updating pause on failure", () =>
+      setWorkflowRunPauseOnFailure(detail.run.id, enabled),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to update pause on failure");
+      return;
+    }
+
+    const workflowId = host.getWorkflowRunWorkflow()?.id;
+
+    if (workflowId) {
+      const preset = loadDebugPreset(workflowId);
+      saveDebugPreset(workflowId, { ...preset, pauseOnFailure: enabled });
+    }
+
+    await fetchWorkflowRunDetail(detail.run.id, true);
+    host.notify();
+  }
+
+  async function applyDebugPreset(workflowId: string) {
+    const preset = loadDebugPreset(workflowId);
+    const workflow = host.getWorkflowRunWorkflow();
+    const valid = new Set(
+      jsonRecordArray(workflow?.definition.nodes)
+        .map((node) => node.id)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    const breakpoints = preset.breakpoints.filter((id) => valid.has(id));
+
+    if (breakpoints.length !== preset.breakpoints.length) {
+      saveDebugPreset(workflowId, { ...preset, breakpoints });
+    }
+
+    await setBreakpoints(breakpoints);
+    await setPauseOnFailure(preset.pauseOnFailure);
+  }
+
+  async function runToNode(nodeId: string) {
+    const detail = host.state.workflowRunDetail;
+    const cursor = selectedCursorId();
+    if (!detail || !cursor || !host.isSelectedCursorPaused()) {return;}
+    const response = await host.ctx.runOperation(`Running selected branch to ${nodeId}`, () =>
+      runWorkflowToNode(detail.run.id, cursor, nodeId),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || `Failed to run to ${nodeId}`);
+      return;
+    }
+
+    host.ctx.setStatus(response.message);
+    await fetchWorkflowRunDetail(detail.run.id, true);
+    host.notify();
   }
 
   async function cancelSelectedWorkflowRun() {
@@ -557,6 +657,8 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     openRunInTab(created.id);
     activateRunTab(created.id);
     await fetchWorkflowRunDetail(created.id);
+    const replayWorkflowId = host.getWorkflowRunWorkflow()?.id;
+    if (host.isDebugRun() && replayWorkflowId) {await applyDebugPreset(replayWorkflowId);}
     await fetchRecentWorkflowRuns();
     host.ctx.activeTab = "Runs";
     return created.id;
@@ -1241,6 +1343,8 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     continueSelectedWorkflowRun,
     toggleBreakpoint,
     clearBreakpoints,
+    setPauseOnFailure,
+    runToNode,
     selectCursor,
     cancelSelectedWorkflowRun,
     deleteSelectedWorkflowRun,

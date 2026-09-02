@@ -10,6 +10,7 @@ export interface DebugFrame {
   enabled?: boolean;
   mode?: DebugMode;
   breakpoints?: string[];
+  pause_on_failure?: boolean;
   paused?: boolean;
   step_requested?: boolean;
   one_shot_breakpoint?: string | null;

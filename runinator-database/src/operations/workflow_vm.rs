@@ -322,6 +322,12 @@ where
                     paused: false,
                     step_requested: true,
                     breakpoint: None,
+                    run_to_node_id: None,
+                    pending_failure: None,
+                    pause_on_failure: state
+                        .debug
+                        .as_ref()
+                        .is_some_and(|debug| debug.config.pause_on_failure),
                     last_output: None,
                     speculative: false,
                 },

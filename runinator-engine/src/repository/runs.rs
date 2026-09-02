@@ -35,6 +35,7 @@ pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
                 "step_requested": false,
                 "mode": "breakpoints",
                 "breakpoints": [],
+                "pause_on_failure": false,
                 "one_shot_breakpoint": null
             }
         })

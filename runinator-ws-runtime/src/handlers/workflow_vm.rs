@@ -778,12 +778,33 @@ pub async fn list_cursors<T: AuthorizationStore + RuntimeStore + WorkflowVmStore
                         continuation.instruction_pointer
                     };
                     let location = module.graph_location(instruction_pointer);
+                    let debug = continuation
+                        .frames
+                        .iter()
+                        .rev()
+                        .find_map(|frame| match frame {
+                            runinator_models::workflow_vm::WorkflowFrame::Debug(debug) => {
+                                Some(debug)
+                            }
+                            _ => None,
+                        });
                     WorkflowVmCursor {
                         continuation_id: continuation.id,
                         instruction_pointer,
                         node_id: location.map(|entry| entry.node_id.clone()),
                         edge_label: location.and_then(|entry| entry.edge_label.clone()),
                         status: continuation.status,
+                        stop_reason: debug.and_then(|frame| {
+                            if frame.pending_failure.is_some() {
+                                Some("failure".to_string())
+                            } else if frame.paused {
+                                Some("breakpoint".to_string())
+                            } else {
+                                None
+                            }
+                        }),
+                        run_to_node_id: debug.and_then(|frame| frame.run_to_node_id.clone()),
+                        pending_failure: debug.and_then(|frame| frame.pending_failure.clone()),
                     }
                 })
                 .collect();

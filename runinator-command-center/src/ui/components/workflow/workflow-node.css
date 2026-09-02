@@ -424,6 +424,48 @@
   z-index: 3;
 }
 
+.run-to-node {
+  position: absolute;
+  z-index: 5;
+  top: 6px;
+  left: 24px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--color-accent, #60a5fa);
+  background: var(--color-surface, #111827);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.workflow-node-content:hover .run-to-node,
+.run-to-node:focus-visible {
+  opacity: 1;
+}
+
+.run-to-node:hover {
+  transform: translateX(2px);
+}
+
+.debug-failure-banner {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.4rem 0.55rem;
+  color: var(--color-danger-fg, #fecaca);
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger, #ef4444) 45%, transparent);
+  border-radius: 0.4rem;
+  font-size: 0.75rem;
+}
+
 .breakpoint-dot {
   width: 9px;
   height: 9px;

@@ -67,6 +67,7 @@ export function createWorkflowSelectors(deps: WorkflowSelectorDependencies) {
   const cursors = mirroredComputed(() => services.getCursors());
   const selectedCursorId = mirroredComputed(() => services.getSelectedCursorId());
   const canContinueWorkflowRun = mirroredComputed(() => services.canContinueWorkflowRun());
+  const isSelectedCursorPaused = mirroredComputed(() => services.isSelectedCursorPaused());
   const controlState = mirroredComputed<ControlFrame | null>(() => services.getControlState());
   const canPauseWorkflowRun = mirroredComputed(() => services.canPauseWorkflowRun());
   const canResumeWorkflowRun = mirroredComputed(() => services.canResumeWorkflowRun());
@@ -121,7 +122,8 @@ export function createWorkflowSelectors(deps: WorkflowSelectorDependencies) {
     return `${lines.join("\n")}${state.value.workflowNodeDetailExtra}`;
   });
   const stepNeeds = computed(() => {
-    const transitions = (state.value.stepEditor.nodeDraft.transitions as JsonRecord | undefined) ?? {};
+    const transitions =
+      (state.value.stepEditor.nodeDraft.transitions as JsonRecord | undefined) ?? {};
     return ["next", "on_success", "on_failure", "on_timeout", "on_reject"]
       .filter((key) => transitions[key])
       .map((key) => `${key}:${String(transitions[key])}`)
@@ -260,6 +262,7 @@ export function createWorkflowSelectors(deps: WorkflowSelectorDependencies) {
       followCursor.value = value;
     },
     canContinueWorkflowRun,
+    isSelectedCursorPaused,
     controlState,
     canPauseWorkflowRun,
     canResumeWorkflowRun,

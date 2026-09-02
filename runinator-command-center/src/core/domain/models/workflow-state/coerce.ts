@@ -125,9 +125,7 @@ export function coerceRunCursors(value: unknown): RunCursor[] {
                 }
               : null,
             raised_at:
-              typeof entry.interrupt.raised_at === "string"
-                ? entry.interrupt.raised_at
-                : undefined,
+              typeof entry.interrupt.raised_at === "string" ? entry.interrupt.raised_at : undefined,
           }
         : null,
       suspended_by: typeof entry.suspended_by === "string" ? entry.suspended_by : null,
@@ -154,6 +152,8 @@ export function coerceDebugFrame(value: unknown): DebugFrame | undefined {
     enabled: typeof record.enabled === "boolean" ? record.enabled : undefined,
     mode: debugMode(record.mode),
     breakpoints: stringArray(record.breakpoints),
+    pause_on_failure:
+      typeof record.pause_on_failure === "boolean" ? record.pause_on_failure : undefined,
     paused: typeof record.paused === "boolean" ? record.paused : undefined,
     step_requested: typeof record.step_requested === "boolean" ? record.step_requested : undefined,
     one_shot_breakpoint:

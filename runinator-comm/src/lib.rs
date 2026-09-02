@@ -831,8 +831,12 @@ pub enum DebugVerb {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cursor: CursorTarget,
     },
+    /// Resume one parked branch until it reaches `node_id` or an ordinary breakpoint first.
+    RunTo { cursor: Uuid, node_id: String },
     /// Replace the run-scoped breakpoint set used by every continuation.
     SetBreakpoints { breakpoints: Vec<String> },
+    /// Pause each branch once, before its next failure is routed.
+    SetPauseOnFailure { enabled: bool },
 }
 
 impl runinator_models::validation::Validate for DebugVerb {

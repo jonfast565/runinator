@@ -83,6 +83,7 @@ pub fn resume_with_debug(
     result: Result<Value, WorkflowFailure>,
     debug: Option<&DebugConfig>,
 ) -> WorkflowVmStep {
+    sync_debug_config(&mut continuation, debug);
     // Persisted effect settlement makes the row runnable so a scheduler can claim it, while the
     // effect id remains available for the durable host to load its immutable receipt.
     if !matches!(
@@ -235,6 +236,7 @@ pub fn step_with_debug(
     mut continuation: WorkflowContinuation,
     debug: Option<&DebugConfig>,
 ) -> WorkflowVmStep {
+    sync_debug_config(&mut continuation, debug);
     if let Err(error) = module.ensure_supported() {
         return fail(continuation, error.to_string());
     }
@@ -256,6 +258,10 @@ pub fn step_with_debug(
             continuation,
             "attempted to step a non-runnable continuation".into(),
         );
+    }
+
+    if let Some(failure) = take_pending_debug_failure(&mut continuation) {
+        return route_classified_failure(module, continuation, failure);
     }
 
     for _ in 0..MAX_INLINE_INSTRUCTIONS {
@@ -420,9 +426,25 @@ pub fn step_with_debug(
                 return resolve_interrupt(module, continuation, *mode);
             }
             WorkflowInstruction::DebugBoundary { label } => {
+                let one_shot = continuation
+                    .frames
+                    .iter()
+                    .rev()
+                    .find_map(|frame| match frame {
+                        WorkflowFrame::Debug(frame) => frame.run_to_node_id.clone(),
+                        _ => None,
+                    });
                 let breakpoint_matches = label.as_deref().is_some_and(|label| {
                     debug.is_some_and(|config| {
-                        config.enabled && should_break_at(config, &DebugRuntime::default(), label)
+                        config.enabled
+                            && should_break_at(
+                                config,
+                                &DebugRuntime {
+                                    one_shot_breakpoint: one_shot.clone(),
+                                    ..DebugRuntime::default()
+                                },
+                                label,
+                            )
                     })
                 });
                 let mut park_after_boundary = breakpoint_matches;
@@ -432,6 +454,9 @@ pub fn step_with_debug(
                     .rposition(|frame| matches!(frame, WorkflowFrame::Debug(_)))
                 {
                     if let WorkflowFrame::Debug(frame) = &mut continuation.frames[position] {
+                        if label.as_ref() == frame.run_to_node_id.as_ref() {
+                            frame.run_to_node_id = None;
+                        }
                         frame.breakpoint = label.clone();
                         if frame.step_requested {
                             frame.step_requested = false;
@@ -447,6 +472,9 @@ pub fn step_with_debug(
                             paused: breakpoint_matches,
                             step_requested: false,
                             breakpoint: label.clone(),
+                            run_to_node_id: None,
+                            pending_failure: None,
+                            pause_on_failure: debug.is_some_and(|config| config.pause_on_failure),
                             last_output: None,
                             speculative: false,
                         },
@@ -1439,6 +1467,35 @@ fn handle_classified_failure(
     mut continuation: WorkflowContinuation,
     failure: WorkflowFailure,
 ) -> WorkflowVmStep {
+    if let Some(frame) = continuation
+        .frames
+        .iter_mut()
+        .rev()
+        .find_map(|frame| match frame {
+            WorkflowFrame::Debug(frame) => Some(frame),
+            _ => None,
+        })
+        && frame.pause_on_failure
+        && frame.pending_failure.is_none()
+    {
+        frame.pending_failure = Some(failure);
+        frame.paused = true;
+        continuation.status = WorkflowContinuationStatus::Paused;
+        continuation.operator_paused = true;
+        return WorkflowVmStep::Joined {
+            continuation,
+            join_key: "debug-failure".into(),
+            value: Value::Null,
+        };
+    }
+    route_classified_failure(module, continuation, failure)
+}
+
+fn route_classified_failure(
+    module: &WorkflowModule,
+    mut continuation: WorkflowContinuation,
+    failure: WorkflowFailure,
+) -> WorkflowVmStep {
     let message = failure.message;
     if let Some(position) = continuation
         .frames
@@ -1498,6 +1555,47 @@ fn handle_classified_failure(
         }
     }
     fail(continuation, message)
+}
+
+fn sync_debug_config(continuation: &mut WorkflowContinuation, debug: Option<&DebugConfig>) {
+    let Some(config) = debug.filter(|config| config.enabled) else {
+        return;
+    };
+    if let Some(frame) = continuation
+        .frames
+        .iter_mut()
+        .rev()
+        .find_map(|frame| match frame {
+            WorkflowFrame::Debug(frame) => Some(frame),
+            _ => None,
+        })
+    {
+        frame.pause_on_failure = config.pause_on_failure;
+    } else {
+        continuation.frames.push(WorkflowFrame::Debug(
+            runinator_models::workflow_vm::WorkflowDebugFrame {
+                paused: false,
+                step_requested: false,
+                breakpoint: None,
+                run_to_node_id: None,
+                pending_failure: None,
+                pause_on_failure: config.pause_on_failure,
+                last_output: None,
+                speculative: false,
+            },
+        ));
+    }
+}
+
+fn take_pending_debug_failure(continuation: &mut WorkflowContinuation) -> Option<WorkflowFailure> {
+    continuation
+        .frames
+        .iter_mut()
+        .rev()
+        .find_map(|frame| match frame {
+            WorkflowFrame::Debug(frame) if !frame.paused => frame.pending_failure.take(),
+            _ => None,
+        })
 }
 
 fn stable_id(namespace: uuid::Uuid, name: &str) -> uuid::Uuid {
@@ -2773,6 +2871,7 @@ mod tests {
             enabled: true,
             mode: Some(runinator_models::workflow_state::DebugMode::Breakpoints),
             breakpoints: vec!["stop".into()],
+            pause_on_failure: false,
         };
 
         let WorkflowVmStep::Joined {
@@ -2802,6 +2901,7 @@ mod tests {
             enabled: true,
             mode: Some(runinator_models::workflow_state::DebugMode::Breakpoints),
             breakpoints: vec![],
+            pause_on_failure: false,
         };
 
         let WorkflowVmStep::Complete { .. } =
@@ -2809,6 +2909,98 @@ mod tests {
         else {
             panic!("an unset breakpoint should not park the continuation");
         };
+    }
+
+    #[test]
+    fn run_to_target_is_one_shot_and_branch_local() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::DebugBoundary {
+                label: Some("start".into()),
+            },
+            WorkflowInstruction::DebugBoundary {
+                label: Some("target".into()),
+            },
+            WorkflowInstruction::Return,
+        ]);
+        let mut config = DebugConfig {
+            enabled: true,
+            mode: Some(runinator_models::workflow_state::DebugMode::Breakpoints),
+            breakpoints: vec!["start".into()],
+            pause_on_failure: false,
+        };
+        let WorkflowVmStep::Joined {
+            mut continuation, ..
+        } = step_with_debug(&module, continuation(), Some(&config))
+        else {
+            panic!("start breakpoint should park");
+        };
+        continuation.status = WorkflowContinuationStatus::Runnable;
+        continuation.operator_paused = false;
+        let frame = continuation
+            .frames
+            .iter_mut()
+            .find_map(|frame| match frame {
+                WorkflowFrame::Debug(frame) => Some(frame),
+                _ => None,
+            })
+            .unwrap();
+        frame.paused = false;
+        frame.run_to_node_id = Some("target".into());
+        config.breakpoints.clear();
+
+        let WorkflowVmStep::Joined { continuation, .. } =
+            step_with_debug(&module, continuation, Some(&config))
+        else {
+            panic!("run-to target should park");
+        };
+        assert!(continuation.frames.iter().any(|frame| matches!(frame,
+            WorkflowFrame::Debug(frame) if frame.paused && frame.breakpoint.as_deref() == Some("target") && frame.run_to_node_id.is_none()
+        )));
+    }
+
+    #[test]
+    fn pause_on_failure_stops_once_before_error_routing() {
+        let module = WorkflowModule::new(vec![WorkflowInstruction::Fail {
+            message: "boom".into(),
+        }]);
+        let config = DebugConfig {
+            enabled: true,
+            mode: Some(runinator_models::workflow_state::DebugMode::Breakpoints),
+            breakpoints: vec![],
+            pause_on_failure: true,
+        };
+        let WorkflowVmStep::Joined {
+            mut continuation,
+            join_key,
+            ..
+        } = step_with_debug(&module, continuation(), Some(&config))
+        else {
+            panic!("failure should pause before routing");
+        };
+        assert_eq!(join_key, "debug-failure");
+        continuation.status = WorkflowContinuationStatus::Runnable;
+        continuation.operator_paused = false;
+        let frame = continuation
+            .frames
+            .iter_mut()
+            .find_map(|frame| match frame {
+                WorkflowFrame::Debug(frame) => Some(frame),
+                _ => None,
+            })
+            .unwrap();
+        frame.paused = false;
+
+        let WorkflowVmStep::Failed {
+            message,
+            continuation,
+        } = step_with_debug(&module, continuation, Some(&config))
+        else {
+            panic!("resumed failure should route instead of pausing twice");
+        };
+        assert_eq!(message, "boom");
+        assert!(continuation.frames.iter().any(|frame| matches!(frame,
+            WorkflowFrame::Debug(frame) if frame.pending_failure.is_none()
+        )));
     }
 
     fn vm_node(id: &str, kind: WorkflowNodeKind, next: Option<&str>) -> WorkflowNode {

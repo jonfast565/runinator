@@ -77,4 +77,7 @@ export interface WorkflowVmCursor {
   node_id?: string | null;
   edge_label?: string | null;
   status: string;
+  stop_reason?: string | null;
+  run_to_node_id?: string | null;
+  pending_failure?: { kind?: string; message: string } | null;
 }

@@ -54,6 +54,7 @@ export interface WorkflowServiceHost {
   getControlState(): ControlFrame | null;
   canStepWorkflowRun(): boolean;
   canContinueWorkflowRun(): boolean;
+  isSelectedCursorPaused(): boolean;
   canPauseWorkflowRun(): boolean;
   canResumeWorkflowRun(): boolean;
   canCancelWorkflowRun(): boolean;

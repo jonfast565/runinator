@@ -1431,6 +1431,17 @@ export async function setWorkflowRunBreakpoints(workflowRunId: string, breakpoin
   });
 }
 
+export async function runWorkflowToNode(workflowRunId: string, cursor: string, nodeId: string) {
+  return command<TaskResponse>("run_workflow_to_node", { workflowRunId, cursor, nodeId });
+}
+
+export async function setWorkflowRunPauseOnFailure(workflowRunId: string, enabled: boolean) {
+  return command<TaskResponse>("set_workflow_run_pause_on_failure", {
+    workflowRunId,
+    enabled,
+  });
+}
+
 export async function cancelWorkflowRun(
   workflowRunId: string,
   override?: ManagedRunOverrideOptions,

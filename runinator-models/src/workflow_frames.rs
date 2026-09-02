@@ -56,6 +56,8 @@ pub struct DebugConfig {
     pub mode: Option<DebugMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub breakpoints: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pause_on_failure: bool,
 }
 
 /// reducer-owned per-cursor debug runtime state.

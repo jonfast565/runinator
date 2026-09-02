@@ -693,6 +693,13 @@ pub struct WorkflowDebugFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub breakpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_to_node_id: Option<String>,
+    /// A failure parked before structured error routing. Resuming consumes it exactly once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_failure: Option<WorkflowFailure>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pause_on_failure: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output: Option<Value>,
     /// Speculative continuations cannot settle durable effects unless explicitly armed.
     #[serde(default)]
@@ -756,6 +763,12 @@ pub struct WorkflowVmCursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge_label: Option<String>,
     pub status: WorkflowContinuationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_to_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_failure: Option<WorkflowFailure>,
 }
 
 impl WorkflowContinuation {
@@ -1397,6 +1410,9 @@ mod tests {
                 paused: true,
                 step_requested: true,
                 breakpoint: Some("node:publish".into()),
+                run_to_node_id: Some("node:finish".into()),
+                pending_failure: None,
+                pause_on_failure: true,
                 last_output: Some(Value::from("output")),
                 speculative: true,
             }),

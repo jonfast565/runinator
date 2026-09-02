@@ -27,6 +27,17 @@
     >
       <span aria-hidden="true" />
     </button>
+    <button
+      v-if="canRunToNode"
+      type="button"
+      class="run-to-node nodrag nopan"
+      :title="`Run selected branch to ${id}`"
+      :aria-label="`Run selected branch to ${id}`"
+      @click.stop="workflows.runToNode(id)"
+      @dblclick.stop
+    >
+      <Icon name="continue" :size="12" />
+    </button>
     <span v-else-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
     <span v-if="data.locked" class="lock-dot" title="Locked node"
       ><Icon name="lock" :size="11"
@@ -328,6 +339,13 @@ const nodeCursors = computed(() => props.data.cursors ?? []);
 const isDebugActive = computed(() => nodeCursors.value.some((cursor) => cursor.paused));
 const canToggleBreakpoint = computed(
   () => props.data.readOnly === true && workflows.isDebugRun && workflows.canCancelWorkflowRun,
+);
+const canRunToNode = computed(
+  () =>
+    props.data.readOnly === true &&
+    workflows.isDebugRun &&
+    workflows.isSelectedCursorPaused &&
+    !nodeCursors.value.some((cursor) => cursor.selected),
 );
 
 const isInlineEditing = computed(() => workflows.inlineEditNodeId === props.id);

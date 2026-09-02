@@ -638,6 +638,20 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       breakpoints: arg(args, "breakpoints"),
     }),
   },
+  run_workflow_to_node: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/command`,
+    body: (args) => ({
+      verb: "run_to",
+      cursor: arg(args, "cursor"),
+      node_id: arg(args, "nodeId"),
+    }),
+  },
+  set_workflow_run_pause_on_failure: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/command`,
+    body: (args) => ({ verb: "set_pause_on_failure", enabled: arg(args, "enabled") }),
+  },
   cancel_workflow_run: {
     ...workflowRunAction("cancel"),
     body: (args) => ({

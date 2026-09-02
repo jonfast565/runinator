@@ -136,16 +136,17 @@ async fn debug_breakpoints_are_deduplicated_and_persisted_on_the_run() {
     .await
     .unwrap();
     assert!(response.success);
+    let response = repository::set_debug_pause_on_failure(db.as_ref(), run.id, true)
+        .await
+        .unwrap();
+    assert!(response.success);
     let refreshed = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
-    assert_eq!(
-        refreshed
-            .execution_state
-            .debug
-            .expect("debug run has a debug frame")
-            .config
-            .breakpoints,
-        vec!["end"]
-    );
+    let debug = refreshed
+        .execution_state
+        .debug
+        .expect("debug run has a debug frame");
+    assert_eq!(debug.config.breakpoints, vec!["end"]);
+    assert!(debug.config.pause_on_failure);
 
     let _ = std::fs::remove_file(path);
 }

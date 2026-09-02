@@ -67,10 +67,134 @@ pub async fn apply_debug_command<T: RuntimeStore + WorkflowVmStore>(
     match verb {
         DebugVerb::Step { cursor } => step_debug_cursor(db, workflow_run_id, cursor).await,
         DebugVerb::Continue { cursor } => continue_debug_cursor(db, workflow_run_id, cursor).await,
+        DebugVerb::RunTo { cursor, node_id } => {
+            run_to_debug_node(db, workflow_run_id, cursor, node_id).await
+        }
         DebugVerb::SetBreakpoints { breakpoints } => {
             set_debug_breakpoints(db, workflow_run_id, breakpoints).await
         }
+        DebugVerb::SetPauseOnFailure { enabled } => {
+            set_debug_pause_on_failure(db, workflow_run_id, enabled).await
+        }
     }
+}
+
+pub async fn set_debug_pause_on_failure<T: RuntimeStore + WorkflowVmStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    enabled: bool,
+) -> Result<TaskResponse, SendableError> {
+    for _ in 0..8 {
+        let Some(mut run) = db.fetch_workflow_run(workflow_run_id).await? else {
+            return Err(crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id));
+        };
+        if run.status.is_terminal() {
+            return Err(crate::errors::DEBUG_TERMINAL.error(workflow_run_id));
+        }
+        let Some(debug) = run.execution_state.debug.as_mut() else {
+            return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
+        };
+        if !debug.config.enabled {
+            return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
+        }
+        debug.config.pause_on_failure = enabled;
+        let expected_version = run.state_version;
+        if db
+            .update_workflow_run_execution_state_cas(
+                workflow_run_id,
+                expected_version,
+                run.execution_state,
+            )
+            .await?
+        {
+            return Ok(TaskResponse {
+                success: true,
+                message: format!(
+                    "Pause on failure {}",
+                    if enabled { "enabled" } else { "disabled" }
+                ),
+            });
+        }
+    }
+    Err(crate::errors::DEBUG_INVALID_PATCH
+        .error("workflow state changed repeatedly while updating pause on failure"))
+}
+
+pub async fn run_to_debug_node<T: RuntimeStore + WorkflowVmStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    continuation_id: Uuid,
+    node_id: String,
+) -> Result<TaskResponse, SendableError> {
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Err(crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id));
+    };
+    if run.status.is_terminal() {
+        return Err(crate::errors::DEBUG_TERMINAL.error(workflow_run_id));
+    }
+    if !run
+        .execution_state
+        .debug
+        .as_ref()
+        .is_some_and(|debug| debug.config.enabled)
+    {
+        return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
+    }
+    let module = db
+        .fetch_workflow_module(workflow_run_id)
+        .await?
+        .ok_or_else(|| crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id))?;
+    if !module
+        .source_map
+        .iter()
+        .any(|entry| entry.node_id == node_id)
+    {
+        return Err(crate::errors::DEBUG_INVALID_PATCH.error(format!("unknown node '{node_id}'")));
+    }
+    let Some(mut continuation) = db.fetch_workflow_continuation(continuation_id).await? else {
+        return Err(crate::errors::RESUME_NOT_FOUND.error(continuation_id));
+    };
+    if continuation.workflow_run_id != workflow_run_id
+        || continuation.status != runinator_models::workflow_vm::WorkflowContinuationStatus::Paused
+    {
+        return Err(crate::errors::RESUME_NOT_FOUND.error("continuation is not paused"));
+    }
+    if module
+        .graph_location(continuation.instruction_pointer)
+        .is_some_and(|location| location.node_id == node_id)
+    {
+        return Err(
+            crate::errors::DEBUG_INVALID_PATCH.error("cursor is already at the target node")
+        );
+    }
+    let Some(debug) = continuation
+        .frames
+        .iter_mut()
+        .rev()
+        .find_map(|frame| match frame {
+            runinator_models::workflow_vm::WorkflowFrame::Debug(debug) => Some(debug),
+            _ => None,
+        })
+    else {
+        return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
+    };
+    debug.paused = false;
+    debug.step_requested = false;
+    debug.run_to_node_id = Some(node_id.clone());
+    continuation.status = runinator_models::workflow_vm::WorkflowContinuationStatus::Runnable;
+    continuation.operator_paused = false;
+    db.commit_workflow_continuation(
+        continuation.clone(),
+        runinator_models::workflow_vm::WorkflowJournalEntry::Transitioned {
+            continuation_id,
+            instruction_pointer: continuation.instruction_pointer,
+        },
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Continuation {continuation_id} running to {node_id}"),
+    })
 }
 
 /// Replace the breakpoint configuration without disturbing any continuation's current position.
@@ -249,6 +373,7 @@ pub async fn replay_workflow_run<T: RuntimeStore + WorkflowVmStore>(
             "step_requested": false,
             "mode": "breakpoints",
             "breakpoints": [],
+            "pause_on_failure": false,
             "one_shot_breakpoint": null
         },
         "replay": { "source_run_id": source.id }

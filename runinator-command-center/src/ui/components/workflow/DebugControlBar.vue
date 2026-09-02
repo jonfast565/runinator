@@ -33,6 +33,22 @@
       >
         Clear all
       </button>
+      <label
+        class="inline-flex items-center gap-1.5"
+        title="Pause before catch, failure, finally, or compensation routing"
+      >
+        <input
+          type="checkbox"
+          :checked="pauseOnFailure"
+          @change="workflows.setPauseOnFailure(($event.target as HTMLInputElement).checked)"
+        />
+        Pause on failure
+      </label>
+    </div>
+    <div v-if="selectedFailure" class="debug-failure-banner" role="status">
+      <strong>{{ selectedFailure.kind ?? "failed" }}</strong>
+      <span v-if="selectedFailure.nodeId">at {{ selectedFailure.nodeId }}</span>
+      <span>{{ selectedFailure.message }}</span>
     </div>
   </div>
 </template>
@@ -46,5 +62,15 @@ const workflows = useWorkflowsStore();
 const breakpointSummary = computed(() => {
   const count = workflows.currentBreakpoints.length;
   return count === 0 ? "No breakpoints set." : `${String(count)} set.`;
+});
+const pauseOnFailure = computed(() => workflows.debugState?.pause_on_failure === true);
+const selectedFailure = computed(() => {
+  const cursorId = workflows.selectedCursorId;
+  const cursor = workflows.workflowRunDetail?.vm_cursors?.find(
+    (cursor) => cursor.continuation_id === cursorId,
+  );
+  return cursor?.pending_failure
+    ? { ...cursor.pending_failure, nodeId: cursor.node_id ?? null }
+    : null;
 });
 </script>

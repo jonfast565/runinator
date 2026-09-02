@@ -41,6 +41,8 @@ export function createWorkflowActions(services: WorkflowServices) {
     continueSelectedWorkflowRun: services.runs.continueSelectedWorkflowRun,
     toggleBreakpoint: services.runs.toggleBreakpoint,
     clearBreakpoints: services.runs.clearBreakpoints,
+    setPauseOnFailure: services.runs.setPauseOnFailure,
+    runToNode: services.runs.runToNode,
     pauseSelectedWorkflowRun: services.runs.pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun: services.runs.resumeSelectedWorkflowRun,
     forceManagedWorkflowRunControl: services.runs.forceManagedWorkflowRunControl,
