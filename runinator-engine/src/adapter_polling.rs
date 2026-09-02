@@ -67,6 +67,8 @@ fn is_event_scoped(error: &PipelineIngressError) -> bool {
         PipelineIngressError::NotFound(_)
             | PipelineIngressError::Invalid(_)
             | PipelineIngressError::Conflict(_)
+            | PipelineIngressError::Held(_)
+            | PipelineIngressError::Full
     )
 }
 

@@ -6,6 +6,7 @@ pub mod debug;
 pub mod files;
 pub mod function_invocations;
 pub mod health;
+pub mod ingress_control;
 pub mod notifications;
 pub mod observability;
 pub mod provisioning;

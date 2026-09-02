@@ -9,10 +9,19 @@ use std::{sync::Arc, time::Duration};
 
 use runinator_broker_core::{Broker, EffectResultMessage, IngressDelivery};
 use runinator_comm::{ControlKind, WsIngressCommand};
-use runinator_models::errors::SendableError;
+use runinator_models::{
+    auth::ResourceType,
+    errors::SendableError,
+    ingress_control::{
+        BrokerIngressCapture, BrokerIngressCaptureRequest, BrokerIngressSessionMode,
+        INGRESS_CONTROL_QUEUE_CAPACITY, IngressControlState,
+    },
+    rbac::{ScopeKind, ScopeRef},
+    value::Value,
+};
 use runinator_store::{
     RuntimeStore,
-    roles::{ReplicaStore, WorkflowVmStore},
+    roles::{DeliveryStore, OrchestrationStore, RbacStore, ReplicaStore, WorkflowVmStore},
 };
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -24,7 +33,9 @@ const INGRESS_CONSUMER_ID: &str = "runinator-engine-ingress";
 /// A message is acknowledged once its effect has been durably recorded or handed to the channel
 /// that owns it; anything else is returned to the broker, since dropping an ingress message loses
 /// the only copy of a due timer or a directive reply.
-pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
+pub async fn run_ingress_consumer<
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
+>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
@@ -34,7 +45,7 @@ pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmSto
 }
 
 pub async fn run_ingress_consumer_with_orchestration_nudge<
-    T: RuntimeStore + ReplicaStore + WorkflowVmStore,
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
 >(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
@@ -42,9 +53,42 @@ pub async fn run_ingress_consumer_with_orchestration_nudge<
     shutdown: Arc<Notify>,
 ) {
     info!("workflow ingress consumer started");
+    let mut approvals = tokio::time::interval(Duration::from_millis(250));
+    let mut last_cleanup = chrono::Utc::now();
     loop {
         let delivery = tokio::select! {
             _ = shutdown.notified() => return,
+            _ = approvals.tick() => {
+                match db.claim_approved_broker_ingress(chrono::Utc::now()).await {
+                    Ok(Some(record)) => {
+                        match serde_json::from_value::<WsIngressCommand>(record.command.clone().into()) {
+                            Ok(command) => {
+                                let result = apply_command(db.clone(), broker.as_ref(), orchestration_nudge.as_ref(), &command).await;
+                                let (state, error) = match result {
+                                    Ok(()) => (IngressControlState::Applied, None),
+                                    Err(error) => (IngressControlState::Failed, Some(error.to_string())),
+                                };
+                                if let Err(error) = db.finish_broker_ingress_record(record.id, state, error, chrono::Utc::now()).await {
+                                    warn!(error = %error, record_id = %record.id, "failed to settle approved broker ingress record");
+                                }
+                            }
+                            Err(error) => {
+                                let _ = db.finish_broker_ingress_record(record.id, IngressControlState::Failed, Some(error.to_string()), chrono::Utc::now()).await;
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => warn!(error = %error, "failed to claim approved broker ingress record"),
+                }
+                if chrono::Utc::now() - last_cleanup >= chrono::Duration::minutes(1) {
+                    let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+                    if let Err(error) = db.purge_broker_ingress_records_before(cutoff).await {
+                        warn!(error = %error, "failed to purge expired broker ingress records");
+                    }
+                    last_cleanup = chrono::Utc::now();
+                }
+                continue;
+            }
             received = broker.receive_ingress(INGRESS_CONSUMER_ID) => match received {
                 Ok(delivery) => delivery,
                 Err(err) => {
@@ -58,7 +102,7 @@ pub async fn run_ingress_consumer_with_orchestration_nudge<
             }
         };
 
-        match apply(
+        match inspect_or_apply(
             db.clone(),
             broker.as_ref(),
             orchestration_nudge.as_ref(),
@@ -89,13 +133,142 @@ pub async fn run_ingress_consumer_with_orchestration_nudge<
     }
 }
 
-async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
+fn command_kind(command: &WsIngressCommand) -> &'static str {
+    match command {
+        WsIngressCommand::SettleEffect { .. } => "settle_effect",
+        WsIngressCommand::TimerInterrupt { .. } => "timer_interrupt",
+        WsIngressCommand::OrchestrationIntent { .. } => "orchestration_intent",
+        WsIngressCommand::Control { .. } => "control",
+        WsIngressCommand::AgentDirectiveResult { .. } => "agent_directive_result",
+        WsIngressCommand::ReplicaAvailability { .. } => "replica_availability",
+    }
+}
+
+async fn resource_scope<T: RbacStore>(
+    db: &T,
+    resource_type: ResourceType,
+    resource_id: uuid::Uuid,
+    org_id: Option<uuid::Uuid>,
+) -> Result<ScopeRef, SendableError> {
+    if let Some(ownership) = db
+        .fetch_resource_ownership(resource_type, resource_id)
+        .await?
+    {
+        return Ok(ownership.owner);
+    }
+    Ok(org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM))
+}
+
+async fn command_scope<T: RuntimeStore + RbacStore + OrchestrationStore>(
+    db: &T,
+    command: &WsIngressCommand,
+) -> Result<ScopeRef, SendableError> {
+    let workflow_run_id = match command {
+        WsIngressCommand::SettleEffect { result, .. } => Some(result.workflow_run_id),
+        WsIngressCommand::TimerInterrupt { timer, .. } => Some(timer.workflow_run_id),
+        WsIngressCommand::Control {
+            workflow_run_id, ..
+        } => Some(*workflow_run_id),
+        _ => None,
+    };
+    if let Some(run_id) = workflow_run_id
+        && let Some(run) = db.fetch_workflow_run(run_id).await?
+    {
+        return resource_scope(db, ResourceType::Workflow, run.workflow_id, None).await;
+    }
+    if let WsIngressCommand::OrchestrationIntent { wake, .. } = command
+        && let Some(binding) = db.fetch_orchestration_binding(wake.binding_id).await?
+    {
+        return resource_scope(
+            db,
+            ResourceType::Pipeline,
+            binding.pipeline_id,
+            binding.org_id,
+        )
+        .await;
+    }
+    Ok(ScopeRef::PLATFORM)
+}
+
+async fn inspect_or_apply<
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
+>(
     db: Arc<T>,
     broker: &dyn Broker,
     orchestration_nudge: &Notify,
     delivery: &IngressDelivery,
 ) -> Result<(), SendableError> {
-    match &delivery.command {
+    let scope = command_scope(db.as_ref(), &delivery.command).await?;
+    let Some(session) = db.fetch_broker_ingress_session(scope).await? else {
+        return apply_command(db, broker, orchestration_nudge, &delivery.command).await;
+    };
+    if session.mode == BrokerIngressSessionMode::Off {
+        return apply_command(db, broker, orchestration_nudge, &delivery.command).await;
+    }
+    let hold = session.mode == BrokerIngressSessionMode::HoldOrchestrationNudges
+        && matches!(
+            delivery.command,
+            WsIngressCommand::OrchestrationIntent { .. }
+        );
+    let command = serde_json::to_value(&delivery.command)
+        .map(Value::from)
+        .map_err(|error| Box::new(error) as SendableError)?;
+    match db
+        .capture_broker_ingress(BrokerIngressCaptureRequest {
+            scope,
+            delivery_id: delivery.delivery_id,
+            dedupe_key: delivery.dedupe_key.clone(),
+            command_kind: command_kind(&delivery.command).into(),
+            command,
+            hold,
+            received_at: chrono::Utc::now(),
+            capacity: INGRESS_CONTROL_QUEUE_CAPACITY,
+        })
+        .await?
+    {
+        BrokerIngressCapture::Full => Err(Box::new(std::io::Error::other(
+            "broker ingress inspector queue is full",
+        ))),
+        BrokerIngressCapture::Held(_) => Ok(()),
+        BrokerIngressCapture::Duplicate(record) if record.state != IngressControlState::Failed => {
+            Ok(())
+        }
+        BrokerIngressCapture::Observed(record) | BrokerIngressCapture::Duplicate(record) => {
+            match apply_command(db.clone(), broker, orchestration_nudge, &delivery.command).await {
+                Ok(()) => {
+                    db.finish_broker_ingress_record(
+                        record.id,
+                        IngressControlState::Applied,
+                        None,
+                        chrono::Utc::now(),
+                    )
+                    .await?;
+                    Ok(())
+                }
+                Err(error) => {
+                    db.finish_broker_ingress_record(
+                        record.id,
+                        IngressControlState::Failed,
+                        Some(error.to_string()),
+                        chrono::Utc::now(),
+                    )
+                    .await?;
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
+async fn apply_command<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
+    db: Arc<T>,
+    broker: &dyn Broker,
+    orchestration_nudge: &Notify,
+    command: &WsIngressCommand,
+) -> Result<(), SendableError> {
+    match command {
         // a timer came due. the result was built by the infrastructure effect host that armed the
         // wake, so this republishes it on the ordinary effect-result channel rather than settling
         // it here: retry policy, interrupt handling, and run events all live in that one consumer,

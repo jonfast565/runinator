@@ -2,6 +2,7 @@
 
 use chrono::Utc;
 use runinator_models::{
+    ingress_control::{ExternalIngressCapture, ExternalIngressGateMode, ExternalIngressRecord},
     orchestration::{
         INGRESS_CORRELATION_KEY_LIMIT, INGRESS_DELIVERY_ID_LIMIT, INGRESS_EVENT_TYPE_LIMIT,
         IngressAction, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
@@ -12,7 +13,10 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, IngressStore, OrchestrationStore, ScheduleStore, WorkflowVmStore},
+    roles::{
+        DefinitionStore, IngressStore, OrchestrationStore, RbacStore, ScheduleStore,
+        WorkflowVmStore,
+    },
 };
 use uuid::Uuid;
 
@@ -82,6 +86,8 @@ pub struct PipelineIngressResult {
 
 #[derive(Debug, Clone)]
 pub enum PipelineIngressError {
+    Held(Box<ExternalIngressRecord>),
+    Full,
     NotFound(String),
     Invalid(String),
     Conflict(String),
@@ -115,6 +121,7 @@ where
         + ScheduleStore
         + WorkflowVmStore
         + IngressStore
+        + RbacStore
         + OrchestrationStore,
 {
     pub async fn process_ingress(
@@ -123,6 +130,29 @@ where
         caller_org_id: Option<Uuid>,
         request: PipelineIngressRequest,
         adapter: Option<(Uuid, i64)>,
+    ) -> Result<PipelineIngressResult, PipelineIngressError> {
+        self.process_ingress_inner(pipeline_id, caller_org_id, request, adapter, false)
+            .await
+    }
+
+    pub async fn process_approved_ingress(
+        &self,
+        pipeline_id: Uuid,
+        caller_org_id: Option<Uuid>,
+        request: PipelineIngressRequest,
+        adapter: Option<(Uuid, i64)>,
+    ) -> Result<PipelineIngressResult, PipelineIngressError> {
+        self.process_ingress_inner(pipeline_id, caller_org_id, request, adapter, true)
+            .await
+    }
+
+    async fn process_ingress_inner(
+        &self,
+        pipeline_id: Uuid,
+        caller_org_id: Option<Uuid>,
+        request: PipelineIngressRequest,
+        adapter: Option<(Uuid, i64)>,
+        bypass_gate: bool,
     ) -> Result<PipelineIngressResult, PipelineIngressError> {
         let pipeline = self
             .fetch(pipeline_id)
@@ -159,6 +189,29 @@ where
             kind: IngressTargetKind::Pipeline,
             id: pipeline_id,
         };
+        if !bypass_gate
+            && let Some(gate) = ingress
+                .gate(target.clone())
+                .await
+                .map_err(PipelineIngressError::internal)?
+            && gate.mode != ExternalIngressGateMode::Disabled
+        {
+            let owner_scope = ingress
+                .owner_scope_for_target(&target)
+                .await
+                .map_err(PipelineIngressError::internal)?;
+            return match ingress
+                .capture_for_review(target, owner_scope, gate.mode, event)
+                .await
+                .map_err(PipelineIngressError::internal)?
+            {
+                ExternalIngressCapture::Stored(record)
+                | ExternalIngressCapture::Duplicate(record) => {
+                    Err(PipelineIngressError::Held(Box::new(record)))
+                }
+                ExternalIngressCapture::Full => Err(PipelineIngressError::Full),
+            };
+        }
         let org_id = pipeline.org_id.or(caller_org_id);
         let mut admission = ingress
             .fetch(org_id, policy.scope.clone(), event.correlation_key.clone())

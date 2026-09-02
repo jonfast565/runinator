@@ -26,9 +26,9 @@ use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     adapters, agents, artifacts, auth, authz, automation, billing, catalog, catalog_metadata,
-    console, credentials, debug, files, function_invocations, functions, health, notifications,
-    observability, orchestrations, orgs, packs, pipelines, providers, provisioning, replicas,
-    rexrap, runs, schedules, supervisor, triggers, workflow_vm, workflows,
+    console, credentials, debug, files, function_invocations, functions, health, ingress_control,
+    notifications, observability, orchestrations, orgs, packs, pipelines, providers, provisioning,
+    replicas, rexrap, runs, schedules, supervisor, triggers, workflow_vm, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};
@@ -189,6 +189,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(catalog::routes(pool.clone()))
         .merge(automation::routes(pool.clone()))
         .merge(observability::routes(pool.clone()))
+        .merge(ingress_control::routes(pool.clone()))
         .merge(credentials::routes(pool.clone()))
         .merge(providers::routes(pool.clone()))
         .merge(functions::routes(pool.clone()))
@@ -242,9 +243,30 @@ pub fn build_router<T: DatabaseImpl>(
         // recover from any panic in a handler or inner middleware so a single bad request returns a
         // 500 instead of dropping the connection or poisoning the runtime.
         .layer(CatchPanicLayer::custom(handle_panic))
+        // Admission queues use 429 as backpressure. Always make the retry contract explicit,
+        // including webhook adapters whose shared handler returns the historical JSON tuple.
+        .layer(axum::middleware::from_fn(retry_after_backpressure))
         // outermost layer: open a request span parented to any inbound w3c trace context so logs and
         // otel spans for this request continue the caller's distributed trace.
         .layer(axum::middleware::from_fn(trace_propagation_middleware))
+}
+
+async fn retry_after_backpressure(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    if response.status() == axum::http::StatusCode::TOO_MANY_REQUESTS
+        && !response
+            .headers()
+            .contains_key(axum::http::header::RETRY_AFTER)
+    {
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from_static("5"),
+        );
+    }
+    response
 }
 
 fn cors_layer(config: &CorsConfig) -> CorsLayer {

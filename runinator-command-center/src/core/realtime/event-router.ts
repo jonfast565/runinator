@@ -22,6 +22,7 @@ export interface EventStreamRouterDeps {
   refreshPipelineDetailIfMember: (runId: string) => void;
   refreshOrchestrationsIfActive: (orchestrationId?: string) => void;
   refreshAdaptersIfActive: () => void;
+  refreshIngressControlIfActive: () => void;
 }
 
 export function createEventStreamRouter(deps: () => EventStreamRouterDeps): EventStreamRouter {
@@ -80,6 +81,9 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
           break;
         case "schedules_changed":
           context.refreshSchedulesIfActive();
+          break;
+        case "ingress_control_changed":
+          context.refreshIngressControlIfActive();
           break;
       }
     },

@@ -10,11 +10,72 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use runinator_models::value::Value;
-use runinator_models::{errors::SendableError, orchestration::IdempotencyClaim};
+use runinator_models::{
+    errors::SendableError,
+    ingress_control::{
+        BrokerIngressCapture, BrokerIngressCaptureRequest, BrokerIngressRecord,
+        BrokerIngressSession, IngressControlState,
+    },
+    orchestration::IdempotencyClaim,
+    rbac::ScopeRef,
+};
 
 /// Core persistence operations for Runinator.
 /// At-least-once delivery plumbing: the action-dispatch outbox, idempotency claims, and dead letters.
 pub trait DeliveryStore: Send + Sync + 'static {
+    fn fetch_broker_ingress_session(
+        &self,
+        scope: ScopeRef,
+    ) -> impl Future<Output = Result<Option<BrokerIngressSession>, SendableError>> + Send;
+
+    fn put_broker_ingress_session(
+        &self,
+        session: BrokerIngressSession,
+    ) -> impl Future<Output = Result<BrokerIngressSession, SendableError>> + Send;
+
+    fn capture_broker_ingress(
+        &self,
+        request: BrokerIngressCaptureRequest,
+    ) -> impl Future<Output = Result<BrokerIngressCapture, SendableError>> + Send;
+
+    fn fetch_broker_ingress_record(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Result<Option<BrokerIngressRecord>, SendableError>> + Send;
+
+    fn fetch_broker_ingress_records(
+        &self,
+        scope: Option<ScopeRef>,
+        state: Option<IngressControlState>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<BrokerIngressRecord>, SendableError>> + Send;
+
+    fn decide_broker_ingress_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        reviewed_by: Uuid,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn claim_approved_broker_ingress(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<BrokerIngressRecord>, SendableError>> + Send;
+
+    fn finish_broker_ingress_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        error: Option<String>,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn purge_broker_ingress_records_before(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Persist a dead-lettered broker message for later inspection/replay.
     fn record_dead_letter(
         &self,

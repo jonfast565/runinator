@@ -12,6 +12,7 @@ pub mod errors;
 pub mod files;
 pub mod foreign_languages;
 pub mod functions;
+pub mod ingress_control;
 pub mod interrupt;
 pub mod invocation;
 pub mod notifications;

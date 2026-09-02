@@ -3,11 +3,45 @@
 use super::*;
 use runinator_models::orchestration::{
     IngressAdmission, IngressAdmissionClaim, IngressEvent, IngressEventDisposition,
-    IngressEventRecord, IngressPromotion, IngressQueueState,
+    IngressEventRecord, IngressPromotion, IngressQueueState, IngressTarget,
+};
+use runinator_models::{
+    ingress_control::{
+        ExternalIngressCapture, ExternalIngressGate, ExternalIngressGateMode,
+        ExternalIngressRecord, IngressControlState,
+    },
+    rbac::ScopeRef,
 };
 
 const INGRESS_ADMISSION_COLUMNS: &str = "id, org_scope, scope, correlation_key, generation, workflow_id, pipeline_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at";
 const INGRESS_EVENT_COLUMNS: &str = "id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state, claim_token, promoted_generation, workflow_run_id, pipeline_run_id";
+const EXTERNAL_CONTROL_COLUMNS: &str = "id, target_kind, target_id, owner_scope_kind, owner_scope_id, gate_mode, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, state, reviewed_by, last_error, received_at, resolved_at";
+
+fn target_kind_name(kind: runinator_models::orchestration::IngressTargetKind) -> &'static str {
+    match kind {
+        runinator_models::orchestration::IngressTargetKind::Workflow => "workflow",
+        runinator_models::orchestration::IngressTargetKind::Pipeline => "pipeline",
+    }
+}
+
+fn gate_mode_name(mode: ExternalIngressGateMode) -> &'static str {
+    match mode {
+        ExternalIngressGateMode::Disabled => "disabled",
+        ExternalIngressGateMode::Paused => "paused",
+        ExternalIngressGateMode::Review => "review",
+    }
+}
+
+fn control_state_name(state: IngressControlState) -> &'static str {
+    match state {
+        IngressControlState::Held => "held",
+        IngressControlState::Approved => "approved",
+        IngressControlState::Applying => "applying",
+        IngressControlState::Applied => "applied",
+        IngressControlState::Dropped => "dropped",
+        IngressControlState::Failed => "failed",
+    }
+}
 
 fn disposition_name(value: IngressEventDisposition) -> &'static str {
     match value {
@@ -104,6 +138,228 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn fetch_external_ingress_gate(
+        &self,
+        target: IngressTarget,
+    ) -> Result<Option<ExternalIngressGate>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT target_kind, target_id, owner_scope_kind, owner_scope_id, mode, updated_by, updated_at FROM ingress_control_gates WHERE target_kind = ? AND target_id = ?",
+        ))
+        .bind(target_kind_name(target.kind))
+        .bind(target.id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref()
+            .map(mappers::row_to_external_ingress_gate)
+            .transpose()
+    }
+
+    async fn put_external_ingress_gate(
+        &self,
+        gate: ExternalIngressGate,
+    ) -> Result<ExternalIngressGate, SendableError> {
+        let target_kind = target_kind_name(gate.target.kind);
+        let scope_kind = gate.owner_scope.kind.as_str();
+        let sql = if self.dialect() == SqlDialect::MariaDb {
+            "INSERT INTO ingress_control_gates (target_kind, target_id, owner_scope_kind, owner_scope_id, mode, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE owner_scope_kind = VALUES(owner_scope_kind), owner_scope_id = VALUES(owner_scope_id), mode = VALUES(mode), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)"
+        } else {
+            "INSERT INTO ingress_control_gates (target_kind, target_id, owner_scope_kind, owner_scope_id, mode, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(target_kind, target_id) DO UPDATE SET owner_scope_kind = excluded.owner_scope_kind, owner_scope_id = excluded.owner_scope_id, mode = excluded.mode, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
+        };
+        sqlx::query(&self.render(sql))
+            .bind(target_kind)
+            .bind(gate.target.id)
+            .bind(scope_kind)
+            .bind(gate.owner_scope.id)
+            .bind(gate_mode_name(gate.mode))
+            .bind(gate.updated_by)
+            .bind(gate.updated_at.timestamp())
+            .execute(self.pool())
+            .await?;
+        self.fetch_external_ingress_gate(gate.target)
+            .await?
+            .ok_or_else(|| {
+                Box::new(std::io::Error::other("ingress control gate disappeared")) as SendableError
+            })
+    }
+
+    async fn capture_external_ingress(
+        &self,
+        target: IngressTarget,
+        owner_scope: ScopeRef,
+        gate_mode: ExternalIngressGateMode,
+        event: IngressEvent,
+        now: chrono::DateTime<chrono::Utc>,
+        capacity: i64,
+    ) -> Result<ExternalIngressCapture, SendableError> {
+        let target_kind = target_kind_name(target.kind);
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render("UPDATE ingress_control_gates SET updated_at = updated_at WHERE target_kind = ? AND target_id = ?"))
+            .bind(target_kind).bind(target.id).execute(&mut *tx).await?;
+        if let Some(row) = sqlx::query(&self.render(&format!(
+            "SELECT {EXTERNAL_CONTROL_COLUMNS} FROM ingress_control_events WHERE target_kind = ? AND target_id = ? AND source = ? AND event_id = ?"
+        )))
+        .bind(target_kind).bind(target.id).bind(event.source.as_str()).bind(event.event_id.as_str())
+        .fetch_optional(&mut *tx).await? {
+            let record = mappers::row_to_external_ingress_record(&row)?;
+            tx.commit().await?;
+            return Ok(ExternalIngressCapture::Duplicate(record));
+        }
+        let row = sqlx::query(&self.render(
+            "SELECT COUNT(*) AS count FROM ingress_control_events WHERE target_kind = ? AND target_id = ? AND state IN ('held', 'approved', 'applying')",
+        )).bind(target_kind).bind(target.id).fetch_one(&mut *tx).await?;
+        if row.get::<i64, _>("count") >= capacity.max(1) {
+            tx.commit().await?;
+            return Ok(ExternalIngressCapture::Full);
+        }
+        let id = Uuid::now_v7();
+        sqlx::query(&self.render(
+            "INSERT INTO ingress_control_events (id, target_kind, target_id, owner_scope_kind, owner_scope_id, gate_mode, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, state, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?)",
+        ))
+        .bind(id).bind(target_kind).bind(target.id).bind(owner_scope.kind.as_str()).bind(owner_scope.id)
+        .bind(gate_mode_name(gate_mode)).bind(event.source.as_str()).bind(event.event_id.as_str())
+        .bind(event.event_type.as_str()).bind(event.correlation_key.as_str()).bind(event.payload.to_string())
+        .bind(event.provenance.to_string()).bind(event.occurred_at.map(|value| value.timestamp())).bind(now.timestamp())
+        .execute(&mut *tx).await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {EXTERNAL_CONTROL_COLUMNS} FROM ingress_control_events WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut record = mappers::row_to_external_ingress_record(&row)?;
+        let position = sqlx::query(&self.render(
+            "SELECT COUNT(*) AS count FROM ingress_control_events WHERE target_kind = ? AND target_id = ? AND state IN ('held', 'approved', 'applying') AND (received_at < ? OR (received_at = ? AND id <= ?))",
+        )).bind(target_kind).bind(target.id).bind(now.timestamp()).bind(now.timestamp()).bind(id)
+        .fetch_one(&mut *tx).await?.get::<i64, _>("count");
+        record.queue_position = Some(position);
+        tx.commit().await?;
+        Ok(ExternalIngressCapture::Stored(record))
+    }
+
+    async fn fetch_external_ingress_record(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {EXTERNAL_CONTROL_COLUMNS} FROM ingress_control_events WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref()
+            .map(mappers::row_to_external_ingress_record)
+            .transpose()
+    }
+
+    async fn fetch_external_ingress_records(
+        &self,
+        owner_scope: Option<ScopeRef>,
+        target: Option<IngressTarget>,
+        state: Option<IngressControlState>,
+        limit: i64,
+    ) -> Result<Vec<ExternalIngressRecord>, SendableError> {
+        let mut sql =
+            format!("SELECT {EXTERNAL_CONTROL_COLUMNS} FROM ingress_control_events WHERE 1 = 1");
+        if owner_scope.is_some() {
+            sql.push_str(" AND owner_scope_kind = ? AND ((owner_scope_id IS NULL AND ? IS NULL) OR owner_scope_id = ?)");
+        }
+        if target.is_some() {
+            sql.push_str(" AND target_kind = ? AND target_id = ?");
+        }
+        if state.is_some() {
+            sql.push_str(" AND state = ?");
+        }
+        sql.push_str(" ORDER BY received_at DESC, id DESC LIMIT ?");
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered);
+        if let Some(scope) = owner_scope {
+            query = query
+                .bind(scope.kind.as_str())
+                .bind(scope.id)
+                .bind(scope.id);
+        }
+        if let Some(target) = target {
+            query = query.bind(target_kind_name(target.kind)).bind(target.id);
+        }
+        if let Some(state) = state {
+            query = query.bind(control_state_name(state));
+        }
+        let rows = query
+            .bind(limit.clamp(1, 1000))
+            .fetch_all(self.pool())
+            .await?;
+        let mut records = rows
+            .iter()
+            .map(mappers::row_to_external_ingress_record)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut position = 0;
+        for record in records.iter_mut().rev() {
+            if record.state == IngressControlState::Held {
+                position += 1;
+                record.queue_position = Some(position);
+            }
+        }
+        Ok(records)
+    }
+
+    async fn claim_external_ingress_record(
+        &self,
+        id: Uuid,
+        reviewed_by: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        let updated = sqlx::query(&self.render("UPDATE ingress_control_events SET state = 'applying', reviewed_by = ?, last_error = NULL WHERE id = ? AND state = 'held'"))
+            .bind(reviewed_by).bind(id).execute(self.pool()).await?;
+        if updated.affected() == 0 {
+            return Ok(None);
+        }
+        let _ = now;
+        self.fetch_external_ingress_record(id).await
+    }
+
+    async fn claim_oldest_external_ingress_record(
+        &self,
+        target: IngressTarget,
+        reviewed_by: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        let row = sqlx::query(&self.render("SELECT id FROM ingress_control_events WHERE target_kind = ? AND target_id = ? AND state = 'held' ORDER BY received_at, id LIMIT 1"))
+            .bind(target_kind_name(target.kind)).bind(target.id).fetch_optional(self.pool()).await?;
+        match row {
+            Some(row) => {
+                self.claim_external_ingress_record(row.get("id"), reviewed_by, now)
+                    .await
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn finish_external_ingress_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        error: Option<String>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, SendableError> {
+        let affected = match error {
+            Some(error) => sqlx::query(&self.render("UPDATE ingress_control_events SET state = ?, last_error = ?, resolved_at = ? WHERE id = ? AND state = 'applying'"))
+                .bind(control_state_name(state)).bind(error).bind(now.timestamp()).bind(id).execute(self.pool()).await?.affected(),
+            None => sqlx::query(&self.render("UPDATE ingress_control_events SET state = ?, last_error = NULL, resolved_at = ? WHERE id = ? AND state = 'applying'"))
+                .bind(control_state_name(state)).bind(now.timestamp()).bind(id).execute(self.pool()).await?.affected(),
+        };
+        Ok(affected > 0)
+    }
+
+    async fn drop_external_ingress_record(
+        &self,
+        id: Uuid,
+        reviewed_by: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, SendableError> {
+        Ok(sqlx::query(&self.render("UPDATE ingress_control_events SET state = 'dropped', reviewed_by = ?, resolved_at = ? WHERE id = ? AND state = 'held'"))
+            .bind(reviewed_by).bind(now.timestamp()).bind(id).execute(self.pool()).await?.affected() > 0)
+    }
+
     async fn claim_ingress_admission(
         &self,
         admission: IngressAdmission,

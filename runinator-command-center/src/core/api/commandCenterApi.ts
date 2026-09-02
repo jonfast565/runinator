@@ -91,10 +91,21 @@ import type {
   IngressInboxEntry,
 } from "../domain/models";
 
-async function fetchIngressJson<T>(path: string): Promise<T> {
+async function fetchIngressJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = httpAuthToken();
+  const headers = new Headers(init?.headers);
+
+  if (init?.body) {
+    headers.set("content-type", "application/json");
+  }
+
+  if (token) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+
   const response = await fetch(`${apiBaseUrl()}/${path}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+    ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -114,6 +125,73 @@ export async function fetchIngressAdmission(scope: string, correlationKey: strin
 export async function fetchIngressTimeline(scope: string, correlationKey: string) {
   const query = new URLSearchParams({ scope, correlation_key: correlationKey });
   return fetchIngressJson<IngressInboxEntry[]>(`ingress/admission/events?${query}`);
+}
+
+export interface ScopeRefInput {
+  kind: "platform" | "organization" | "team" | "user";
+  id?: string | null;
+}
+
+export async function listExternalIngressControl(params: URLSearchParams) {
+  const query = params.toString();
+  return fetchIngressJson<JsonRecord[]>(`ingress_control/external${query ? `?${query}` : ""}`);
+}
+
+export async function configureExternalIngressGate(
+  targetKind: "workflow" | "pipeline",
+  targetId: string,
+  mode: "disabled" | "paused" | "review",
+) {
+  return fetchIngressJson<JsonRecord>(`ingress_control/targets/${targetKind}/${targetId}/gate`, {
+    method: "PUT",
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export async function approveExternalIngress(id: string) {
+  return fetchIngressJson<JsonRecord>(`ingress_control/external/${id}/approve`, { method: "POST" });
+}
+
+export async function dropExternalIngress(id: string) {
+  return fetchIngressJson<JsonRecord>(`ingress_control/external/${id}/drop`, { method: "POST" });
+}
+
+export async function releaseExternalIngress(
+  targetKind: "workflow" | "pipeline",
+  targetId: string,
+) {
+  return fetchIngressJson<JsonRecord[]>(`ingress_control/targets/${targetKind}/${targetId}/release`, {
+    method: "POST",
+  });
+}
+
+export async function listBrokerIngressControl(params: URLSearchParams) {
+  const query = params.toString();
+  return fetchIngressJson<JsonRecord[]>(`ingress_control/broker${query ? `?${query}` : ""}`);
+}
+
+export async function fetchBrokerIngressSession(scope: ScopeRefInput) {
+  const params = new URLSearchParams({ scope_kind: scope.kind });
+  if (scope.id) {params.set("scope_id", scope.id);}
+  return fetchIngressJson<JsonRecord>(`ingress_control/broker/session?${params}`);
+}
+
+export async function configureBrokerIngressSession(
+  scope: ScopeRefInput,
+  mode: "off" | "observe" | "hold_orchestration_nudges",
+) {
+  return fetchIngressJson<JsonRecord>("ingress_control/broker/session", {
+    method: "PUT",
+    body: JSON.stringify({ scope, mode }),
+  });
+}
+
+export async function approveBrokerIngress(id: string) {
+  return fetchIngressJson<JsonRecord>(`ingress_control/broker/${id}/approve`, { method: "POST" });
+}
+
+export async function dropBrokerIngress(id: string) {
+  return fetchIngressJson<JsonRecord>(`ingress_control/broker/${id}/drop`, { method: "POST" });
 }
 
 export interface WorkflowRexRapSaveRequest {

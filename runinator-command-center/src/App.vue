@@ -31,7 +31,7 @@
     <OrgResourcesView v-if="app.activeTab === 'OrgResources'" />
     <AdminSettingsView v-if="app.activeTab === 'AdminSettings'" />
     <PermissionsView v-if="app.activeTab === 'Permissions'" />
-    <DeadLettersView v-if="app.activeTab === 'DeadLetters'" />
+    <IngressControlView v-if="app.activeTab === 'IngressControl'" />
     <AuditLogView v-if="app.activeTab === 'AuditLog'" />
   </AppShell>
 </template>
@@ -87,7 +87,7 @@ const PermissionsView = defineAsyncComponent(() => import("./ui/views/Permission
 const OrganizationView = defineAsyncComponent(() => import("./ui/views/OrganizationView.vue"));
 const OrgResourcesView = defineAsyncComponent(() => import("./ui/views/OrgResourcesView.vue"));
 const AdminSettingsView = defineAsyncComponent(() => import("./ui/views/AdminSettingsView.vue"));
-const DeadLettersView = defineAsyncComponent(() => import("./ui/views/DeadLettersView.vue"));
+const IngressControlView = defineAsyncComponent(() => import("./ui/views/IngressControlView.vue"));
 const AuditLogView = defineAsyncComponent(() => import("./ui/views/AuditLogView.vue"));
 
 const app = useAppStore();

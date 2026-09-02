@@ -8,6 +8,7 @@ mod archive;
 mod audit;
 mod auth;
 mod definitions;
+mod ingress_control;
 mod notifications;
 mod orchestrations;
 mod pack_transaction;

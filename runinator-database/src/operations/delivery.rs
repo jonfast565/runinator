@@ -4,6 +4,38 @@
 //! `SqlBackend`; see `super` for the shared helpers they call.
 
 use super::*;
+use runinator_models::ingress_control::{
+    BrokerIngressCapture, BrokerIngressCaptureRequest, BrokerIngressRecord, BrokerIngressSession,
+    BrokerIngressSessionMode, IngressControlState,
+};
+
+const BROKER_CONTROL_COLUMNS: &str = "id, scope_kind, scope_id, delivery_id, dedupe_key, command_kind, command, state, reviewed_by, last_error, received_at, resolved_at";
+
+fn scope_key(scope: ScopeRef) -> String {
+    match scope.id {
+        Some(id) => format!("{}:{id}", scope.kind.as_str()),
+        None => "platform".into(),
+    }
+}
+
+fn broker_mode_name(mode: BrokerIngressSessionMode) -> &'static str {
+    match mode {
+        BrokerIngressSessionMode::Off => "off",
+        BrokerIngressSessionMode::Observe => "observe",
+        BrokerIngressSessionMode::HoldOrchestrationNudges => "hold_orchestration_nudges",
+    }
+}
+
+fn broker_state_name(state: IngressControlState) -> &'static str {
+    match state {
+        IngressControlState::Held => "held",
+        IngressControlState::Approved => "approved",
+        IngressControlState::Applying => "applying",
+        IngressControlState::Applied => "applied",
+        IngressControlState::Dropped => "dropped",
+        IngressControlState::Failed => "failed",
+    }
+}
 
 // the bound list is repeated verbatim in every role impl in this directory. it stays spelled out
 // rather than hidden behind a macro so that type errors inside the query bodies — the part that
@@ -37,6 +69,231 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn fetch_broker_ingress_session(
+        &self,
+        scope: ScopeRef,
+    ) -> Result<Option<BrokerIngressSession>, SendableError> {
+        let row = sqlx::query(&self.render("SELECT scope_kind, scope_id, mode, updated_by, updated_at FROM broker_ingress_sessions WHERE scope_key = ?"))
+            .bind(scope_key(scope)).fetch_optional(self.pool()).await?;
+        row.as_ref()
+            .map(mappers::row_to_broker_ingress_session)
+            .transpose()
+    }
+
+    async fn put_broker_ingress_session(
+        &self,
+        session: BrokerIngressSession,
+    ) -> Result<BrokerIngressSession, SendableError> {
+        let key = scope_key(session.scope);
+        let sql = if self.dialect() == SqlDialect::MariaDb {
+            "INSERT INTO broker_ingress_sessions (scope_key, scope_kind, scope_id, mode, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE mode = VALUES(mode), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)"
+        } else {
+            "INSERT INTO broker_ingress_sessions (scope_key, scope_kind, scope_id, mode, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(scope_key) DO UPDATE SET mode = excluded.mode, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
+        };
+        sqlx::query(&self.render(sql))
+            .bind(key)
+            .bind(session.scope.kind.as_str())
+            .bind(session.scope.id)
+            .bind(broker_mode_name(session.mode))
+            .bind(session.updated_by)
+            .bind(session.updated_at.timestamp())
+            .execute(self.pool())
+            .await?;
+        self.fetch_broker_ingress_session(session.scope)
+            .await?
+            .ok_or_else(|| {
+                Box::new(std::io::Error::other("broker ingress session disappeared"))
+                    as SendableError
+            })
+    }
+
+    async fn capture_broker_ingress(
+        &self,
+        request: BrokerIngressCaptureRequest,
+    ) -> Result<BrokerIngressCapture, SendableError> {
+        let BrokerIngressCaptureRequest {
+            scope,
+            delivery_id,
+            dedupe_key,
+            command_kind,
+            command,
+            hold,
+            received_at,
+            capacity,
+        } = request;
+        let key = scope_key(scope);
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render(
+            "UPDATE broker_ingress_sessions SET updated_at = updated_at WHERE scope_key = ?",
+        ))
+        .bind(key.as_str())
+        .execute(&mut *tx)
+        .await?;
+        if let Some(row) = sqlx::query(&self.render(&format!("SELECT {BROKER_CONTROL_COLUMNS} FROM broker_ingress_messages WHERE scope_key = ? AND dedupe_key = ?")))
+            .bind(key.as_str()).bind(dedupe_key.as_str()).fetch_optional(&mut *tx).await? {
+            let record = mappers::row_to_broker_ingress_record(&row)?;
+            tx.commit().await?;
+            return Ok(BrokerIngressCapture::Duplicate(record));
+        }
+        if hold {
+            let row = sqlx::query(&self.render("SELECT COUNT(*) AS count FROM broker_ingress_messages WHERE scope_key = ? AND state IN ('held', 'approved')"))
+                .bind(key.as_str()).fetch_one(&mut *tx).await?;
+            if row.get::<i64, _>("count") >= capacity.max(1) {
+                tx.commit().await?;
+                return Ok(BrokerIngressCapture::Full);
+            }
+        }
+        let id = Uuid::now_v7();
+        let state = if hold { "held" } else { "applying" };
+        sqlx::query(&self.render("INSERT INTO broker_ingress_messages (id, scope_key, scope_kind, scope_id, delivery_id, dedupe_key, command_kind, command, state, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+            .bind(id).bind(key).bind(scope.kind.as_str()).bind(scope.id).bind(delivery_id)
+            .bind(dedupe_key).bind(command_kind).bind(command.to_string()).bind(state).bind(received_at.timestamp())
+            .execute(&mut *tx).await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {BROKER_CONTROL_COLUMNS} FROM broker_ingress_messages WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let record = mappers::row_to_broker_ingress_record(&row)?;
+        tx.commit().await?;
+        Ok(if hold {
+            BrokerIngressCapture::Held(record)
+        } else {
+            BrokerIngressCapture::Observed(record)
+        })
+    }
+
+    async fn fetch_broker_ingress_record(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<BrokerIngressRecord>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {BROKER_CONTROL_COLUMNS} FROM broker_ingress_messages WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref()
+            .map(mappers::row_to_broker_ingress_record)
+            .transpose()
+    }
+
+    async fn fetch_broker_ingress_records(
+        &self,
+        scope: Option<ScopeRef>,
+        state: Option<IngressControlState>,
+        limit: i64,
+    ) -> Result<Vec<BrokerIngressRecord>, SendableError> {
+        let mut sql =
+            format!("SELECT {BROKER_CONTROL_COLUMNS} FROM broker_ingress_messages WHERE 1 = 1");
+        if scope.is_some() {
+            sql.push_str(
+                " AND scope_kind = ? AND ((scope_id IS NULL AND ? IS NULL) OR scope_id = ?)",
+            );
+        }
+        if state.is_some() {
+            sql.push_str(" AND state = ?");
+        }
+        sql.push_str(" ORDER BY received_at DESC, id DESC LIMIT ?");
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered);
+        if let Some(scope) = scope {
+            query = query
+                .bind(scope.kind.as_str())
+                .bind(scope.id)
+                .bind(scope.id);
+        }
+        if let Some(state) = state {
+            query = query.bind(broker_state_name(state));
+        }
+        let rows = query
+            .bind(limit.clamp(1, 1000))
+            .fetch_all(self.pool())
+            .await?;
+        rows.iter()
+            .map(mappers::row_to_broker_ingress_record)
+            .collect()
+    }
+
+    async fn decide_broker_ingress_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        reviewed_by: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let terminal = state == IngressControlState::Dropped;
+        Ok(sqlx::query(&self.render("UPDATE broker_ingress_messages SET state = ?, reviewed_by = ?, resolved_at = ? WHERE id = ? AND state = 'held'"))
+            .bind(broker_state_name(state)).bind(reviewed_by)
+            .bind(if terminal { Some(now.timestamp()) } else { None }).bind(id)
+            .execute(self.pool()).await?.affected() > 0)
+    }
+
+    async fn claim_approved_broker_ingress(
+        &self,
+        _now: DateTime<Utc>,
+    ) -> Result<Option<BrokerIngressRecord>, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let lock = match self.dialect() {
+            SqlDialect::Postgres | SqlDialect::MariaDb => " FOR UPDATE",
+            SqlDialect::Sqlite => "",
+        };
+        let row = sqlx::query(&self.render(&format!("SELECT id FROM broker_ingress_messages WHERE state = 'approved' ORDER BY received_at, id LIMIT 1{lock}")))
+            .fetch_optional(&mut *tx).await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let id: Uuid = row.get("id");
+        let updated = sqlx::query(&self.render("UPDATE broker_ingress_messages SET state = 'applying' WHERE id = ? AND state = 'approved'"))
+            .bind(id).execute(&mut *tx).await?;
+        if updated.affected() == 0 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {BROKER_CONTROL_COLUMNS} FROM broker_ingress_messages WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let record = mappers::row_to_broker_ingress_record(&row)?;
+        tx.commit().await?;
+        Ok(Some(record))
+    }
+
+    async fn finish_broker_ingress_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        error: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let affected = match error {
+            Some(error) => sqlx::query(&self.render("UPDATE broker_ingress_messages SET state = ?, last_error = ?, resolved_at = ? WHERE id = ? AND state = 'applying'"))
+                .bind(broker_state_name(state)).bind(error).bind(now.timestamp()).bind(id)
+                .execute(self.pool()).await?.affected(),
+            None => sqlx::query(&self.render("UPDATE broker_ingress_messages SET state = ?, last_error = NULL, resolved_at = ? WHERE id = ? AND state = 'applying'"))
+                .bind(broker_state_name(state)).bind(now.timestamp()).bind(id)
+                .execute(self.pool()).await?.affected(),
+        };
+        Ok(affected > 0)
+    }
+
+    async fn purge_broker_ingress_records_before(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<u64, SendableError> {
+        Ok(sqlx::query(&self.render(
+            "DELETE FROM broker_ingress_messages WHERE resolved_at IS NOT NULL AND resolved_at < ?",
+        ))
+        .bind(cutoff.timestamp())
+        .execute(self.pool())
+        .await?
+        .affected())
+    }
+
     async fn record_dead_letter(&self, record: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();

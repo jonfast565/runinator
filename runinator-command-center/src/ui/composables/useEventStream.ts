@@ -116,6 +116,11 @@ export function useEventStream() {
         void orchestrations.refreshAdapters();
       }
     },
+    refreshIngressControlIfActive: () => {
+      if (app.activeTab === "IngressControl") {
+        window.dispatchEvent(new CustomEvent("runinator:ingress-control-changed"));
+      }
+    },
   }));
 
   const client = new EventStreamClient({

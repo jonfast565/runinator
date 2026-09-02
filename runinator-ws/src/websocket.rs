@@ -32,16 +32,25 @@ use crate::repository;
 use runinator_ws_middleware::auth::WEBSOCKET_AUTH_PROTOCOL;
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 
-fn event_scope_visible(ctx: &AuthContext, org_id: Option<Uuid>) -> bool {
-    let scope = org_id
-        .and_then(|id| {
-            runinator_models::rbac::ScopeRef::new(
-                runinator_models::rbac::ScopeKind::Organization,
-                Some(id),
-            )
-        })
-        .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM);
-    ctx.authorize_scope(runinator_models::rbac::Action::View, scope)
+fn event_scope_visible(ctx: &AuthContext, event: &runinator_comm::UiEvent) -> bool {
+    let scope = event.scope.unwrap_or_else(|| {
+        event
+            .org_id
+            .and_then(|id| {
+                runinator_models::rbac::ScopeRef::new(
+                    runinator_models::rbac::ScopeKind::Organization,
+                    Some(id),
+                )
+            })
+            .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM)
+    });
+    let action = match &event.kind {
+        runinator_comm::UiEventKind::IngressControlChanged { stream, .. } if stream == "broker" => {
+            runinator_models::rbac::Action::EngineOperate
+        }
+        _ => runinator_models::rbac::Action::View,
+    };
+    ctx.authorize_scope(action, scope)
 }
 
 pub(crate) async fn send_json<T: Serialize>(
@@ -91,7 +100,7 @@ pub(crate) async fn ws_events(
                     match event {
                         Ok(event) => {
                             // org-scoped egress: drop cross-tenant hints; unscoped events stay visible.
-                            if !event_scope_visible(&ctx, event.org_id) {
+                            if !event_scope_visible(&ctx, &event) {
                                 continue;
                             }
                             if send_json(&mut tx, &event).await.is_err() {
@@ -168,7 +177,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if !event_scope_visible(&ctx, event.org_id) {
+                            if !event_scope_visible(&ctx, &event) {
                                 continue;
                             }
                             let relevant = matches!(

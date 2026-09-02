@@ -12,7 +12,10 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, IngressStore, OrchestrationStore, ScheduleStore, WorkflowVmStore},
+    roles::{
+        DefinitionStore, IngressStore, OrchestrationStore, RbacStore, ScheduleStore,
+        WorkflowVmStore,
+    },
 };
 use serde::Deserialize;
 
@@ -300,6 +303,7 @@ pub async fn ingress_pipeline_run<
         + ScheduleStore
         + WorkflowVmStore
         + IngressStore
+        + RbacStore
         + OrchestrationStore,
 >(
     Extension(db): Extension<Arc<T>>,
@@ -324,6 +328,7 @@ pub async fn process_pipeline_ingress<
         + ScheduleStore
         + WorkflowVmStore
         + IngressStore
+        + RbacStore
         + OrchestrationStore,
 >(
     service: Arc<PipelineOperations<T>>,
@@ -361,6 +366,19 @@ pub async fn process_pipeline_ingress<
                 pipeline_run_id: value.pipeline_run_id,
                 orchestration_binding_id: value.orchestration_binding_id,
                 message: value.message,
+            })),
+        ),
+        Err(PipelineIngressError::Held(record)) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::ExternalIngressRecord(*record)),
+        ),
+        Err(PipelineIngressError::Full) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ApiResponse::ApiError(ApiError {
+                message: "ingress review queue is full; retry later".into(),
+                path: None,
+                expected: None,
+                actual: None,
             })),
         ),
         Err(PipelineIngressError::NotFound(message)) => not_found(message),

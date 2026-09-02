@@ -5,6 +5,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use runinator_models::{
     errors::SendableError,
+    ingress_control::{
+        ExternalIngressCapture, ExternalIngressGate, ExternalIngressGateMode,
+        ExternalIngressRecord, INGRESS_CONTROL_QUEUE_CAPACITY, IngressControlState,
+    },
     orchestration::{
         IngressAction, IngressAdmission, IngressAdmissionClaim, IngressAdmissionStatus,
         IngressEvent, IngressEventDisposition, IngressEventRecord, IngressInboxEntry,
@@ -13,7 +17,7 @@ use runinator_models::{
     value::Value,
 };
 use runinator_store::RuntimeStore;
-use runinator_store::roles::IngressStore;
+use runinator_store::roles::{DeliveryStore, IngressStore, RbacStore};
 use uuid::Uuid;
 
 /// The admission boundary used by HTTP, broker, or other transport adapters before they start a
@@ -31,6 +35,95 @@ impl<T> IngressOperations<T> {
 }
 
 impl<T: IngressStore> IngressOperations<T> {
+    pub async fn gate(
+        &self,
+        target: IngressTarget,
+    ) -> Result<Option<ExternalIngressGate>, SendableError> {
+        self.store.fetch_external_ingress_gate(target).await
+    }
+
+    pub async fn set_gate(
+        &self,
+        gate: ExternalIngressGate,
+    ) -> Result<ExternalIngressGate, SendableError> {
+        self.store.put_external_ingress_gate(gate).await
+    }
+
+    pub async fn capture_for_review(
+        &self,
+        target: IngressTarget,
+        owner_scope: runinator_models::rbac::ScopeRef,
+        mode: ExternalIngressGateMode,
+        event: IngressEvent,
+    ) -> Result<ExternalIngressCapture, SendableError> {
+        self.store
+            .capture_external_ingress(
+                target,
+                owner_scope,
+                mode,
+                event,
+                Utc::now(),
+                INGRESS_CONTROL_QUEUE_CAPACITY,
+            )
+            .await
+    }
+
+    pub async fn review_records(
+        &self,
+        owner_scope: Option<runinator_models::rbac::ScopeRef>,
+        target: Option<IngressTarget>,
+        state: Option<IngressControlState>,
+        limit: i64,
+    ) -> Result<Vec<ExternalIngressRecord>, SendableError> {
+        self.store
+            .fetch_external_ingress_records(owner_scope, target, state, limit)
+            .await
+    }
+
+    pub async fn review_record(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        self.store.fetch_external_ingress_record(id).await
+    }
+
+    pub async fn claim_review(
+        &self,
+        id: Uuid,
+        actor: Uuid,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        self.store
+            .claim_external_ingress_record(id, actor, Utc::now())
+            .await
+    }
+
+    pub async fn claim_oldest_review(
+        &self,
+        target: IngressTarget,
+        actor: Uuid,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        self.store
+            .claim_oldest_external_ingress_record(target, actor, Utc::now())
+            .await
+    }
+
+    pub async fn finish_review(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        error: Option<String>,
+    ) -> Result<bool, SendableError> {
+        self.store
+            .finish_external_ingress_record(id, state, error, Utc::now())
+            .await
+    }
+
+    pub async fn drop_review(&self, id: Uuid, actor: Uuid) -> Result<bool, SendableError> {
+        self.store
+            .drop_external_ingress_record(id, actor, Utc::now())
+            .await
+    }
+
     /// Acquire a previously unbound correlation key when its policy says to start. `None` means
     /// this event has no unbound-start route; callers must not create a target run in that case.
     pub async fn claim_start(
@@ -221,6 +314,90 @@ impl<T: IngressStore> IngressOperations<T> {
                 Utc::now(),
             )
             .await
+    }
+}
+
+impl<T: DeliveryStore> IngressOperations<T> {
+    pub async fn broker_session(
+        &self,
+        scope: runinator_models::rbac::ScopeRef,
+    ) -> Result<Option<runinator_models::ingress_control::BrokerIngressSession>, SendableError>
+    {
+        self.store.fetch_broker_ingress_session(scope).await
+    }
+
+    pub async fn set_broker_session(
+        &self,
+        session: runinator_models::ingress_control::BrokerIngressSession,
+    ) -> Result<runinator_models::ingress_control::BrokerIngressSession, SendableError> {
+        self.store.put_broker_ingress_session(session).await
+    }
+
+    pub async fn broker_records(
+        &self,
+        scope: Option<runinator_models::rbac::ScopeRef>,
+        state: Option<IngressControlState>,
+        limit: i64,
+    ) -> Result<Vec<runinator_models::ingress_control::BrokerIngressRecord>, SendableError> {
+        self.store
+            .fetch_broker_ingress_records(scope, state, limit)
+            .await
+    }
+
+    pub async fn broker_record(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<runinator_models::ingress_control::BrokerIngressRecord>, SendableError> {
+        self.store.fetch_broker_ingress_record(id).await
+    }
+
+    pub async fn decide_broker_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        actor: Uuid,
+    ) -> Result<bool, SendableError> {
+        self.store
+            .decide_broker_ingress_record(id, state, actor, Utc::now())
+            .await
+    }
+}
+
+impl<T: IngressStore + RbacStore + RuntimeStore> IngressOperations<T> {
+    pub async fn owner_scope_for_target(
+        &self,
+        target: &IngressTarget,
+    ) -> Result<runinator_models::rbac::ScopeRef, SendableError> {
+        use runinator_models::{
+            auth::ResourceType,
+            rbac::{ScopeKind, ScopeRef},
+        };
+        let resource_type = match target.kind {
+            runinator_models::orchestration::IngressTargetKind::Workflow => ResourceType::Workflow,
+            runinator_models::orchestration::IngressTargetKind::Pipeline => ResourceType::Pipeline,
+        };
+        if let Some(ownership) = self
+            .store
+            .fetch_resource_ownership(resource_type, target.id)
+            .await?
+        {
+            return Ok(ownership.owner);
+        }
+        let org_id = match target.kind {
+            runinator_models::orchestration::IngressTargetKind::Workflow => self
+                .store
+                .fetch_workflow(target.id)
+                .await?
+                .and_then(|value| value.org_id),
+            runinator_models::orchestration::IngressTargetKind::Pipeline => self
+                .store
+                .fetch_pipeline(target.id)
+                .await?
+                .and_then(|value| value.org_id),
+        };
+        Ok(org_id
+            .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+            .unwrap_or(ScopeRef::PLATFORM))
     }
 }
 

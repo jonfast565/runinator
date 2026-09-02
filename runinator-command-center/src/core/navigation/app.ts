@@ -24,7 +24,7 @@ export type AppTab =
   | "Secrets"
   | "AdminSettings"
   | "Permissions"
-  | "DeadLetters"
+  | "IngressControl"
   | "AuditLog"
   | "Organization"
   | "OrgResources";

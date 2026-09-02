@@ -200,11 +200,10 @@ export const navSections: NavSection[] = [
         searchPlaceholder: "Search users & teams",
       },
       {
-        tab: "DeadLetters",
-        label: "Dead Letters",
+        tab: "IngressControl",
+        label: "Ingress Control",
         icon: "flag",
-        description: "Inspect the final broker error before replaying or discarding a delivery.",
-        requires: "deadletters:read",
+        description: "Observe, hold, approve, or drop scoped ingress before it reaches orchestration.",
       },
       {
         tab: "AuditLog",

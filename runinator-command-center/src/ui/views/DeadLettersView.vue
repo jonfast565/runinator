@@ -103,6 +103,8 @@ import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import type { JsonRecord } from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
 
+defineProps<{ embedded?: boolean }>();
+
 const app = useAppStore();
 const orgs = useOrgsStore();
 const loading = ref(false);

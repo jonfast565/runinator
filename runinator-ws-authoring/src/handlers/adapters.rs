@@ -706,6 +706,7 @@ pub async fn webhook<
         + RuntimeStore
         + DefinitionStore
         + IngressStore
+        + runinator_store::roles::RbacStore
         + ScheduleStore
         + WorkflowVmStore,
 >(

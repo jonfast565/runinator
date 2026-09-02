@@ -64,6 +64,66 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
 pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "get",
+        "/ingress_control/targets/{kind}/{id}/gate",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::View),
+    ),
+    (
+        "put",
+        "/ingress_control/targets/{kind}/{id}/gate",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::Edit),
+    ),
+    (
+        "post",
+        "/ingress_control/targets/{kind}/{id}/release",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::Run),
+    ),
+    (
+        "get",
+        "/ingress_control/external",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::View),
+    ),
+    (
+        "get",
+        "/ingress_control/external/{id}",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::View),
+    ),
+    (
+        "post",
+        "/ingress_control/external/{id}/approve",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::Run),
+    ),
+    (
+        "post",
+        "/ingress_control/external/{id}/drop",
+        docs::EndpointPolicy::AnyResourceAction(runinator_models::rbac::Action::Run),
+    ),
+    (
+        "get",
+        "/ingress_control/broker/session",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
+    ),
+    (
+        "put",
+        "/ingress_control/broker/session",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
+    ),
+    (
+        "get",
+        "/ingress_control/broker",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
+    ),
+    (
+        "post",
+        "/ingress_control/broker/{id}/approve",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
+    ),
+    (
+        "post",
+        "/ingress_control/broker/{id}/drop",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::EngineOperate),
+    ),
+    (
+        "get",
         "/audit_log",
         docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::AuditRead),
     ),

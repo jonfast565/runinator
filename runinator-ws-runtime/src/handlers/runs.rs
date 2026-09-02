@@ -7,6 +7,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use runinator_models::{
+    ingress_control::{ExternalIngressCapture, ExternalIngressGateMode},
     interrupt::InterruptSource,
     orchestration::{
         IngressAction, IngressAdmissionClaim, IngressAdmissionStatus, IngressEvent,
@@ -161,6 +162,39 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
+    let provenance = request_provenance(
+        TriggerSourceKind::Api,
+        &headers,
+        connect,
+        runinator_models::json!({
+            "ingress_source": request.source.clone(),
+            "ingress_event_id": request.event_id.clone(),
+        }),
+    );
+    process_workflow_ingress(
+        db,
+        operations,
+        ctx.org_id,
+        ctx.principal_id,
+        workflow_id,
+        request,
+        provenance,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn process_workflow_ingress<T: RunOperationsStore>(
+    db: Arc<T>,
+    operations: Arc<RunOperations<T>>,
+    caller_org_id: Option<Uuid>,
+    actor_id: Option<Uuid>,
+    workflow_id: Uuid,
+    request: IngressEventRequest,
+    provenance: WorkflowRunProvenance,
+    bypass_gate: bool,
+) -> (StatusCode, Json<ApiResponse>) {
     let workflow = match operations.fetch_workflow_definition(workflow_id).await {
         Ok(Some(workflow)) => workflow,
         Ok(None) => return not_found("workflow not found"),
@@ -187,7 +221,40 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
         kind: IngressTargetKind::Workflow,
         id: workflow_id,
     };
-    let org_id = workflow.org_id.or(ctx.org_id);
+    match ingress.gate(requested_target.clone()).await {
+        Ok(Some(gate)) if gate.mode != ExternalIngressGateMode::Disabled => {
+            if bypass_gate {
+                // An operator-approved event is already the durable copy captured by this gate.
+            } else {
+                let owner_scope = match ingress.owner_scope_for_target(&requested_target).await {
+                    Ok(scope) => scope,
+                    Err(err) => return api_error(err.to_string()),
+                };
+                return match ingress
+                    .capture_for_review(requested_target, owner_scope, gate.mode, event)
+                    .await
+                {
+                    Ok(
+                        ExternalIngressCapture::Stored(record)
+                        | ExternalIngressCapture::Duplicate(record),
+                    ) => (
+                        StatusCode::ACCEPTED,
+                        Json(ApiResponse::ExternalIngressRecord(record)),
+                    ),
+                    Ok(ExternalIngressCapture::Full) => (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        Json(ApiResponse::ApiError(ApiError::new(
+                            "ingress review queue is full; retry later",
+                        ))),
+                    ),
+                    Err(err) => api_error(err.to_string()),
+                };
+            }
+        }
+        Ok(_) => {}
+        Err(err) => return api_error(err.to_string()),
+    }
+    let org_id = workflow.org_id.or(caller_org_id);
     let mut admission = match ingress
         .fetch(org_id, policy.scope.clone(), event.correlation_key.clone())
         .await
@@ -367,18 +434,10 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
             event.payload.clone(),
             false,
             Some(format!("ingress:{}", event.event_id)),
-            request_provenance(
-                TriggerSourceKind::Api,
-                &headers,
-                connect,
-                runinator_models::json!({
-                    "ingress_source": event.source,
-                    "ingress_event_id": event.event_id,
-                }),
-            ),
+            provenance,
             Vec::new(),
-            workflow.org_id.or(ctx.org_id),
-            ctx.principal_id,
+            workflow.org_id.or(caller_org_id),
+            actor_id,
         )
         .await
     {

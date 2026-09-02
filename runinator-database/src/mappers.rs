@@ -18,6 +18,10 @@ use runinator_models::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionRuntimeSpec, FunctionVersion,
     },
+    ingress_control::{
+        BrokerIngressRecord, BrokerIngressSession, BrokerIngressSessionMode, ExternalIngressGate,
+        ExternalIngressGateMode, ExternalIngressRecord, IngressControlState,
+    },
     notifications::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
         NotificationEvent, NotificationPolicy, NotificationSeverity,

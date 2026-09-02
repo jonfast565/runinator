@@ -876,13 +876,27 @@ pub struct UiEvent {
     /// When absent, every connected client can see the event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org_id: Option<Uuid>,
+    /// Exact owner scope for new event kinds. `org_id` remains populated where available for
+    /// mixed-version compatibility, while egress authorization prefers this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<runinator_models::rbac::ScopeRef>,
     #[serde(flatten)]
     pub kind: UiEventKind,
 }
 
 impl UiEvent {
     pub fn new(org_id: Option<Uuid>, kind: UiEventKind) -> Self {
-        Self { org_id, kind }
+        let scope = org_id.and_then(|id| {
+            runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(id),
+            )
+        });
+        Self {
+            org_id,
+            scope,
+            kind,
+        }
     }
 
     /// unscoped / platform-global hint.
@@ -892,6 +906,19 @@ impl UiEvent {
 
     pub fn for_org(org_id: Uuid, kind: UiEventKind) -> Self {
         Self::new(Some(org_id), kind)
+    }
+
+    pub fn for_scope(scope: runinator_models::rbac::ScopeRef, kind: UiEventKind) -> Self {
+        let org_id = if scope.kind == runinator_models::rbac::ScopeKind::Organization {
+            scope.id
+        } else {
+            None
+        };
+        Self {
+            org_id,
+            scope: Some(scope),
+            kind,
+        }
     }
 }
 
@@ -924,6 +951,12 @@ pub enum UiEventKind {
     ReplicasChanged,
     /// a freeze window was created, edited, or removed, so what is currently suspended changed.
     SchedulesChanged,
+    IngressControlChanged {
+        stream: String,
+        record_id: Uuid,
+        state: String,
+        owner_scope: runinator_models::rbac::ScopeRef,
+    },
 }
 
 impl ControlCommand {

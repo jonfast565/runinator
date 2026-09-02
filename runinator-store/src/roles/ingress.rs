@@ -5,6 +5,10 @@ use std::future::Future;
 use chrono::{DateTime, Utc};
 use runinator_models::{
     errors::SendableError,
+    ingress_control::{
+        ExternalIngressCapture, ExternalIngressGate, ExternalIngressGateMode,
+        ExternalIngressRecord, IngressControlState,
+    },
     orchestration::{
         IngressAdmission, IngressAdmissionClaim, IngressEvent, IngressEventDisposition,
         IngressEventRecord, IngressInboxEntry, IngressPromotion, IngressTarget,
@@ -15,6 +19,68 @@ use uuid::Uuid;
 
 /// Owns the atomic `(organization, scope, correlation key)` admission boundary.
 pub trait IngressStore: Send + Sync + 'static {
+    fn fetch_external_ingress_gate(
+        &self,
+        target: IngressTarget,
+    ) -> impl Future<Output = Result<Option<ExternalIngressGate>, SendableError>> + Send;
+
+    fn put_external_ingress_gate(
+        &self,
+        gate: ExternalIngressGate,
+    ) -> impl Future<Output = Result<ExternalIngressGate, SendableError>> + Send;
+
+    fn capture_external_ingress(
+        &self,
+        target: IngressTarget,
+        owner_scope: runinator_models::rbac::ScopeRef,
+        gate_mode: ExternalIngressGateMode,
+        event: IngressEvent,
+        now: DateTime<Utc>,
+        capacity: i64,
+    ) -> impl Future<Output = Result<ExternalIngressCapture, SendableError>> + Send;
+
+    fn fetch_external_ingress_record(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Result<Option<ExternalIngressRecord>, SendableError>> + Send;
+
+    fn fetch_external_ingress_records(
+        &self,
+        owner_scope: Option<runinator_models::rbac::ScopeRef>,
+        target: Option<IngressTarget>,
+        state: Option<IngressControlState>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ExternalIngressRecord>, SendableError>> + Send;
+
+    fn claim_external_ingress_record(
+        &self,
+        id: Uuid,
+        reviewed_by: Uuid,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ExternalIngressRecord>, SendableError>> + Send;
+
+    fn claim_oldest_external_ingress_record(
+        &self,
+        target: IngressTarget,
+        reviewed_by: Uuid,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ExternalIngressRecord>, SendableError>> + Send;
+
+    fn finish_external_ingress_record(
+        &self,
+        id: Uuid,
+        state: IngressControlState,
+        error: Option<String>,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn drop_external_ingress_record(
+        &self,
+        id: Uuid,
+        reviewed_by: Uuid,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Insert an active admission if no admission exists for this key.  Concurrent callers receive
     /// the same existing record, so only the acquired caller can create a workflow/pipeline run.
     fn claim_ingress_admission(
