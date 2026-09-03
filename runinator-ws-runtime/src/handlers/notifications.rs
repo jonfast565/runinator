@@ -19,7 +19,7 @@ use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -69,7 +69,7 @@ pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + Notificat
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     let unread_only = query.unread.unwrap_or(false);
     let limit = query.limit.unwrap_or(200);
@@ -83,7 +83,7 @@ pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + Notificat
                 match notification_visible(db.as_ref(), &ctx, &notification).await {
                     Ok(true) => visible.push(notification),
                     Ok(false) => {}
-                    Err(reply) => return reply,
+                    Err(reply) => return reply.into_reply(),
                 }
             }
             visible.truncate(limit.clamp(1, 1000) as usize);
@@ -99,7 +99,7 @@ pub async fn create_notification<T: AuthorizationStore + RuntimeStore + Notifica
     ValidatedJson(notification): ValidatedJson<NewNotification>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine]) {
-        return reply;
+        return reply.into_reply();
     }
     match service.create(&notification).await {
         Ok(notification) => (
@@ -119,7 +119,7 @@ pub async fn mark_notification_read<T: AuthorizationStore + RuntimeStore + Notif
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     let Some(user_id) = ctx.principal_id else {
         return forbidden("notifications require a user principal");
@@ -157,7 +157,7 @@ pub async fn delete_notification<T: AuthorizationStore + RuntimeStore + Notifica
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     let Some(user_id) = ctx.principal_id else {
         return forbidden("notifications require a user principal");
@@ -206,12 +206,12 @@ pub async fn list_notification_policies<
             .require_workflow(workflow_id, Permission::View)
             .await
         {
-            return reply;
+            return reply.into_reply();
         }
     } else if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.list_policies(ctx.org_id, query.workflow_id).await {
         Ok(mut policies) => {
@@ -235,7 +235,7 @@ pub async fn list_notification_policies<
                         visible.push(policy)
                     }
                     Ok(_) => {}
-                    Err(reply) => return reply,
+                    Err(reply) => return reply.into_reply(),
                 }
             }
             (
@@ -259,7 +259,7 @@ pub async fn create_notification_policy<
     if let Err(reply) =
         require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.create_policy(&policy).await {
         Ok(policy) => {
@@ -271,7 +271,7 @@ pub async fn create_notification_policy<
                     )
                     .await
             {
-                return reply;
+                return reply.into_reply();
             }
             (
                 StatusCode::CREATED,
@@ -314,7 +314,7 @@ pub async fn update_notification_policy<
         }
     };
     if let Err(reply) = current_access {
-        return reply;
+        return reply.into_reply();
     }
     if policy.workflow_id != current.workflow_id {
         return bad_request(
@@ -324,7 +324,7 @@ pub async fn update_notification_policy<
     if let Err(reply) =
         require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.update_policy(policy_id, &policy).await {
         Ok(Some(policy)) => (
@@ -362,7 +362,7 @@ pub async fn delete_notification_policy<
         }
     };
     if let Err(reply) = access {
-        return reply;
+        return reply.into_reply();
     }
     match service.delete_policy(policy_id).await {
         Ok(true) => (
@@ -389,10 +389,12 @@ async fn require_policy_target<T: AuthorizationStore + RuntimeStore + Notificati
                 .require_workflow(workflow_id, needed)
                 .await
         }
-        None => ctx.require_scope_action(
-            runinator_models::rbac::Action::NotificationsManage,
-            ctx.selected_scope(),
-        ),
+        None => ctx
+            .require_scope_action(
+                runinator_models::rbac::Action::NotificationsManage,
+                ctx.selected_scope(),
+            )
+            .map_err(IntoReply::into_reply),
     }
 }
 
@@ -439,7 +441,7 @@ pub async fn mark_all_notifications_read<
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     let Some(user_id) = ctx.principal_id else {
         return forbidden("notifications require a user principal");
@@ -460,7 +462,7 @@ pub async fn mark_all_notifications_read<
                 Err(err) => return api_error(err.to_string()),
             },
             Ok(false) => {}
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         }
     }
     (

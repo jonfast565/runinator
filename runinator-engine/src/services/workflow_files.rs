@@ -23,6 +23,16 @@ pub struct WorkflowFiles<T> {
     blobs: Arc<dyn BlobStore>,
 }
 
+struct NewStoredFile {
+    scope: FileScope,
+    org_id: Option<Uuid>,
+    owner_id: Option<Uuid>,
+    path: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+    revision: i64,
+}
+
 impl<T> WorkflowFiles<T> {
     pub fn new(store: Arc<T>, blobs: Arc<dyn BlobStore>) -> Self {
         Self { store, blobs }
@@ -58,15 +68,15 @@ impl<T: FileStore> WorkflowFiles<T> {
         mime_type: String,
         bytes: Vec<u8>,
     ) -> Result<StoredFile, SendableError> {
-        self.store_file(
-            FileScope::Staged,
+        self.store_file(NewStoredFile {
+            scope: FileScope::Staged,
             org_id,
             owner_id,
             path,
             mime_type,
             bytes,
-            1,
-        )
+            revision: 1,
+        })
         .await
     }
 
@@ -79,15 +89,15 @@ impl<T: FileStore> WorkflowFiles<T> {
         bytes: Vec<u8>,
     ) -> Result<StoredFile, SendableError> {
         let revision = self.store.next_library_revision(org_id, &path).await?;
-        self.store_file(
-            FileScope::Library,
+        self.store_file(NewStoredFile {
+            scope: FileScope::Library,
             org_id,
             owner_id,
             path,
             mime_type,
             bytes,
             revision,
-        )
+        })
         .await
     }
 
@@ -138,16 +148,16 @@ impl<T: FileStore> WorkflowFiles<T> {
             body: reader.body,
         })
     }
-    async fn store_file(
-        &self,
-        scope: FileScope,
-        org_id: Option<Uuid>,
-        owner_id: Option<Uuid>,
-        path: String,
-        mime_type: String,
-        bytes: Vec<u8>,
-        revision: i64,
-    ) -> Result<StoredFile, SendableError> {
+    async fn store_file(&self, file: NewStoredFile) -> Result<StoredFile, SendableError> {
+        let NewStoredFile {
+            scope,
+            org_id,
+            owner_id,
+            path,
+            mime_type,
+            bytes,
+            revision,
+        } = file;
         validate_relative_path(&path).map_err(|message| {
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,

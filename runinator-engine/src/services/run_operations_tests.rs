@@ -69,16 +69,16 @@ async fn create_persists_and_nudges_the_embedded_engine() {
     );
 
     let run = service
-        .create(
+        .create(CreateWorkflowRunRequest {
             workflow_id,
-            json!({ "ticket": "R-42" }),
-            false,
-            None,
-            WorkflowRunProvenance::default(),
-            Vec::new(),
-            None,
-            None,
-        )
+            parameters: json!({ "ticket": "R-42" }),
+            debug: false,
+            name: None,
+            provenance: WorkflowRunProvenance::default(),
+            file_ids: Vec::new(),
+            org_id: None,
+            principal_id: None,
+        })
         .await
         .unwrap();
     assert!(db.fetch_workflow_run(run.id).await.unwrap().is_some());
@@ -115,16 +115,16 @@ async fn debug_breakpoints_are_deduplicated_and_persisted_on_the_run() {
         None,
     );
     let run = service
-        .create(
+        .create(CreateWorkflowRunRequest {
             workflow_id,
-            json!({}),
-            true,
-            None,
-            WorkflowRunProvenance::default(),
-            Vec::new(),
-            None,
-            None,
-        )
+            parameters: json!({}),
+            debug: true,
+            name: None,
+            provenance: WorkflowRunProvenance::default(),
+            file_ids: Vec::new(),
+            org_id: None,
+            principal_id: None,
+        })
         .await
         .unwrap();
 

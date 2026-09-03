@@ -32,7 +32,7 @@ pub async fn upload_artifact_content<T: Send + Sync + 'static>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
 
     let bytes = body.to_vec();

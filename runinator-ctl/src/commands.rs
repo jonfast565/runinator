@@ -113,14 +113,16 @@ pub async fn run_command(
         } => {
             console::console(
                 client,
-                session.as_deref(),
-                new_session.as_deref(),
-                execute.as_deref(),
-                file.as_deref(),
-                *no_follow,
-                json_output,
-                api_base_url,
-                *plain,
+                console::ConsoleRequest {
+                    requested_session: session.as_deref(),
+                    new_session: new_session.as_deref(),
+                    execute: execute.as_deref(),
+                    file: file.as_deref(),
+                    no_follow: *no_follow,
+                    json_output,
+                    api_base_url,
+                    plain: *plain,
+                },
             )
             .await
         }

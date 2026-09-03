@@ -17,7 +17,7 @@ use runinator_ws_core::openapi::docs::{
 };
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_core::{ValidatedJson, models::ApiResponse};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 pub async fn upsert_workflow_trigger<
@@ -33,7 +33,7 @@ pub async fn upsert_workflow_trigger<
         .require_workflow(workflow_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     trigger.workflow_id = workflow_id;
     match scheduling.save_workflow_trigger(&trigger, ctx.org_id).await {
@@ -55,7 +55,7 @@ pub async fn update_workflow_trigger<
         .require_trigger_workflow(trigger_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     trigger.id = Some(trigger_id);
     match scheduling.save_workflow_trigger(&trigger, ctx.org_id).await {
@@ -76,7 +76,7 @@ pub async fn get_workflow_trigger<
         .require_trigger_workflow(trigger_id, Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match scheduling.fetch_workflow_trigger(trigger_id).await {
         Ok(Some(trigger)) => (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger))),
@@ -97,7 +97,7 @@ pub async fn get_workflow_triggers<
         .require_workflow(workflow_id, Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match scheduling.list_workflow_triggers(workflow_id).await {
         Ok(triggers) => (
@@ -119,7 +119,7 @@ pub async fn get_due_workflow_triggers<
         runinator_models::rbac::SystemRole::Engine,
         runinator_models::rbac::SystemRole::Waker,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match scheduling.due_workflow_triggers().await {
         Ok(triggers) => (
@@ -142,7 +142,7 @@ pub async fn delete_workflow_trigger<
         .require_trigger_workflow(trigger_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match scheduling
         .delete_workflow_trigger(trigger_id, ctx.org_id)

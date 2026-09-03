@@ -32,6 +32,18 @@ pub struct PackOperations<T> {
     events: UiEventPublisher,
 }
 
+pub struct PackImportRequest<'a> {
+    pub workflows: WorkflowBundle,
+    pub settings: Option<&'a SettingsBundle>,
+    pub pipelines: Option<&'a PipelineBundle>,
+    pub functions: &'a [NewFunctionVersion],
+    pub artifacts: &'a [FunctionArtifact],
+    pub import_org: Option<Uuid>,
+    pub owner: ScopeRef,
+    pub created_by: Option<Uuid>,
+    pub overwrite: bool,
+}
+
 impl<T> PackOperations<T> {
     pub fn new(store: Arc<T>, blobs: Arc<dyn BlobStore>, events: UiEventPublisher) -> Self {
         Self {
@@ -250,16 +262,19 @@ impl<
     /// connection. Blob bytes are deliberately staged by the caller before entering this method.
     pub async fn import_compiled_pack(
         &self,
-        mut workflows: WorkflowBundle,
-        settings: Option<&SettingsBundle>,
-        pipelines: Option<&PipelineBundle>,
-        functions: &[NewFunctionVersion],
-        artifacts: &[FunctionArtifact],
-        import_org: Option<Uuid>,
-        owner: ScopeRef,
-        created_by: Option<Uuid>,
-        overwrite: bool,
+        request: PackImportRequest<'_>,
     ) -> Result<PackImportResult, PackImportError> {
+        let PackImportRequest {
+            mut workflows,
+            settings,
+            pipelines,
+            functions,
+            artifacts,
+            import_org,
+            owner,
+            created_by,
+            overwrite,
+        } = request;
         let transaction = Arc::new(self.store.begin_pack_transaction().await.map_err(|error| {
             PackImportError::internal(format!("could not begin pack transaction: {error}"))
         })?);

@@ -23,7 +23,7 @@ use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, REPLICA_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
 
 pub async fn register_replica<T: ReplicaStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
@@ -36,7 +36,7 @@ pub async fn register_replica<T: ReplicaStore>(
         runinator_models::rbac::SystemRole::Agent,
         runinator_models::rbac::SystemRole::Replica,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match registry
         .agent_owns_runtime_registration(&ctx, &request)
@@ -67,10 +67,10 @@ pub async fn heartbeat_replica<T: ReplicaStore>(
         runinator_models::rbac::SystemRole::Agent,
         runinator_models::rbac::SystemRole::Replica,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match registry
         .heartbeat(replica_id, request, observed_ip(&headers, connect))
@@ -94,10 +94,10 @@ pub async fn mark_replica_offline<T: ReplicaStore>(
         runinator_models::rbac::SystemRole::Agent,
         runinator_models::rbac::SystemRole::Replica,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match registry.mark_offline(replica_id, request.runtime_id).await {
         Ok(Some(replica)) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
@@ -120,7 +120,7 @@ pub async fn kick_replica<T: ReplicaStore>(
         runinator_models::rbac::Action::NodesOperate,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(org_id) = ctx.org_id {
         match registry.fetch(replica_id).await {
@@ -158,7 +158,7 @@ pub async fn get_replicas<T: ReplicaStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     let settings = runinator_engine::settings::load_server_settings(db.as_ref())
         .await
@@ -232,7 +232,7 @@ pub async fn get_replica_samples<T: ReplicaStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(org_id) = ctx.org_id {
         match registry.fetch(replica_id).await {
@@ -268,10 +268,10 @@ pub async fn upsert_replica_provider<T: ReplicaStore>(
         runinator_models::rbac::SystemRole::Agent,
         runinator_models::rbac::SystemRole::Replica,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match registry.upsert_provider(replica_id, request).await {
         Ok(registration) => (
@@ -290,7 +290,7 @@ pub async fn get_replica_providers<T: ReplicaStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(org_id) = ctx.org_id {
         match registry.fetch(replica_id).await {

@@ -30,7 +30,7 @@ use runinator_engine::services::SchedulingOperations;
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -100,7 +100,7 @@ pub async fn create_calendar_subscription<
         CalendarScope::User => ScopeRef::new(ScopeKind::User, Some(principal_id)).unwrap(),
     };
     if let Err(reply) = ctx.require_scope_action(Action::View, scope) {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     let token = format!(
         "runi_cal_{}{}",
@@ -246,7 +246,7 @@ pub async fn schedule_calendar<
     if !matches!(query.scope, CalendarScope::User)
         && let Err(reply) = ctx.require_scope_action(Action::View, scope)
     {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
 
     let checker = AuthzChecker::new(db.as_ref(), &ctx);
@@ -431,7 +431,7 @@ pub async fn list_freeze_windows<
         })
         .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM);
     if let Err(reply) = ctx.require_scope_action(runinator_models::rbac::Action::View, scope) {
-        return reply;
+        return reply.into_reply();
     }
     let windows = service
         .list_freeze_windows(query.org_id, query.active.unwrap_or(false))
@@ -451,7 +451,7 @@ pub async fn create_freeze_window<
     ValidatedJson(mut window): ValidatedJson<NewFreezeWindow>,
 ) -> Reply {
     if let Err(reply) = require_window_target(db.as_ref(), &ctx, &window, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(workflow_id) = window.workflow_id {
         window.org_id = match service.workflow(workflow_id).await {
@@ -493,10 +493,10 @@ pub async fn update_freeze_window<
     if let Err(reply) =
         require_window_target(db.as_ref(), &ctx, &current_target, Permission::Edit).await
     {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = require_window_target(db.as_ref(), &ctx, &window, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(workflow_id) = window.workflow_id {
         window.org_id = match service.workflow(workflow_id).await {
@@ -536,7 +536,7 @@ pub async fn delete_freeze_window<
         enabled: current.enabled,
     };
     if let Err(reply) = require_window_target(db.as_ref(), &ctx, &target, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     match service.delete_freeze_window(window_id).await {
         Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
@@ -559,7 +559,7 @@ pub async fn backfill_workflow_trigger<
         .require_trigger_workflow(trigger_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(err) = service.validate_backfill(&request) {
         return api_error(err.to_string());
@@ -596,6 +596,7 @@ async fn require_window_target<
         })
         .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM);
     ctx.require_scope_action(runinator_models::rbac::Action::SchedulesManage, scope)
+        .map_err(IntoReply::into_reply)
 }
 
 /// the `schedules` endpoints.

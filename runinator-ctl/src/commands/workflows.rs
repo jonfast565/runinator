@@ -58,14 +58,16 @@ pub(super) async fn workflows(
             let resolved = resolve_workflow_apply_path(file.as_deref())?;
             workflow_dev(
                 client,
-                &resolved,
-                run.as_deref(),
-                cli_params,
-                json_file.as_deref(),
-                *debug,
-                name.as_deref(),
-                Duration::from_millis(*watch_interval_ms),
-                Duration::from_millis(*debounce_ms),
+                WorkflowDevRequest {
+                    file: &resolved,
+                    run_workflow: run.as_deref(),
+                    cli_params,
+                    json_file: json_file.as_deref(),
+                    debug: *debug,
+                    name: name.as_deref(),
+                    watch_interval: Duration::from_millis(*watch_interval_ms),
+                    debounce: Duration::from_millis(*debounce_ms),
+                },
             )
             .await?;
         }
@@ -298,17 +300,28 @@ fn print_apply_summary(summary: &WorkflowApplySummary) {
 }
 
 // dry-run a compiled pack against .rexrapt suites entirely client-side; no server or broker involved.
-async fn workflow_dev(
-    client: &Client,
-    file: &Path,
-    run_workflow: Option<&str>,
-    cli_params: &[String],
-    json_file: Option<&Path>,
+struct WorkflowDevRequest<'a> {
+    file: &'a Path,
+    run_workflow: Option<&'a str>,
+    cli_params: &'a [String],
+    json_file: Option<&'a Path>,
     debug: bool,
-    name: Option<&str>,
+    name: Option<&'a str>,
     watch_interval: Duration,
     debounce: Duration,
-) -> Result<()> {
+}
+
+async fn workflow_dev(client: &Client, request: WorkflowDevRequest<'_>) -> Result<()> {
+    let WorkflowDevRequest {
+        file,
+        run_workflow,
+        cli_params,
+        json_file,
+        debug,
+        name,
+        watch_interval,
+        debounce,
+    } = request;
     if watch_interval.is_zero() {
         return Err(err("--watch-interval-ms must be greater than 0"));
     }

@@ -392,22 +392,24 @@ pub async fn replay_workflow_run<T: RuntimeStore + WorkflowVmStore>(
         }
         let new_run = super::runs::create_workflow_vm_run(
             db,
-            source.workflow_id,
-            snapshot.clone(),
-            source.parameters.clone(),
-            state,
-            source.name.clone(),
-            runinator_models::replicas::WorkflowRunProvenance {
-                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-                actor_replica_id: None,
-                actor_display_name: Some("replay".into()),
-                request_host: None,
-                request_ip: None,
-                metadata: runinator_models::json!({ "source_run_id": source.id }),
+            super::runs::WorkflowVmRunRequest {
+                workflow_id: source.workflow_id,
+                workflow_snapshot: snapshot.clone(),
+                parameters: source.parameters.clone(),
+                state,
+                name: source.name.clone(),
+                provenance: runinator_models::replicas::WorkflowRunProvenance {
+                    source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+                    actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+                    actor_replica_id: None,
+                    actor_display_name: Some("replay".into()),
+                    request_host: None,
+                    request_ip: None,
+                    metadata: runinator_models::json!({ "source_run_id": source.id }),
+                },
+                pipeline_run_id: None,
+                start_node_id: Some(target_node_id.to_string()),
             },
-            None,
-            Some(target_node_id),
         )
         .await?;
 
@@ -431,22 +433,24 @@ pub async fn replay_workflow_run<T: RuntimeStore + WorkflowVmStore>(
 
     super::runs::create_workflow_vm_run(
         db,
-        source.workflow_id,
-        snapshot,
-        source.parameters,
-        state,
-        source.name,
-        runinator_models::replicas::WorkflowRunProvenance {
-            source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-            actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-            actor_replica_id: None,
-            actor_display_name: Some("replay".into()),
-            request_host: None,
-            request_ip: None,
-            metadata: runinator_models::json!({ "source_run_id": source.id }),
+        super::runs::WorkflowVmRunRequest {
+            workflow_id: source.workflow_id,
+            workflow_snapshot: snapshot,
+            parameters: source.parameters,
+            state,
+            name: source.name,
+            provenance: runinator_models::replicas::WorkflowRunProvenance {
+                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+                actor_replica_id: None,
+                actor_display_name: Some("replay".into()),
+                request_host: None,
+                request_ip: None,
+                metadata: runinator_models::json!({ "source_run_id": source.id }),
+            },
+            pipeline_run_id: None,
+            start_node_id: None,
         },
-        None,
-        None,
     )
     .await
 }

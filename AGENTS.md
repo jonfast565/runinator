@@ -44,6 +44,13 @@ and before finishing the task. This prevents Rust test binaries and other build 
 accumulating in `target/`; do not clean earlier when another verification command still needs the
 build outputs.
 
+## API Design
+
+When an operation needs several related inputs, prefer one purpose-named context or request object
+over a long positional parameter list. This keeps call sites self-documenting and lets the context
+grow without repeatedly changing every caller; do not retain a large parameter list merely to avoid
+introducing the small domain type that represents that operation.
+
 ## Project Shape
 
 Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime using a resumable state-machine orchestrator.

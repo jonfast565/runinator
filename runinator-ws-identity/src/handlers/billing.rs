@@ -77,7 +77,7 @@ pub async fn get_org_nodes<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     let groups = match db.list_org_resource_groups(org_id).await {
         Ok(groups) => groups,
@@ -104,7 +104,7 @@ pub async fn scale_org_nodes<T: OrgStore + RuntimeStore>(
         runinator_models::rbac::Action::NodesOperate,
         org_scope(org_id),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let card = rate_card();
     let quota = match db.fetch_org_quota(org_id).await {
@@ -184,7 +184,7 @@ pub async fn get_org_quota<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     let quota = match db.fetch_org_quota(org_id).await {
         Ok(Some(quota)) => quota,
@@ -208,7 +208,7 @@ pub async fn put_org_quota<T: OrgStore + RuntimeStore>(
         runinator_models::rbac::Action::BillingManage,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     // reject unknown replica-kind keys so a typo never silently disables a cap.
     for key in request.max_nodes_per_kind.keys() {
@@ -238,7 +238,7 @@ pub async fn get_org_usage<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     let since = chrono::Utc::now() - chrono::Duration::days(30);
     let samples = match db.fetch_usage_samples(org_id, since.timestamp()).await {

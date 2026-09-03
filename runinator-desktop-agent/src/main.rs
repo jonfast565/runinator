@@ -53,7 +53,7 @@ fn main() -> ExitCode {
         // an unexpected bind failure must not lock the operator out of their own agent; note it and
         // start anyway rather than refusing to run.
         Err(err) => {
-            eprintln!("desktop-agent single-instance check failed, starting anyway: {err}");
+            eprintln!("desktop agent single-instance check failed, starting anyway: {err}");
             None
         }
     };
@@ -93,17 +93,20 @@ fn run_gui(draft: AgentConfig) -> eframe::Result<()> {
     let shared = Arc::new(Mutex::new(agent::Shared::default()));
     logging::init(shared.clone(), draft.log_level);
 
+    const APP_NAME: &str = "Runinator Desktop Agent";
+
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1120.0, 760.0])
             .with_min_inner_size([820.0, 580.0])
             .with_icon(app_icon::window_icon())
-            .with_visible(true),
+            .with_visible(true)
+            .with_title(APP_NAME),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Runinator Desktop Agent",
+        APP_NAME,
         native_options,
         Box::new(move |cc| Ok(Box::new(gui::DesktopAgentApp::new(cc, shared, draft)))),
     )

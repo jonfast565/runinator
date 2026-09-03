@@ -20,7 +20,8 @@ use runinator_store::{
 use serde::Deserialize;
 
 use runinator_engine::services::{
-    OrchestrationOperations, PipelineIngressError, PipelineIngressRequest, PipelineOperations,
+    OrchestrationOperations, OutOfBandOverrideRequest, PipelineIngressError,
+    PipelineIngressRequest, PipelineOperations,
 };
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
@@ -810,12 +811,14 @@ async fn authorize_pipeline_run_control<
     let record = OrchestrationOperations::new(db)
         .record_out_of_band_override(
             &binding,
-            "pipeline_run",
-            pipeline_run_id,
-            action,
-            reason.to_owned(),
-            idempotency_key.to_owned(),
-            ctx.principal_id,
+            OutOfBandOverrideRequest {
+                target_kind: "pipeline_run".into(),
+                target_id: pipeline_run_id,
+                action: action.into(),
+                reason: reason.to_owned(),
+                idempotency_key: idempotency_key.to_owned(),
+                actor_id: ctx.principal_id,
+            },
         )
         .await
         .map_err(|error| api_error(error.to_string()))?;

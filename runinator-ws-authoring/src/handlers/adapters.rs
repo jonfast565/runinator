@@ -35,7 +35,9 @@ use runinator_ws_core::{
     openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body},
     responses::{api_error, bad_request, not_found},
 };
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{
+    AuthContextExt, AuthorizationStore, AuthzChecker, GuardError, IntoReply,
+};
 use uuid::Uuid;
 
 use super::pipelines::process_pipeline_ingress;
@@ -44,9 +46,9 @@ async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCat
 {
     runinator_adapter_client::kinds().await
 }
-fn org_id(ctx: &AuthContext) -> Result<Uuid, (StatusCode, Json<ApiResponse>)> {
+fn org_id(ctx: &AuthContext) -> Result<Uuid, GuardError> {
     ctx.org_id
-        .ok_or_else(|| bad_request("an organization must be selected"))
+        .ok_or_else(|| bad_request("an organization must be selected").into())
 }
 
 fn forbidden() -> (StatusCode, Json<ApiResponse>) {
@@ -60,10 +62,7 @@ fn forbidden() -> (StatusCode, Json<ApiResponse>) {
         })),
     )
 }
-fn require_scope(
-    ctx: &AuthContext,
-    action: Action,
-) -> Result<Uuid, (StatusCode, Json<ApiResponse>)> {
+fn require_scope(ctx: &AuthContext, action: Action) -> Result<Uuid, GuardError> {
     let org_id = org_id(ctx)?;
     ctx.require_scope_action(action, ctx.selected_scope())?;
     Ok(org_id)
@@ -72,10 +71,7 @@ fn require_scope(
 /// Platform administrators may inspect adapters without selecting an organization. In that
 /// platform-wide view `None` deliberately means every organization; ordinary callers remain
 /// restricted to their selected organization.
-fn adapter_list_scope(
-    ctx: &AuthContext,
-    action: Action,
-) -> Result<Option<Uuid>, (StatusCode, Json<ApiResponse>)> {
+fn adapter_list_scope(ctx: &AuthContext, action: Action) -> Result<Option<Uuid>, GuardError> {
     if ctx.is_platform_admin() {
         ctx.require_scope_action(action, ctx.selected_scope())?;
         Ok(ctx.org_id)
@@ -320,7 +316,7 @@ pub async fn kinds<T: RbacStore>(
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = adapter_list_scope(&ctx, Action::View) {
-        return reply;
+        return reply.into_reply();
     }
     match catalog().await {
         Ok(entries) => (StatusCode::OK, Json(ApiResponse::AdapterKindList(entries))),
@@ -334,7 +330,7 @@ pub async fn list<T: OrchestrationStore + AuthorizationStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     let org_id = match adapter_list_scope(&ctx, Action::View) {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let operations = AdapterOperations::new(db.clone());
     match operations.list(org_id).await {
@@ -344,7 +340,7 @@ pub async fn list<T: OrchestrationStore + AuthorizationStore>(
                 .await
             {
                 Ok(value) => value,
-                Err(reply) => return reply,
+                Err(reply) => return reply.into_reply(),
             } {
                 values.retain(|value| visible.contains(&value.id));
             }
@@ -368,7 +364,7 @@ pub async fn get_one<T: OrchestrationStore + AuthorizationStore>(
             StatusCode::OK,
             Json(ApiResponse::OrchestrationAdapter(value)),
         ),
-        Err(reply) => reply,
+        Err(reply) => reply.into_reply(),
     }
 }
 
@@ -379,7 +375,7 @@ pub async fn revisions<T: OrchestrationStore + AuthorizationStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
     if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply;
+        return reply.into_reply();
     }
     match operations.revisions(id).await {
         Ok(values) => (
@@ -397,7 +393,7 @@ pub async fn poll_status<T: OrchestrationStore + AuthorizationStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
     if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply;
+        return reply.into_reply();
     }
     match operations.poll_status(id).await {
         Ok(Some(status)) => (
@@ -419,7 +415,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     let org_id = match require_scope(&ctx, Action::Edit) {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let kinds = match catalog().await {
         Ok(values) => values,
@@ -444,7 +440,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let now = Utc::now();
     let adapter_id = Uuid::now_v7();
@@ -473,7 +469,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
                 .grant_resource_owner(ResourceType::OrchestrationAdapter, adapter.id)
                 .await
             {
-                return reply;
+                return reply.into_reply();
             }
             emit_adapter(&publisher, adapter.id, Some(org_id));
             (
@@ -495,7 +491,7 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore>(
     let operations = AdapterOperations::new(db.clone());
     let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Edit).await {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if request.kind != adapter.kind {
         return bad_request("adapter kind cannot be changed; clone the adapter instead");
@@ -523,12 +519,12 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore>(
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if adapter.has_admitted_binding {
         let current = match current_revision(&operations, &adapter).await {
             Ok(value) => value,
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         };
         if current.transport != request.transport {
             return bad_request(
@@ -594,7 +590,7 @@ pub async fn set_enabled<T: OrchestrationStore + AuthorizationStore>(
     let authorized =
         match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Edit).await {
             Ok(adapter) => adapter,
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         };
     match operations
         .set_enabled(id, request.enabled, Utc::now())
@@ -621,7 +617,7 @@ pub async fn remove<T: OrchestrationStore + AuthorizationStore>(
     let operations = AdapterOperations::new(db.clone());
     let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Own).await {
         Ok(adapter) => adapter,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match operations.delete(id).await {
         Ok(true) => {
@@ -657,18 +653,18 @@ pub async fn test<
     let operations = AdapterOperations::new(db.clone());
     let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Edit).await {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let revision = match current_revision(&operations, &adapter).await {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let bindings = request.secret_bindings.unwrap_or(revision.secret_bindings);
     if let Err(reply) =
         validate_adapter_secret_access(db.as_ref(), Some(&ctx), Some(id), adapter.org_id, &bindings)
             .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let secrets = match operations.resolve_secrets(adapter.org_id, &bindings).await {
         Ok(value) => value,
@@ -829,7 +825,7 @@ pub async fn webhook<
     };
     let revision = match current_revision(&operations, &adapter).await {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if revision.transport != AdapterTransport::Webhook {
         return not_found("adapter is configured for polling, not webhook delivery");
@@ -843,7 +839,7 @@ pub async fn webhook<
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let secrets = match operations
         .resolve_secrets(adapter.org_id, &revision.secret_bindings)
@@ -929,7 +925,7 @@ pub async fn webhook<
         )
         .await;
         if !reply.0.is_success() {
-            return reply;
+            return reply.into_reply();
         }
         outcomes.push(serde_json::to_value(&reply.1.0).unwrap_or_default());
     }

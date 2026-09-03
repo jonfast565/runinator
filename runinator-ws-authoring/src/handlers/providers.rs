@@ -30,7 +30,7 @@ pub async fn get_providers<T: DefinitionStore>(
         runinator_models::rbac::Action::View,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let items = match service.list(Some("provider_metadata".into())).await {
         Ok(items) => items,
@@ -52,7 +52,7 @@ pub async fn upsert_provider<T: DefinitionStore>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(err) = validate_provider_metadata(&provider) {
         return bad_request(err);
@@ -78,7 +78,7 @@ pub async fn import_provider_bundle<T: DefinitionStore>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     let mut imported = Vec::with_capacity(bundle.providers.len());
     for provider in &bundle.providers {

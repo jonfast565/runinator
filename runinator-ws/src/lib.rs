@@ -50,10 +50,10 @@ pub(crate) use runinator_ws_core::responses;
 pub(crate) use runinator_ws_core::{events, models};
 pub(crate) use runinator_ws_middleware::{auth, overload, rate_limit};
 
-pub use router::{CorsConfig, DEFAULT_CORS_ALLOWED_ORIGINS, build_router};
+pub use router::{CorsConfig, DEFAULT_CORS_ALLOWED_ORIGINS, RouterDependencies, build_router};
 pub use runinator_ws_core::{AppEvent, AppEventKind, EventSender};
 pub use runinator_ws_middleware::{AuthOptions, OverloadConfig, RateLimitConfig};
-pub use server::{ReplicaAdvertisement, run_webserver};
+pub use server::{ReplicaAdvertisement, WebserverRuntime, run_webserver};
 
 #[cfg(test)]
 pub(crate) use runinator_ws_authoring::handlers::providers::{

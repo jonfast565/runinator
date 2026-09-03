@@ -21,7 +21,7 @@ use runinator_ws_core::{
     responses::{api_error, bad_request, not_found, task_response_success},
 };
 use runinator_ws_middleware::authz::AuthorizationStore;
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker, GuardError, IntoReply};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -37,13 +37,15 @@ async fn audit_change<T: AuthorizationStore>(
 ) {
     crate::audit::record_audit(
         db,
-        ctx.principal_id,
-        ctx.actor_kind(),
-        action,
-        crate::audit::AuditOutcome::Success,
-        resource_type,
-        resource_id,
-        Some(detail),
+        crate::audit::AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            action,
+            crate::audit::AuditOutcome::Success,
+            resource_type,
+            resource_id,
+            Some(detail),
+        ),
     )
     .await;
 }
@@ -117,30 +119,28 @@ fn forbidden(message: &str) -> Reply {
         Json(ApiResponse::ApiError(ApiError::new(message))),
     )
 }
-fn parse_scope(kind: &str, id: &str) -> Result<ScopeRef, Reply> {
+fn parse_scope(kind: &str, id: &str) -> Result<ScopeRef, GuardError> {
     let Some(kind) = ScopeKind::from_str_lossy(kind) else {
-        return Err(bad_request("unknown scope kind"));
+        return Err(bad_request("unknown scope kind").into());
     };
     let id = if kind == ScopeKind::Platform {
         if id != "platform" {
-            return Err(bad_request("platform scope id must be 'platform'"));
+            return Err(bad_request("platform scope id must be 'platform'").into());
         }
         None
     } else {
         Some(
             id.parse::<Uuid>()
-                .map_err(|_| bad_request("invalid scope id"))?,
+                .map_err(|_| GuardError::from(bad_request("invalid scope id")))?,
         )
     };
-    ScopeRef::new(kind, id).ok_or_else(|| bad_request("invalid scope"))
+    ScopeRef::new(kind, id).ok_or_else(|| bad_request("invalid scope").into())
 }
-fn parse_principal(kind: &str) -> Result<PrincipalKind, Reply> {
+fn parse_principal(kind: &str) -> Result<PrincipalKind, GuardError> {
     match PrincipalKind::from_str_lossy(kind) {
         Some(PrincipalKind::User) => Ok(PrincipalKind::User),
         Some(PrincipalKind::Service) => Ok(PrincipalKind::Service),
-        _ => Err(bad_request(
-            "role assignments support user and service principals only",
-        )),
+        _ => Err(bad_request("role assignments support user and service principals only").into()),
     }
 }
 
@@ -260,7 +260,7 @@ pub async fn list_assignments<T: AuthorizationStore>(
 ) -> Reply {
     let scope = match parse_scope(&kind, &id) {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let authorized =
         match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::RolesManage, scope).await {
@@ -270,10 +270,10 @@ pub async fn list_assignments<T: AuthorizationStore>(
                     .await
                 {
                     Ok(value) => value,
-                    Err(reply) => return reply,
+                    Err(reply) => return reply.into_reply(),
                 }
             }
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         };
     if !authorized {
         return forbidden("role administration is not permitted in this scope");
@@ -297,11 +297,11 @@ pub async fn set_assignment<T: AuthorizationStore>(
 ) -> Reply {
     let scope = match parse_scope(&scope_kind, &scope_id) {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let principal_kind = match parse_principal(&principal_kind) {
         Ok(kind) => kind,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if !role_matches_scope(request.role, scope) {
         return bad_request("role kind does not match scope kind");
@@ -309,12 +309,12 @@ pub async fn set_assignment<T: AuthorizationStore>(
     match can_assign(db.as_ref(), &ctx, scope, request.role).await {
         Ok(true) => {}
         Ok(false) => return forbidden("cannot delegate this role"),
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     }
     match principal_exists(db.as_ref(), principal_kind, principal_id).await {
         Ok(true) => {}
         Ok(false) => return bad_request("principal does not exist or is disabled"),
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     }
     match db
         .upsert_role_assignment(
@@ -354,16 +354,16 @@ pub async fn delete_assignment<T: AuthorizationStore>(
 ) -> Reply {
     let scope = match parse_scope(&scope_kind, &scope_id) {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let principal_kind = match parse_principal(&principal_kind) {
         Ok(kind) => kind,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::RolesManage, scope).await {
         Ok(true) => {}
         Ok(false) => return forbidden("role administration is not permitted in this scope"),
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     }
     let assignments = match db.list_scope_role_assignments(scope).await {
         Ok(rows) => rows,
@@ -421,7 +421,7 @@ pub async fn list_resource_grants<T: AuthorizationStore>(
         .require_resource(resource_type, resource_id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_grants(kind, resource_id).await {
         Ok(grants) => ok(&grants),
@@ -441,7 +441,7 @@ pub async fn get_resource_owner<T: AuthorizationStore>(
         .require_resource(resource_type, resource_id, Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match db
         .fetch_resource_ownership(resource_type, resource_id)
@@ -466,7 +466,7 @@ pub async fn create_resource_grant<T: AuthorizationStore>(
         .require_resource(resource_type, resource_id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let ownership = match db
         .fetch_resource_ownership(resource_type, resource_id)
@@ -544,7 +544,7 @@ pub async fn delete_resource_grant<T: AuthorizationStore>(
         .require_resource(resource_type, resource_id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match db
         .revoke_scoped_grant(resource_type, resource_id, grant_id)
@@ -580,7 +580,7 @@ pub async fn transfer_resource<T: AuthorizationStore>(
         .require_resource(resource_type, resource_id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let ownership = match db
         .fetch_resource_ownership(resource_type, resource_id)
@@ -612,7 +612,7 @@ pub async fn transfer_resource<T: AuthorizationStore>(
             Ok(false) => {
                 return forbidden("cannot transfer a resource into a scope you do not own");
             }
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         }
     }
     let target_team = if request.owner.kind == ScopeKind::Team {
@@ -696,7 +696,7 @@ pub async fn list_service_accounts<T: AuthorizationStore>(
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ScopeRef::PLATFORM) {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_service_accounts().await {
         Ok(rows) => ok(&rows),
@@ -710,7 +710,7 @@ pub async fn create_service_account<T: AuthorizationStore>(
     ValidatedJson(request): ValidatedJson<CreateServiceAccountRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ScopeRef::PLATFORM) {
-        return reply;
+        return reply.into_reply();
     }
     if request.name.trim().is_empty() {
         return bad_request("service account name must not be empty");
@@ -742,7 +742,7 @@ pub async fn update_service_account<T: AuthorizationStore>(
     ValidatedJson(request): ValidatedJson<UpdateServiceAccountRequest>,
 ) -> Reply {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ScopeRef::PLATFORM) {
-        return reply;
+        return reply.into_reply();
     }
     match db.set_service_account_disabled(id, request.disabled).await {
         Ok(account) => {

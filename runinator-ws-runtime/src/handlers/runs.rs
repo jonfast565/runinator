@@ -23,7 +23,10 @@ use runinator_store::{
     },
 };
 
-use runinator_engine::services::{IngressOperations, OrchestrationOperations, RunOperations};
+use runinator_engine::services::{
+    CreateWorkflowRunRequest, IngressOperations, OrchestrationOperations, OutOfBandOverrideRequest,
+    RunOperations,
+};
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     self, ApiError, ApiResponse, IngressAdmissionQuery, IngressEventRequest, IngressResponse,
@@ -35,7 +38,7 @@ use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, ParamDoc, WORKFLOW_RUN_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 /// Persistence the workflow-run HTTP surface coordinates. It excludes authoring, settings,
@@ -78,7 +81,7 @@ pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
         .require_trigger_workflow(trigger_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations
         .create_for_trigger(
@@ -113,24 +116,24 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
         .require_workflow(workflow_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations
-        .create(
+        .create(CreateWorkflowRunRequest {
             workflow_id,
-            request.parameters,
-            request.debug,
-            request.name,
-            request_provenance(
+            parameters: request.parameters,
+            debug: request.debug,
+            name: request.name,
+            provenance: request_provenance(
                 TriggerSourceKind::Api,
                 &headers,
                 connect,
                 runinator_models::json!({}),
             ),
-            request.file_ids,
-            ctx.org_id,
-            ctx.principal_id,
-        )
+            file_ids: request.file_ids,
+            org_id: ctx.org_id,
+            principal_id: ctx.principal_id,
+        })
         .await
     {
         Ok(run) => (
@@ -158,7 +161,7 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
         .require_workflow(workflow_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let provenance = request_provenance(
         TriggerSourceKind::Api,
@@ -169,28 +172,42 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
             "ingress_event_id": request.event_id.clone(),
         }),
     );
-    process_workflow_ingress(
+    process_workflow_ingress(WorkflowIngressContext {
         db,
         operations,
-        ctx.org_id,
-        ctx.principal_id,
+        caller_org_id: ctx.org_id,
+        actor_id: ctx.principal_id,
         workflow_id,
         request,
         provenance,
-        false,
-    )
+        bypass_gate: false,
+    })
     .await
 }
+pub(crate) struct WorkflowIngressContext<T> {
+    pub(crate) db: Arc<T>,
+    pub(crate) operations: Arc<RunOperations<T>>,
+    pub(crate) caller_org_id: Option<Uuid>,
+    pub(crate) actor_id: Option<Uuid>,
+    pub(crate) workflow_id: Uuid,
+    pub(crate) request: IngressEventRequest,
+    pub(crate) provenance: WorkflowRunProvenance,
+    pub(crate) bypass_gate: bool,
+}
+
 pub(crate) async fn process_workflow_ingress<T: RunOperationsStore>(
-    db: Arc<T>,
-    operations: Arc<RunOperations<T>>,
-    caller_org_id: Option<Uuid>,
-    actor_id: Option<Uuid>,
-    workflow_id: Uuid,
-    request: IngressEventRequest,
-    provenance: WorkflowRunProvenance,
-    bypass_gate: bool,
+    context: WorkflowIngressContext<T>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    let WorkflowIngressContext {
+        db,
+        operations,
+        caller_org_id,
+        actor_id,
+        workflow_id,
+        request,
+        provenance,
+        bypass_gate,
+    } = context;
     let workflow = match operations.fetch_workflow_definition(workflow_id).await {
         Ok(Some(workflow)) => workflow,
         Ok(None) => return not_found("workflow not found"),
@@ -425,16 +442,16 @@ pub(crate) async fn process_workflow_ingress<T: RunOperationsStore>(
     }
     let start_entry = start_record.expect("start event record");
     match operations
-        .create(
-            admission.target.id,
-            event.payload.clone(),
-            false,
-            Some(format!("ingress:{}", event.event_id)),
+        .create(CreateWorkflowRunRequest {
+            workflow_id: admission.target.id,
+            parameters: event.payload.clone(),
+            debug: false,
+            name: Some(format!("ingress:{}", event.event_id)),
             provenance,
-            Vec::new(),
-            workflow.org_id.or(caller_org_id),
-            actor_id,
-        )
+            file_ids: Vec::new(),
+            org_id: workflow.org_id.or(caller_org_id),
+            principal_id: actor_id,
+        })
         .await
     {
         Ok(run) => match ingress.bind_workflow_run(admission_id, run.id).await {
@@ -518,7 +535,7 @@ pub async fn get_ingress_admission<T: RunOperationsStore>(
         }
     };
     if let Err(reply) = authorized {
-        return reply;
+        return reply.into_reply();
     }
     (
         StatusCode::OK,
@@ -560,7 +577,7 @@ pub async fn get_ingress_timeline<T: RunOperationsStore>(
         }
     };
     if let Err(reply) = authorized {
-        return reply;
+        return reply.into_reply();
     }
     match ingress
         .timeline(admission.id.expect("stored admission id"))
@@ -612,7 +629,7 @@ pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     let statuses = if request.statuses.is_empty() {
         vec![
@@ -654,7 +671,7 @@ pub async fn renew_workflow_run_claim<T: RunOperationsStore>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match operations
         .renew_scheduler_claim(workflow_run_id, request.scheduler_id, request.lease_until)
@@ -685,7 +702,7 @@ pub async fn release_workflow_run_claim<T: RunOperationsStore>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match operations
         .release_scheduler_claim(workflow_run_id, request.scheduler_id)
@@ -727,7 +744,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
@@ -740,7 +757,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations.cancel(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
@@ -771,7 +788,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
@@ -784,7 +801,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations.pause(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
@@ -815,7 +832,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let override_request = body.as_ref().map(|ValidatedJson(request)| request);
     if let Err(reply) = authorize_workflow_run_control(
@@ -828,7 +845,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations.resume(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
@@ -859,7 +876,7 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let request = body
         .map(|ValidatedJson(request)| request)
@@ -878,7 +895,7 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     )
     .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let from_step_id = request.from_step_id;
     match operations.replay(workflow_run_id, from_step_id).await {
@@ -942,12 +959,14 @@ async fn authorize_workflow_run_control<T: RunOperationsStore>(
     let record = OrchestrationOperations::new(db)
         .record_out_of_band_override(
             &binding,
-            "workflow_run",
-            workflow_run_id,
-            action,
-            reason.to_owned(),
-            idempotency_key.to_owned(),
-            ctx.principal_id,
+            OutOfBandOverrideRequest {
+                target_kind: "workflow_run".into(),
+                target_id: workflow_run_id,
+                action: action.into(),
+                reason: reason.to_owned(),
+                idempotency_key: idempotency_key.to_owned(),
+                actor_id: ctx.principal_id,
+            },
         )
         .await
         .map_err(|error| api_error(error.to_string()))?;
@@ -975,7 +994,7 @@ pub async fn deliver_run_event<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     // the VM matches on the event's `type` and evaluates the node's filter against the whole
     // object, so the declared type rides alongside the payload rather than replacing it.
@@ -1003,7 +1022,7 @@ pub async fn deliver_signal<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations
         .deliver_signal(workflow_run_id, request.name, request.payload)
@@ -1030,7 +1049,7 @@ pub async fn request_interrupt<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let raw = request.source.as_deref().unwrap_or("external");
     let Ok(source) = raw.parse::<runinator_models::interrupt::InterruptSource>() else {
@@ -1081,7 +1100,7 @@ pub async fn rename_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations.rename(workflow_run_id, request.name).await {
         Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
@@ -1107,7 +1126,7 @@ pub async fn get_workflow_runs<T: RunOperationsStore>(
         .await
     {
         Ok(visible) => visible,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
 
     if let Some(name) = query.name {
@@ -1128,7 +1147,7 @@ pub async fn get_workflow_runs<T: RunOperationsStore>(
             .require_workflow(workflow_id, runinator_models::auth::Permission::View)
             .await
         {
-            return reply;
+            return reply.into_reply();
         }
         return match operations.list_workflow_for_definition(workflow_id).await {
             Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
@@ -1177,7 +1196,7 @@ pub async fn update_workflow_run<T: RunOperationsStore>(
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match operations
         .update_workflow_status(
@@ -1204,7 +1223,7 @@ pub async fn get_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match operations.fetch_workflow(workflow_run_id).await {
         Ok(Some(run)) => (
@@ -1228,10 +1247,10 @@ pub async fn delete_workflow_run<T: RunOperationsStore>(
         .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = require_unmanaged_workflow_run(operations.as_ref(), workflow_run_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match operations.delete(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),

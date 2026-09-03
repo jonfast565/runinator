@@ -23,7 +23,7 @@ use runinator_ws_core::{
     openapi::docs::{EndpointDoc, Example, endpoint, json_body},
     responses::{api_error, not_found, task_response_success},
 };
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
 use uuid::Uuid;
 
 pub async fn create<T: ReplicaStore>(
@@ -35,10 +35,10 @@ pub async fn create<T: ReplicaStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     let (action, scope) = required_policy(&ctx, &request.kind);
     if let Err(reply) = ctx.require_scope_action(action, scope) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = require_visible_replica(registry.as_ref(), &ctx, replica_id).await {
-        return reply;
+        return reply.into_reply();
     }
     let ttl = request.expires_in_seconds.unwrap_or(300).clamp(1, 86_400);
     match registry
@@ -74,10 +74,10 @@ pub async fn list<T: ReplicaStore>(
     Query(query): Query<AgentDirectiveQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::AuditRead, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = require_visible_replica(registry.as_ref(), &ctx, replica_id).await {
-        return reply;
+        return reply.into_reply();
     }
     let can_read_files = ctx
         .require_scope_action(
@@ -112,7 +112,7 @@ pub async fn list_machines<T: AuthStore + RbacStore>(
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::AgentsEnroll, ScopeRef::PLATFORM) {
-        return reply;
+        return reply.into_reply();
     }
     match registry.agent_machines().await {
         Ok(machines) => match machines
@@ -134,7 +134,7 @@ pub async fn invalidate_machine<T: AuthStore + RbacStore + ReplicaStore + Runtim
     Path(machine_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::AgentsEnroll, ScopeRef::PLATFORM) {
-        return reply;
+        return reply.into_reply();
     }
     match registry.invalidate_machine(machine_id, &ctx).await {
         Ok(Some(result)) => {

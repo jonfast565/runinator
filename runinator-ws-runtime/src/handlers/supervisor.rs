@@ -15,7 +15,7 @@ use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint};
 
 pub async fn get_supervisor_status(Extension(ctx): Extension<AuthContext>) -> Response {
     if let Err(reply) = ctx.require_scope_action(Action::View, ScopeRef::PLATFORM) {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|_| {
         app_data::default_supervisor_state_dir()

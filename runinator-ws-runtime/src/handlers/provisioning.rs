@@ -25,7 +25,7 @@ pub async fn get_node_backends(
         runinator_models::rbac::Action::NodesOperate,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let backends = registry.backends().await;
     (
@@ -49,7 +49,7 @@ pub async fn get_nodes(
         runinator_models::rbac::Action::NodesOperate,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let groups = registry.list_all().await;
     (StatusCode::OK, Json(ApiResponse::NodeGroupList(groups)))
@@ -65,7 +65,7 @@ pub async fn scale_nodes(
         runinator_models::rbac::Action::NodesOperate,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let provisioner = match registry.require(request.backend) {
         Ok(provisioner) => provisioner,
@@ -90,7 +90,7 @@ pub async fn stop_node(
         runinator_models::rbac::Action::NodesOperate,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let provisioner = match registry.require(request.backend) {
         Ok(provisioner) => provisioner,

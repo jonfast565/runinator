@@ -27,7 +27,7 @@ use runinator_ws_core::openapi::docs::{
     CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 
 // the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY` (plus any
 // rotation-overlap keys in `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`). the value column holds ciphertext;
@@ -71,7 +71,7 @@ pub async fn get_credential<T: AuthorizationStore + SettingStore + RuntimeStore>
         runinator_models::rbac::Action::SecretsRead,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if query.scope.is_none() && query.name.is_none() {
         let visible = match AuthzChecker::new(db.as_ref(), &ctx)
@@ -79,7 +79,7 @@ pub async fn get_credential<T: AuthorizationStore + SettingStore + RuntimeStore>
             .await
         {
             Ok(ids) => ids,
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         };
         return match db.list_settings(ctx.org_id).await {
             Ok(entries) => (
@@ -133,7 +133,7 @@ pub async fn get_credential<T: AuthorizationStore + SettingStore + RuntimeStore>
                 .require_resource(ResourceType::Setting, record.id, Permission::View)
                 .await
             {
-                return reply;
+                return reply.into_reply();
             }
             let Some(bytes) = cipher.try_decrypt(&record.value) else {
                 return api_error(
@@ -192,13 +192,13 @@ pub async fn get_credential_by_id<T: AuthorizationStore + SettingStore + Runtime
         runinator_models::rbac::Action::SecretsRead,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_resource(ResourceType::Setting, setting_id, Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if record.kind != SettingKind::Secret {
         return not_found("credential not found");
@@ -283,7 +283,7 @@ pub async fn put_credential<T: AuthorizationStore + SettingStore + RuntimeStore>
         runinator_models::rbac::Action::SecretsWrite,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if is_reserved_server_setting(request.kind, &request.scope, &request.name) {
         return bad_request(
@@ -310,7 +310,7 @@ pub async fn put_credential<T: AuthorizationStore + SettingStore + RuntimeStore>
             .require_resource(ResourceType::Setting, record.id, Permission::Edit)
             .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match SettingOperations::new(db.clone())
         .configure(SettingConfiguration {
@@ -343,7 +343,7 @@ pub async fn put_credential<T: AuthorizationStore + SettingStore + RuntimeStore>
                     .grant_resource_owner(ResourceType::Setting, created.id)
                     .await
                 {
-                    return reply;
+                    return reply.into_reply();
                 }
             }
             (
@@ -372,7 +372,7 @@ pub async fn reencrypt_settings<T: AuthorizationStore + SettingStore + RuntimeSt
         runinator_models::rbac::Action::SecretsWrite,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let cipher = settings_cipher();
     let entries = match db.list_settings(ctx.org_id).await {
@@ -434,7 +434,7 @@ pub async fn delete_credential<
         runinator_models::rbac::Action::SecretsWrite,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let (Some(scope), Some(name)) = (query.scope, query.name) else {
         return bad_request("credential deletion requires both scope and name");
@@ -454,7 +454,7 @@ pub async fn delete_credential<
         .require_resource(ResourceType::Setting, record.id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
 
     match SettingOperations::new(db)
@@ -487,7 +487,7 @@ pub async fn move_credential<
         runinator_models::rbac::Action::SecretsWrite,
         ctx.selected_scope(),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if request.scope.trim().is_empty() || request.name.trim().is_empty() {
         return bad_request("setting scope and name must not be empty");
@@ -502,7 +502,7 @@ pub async fn move_credential<
         .require_resource(ResourceType::Setting, setting_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if existing.kind != request.kind {
         return bad_request("a setting move cannot change its kind");

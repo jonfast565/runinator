@@ -16,7 +16,7 @@ use runinator_store::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use runinator_engine::services::PackOperations;
+use runinator_engine::services::{PackImportRequest, PackOperations};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, PACK_IMPORT_PARAMS, RequestDoc, endpoint,
@@ -81,7 +81,7 @@ pub async fn import_pack<
         }
     };
     if let Err(reply) = ctx.require_scope_action(Action::Edit, import_scope) {
-        return reply;
+        return reply.into_reply();
     }
     let overwrite = params.overwrite;
     let contents = match runinator_pack_wire::pack::read_pack_zip(&body) {
@@ -99,17 +99,17 @@ pub async fn import_pack<
             .any(|entry| entry.kind == runinator_models::settings::SettingKind::Secret)
     }) && let Err(reply) = ctx.require_scope_action(Action::SecretsWrite, import_scope)
     {
-        return reply;
+        return reply.into_reply();
     }
     if settings_section.is_some_and(|bundle| !bundle.execution_profiles.is_empty())
         && let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, import_scope)
     {
-        return reply;
+        return reply.into_reply();
     }
     if (!contents.functions.is_empty() || !contents.function_artifacts.is_empty())
         && let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, import_scope)
     {
-        return reply;
+        return reply.into_reply();
     }
     let mut workflow_bundle = contents.workflows;
     let secret_bundle = contents.settings;
@@ -143,17 +143,17 @@ pub async fn import_pack<
         }
     }
     let result = match packs
-        .import_compiled_pack(
-            workflow_bundle,
-            secret_bundle.as_ref(),
-            pipeline_bundle.as_ref(),
-            &contents.functions,
-            &artifacts,
+        .import_compiled_pack(PackImportRequest {
+            workflows: workflow_bundle,
+            settings: secret_bundle.as_ref(),
+            pipelines: pipeline_bundle.as_ref(),
+            functions: &contents.functions,
+            artifacts: &artifacts,
             import_org,
             owner,
-            ctx.principal_id,
+            created_by: ctx.principal_id,
             overwrite,
-        )
+        })
         .await
     {
         Ok(result) => result,

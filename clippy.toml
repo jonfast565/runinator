@@ -1,9 +1,0 @@
-# Runtime assembly and durable-operation entry points deliberately carry their independently
-# typed dependencies at the boundary.  Keep that contract consistent workspace-wide rather than
-# selectively suppressing the lint on individual functions.
-too-many-arguments-threshold = 12
-
-# HTTP handlers return their fully formed Axum response as the error value so callers can preserve
-# the status and serialized body exactly.  Boxing that value at every helper boundary obscures the
-# control flow without reducing the response payload itself.
-large-error-threshold = 1024

@@ -375,6 +375,15 @@ impl<T: OrchestrationStore + DefinitionStore> OrchestrationOperations<T> {
     }
 }
 
+pub struct OutOfBandOverrideRequest {
+    pub target_kind: String,
+    pub target_id: Uuid,
+    pub action: String,
+    pub reason: String,
+    pub idempotency_key: String,
+    pub actor_id: Option<Uuid>,
+}
+
 impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
     /// Put an administrator's emergency low-level run control through the durable inbox. The
     /// control itself remains deliberately out of band, but its immutable event is reduced in
@@ -382,12 +391,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
     pub async fn record_out_of_band_override(
         &self,
         binding: &OrchestrationBinding,
-        target_kind: &str,
-        target_id: Uuid,
-        action: &str,
-        reason: String,
-        idempotency_key: String,
-        actor_id: Option<Uuid>,
+        request: OutOfBandOverrideRequest,
     ) -> Result<IngressEventRecord, SendableError> {
         let now = Utc::now();
         self.store
@@ -396,15 +400,15 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
                 binding.generation,
                 IngressEvent {
                     source: "runinator.admin_override".into(),
-                    event_id: idempotency_key,
+                    event_id: request.idempotency_key,
                     event_type: "out_of_band_override".into(),
                     correlation_key: binding.correlation_key.clone(),
                     payload: runinator_models::json!({
-                        "target_kind": target_kind,
-                        "target_id": target_id,
-                        "action": action,
-                        "reason": reason,
-                        "actor_id": actor_id,
+                        "target_kind": request.target_kind,
+                        "target_id": request.target_id,
+                        "action": request.action,
+                        "reason": request.reason,
+                        "actor_id": request.actor_id,
                     }),
                     provenance: runinator_models::json!({
                         "origin": "platform_admin",
@@ -1412,12 +1416,14 @@ mod tests {
         let override_record = operations
             .record_out_of_band_override(
                 &reduced,
-                "pipeline_run",
-                Uuid::now_v7(),
-                "pause",
-                "recover inconsistent provider state".into(),
-                "admin-override-1".into(),
-                Some(Uuid::now_v7()),
+                OutOfBandOverrideRequest {
+                    target_kind: "pipeline_run".into(),
+                    target_id: Uuid::now_v7(),
+                    action: "pause".into(),
+                    reason: "recover inconsistent provider state".into(),
+                    idempotency_key: "admin-override-1".into(),
+                    actor_id: Some(Uuid::now_v7()),
+                },
             )
             .await
             .unwrap();
@@ -1425,12 +1431,14 @@ mod tests {
         let duplicate = operations
             .record_out_of_band_override(
                 &reduced,
-                "pipeline_run",
-                Uuid::now_v7(),
-                "pause",
-                "retry of the same request".into(),
-                "admin-override-1".into(),
-                Some(Uuid::now_v7()),
+                OutOfBandOverrideRequest {
+                    target_kind: "pipeline_run".into(),
+                    target_id: Uuid::now_v7(),
+                    action: "pause".into(),
+                    reason: "retry of the same request".into(),
+                    idempotency_key: "admin-override-1".into(),
+                    actor_id: Some(Uuid::now_v7()),
+                },
             )
             .await
             .unwrap();

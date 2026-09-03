@@ -795,14 +795,16 @@ async fn execute_child_run<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     });
     let child = crate::repository::create_workflow_vm_run(
         db,
-        workflow_id,
-        workflow,
-        input,
-        runinator_models::json!({ "parent_run_id": command.workflow_run_id, "parent_effect_id": command.effect_id }),
-        name,
-        runinator_models::replicas::WorkflowRunProvenance::default(),
-        None,
-        None,
+        crate::repository::WorkflowVmRunRequest {
+            workflow_id,
+            workflow_snapshot: workflow,
+            parameters: input,
+            state: runinator_models::json!({ "parent_run_id": command.workflow_run_id, "parent_effect_id": command.effect_id }),
+            name,
+            provenance: runinator_models::replicas::WorkflowRunProvenance::default(),
+            pipeline_run_id: None,
+            start_node_id: None,
+        },
     )
     .await?;
     if !wait {

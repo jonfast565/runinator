@@ -26,7 +26,7 @@ use runinator_ws_core::openapi::docs::{
     AUTOMATION_FILTERS, EndpointDoc, Example, GATE_FILTERS, IDEMPOTENCY_QUERY, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 async fn list_records<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
@@ -42,7 +42,7 @@ async fn list_records<T: AuthorizationStore + RuntimeStore + AutomationStore + D
     {
         Ok(records) => match filter_records(db, service, ctx, records).await {
             Ok(records) => (StatusCode::OK, Json(ApiResponse::JsonList(records))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -59,7 +59,7 @@ async fn create_record<T: AuthorizationStore + RuntimeStore + AutomationStore + 
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match service.create_record(record_type, record).await {
         Ok(record) => (StatusCode::ACCEPTED, Json(ApiResponse::JsonValue(record))),
@@ -100,7 +100,7 @@ pub async fn get_gates<T: AuthorizationStore + RuntimeStore + AutomationStore + 
     {
         Ok(records) => match filter_records(db.as_ref(), &service, &ctx, records).await {
             Ok(records) => (StatusCode::OK, Json(ApiResponse::JsonList(records))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -116,7 +116,7 @@ pub async fn get_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + D
         .require_gate_workflow(gate_id, Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.fetch_gate(gate_id).await {
         Ok(Some(record)) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
@@ -135,7 +135,7 @@ pub async fn create_gate<T: AuthorizationStore + RuntimeStore + AutomationStore 
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     match service.create_gate(record).await {
         Ok(record) => (StatusCode::ACCEPTED, Json(ApiResponse::JsonValue(record))),
@@ -153,7 +153,7 @@ pub async fn delete_gate<T: AuthorizationStore + RuntimeStore + AutomationStore 
         .require_gate_workflow(gate_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.delete_gate(gate_id).await {
         Ok(true) => (StatusCode::OK, Json(ApiResponse::JsonValue(Value::Null))),
@@ -195,7 +195,7 @@ pub async fn delete_automation_event<
         .require_automation_record_workflow("automation_events", event_id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.delete_record("automation_events", event_id).await {
         Ok(true) => (StatusCode::OK, Json(ApiResponse::JsonValue(Value::Null))),
@@ -262,7 +262,7 @@ pub async fn get_idempotency_key<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     let Some(scope) = query.get("scope").cloned() else {
         return api_error("idempotency query requires scope");
@@ -279,7 +279,7 @@ pub async fn get_idempotency_key<
     let scope =
         match idempotency_scope_for_run(service.as_ref(), &ctx, consumer_run_id, &scope).await {
             Ok(scope) => scope,
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         };
     match service.fetch_idempotency_key(scope, key).await {
         Ok(Some(record)) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
@@ -300,7 +300,7 @@ pub async fn put_idempotency_key<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     request.scope = match idempotency_scope_for_run(
         service.as_ref(),
@@ -311,7 +311,7 @@ pub async fn put_idempotency_key<
     .await
     {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match service
         .put_idempotency_key(request.scope, request.key, request.result)
@@ -334,7 +334,7 @@ pub async fn claim_idempotency_key<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     request.scope = match idempotency_scope_for_run(
         service.as_ref(),
@@ -345,7 +345,7 @@ pub async fn claim_idempotency_key<
     .await
     {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match service.claim_idempotency_key(request).await {
         Ok(claim) => match Value::encode(&claim) {
@@ -368,7 +368,7 @@ pub async fn complete_idempotency_key<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     request.scope = match idempotency_scope_for_run(
         service.as_ref(),
@@ -379,7 +379,7 @@ pub async fn complete_idempotency_key<
     .await
     {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match service.complete_idempotency_key(request).await {
         Ok(recorded) => (
@@ -409,7 +409,7 @@ pub async fn release_idempotency_key<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     request.scope = match idempotency_scope_for_run(
         service.as_ref(),
@@ -420,7 +420,7 @@ pub async fn release_idempotency_key<
     .await
     {
         Ok(scope) => scope,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match service.release_idempotency_key(request).await {
         Ok(released) => (

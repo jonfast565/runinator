@@ -23,7 +23,7 @@ use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::auth::{AuthConfig, issue_access_token};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, GuardError, IntoReply};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -45,14 +45,17 @@ fn ok_value<T: Serialize>(value: &T) -> Reply {
         Err(err) => api_error(err.to_string()),
     }
 }
-fn require_principal(ctx: &AuthContext) -> Result<Uuid, Reply> {
+fn require_principal(ctx: &AuthContext) -> Result<Uuid, GuardError> {
     ctx.principal_id.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::ApiError(ApiError::new(
-                "this action requires a user principal",
-            ))),
-        )
+        {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::ApiError(ApiError::new(
+                    "this action requires a user principal",
+                ))),
+            )
+        }
+        .into()
     })
 }
 
@@ -64,7 +67,7 @@ pub async fn create_org<T: OrgStore + RuntimeStore>(
 ) -> Reply {
     let user_id = match require_principal(&ctx) {
         Ok(id) => id,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let name = request.name.trim().to_string();
     if name.is_empty() {
@@ -104,7 +107,7 @@ pub async fn list_orgs<T: OrgStore + RuntimeStore>(
         runinator_models::rbac::Action::Own,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_orgs().await {
         Ok(orgs) => ok_value(&orgs),
@@ -119,7 +122,7 @@ pub async fn list_my_orgs<T: OrgStore + RuntimeStore>(
 ) -> Reply {
     let user_id = match require_principal(&ctx) {
         Ok(id) => id,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match db.list_user_orgs(user_id).await {
         Ok(orgs) => {
@@ -142,7 +145,7 @@ pub async fn get_org<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     match db.fetch_org(org_id).await {
         Ok(Some(org)) => ok_value(&org),
@@ -161,7 +164,7 @@ pub async fn update_org<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::Own, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     let name = request.name.map(|n| n.trim().to_string());
     if matches!(name.as_deref(), Some("")) {
@@ -182,7 +185,7 @@ pub async fn delete_org<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::Own, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     match db.delete_org(org_id).await {
         Ok(()) => ok_value(&serde_json::json!({ "deleted": org_id })),
@@ -199,7 +202,7 @@ pub async fn list_org_members<T: OrgStore + RuntimeStore>(
     if let Err(reply) =
         ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
     {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_org_members(org_id).await {
         Ok(members) => ok_value(&members),
@@ -220,7 +223,7 @@ pub async fn add_org_member<T: OrgStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage
     };
     if let Err(reply) = ctx.require_scope_action(action, org_scope(org_id)) {
-        return reply;
+        return reply.into_reply();
     }
     if db
         .fetch_org(org_id)
@@ -252,11 +255,11 @@ pub async fn update_org_member<T: OrgStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage
     };
     if let Err(reply) = ctx.require_scope_action(action, org_scope(org_id)) {
-        return reply;
+        return reply.into_reply();
     }
     // guard the last owner: an org must always retain at least one owner.
     if let Err(reply) = guard_last_owner(db.as_ref(), org_id, user_id, request.role).await {
-        return reply;
+        return reply.into_reply();
     }
     match db.add_org_member(org_id, user_id, request.role).await {
         Ok(()) => ok_value(&serde_json::json!({ "org_id": org_id, "user_id": user_id })),
@@ -274,11 +277,11 @@ pub async fn remove_org_member<T: OrgStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage,
         org_scope(org_id),
     ) {
-        return reply;
+        return reply.into_reply();
     }
     // removing an owner demotes them out of the org; block if they are the last one.
     if let Err(reply) = guard_last_owner(db.as_ref(), org_id, user_id, OrgRole::Member).await {
-        return reply;
+        return reply.into_reply();
     }
     match db.remove_org_member(org_id, user_id).await {
         Ok(()) => ok_value(&serde_json::json!({ "removed": user_id })),
@@ -295,7 +298,7 @@ pub async fn switch_org<T: OrgStore + RuntimeStore>(
 ) -> Reply {
     let user_id = match require_principal(&ctx) {
         Ok(id) => id,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let membership = match db.fetch_org_membership(request.org_id, user_id).await {
         Ok(Some(membership)) => membership,

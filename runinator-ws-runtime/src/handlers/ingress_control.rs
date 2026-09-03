@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::Utc;
 use runinator_engine::{
-    audit::{AuditOutcome, record_audit},
+    audit::{AuditEntry, AuditOutcome, record_audit},
     services::{IngressOperations, PipelineIngressRequest, PipelineOperations, RunOperations},
 };
 use runinator_models::{
@@ -28,11 +28,11 @@ use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::{ApiResponse, IngressEventRequest};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker, GuardError, IntoReply};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::runs::{RunOperationsStore, process_workflow_ingress};
+use super::runs::{RunOperationsStore, WorkflowIngressContext, process_workflow_ingress};
 
 pub trait IngressControlStore: RunOperationsStore + DeliveryStore + DefinitionStore {}
 
@@ -108,21 +108,25 @@ async fn require_target<T: IngressControlStore>(
     ctx: &AuthContext,
     target: &IngressTarget,
     permission: Permission,
-) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+) -> Result<(), GuardError> {
     let checker = AuthzChecker::new(db, ctx);
     match target.kind {
-        IngressTargetKind::Workflow => checker.require_workflow(target.id, permission).await,
-        IngressTargetKind::Pipeline => checker.require_pipeline(target.id, permission).await,
+        IngressTargetKind::Workflow => checker
+            .require_workflow(target.id, permission)
+            .await
+            .map_err(GuardError::from),
+        IngressTargetKind::Pipeline => checker
+            .require_pipeline(target.id, permission)
+            .await
+            .map_err(GuardError::from),
     }
 }
-fn require_broker_scope(
-    ctx: &AuthContext,
-    scope: ScopeRef,
-) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+fn require_broker_scope(ctx: &AuthContext, scope: ScopeRef) -> Result<(), GuardError> {
     if ctx.is_platform_admin() {
         Ok(())
     } else {
-        ctx.require_scope_action(Action::EngineOperate, scope)
+        ctx.require_scope_action(Action::EngineOperate, scope)?;
+        Ok(())
     }
 }
 
@@ -157,7 +161,7 @@ pub async fn get_gate<T: IngressControlStore>(
         Err(error) => return bad_request(error),
     };
     if let Err(reply) = require_target(db.as_ref(), &ctx, &target, Permission::View).await {
-        return reply;
+        return reply.into_reply();
     }
     let ingress = IngressOperations::new(db);
     match ingress.gate(target).await {
@@ -179,7 +183,7 @@ pub async fn put_gate<T: IngressControlStore>(
         Err(error) => return bad_request(error),
     };
     if let Err(reply) = require_target(db.as_ref(), &ctx, &target, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     let ingress = IngressOperations::new(db.clone());
     let owner_scope = match ingress.owner_scope_for_target(&target).await {
@@ -206,16 +210,18 @@ pub async fn put_gate<T: IngressControlStore>(
             );
             record_audit(
                 db.as_ref(),
-                ctx.principal_id,
-                ctx.actor_kind(),
-                "ingress.gate.change",
-                AuditOutcome::Success,
-                Some(match target.kind {
-                    IngressTargetKind::Workflow => "workflow",
-                    IngressTargetKind::Pipeline => "pipeline",
-                }),
-                Some(target.id),
-                Some("external ingress gate changed"),
+                AuditEntry::new(
+                    ctx.principal_id,
+                    ctx.actor_kind(),
+                    "ingress.gate.change",
+                    AuditOutcome::Success,
+                    Some(match target.kind {
+                        IngressTargetKind::Workflow => "workflow",
+                        IngressTargetKind::Pipeline => "pipeline",
+                    }),
+                    Some(target.id),
+                    Some("external ingress gate changed"),
+                ),
             )
             .await;
             (StatusCode::OK, Json(ApiResponse::ExternalIngressGate(gate)))
@@ -284,7 +290,7 @@ pub async fn get_external<T: IngressControlStore>(
         Err(error) => return api_error(error.to_string()),
     };
     if let Err(reply) = require_target(db.as_ref(), &ctx, &record.target, Permission::View).await {
-        return reply;
+        return reply.into_reply();
     }
     (
         StatusCode::OK,
@@ -321,16 +327,16 @@ async fn apply_external<T: IngressControlStore>(
                 request_ip: None,
                 metadata: record.event.provenance.clone(),
             };
-            let (status, _) = process_workflow_ingress(
-                db.clone(),
-                runs,
-                ctx.org_id,
-                ctx.principal_id,
-                record.target.id,
+            let (status, _) = process_workflow_ingress(WorkflowIngressContext {
+                db: db.clone(),
+                operations: runs,
+                caller_org_id: ctx.org_id,
+                actor_id: ctx.principal_id,
+                workflow_id: record.target.id,
                 request,
                 provenance,
-                true,
-            )
+                bypass_gate: true,
+            })
             .await;
             if status.is_success() {
                 Ok(())
@@ -396,7 +402,7 @@ pub async fn approve_external<T: IngressControlStore>(
         Err(error) => return api_error(error.to_string()),
     };
     if let Err(reply) = require_target(db.as_ref(), &ctx, &pending.target, Permission::Run).await {
-        return reply;
+        return reply.into_reply();
     }
     if pending.gate_mode != ExternalIngressGateMode::Review {
         return bad_request("paused queues must be released in FIFO order");
@@ -410,13 +416,15 @@ pub async fn approve_external<T: IngressControlStore>(
     let record = apply_external(db.clone(), runs, pipelines, &ctx, &events, claimed).await;
     record_audit(
         db.as_ref(),
-        ctx.principal_id,
-        ctx.actor_kind(),
-        "ingress.external.approve",
-        AuditOutcome::Success,
-        Some("ingress_event"),
-        Some(id),
-        None,
+        AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            "ingress.external.approve",
+            AuditOutcome::Success,
+            Some("ingress_event"),
+            Some(id),
+            None,
+        ),
     )
     .await;
     (
@@ -438,7 +446,7 @@ pub async fn release_external<T: IngressControlStore>(
         Err(error) => return bad_request(error),
     };
     if let Err(reply) = require_target(db.as_ref(), &ctx, &target, Permission::Run).await {
-        return reply;
+        return reply.into_reply();
     }
     let ingress = IngressOperations::new(db.clone());
     if !matches!(
@@ -473,16 +481,18 @@ pub async fn release_external<T: IngressControlStore>(
     }
     record_audit(
         db.as_ref(),
-        ctx.principal_id,
-        ctx.actor_kind(),
-        "ingress.external.release",
-        AuditOutcome::Success,
-        Some(match target.kind {
-            IngressTargetKind::Workflow => "workflow",
-            IngressTargetKind::Pipeline => "pipeline",
-        }),
-        Some(target.id),
-        Some(&format!("released {} events", released.len())),
+        AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            "ingress.external.release",
+            AuditOutcome::Success,
+            Some(match target.kind {
+                IngressTargetKind::Workflow => "workflow",
+                IngressTargetKind::Pipeline => "pipeline",
+            }),
+            Some(target.id),
+            Some(&format!("released {} events", released.len())),
+        ),
     )
     .await;
     (
@@ -504,7 +514,7 @@ pub async fn drop_external<T: IngressControlStore>(
         Err(error) => return api_error(error.to_string()),
     };
     if let Err(reply) = require_target(db.as_ref(), &ctx, &record.target, Permission::Run).await {
-        return reply;
+        return reply.into_reply();
     }
     if !matches!(
         ingress
@@ -517,13 +527,15 @@ pub async fn drop_external<T: IngressControlStore>(
     emit_change(&events, "external", id, "dropped", record.owner_scope);
     record_audit(
         db.as_ref(),
-        ctx.principal_id,
-        ctx.actor_kind(),
-        "ingress.external.drop",
-        AuditOutcome::Success,
-        Some("ingress_event"),
-        Some(id),
-        None,
+        AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            "ingress.external.drop",
+            AuditOutcome::Success,
+            Some("ingress_event"),
+            Some(id),
+            None,
+        ),
     )
     .await;
     get_external(Extension(db), Extension(ctx), Path(id)).await
@@ -536,7 +548,7 @@ pub async fn put_broker_session<T: IngressControlStore>(
     ValidatedJson(request): ValidatedJson<SessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_broker_scope(&ctx, request.scope) {
-        return reply;
+        return reply.into_reply();
     }
     let ingress = IngressOperations::new(db.clone());
     let session = BrokerIngressSession {
@@ -557,13 +569,15 @@ pub async fn put_broker_session<T: IngressControlStore>(
             );
             record_audit(
                 db.as_ref(),
-                ctx.principal_id,
-                ctx.actor_kind(),
-                "ingress.broker.session",
-                AuditOutcome::Success,
-                Some("scope"),
-                request.scope.id,
-                Some(request.scope.kind.as_str()),
+                AuditEntry::new(
+                    ctx.principal_id,
+                    ctx.actor_kind(),
+                    "ingress.broker.session",
+                    AuditOutcome::Success,
+                    Some("scope"),
+                    request.scope.id,
+                    Some(request.scope.kind.as_str()),
+                ),
             )
             .await;
             (
@@ -585,7 +599,7 @@ pub async fn get_broker_session<T: IngressControlStore>(
         Err(error) => return bad_request(error),
     };
     if let Err(reply) = require_broker_scope(&ctx, scope) {
-        return reply;
+        return reply.into_reply();
     }
     let ingress = IngressOperations::new(db);
     match ingress.broker_session(scope).await {
@@ -606,7 +620,7 @@ pub async fn heartbeat_broker_session<T: IngressControlStore>(
     ValidatedJson(request): ValidatedJson<SessionHeartbeatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_broker_scope(&ctx, request.scope) {
-        return reply;
+        return reply.into_reply();
     }
     let ingress = IngressOperations::new(db.clone());
     let current = match ingress.broker_session(request.scope).await {
@@ -664,7 +678,7 @@ pub async fn list_broker<T: IngressControlStore>(
         }
     };
     if let Err(reply) = require_broker_scope(&ctx, scope) {
-        return reply;
+        return reply.into_reply();
     }
     match ingress
         .broker_records(
@@ -696,7 +710,7 @@ async fn decide_broker<T: IngressControlStore>(
         Err(error) => return api_error(error.to_string()),
     };
     if let Err(reply) = require_broker_scope(&ctx, record.scope) {
-        return reply;
+        return reply.into_reply();
     }
     match ingress
         .decide_broker_record(id, state, ctx.principal_id.unwrap_or(Uuid::nil()))
@@ -721,13 +735,15 @@ async fn decide_broker<T: IngressControlStore>(
             };
             record_audit(
                 db.as_ref(),
-                ctx.principal_id,
-                ctx.actor_kind(),
-                action,
-                AuditOutcome::Success,
-                Some("broker_ingress"),
-                Some(id),
-                None,
+                AuditEntry::new(
+                    ctx.principal_id,
+                    ctx.actor_kind(),
+                    action,
+                    AuditOutcome::Success,
+                    Some("broker_ingress"),
+                    Some(id),
+                    None,
+                ),
             )
             .await;
             match ingress.broker_record(id).await {

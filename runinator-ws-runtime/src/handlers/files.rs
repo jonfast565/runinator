@@ -22,7 +22,7 @@ use runinator_ws_core::{
     },
     responses::{api_error, bad_request, not_found},
 };
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -59,7 +59,7 @@ pub async fn upload_library_file<T: AuthorizationStore + FileStore>(
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::Edit, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     if ctx.org_id.is_none() {
         return bad_request("library files must be created inside an organization");
@@ -79,7 +79,7 @@ pub async fn upload_library_file<T: AuthorizationStore + FileStore>(
                 .grant_resource_owner(ResourceType::LibraryFile, file.descriptor.id)
                 .await
             {
-                return reply;
+                return reply.into_reply();
             }
             (StatusCode::CREATED, Json(ApiResponse::WorkflowFile(file)))
         }
@@ -93,7 +93,7 @@ pub async fn list_library_files<T: AuthorizationStore + FileStore>(
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::View, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     match service.list_library(ctx.org_id).await {
         Ok(mut files) => {
@@ -102,7 +102,7 @@ pub async fn list_library_files<T: AuthorizationStore + FileStore>(
                 .await
             {
                 Ok(ids) => ids,
-                Err(reply) => return reply,
+                Err(reply) => return reply.into_reply(),
             };
             if let Some(visible) = visible {
                 files.retain(|file| visible.contains(&file.descriptor.id));
@@ -122,7 +122,7 @@ pub async fn stage_workflow_file<T: AuthorizationStore + FileStore>(
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::Run, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     match service
         .stage(
@@ -146,13 +146,13 @@ pub async fn archive_library_file<T: AuthorizationStore + FileStore>(
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::Edit, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_resource(ResourceType::LibraryFile, id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.archive(id, ctx.org_id).await {
         Ok(true) => (
@@ -185,7 +185,7 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore + RuntimeS
     if !worker_or_agent
         && let Err(reply) = ctx.require_scope_action(Action::View, ctx.selected_scope())
     {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     let file = match service.fetch(id).await {
         Ok(Some(file))
@@ -221,7 +221,7 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore + RuntimeS
                     .require_resource(ResourceType::LibraryFile, id, Permission::View)
                     .await
                 {
-                    return reply.into_response();
+                    return reply.into_reply().into_response();
                 }
             }
             runinator_models::files::FileScope::Run => {
@@ -242,7 +242,7 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore + RuntimeS
                     .require_workflow(workflow_id, Permission::View)
                     .await
                 {
-                    return reply.into_response();
+                    return reply.into_reply().into_response();
                 }
             }
         }

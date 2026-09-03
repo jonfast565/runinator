@@ -17,6 +17,17 @@ use super::repl_completer::ReplCompleter;
 
 struct RexRapValidator;
 
+pub(super) struct ConsoleRequest<'a> {
+    pub requested_session: Option<&'a str>,
+    pub new_session: Option<&'a str>,
+    pub execute: Option<&'a str>,
+    pub file: Option<&'a Path>,
+    pub no_follow: bool,
+    pub json_output: bool,
+    pub api_base_url: &'a str,
+    pub plain: bool,
+}
+
 impl Validator for RexRapValidator {
     fn validate(&self, line: &str) -> ValidationResult {
         let mut stack = Vec::new();
@@ -62,17 +73,17 @@ impl Validator for RexRapValidator {
         }
     }
 }
-pub(super) async fn console(
-    client: &Client,
-    requested_session: Option<&str>,
-    new_session: Option<&str>,
-    execute: Option<&str>,
-    file: Option<&Path>,
-    no_follow: bool,
-    json_output: bool,
-    api_base_url: &str,
-    plain: bool,
-) -> Result<()> {
+pub(super) async fn console(client: &Client, request: ConsoleRequest<'_>) -> Result<()> {
+    let ConsoleRequest {
+        requested_session,
+        new_session,
+        execute,
+        file,
+        no_follow,
+        json_output,
+        api_base_url,
+        plain,
+    } = request;
     if execute.is_some() && file.is_some() {
         return Err(err("use --execute or --file, not both"));
     }

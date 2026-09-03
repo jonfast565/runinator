@@ -8,7 +8,7 @@ use runinator_store::roles::{AutomationStore, DeliveryStore};
 
 use runinator_ws_core::models::{ApiResponse, AuditLogQuery, BrokerMessageQuery, DeadLetterQuery};
 use runinator_ws_core::responses::{api_error, bad_request};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 
 // cap the page size so a single query cannot scan an unbounded log.
 const DEFAULT_LIMIT: i64 = 100;
@@ -34,7 +34,7 @@ pub async fn get_dead_letters<T: DeliveryStore>(
         runinator_models::rbac::Action::DeadLettersRead,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match db
         .fetch_dead_letters(query.channel, clamp_limit(query.limit))
@@ -74,9 +74,10 @@ pub async fn get_broker_messages<T: AuthorizationStore + DeliveryStore>(
             runinator_models::rbac::Action::DeadLettersRead,
             runinator_models::rbac::ScopeRef::PLATFORM,
         )
+        .map_err(IntoReply::into_reply)
     };
     if let Err(reply) = authorization {
-        return reply;
+        return reply.into_reply();
     }
     match db
         .fetch_broker_messages(
@@ -111,7 +112,7 @@ pub async fn get_audit_log<T: AutomationStore>(
         runinator_models::rbac::Action::AuditRead,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match db
         .fetch_audit_log(query.actor_id, query.action, clamp_limit(query.limit))

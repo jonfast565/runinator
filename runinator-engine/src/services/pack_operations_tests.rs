@@ -147,17 +147,17 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
     };
 
     let result = service
-        .import_compiled_pack(
+        .import_compiled_pack(PackImportRequest {
             workflows,
-            Some(&settings),
-            Some(&pipelines),
-            &functions,
-            &[artifact],
-            None,
-            runinator_models::rbac::ScopeRef::PLATFORM,
-            None,
-            true,
-        )
+            settings: Some(&settings),
+            pipelines: Some(&pipelines),
+            functions: &functions,
+            artifacts: &[artifact],
+            import_org: None,
+            owner: runinator_models::rbac::ScopeRef::PLATFORM,
+            created_by: None,
+            overwrite: true,
+        })
         .await;
 
     assert!(result.is_err(), "the unresolved pipeline member must fail");
@@ -231,24 +231,24 @@ async fn portable_pack_preserves_an_unresolved_environment_secret() {
     };
 
     let result = service
-        .import_compiled_pack(
-            WorkflowBundle {
+        .import_compiled_pack(PackImportRequest {
+            workflows: WorkflowBundle {
                 workflows: vec![workflow],
                 triggers: Vec::new(),
             },
-            None,
-            None,
-            &[],
-            &[],
-            Some(org_id),
-            runinator_models::rbac::ScopeRef::new(
+            settings: None,
+            pipelines: None,
+            functions: &[],
+            artifacts: &[],
+            import_org: Some(org_id),
+            owner: runinator_models::rbac::ScopeRef::new(
                 runinator_models::rbac::ScopeKind::User,
                 Some(importing_user),
             )
             .unwrap(),
-            Some(importing_user),
-            true,
-        )
+            created_by: Some(importing_user),
+            overwrite: true,
+        })
         .await
         .expect("portable alias remains importable");
 
@@ -492,24 +492,24 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
     };
 
     let result = service
-        .import_compiled_pack(
-            WorkflowBundle {
+        .import_compiled_pack(PackImportRequest {
+            workflows: WorkflowBundle {
                 workflows: vec![workflow],
                 triggers: Vec::new(),
             },
-            Some(&settings),
-            None,
-            &[],
-            &[],
-            Some(org_id),
-            runinator_models::rbac::ScopeRef::new(
+            settings: Some(&settings),
+            pipelines: None,
+            functions: &[],
+            artifacts: &[],
+            import_org: Some(org_id),
+            owner: runinator_models::rbac::ScopeRef::new(
                 runinator_models::rbac::ScopeKind::User,
                 Some(importing_user),
             )
             .unwrap(),
-            Some(importing_user),
-            true,
-        )
+            created_by: Some(importing_user),
+            overwrite: true,
+        })
         .await
         .expect("same-pack profile import");
 

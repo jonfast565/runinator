@@ -521,13 +521,15 @@ impl<T: AuthStore + RbacStore + ReplicaStore + RuntimeStore> ReplicaRegistry<T> 
         );
         crate::audit::record_audit(
             self.store.as_ref(),
-            actor.principal_id,
-            actor.kind.as_str(),
-            "agent.machine.invalidate",
-            crate::audit::AuditOutcome::Success,
-            Some("service_account"),
-            Some(machine_id),
-            Some(&detail),
+            crate::audit::AuditEntry::new(
+                actor.principal_id,
+                actor.kind.as_str(),
+                "agent.machine.invalidate",
+                crate::audit::AuditOutcome::Success,
+                Some("service_account"),
+                Some(machine_id),
+                Some(&detail),
+            ),
         )
         .await;
         Ok(Some(AgentMachineInvalidation {

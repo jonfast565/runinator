@@ -24,7 +24,7 @@ use runinator_engine::{EngineConfig, run_background_engine, services::ReplicaReg
 use crate::event_consumer::{instance_id, run_event_consumer};
 use crate::events::{AppEvent, EventBus};
 use crate::handlers::catalog::seed_builtin_catalog;
-use crate::router::build_router;
+use crate::router::{RouterDependencies, build_router};
 
 /// what this web service replica advertises to the replica list at registration and on every
 /// heartbeat. host is its stable dns name; attributes carry the broker/database backend it runs on.
@@ -34,20 +34,38 @@ pub struct ReplicaAdvertisement {
     pub host: Option<String>,
     pub attributes: runinator_models::value::Value,
 }
+pub struct WebserverRuntime<T> {
+    pub pool: Arc<T>,
+    pub notify: Arc<Notify>,
+    pub port: u16,
+    pub broker: Arc<dyn Broker>,
+    pub blobs: Arc<dyn runinator_blob::BlobStore>,
+    pub advertisement: ReplicaAdvertisement,
+    pub auth: crate::auth::AuthOptions,
+    pub cors: crate::router::CorsConfig,
+    pub rate_limit: crate::rate_limit::RateLimitConfig,
+    pub overload: crate::overload::OverloadConfig,
+    pub run_engine: bool,
+    pub max_concurrent_ingress: usize,
+}
+
 pub async fn run_webserver<T: DatabaseImpl>(
-    pool: Arc<T>,
-    notify: Arc<Notify>,
-    port: u16,
-    broker: Arc<dyn Broker>,
-    blobs: Arc<dyn runinator_blob::BlobStore>,
-    advertisement: ReplicaAdvertisement,
-    auth: crate::auth::AuthOptions,
-    cors: crate::router::CorsConfig,
-    rate_limit: crate::rate_limit::RateLimitConfig,
-    overload: crate::overload::OverloadConfig,
-    run_engine: bool,
-    max_concurrent_ingress: usize,
+    runtime: WebserverRuntime<T>,
 ) -> Result<(), SendableError> {
+    let WebserverRuntime {
+        pool,
+        notify,
+        port,
+        broker,
+        blobs,
+        advertisement,
+        auth,
+        cors,
+        rate_limit,
+        overload,
+        run_engine,
+        max_concurrent_ingress,
+    } = runtime;
     crate::stability::init_metrics();
     info!("artifact storage backend: {}", blobs.backend());
     seed_builtin_catalog(pool.as_ref()).await?;
@@ -211,17 +229,17 @@ pub async fn run_webserver<T: DatabaseImpl>(
     if !provisioner.is_empty() {
         info!("on-demand node provisioning is ENABLED");
     }
-    let app = build_router(
+    let app = build_router(RouterDependencies {
         pool,
-        bus,
+        events: bus,
         broker,
         blobs,
         provisioner,
-        auth_config,
+        auth: auth_config,
         cors,
         rate_limit,
         overload,
-    );
+    });
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(

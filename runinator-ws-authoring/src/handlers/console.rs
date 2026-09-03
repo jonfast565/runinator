@@ -32,7 +32,7 @@ use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 
 fn selected_scope(ctx: &AuthContext) -> ScopeRef {
     ctx.org_id
@@ -80,14 +80,14 @@ pub async fn get_console_sessions<
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
-        return reply;
+        return reply.into_reply();
     }
     let visible = match AuthzChecker::new(db.as_ref(), &ctx)
         .visible_resource_ids(ResourceType::ConsoleSession)
         .await
     {
         Ok(visible) => visible,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match console.list_sessions().await {
         Ok(sessions) => {
@@ -121,7 +121,7 @@ pub async fn create_console_session<
     ValidatedJson(request): ValidatedJson<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
-        return reply;
+        return reply.into_reply();
     }
     match console
         .create_session(ctx.org_id, &session_name(&request), ctx.principal_id)
@@ -132,7 +132,7 @@ pub async fn create_console_session<
                 .grant_resource_owner(ResourceType::ConsoleSession, session.id)
                 .await
             {
-                return reply;
+                return reply.into_reply();
             }
             (StatusCode::OK, Json(ApiResponse::ConsoleSession(session)))
         }
@@ -160,7 +160,7 @@ pub async fn get_console_session<
         .require_resource(ResourceType::ConsoleSession, session_id, Permission::View)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match console.session_detail(session_id).await {
         Ok(Some(detail)) => (
@@ -190,7 +190,7 @@ pub async fn rename_console_session<
     ValidatedJson(request): ValidatedJson<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     match console
         .rename_session(session_id, &session_name(&request))
@@ -227,7 +227,7 @@ pub async fn delete_console_session<
     Path(session_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Own).await {
-        return reply;
+        return reply.into_reply();
     }
     match console.delete_session(session_id).await {
         Ok(true) => (
@@ -259,7 +259,7 @@ pub async fn clear_console_session<
     Path(session_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     match console.clear_session(session_id).await {
         Ok(true) => (
@@ -292,7 +292,7 @@ pub async fn create_console_cell<
     ValidatedJson(cell): ValidatedJson<NewConsoleCell>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
-        return reply;
+        return reply.into_reply();
     }
     match console.upsert_cell(session_id, None, &cell).await {
         Ok(cell) => (StatusCode::OK, Json(ApiResponse::ConsoleCell(cell))),
@@ -327,7 +327,7 @@ pub async fn update_console_cell<
     .await
     {
         Ok(cell) => cell,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if cell.status == runinator_models::console::ConsoleCellStatus::Running {
         return bad_request("a running console cell must be canceled before it can be edited");
@@ -367,7 +367,7 @@ pub async fn delete_console_cell<
     .await
     {
         Ok(cell) => cell,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if cell.status == runinator_models::console::ConsoleCellStatus::Running {
         return bad_request("a running console cell must be canceled before it can be deleted");
@@ -416,7 +416,7 @@ pub async fn run_console_cell<
     .await
     {
         Ok(cell) => cell,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if cell.status == runinator_models::console::ConsoleCellStatus::Running {
         return bad_request("console cell is already running");
@@ -473,7 +473,7 @@ pub async fn cancel_console_cell<
     .await
     {
         Ok(cell) => cell,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let Some(run_id) = cell.workflow_run_id else {
         return bad_request("console cell has no workflow run to cancel");
@@ -510,7 +510,7 @@ pub async fn get_console_cell<
     .await
     {
         Ok(cell) => cell,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     // settle it from its run first: the VM records the run, and this is where a finished run
     // becomes a finished cell. a poll that only read the row would show `running` forever.

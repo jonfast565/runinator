@@ -24,6 +24,58 @@ use runinator_ws_core::models::{ApiError, ApiResponse};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
+/// A compact authorization rejection that handlers can turn back into their standard response.
+pub struct AuthorizationDenied(Box<Reply>);
+
+impl AuthorizationDenied {
+    fn forbidden() -> Self {
+        Self(Box::new(forbidden()))
+    }
+
+    pub fn into_reply(self) -> Reply {
+        *self.0
+    }
+}
+
+/// A compact, ready-to-send response used by helper functions that must retain HTTP detail.
+pub struct GuardError(Box<Reply>);
+
+impl From<Reply> for GuardError {
+    fn from(reply: Reply) -> Self {
+        Self(Box::new(reply))
+    }
+}
+
+impl From<AuthorizationDenied> for GuardError {
+    fn from(error: AuthorizationDenied) -> Self {
+        Self(error.0)
+    }
+}
+
+/// Convert either an authorization rejection or an already-formed handler reply into a reply.
+/// This keeps guard clauses uniform while the compact error crosses crate boundaries.
+pub trait IntoReply {
+    fn into_reply(self) -> Reply;
+}
+
+impl IntoReply for AuthorizationDenied {
+    fn into_reply(self) -> Reply {
+        self.into_reply()
+    }
+}
+
+impl IntoReply for GuardError {
+    fn into_reply(self) -> Reply {
+        *self.0
+    }
+}
+
+impl IntoReply for Reply {
+    fn into_reply(self) -> Reply {
+        self
+    }
+}
+
 /// Whether one owned resource may consume another reusable resource. This is evaluated again at
 /// run admission so an ownership transfer or revoked grant applies to future runs.
 pub async fn resource_can_consume<T: AuthorizationStore>(
@@ -88,8 +140,12 @@ pub trait AuthContextExt {
     fn is_platform_admin(&self) -> bool;
     fn selected_scope(&self) -> ScopeRef;
     fn authorize_scope(&self, action: Action, scope: ScopeRef) -> bool;
-    fn require_scope_action(&self, action: Action, scope: ScopeRef) -> Result<(), Reply>;
-    fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), Reply>;
+    fn require_scope_action(
+        &self,
+        action: Action,
+        scope: ScopeRef,
+    ) -> Result<(), AuthorizationDenied>;
+    fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), AuthorizationDenied>;
     fn actor_kind(&self) -> &'static str;
     fn revision_author(&self) -> RevisionAuthor;
 }
@@ -137,16 +193,20 @@ impl AuthContextExt for AuthContext {
         role.is_some_and(|role| role_allows(role, action))
     }
 
-    fn require_scope_action(&self, action: Action, scope: ScopeRef) -> Result<(), Reply> {
+    fn require_scope_action(
+        &self,
+        action: Action,
+        scope: ScopeRef,
+    ) -> Result<(), AuthorizationDenied> {
         self.authorize_scope(action, scope)
             .then_some(())
-            .ok_or_else(forbidden)
+            .ok_or_else(AuthorizationDenied::forbidden)
     }
 
-    fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), Reply> {
+    fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), AuthorizationDenied> {
         let assigned = self.system_role.filter(|role| roles.contains(role));
         if !self.is_platform_admin() && assigned.is_none() {
-            return Err(forbidden());
+            return Err(AuthorizationDenied::forbidden());
         }
         let ceiling_allows = self.action_ceiling.is_empty()
             || assigned
@@ -157,7 +217,7 @@ impl AuthContextExt for AuthContext {
         if ceiling_allows {
             Ok(())
         } else {
-            Err(forbidden())
+            Err(AuthorizationDenied::forbidden())
         }
     }
 

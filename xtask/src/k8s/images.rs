@@ -109,16 +109,29 @@ fn current_commit(workspace_root: &Path) -> String {
 
 /// builds (and optionally pushes) the selected images, returning a map of image name -> tagged
 /// reference for the ones that were built.
+pub struct ContainerImageBuild<'a> {
+    pub repository: Option<&'a str>,
+    pub tag: &'a str,
+    pub include_names: Option<&'a [&'a str]>,
+    pub exclude_names: Option<&'a [&'a str]>,
+    pub push_images: bool,
+    pub database_backend: &'a str,
+    pub broker_backend: &'a str,
+}
+
 pub fn build_container_images(
     workspace_root: &Path,
-    repository: Option<&str>,
-    tag: &str,
-    include_names: Option<&[&str]>,
-    exclude_names: Option<&[&str]>,
-    push_images: bool,
-    database_backend: &str,
-    broker_backend: &str,
+    request: ContainerImageBuild<'_>,
 ) -> Result<HashMap<String, String>> {
+    let ContainerImageBuild {
+        repository,
+        tag,
+        include_names,
+        exclude_names,
+        push_images,
+        database_backend,
+        broker_backend,
+    } = request;
     exec::require_tool("docker")?;
 
     let mut images: Vec<&ImageSpec> = IMAGES.iter().collect();

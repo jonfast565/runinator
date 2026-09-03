@@ -44,7 +44,7 @@ use runinator_ws_middleware::auth::{
     AuthConfig, hash_password, hash_secret, issue_access_token, new_api_key, new_refresh_token,
     verify_password,
 };
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, GuardError, IntoReply};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -167,16 +167,16 @@ async fn would_remove_last_enabled_admin<T: AuthStore + RbacStore + RuntimeStore
     }
     Ok(enabled_admin_count(db).await? <= 1)
 }
-fn json_value<T: Serialize>(value: &T) -> Result<Value, Reply> {
+fn json_value<T: Serialize>(value: &T) -> Result<Value, GuardError> {
     serde_json::to_value(value)
         .map(Value::from)
-        .map_err(|err| api_error(err.to_string()))
+        .map_err(|err| api_error(err.to_string()).into())
 }
 
 fn ok_value<T: Serialize>(value: &T) -> Reply {
     match json_value(value) {
         Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
-        Err(reply) => reply,
+        Err(reply) => reply.into_reply(),
     }
 }
 
@@ -350,7 +350,7 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgS
     if let Some(user_id) = user_id {
         let has_membership = match has_enabled_organization(db.as_ref(), user_id).await {
             Ok(value) => value,
-            Err(reply) => return reply,
+            Err(reply) => return reply.into_reply(),
         };
         if !has_membership {
             audit_login_failure(db.as_ref(), &username, "no enabled organization membership").await;
@@ -369,18 +369,20 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgS
         Ok(response) => {
             crate::audit::record_audit(
                 db.as_ref(),
-                user_id,
-                "user",
-                "auth.login",
-                crate::audit::AuditOutcome::Success,
-                None,
-                None,
-                Some(&format!("user {username} logged in")),
+                crate::audit::AuditEntry::new(
+                    user_id,
+                    "user",
+                    "auth.login",
+                    crate::audit::AuditOutcome::Success,
+                    None,
+                    None,
+                    Some(&format!("user {username} logged in")),
+                ),
             )
             .await;
             ok_value(&response)
         }
-        Err(reply) => reply,
+        Err(reply) => reply.into_reply(),
     }
 }
 
@@ -392,13 +394,15 @@ async fn audit_login_failure<T: AuthStore + RbacStore + RuntimeStore>(
 ) {
     crate::audit::record_audit(
         db,
-        None,
-        "anonymous",
-        "auth.login",
-        crate::audit::AuditOutcome::Failure,
-        None,
-        None,
-        Some(&format!("login failed for '{username}': {reason}")),
+        crate::audit::AuditEntry::new(
+            None,
+            "anonymous",
+            "auth.login",
+            crate::audit::AuditOutcome::Failure,
+            None,
+            None,
+            Some(&format!("login failed for '{username}': {reason}")),
+        ),
     )
     .await;
 }
@@ -411,13 +415,15 @@ async fn audit_credential_change<T: AuthStore + RbacStore + RuntimeStore>(
 ) {
     crate::audit::record_audit(
         db,
-        ctx.principal_id,
-        ctx.actor_kind(),
-        action,
-        crate::audit::AuditOutcome::Success,
-        Some("api_key"),
-        Some(key_id),
-        None,
+        crate::audit::AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            action,
+            crate::audit::AuditOutcome::Success,
+            Some("api_key"),
+            Some(key_id),
+            None,
+        ),
     )
     .await;
 }
@@ -452,7 +458,7 @@ pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + Or
     }
     let max_refreshes = match max_refreshes(db.as_ref()).await {
         Ok(value) => value,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if session.refresh_count >= max_refreshes {
         let _ = db.revoke_session(session.id).await;
@@ -482,7 +488,7 @@ pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + Or
     .await
     {
         Ok(response) => ok_value(&response),
-        Err(reply) => reply,
+        Err(reply) => reply.into_reply(),
     }
 }
 
@@ -506,7 +512,7 @@ pub async fn auth_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStor
                 "max_refreshes": value,
             }))),
         ),
-        Err(reply) => reply,
+        Err(reply) => reply.into_reply(),
     }
 }
 
@@ -780,16 +786,16 @@ pub async fn me<T: AuthStore + RbacStore + RuntimeStore>(
         Err(err) => api_error(err.to_string()),
     }
 }
-fn current_user_ids(ctx: &AuthContext) -> Result<(Uuid, Uuid), Reply> {
+fn current_user_ids(ctx: &AuthContext) -> Result<(Uuid, Uuid), GuardError> {
     if ctx.kind != PrincipalKind::User {
-        return Err(forbidden("profile management is available only to users"));
+        return Err(forbidden("profile management is available only to users").into());
     }
     let user_id = ctx
         .principal_id
         .ok_or_else(|| unauthorized("principal missing id"))?;
     let session_id = ctx
         .session_id
-        .ok_or_else(|| unauthorized("session missing id"))?;
+        .ok_or_else(|| GuardError::from(unauthorized("session missing id")))?;
     Ok((user_id, session_id))
 }
 
@@ -802,13 +808,15 @@ async fn audit_profile_event<T: AuthStore + RbacStore + RuntimeStore>(
 ) {
     crate::audit::record_audit(
         db,
-        ctx.principal_id,
-        ctx.actor_kind(),
-        action,
-        outcome,
-        Some("user"),
-        ctx.principal_id,
-        detail,
+        crate::audit::AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            action,
+            outcome,
+            Some("user"),
+            ctx.principal_id,
+            detail,
+        ),
     )
     .await;
 }
@@ -820,7 +828,7 @@ pub async fn update_current_user<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let (user_id, _) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match db.update_user(user_id, request.email, None).await {
         Ok(user) => {
@@ -834,7 +842,7 @@ pub async fn update_current_user<T: AuthStore + RbacStore + RuntimeStore>(
             .await;
             match user_with_platform_role(db.as_ref(), &user).await {
                 Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
-                Err(reply) => reply,
+                Err(reply) => reply.into_reply(),
             }
         }
         Err(err) => api_error(err.to_string()),
@@ -848,7 +856,7 @@ pub async fn change_current_password<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let (user_id, session_id) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let user = match db.fetch_user(user_id).await {
         Ok(Some(user)) => user,
@@ -898,7 +906,7 @@ pub async fn list_current_sessions<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let (user_id, current_id) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match db.list_user_sessions(user_id, Utc::now()).await {
         Ok(sessions) => {
@@ -920,7 +928,7 @@ pub async fn list_current_sessions<T: AuthStore + RbacStore + RuntimeStore>(
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-                Err(reply) => reply,
+                Err(reply) => reply.into_reply(),
             }
         }
         Err(err) => api_error(err.to_string()),
@@ -934,7 +942,7 @@ pub async fn revoke_current_session<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let (user_id, _) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let session = match db.fetch_session(session_id).await {
         Ok(Some(session)) if session.user_id == user_id && !session.revoked => session,
@@ -961,7 +969,7 @@ pub async fn revoke_other_sessions<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let (user_id, current_id) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     if let Err(err) = db.revoke_user_sessions_except(user_id, current_id).await {
         return api_error(err.to_string());
@@ -983,12 +991,12 @@ pub async fn list_personal_api_keys<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let (user_id, _) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match db.list_api_keys(Some(user_id)).await {
         Ok(keys) => match keys.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1000,7 +1008,7 @@ pub async fn personal_api_key_scopes<T: AuthStore + RbacStore + RuntimeStore + O
 ) -> Reply {
     let (user_id, _) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let mut scopes = vec![PersonalApiKeyScope {
         org_id: None,
@@ -1030,7 +1038,7 @@ pub async fn personal_api_key_scopes<T: AuthStore + RbacStore + RuntimeStore + O
     }
     match scopes.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
         Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-        Err(reply) => reply,
+        Err(reply) => reply.into_reply(),
     }
 }
 
@@ -1041,7 +1049,7 @@ pub async fn create_personal_api_key<T: AuthStore + RbacStore + RuntimeStore + O
 ) -> Reply {
     let (user_id, _) = match current_user_ids(&ctx) {
         Ok(ids) => ids,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     let target_scope = request
         .org_id
@@ -1111,7 +1119,7 @@ pub async fn list_users<T: AuthStore + RbacStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_users().await {
         Ok(users) => {
@@ -1119,7 +1127,7 @@ pub async fn list_users<T: AuthStore + RbacStore + RuntimeStore>(
             for user in &users {
                 match user_with_platform_role(db.as_ref(), user).await {
                     Ok(value) => values.push(value),
-                    Err(reply) => return reply,
+                    Err(reply) => return reply.into_reply(),
                 }
             }
             (StatusCode::OK, Json(ApiResponse::JsonList(values)))
@@ -1137,7 +1145,7 @@ pub async fn create_user<T: AuthStore + RbacStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let hash = match hash_password(&request.password) {
         Ok(hash) => hash,
@@ -1155,7 +1163,7 @@ pub async fn create_user<T: AuthStore + RbacStore + RuntimeStore>(
     {
         Ok(user) => match user_with_platform_role(db.as_ref(), &user).await {
             Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1171,7 +1179,7 @@ pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let current = match db.fetch_user(user_id).await {
         Ok(Some(user)) => user,
@@ -1185,7 +1193,7 @@ pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
     match would_remove_last_enabled_admin(db.as_ref(), &current, demotes_enabled_admin).await {
         Ok(true) => return forbidden("cannot remove the last enabled admin user"),
         Ok(false) => {}
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     }
     let password_changed = request.password.is_some();
     if let Some(password) = request.password {
@@ -1223,7 +1231,7 @@ pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
             }
             match user_with_platform_role(db.as_ref(), &user).await {
                 Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
-                Err(reply) => reply,
+                Err(reply) => reply.into_reply(),
             }
         }
         Err(err) => api_error(err.to_string()),
@@ -1239,7 +1247,7 @@ pub async fn delete_user<T: AuthStore + RbacStore + RuntimeStore>(
         runinator_models::rbac::Action::MembersManage,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     let current = match db.fetch_user(user_id).await {
         Ok(Some(user)) => user,
@@ -1249,7 +1257,7 @@ pub async fn delete_user<T: AuthStore + RbacStore + RuntimeStore>(
     match would_remove_last_enabled_admin(db.as_ref(), &current, true).await {
         Ok(true) => return forbidden("cannot delete the last enabled admin user"),
         Ok(false) => {}
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     }
     match db.delete_user(user_id).await {
         Ok(()) => task_response_success("User deleted"),
@@ -1272,7 +1280,7 @@ pub async fn list_api_keys<T: AuthStore + RbacStore + RuntimeStore>(
     match db.list_api_keys(scope).await {
         Ok(keys) => match keys.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1292,7 +1300,7 @@ pub async fn create_api_key<T: AuthStore + RbacStore + RuntimeStore>(
         })
         .unwrap_or(ScopeRef::PLATFORM);
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, target_scope) {
-        return reply;
+        return reply.into_reply();
     }
     if request.system_role.is_some() && !ctx.is_platform_admin() {
         return forbidden("only a platform admin may assign a system role");
@@ -1484,7 +1492,7 @@ pub async fn create_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeSto
         runinator_models::rbac::Action::AgentsEnroll,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if request.ttl_seconds == 0 || request.ttl_seconds > MAX_ENROLLMENT_TTL_SECONDS {
         return bad_request(format!(
@@ -1549,12 +1557,12 @@ pub async fn list_agent_enrollment_tokens<T: AuthStore + RbacStore + RuntimeStor
         runinator_models::rbac::Action::AgentsEnroll,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_agent_enrollment_tokens().await {
         Ok(tokens) => match tokens.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1569,7 +1577,7 @@ pub async fn delete_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeSto
         runinator_models::rbac::Action::AgentsEnroll,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match db.delete_agent_enrollment_token(token_id).await {
         Ok(()) => task_response_success("Enrollment token deleted"),
@@ -1696,6 +1704,7 @@ async fn require_team_management<T: AuthStore + RbacStore + RuntimeStore>(
         Err(err) => return Err(api_error(err.to_string())),
     };
     ctx.require_scope_action(Action::MembersManage, team.scope)
+        .map_err(IntoReply::into_reply)
 }
 
 pub async fn list_teams<T: AuthStore + RbacStore + RuntimeStore>(
@@ -1704,7 +1713,7 @@ pub async fn list_teams<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let scope = ctx.selected_scope();
     if let Err(reply) = ctx.require_scope_action(Action::MembersManage, scope) {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_teams().await {
         Ok(teams) => match teams
@@ -1714,7 +1723,7 @@ pub async fn list_teams<T: AuthStore + RbacStore + RuntimeStore>(
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1727,7 +1736,7 @@ pub async fn list_user_teams<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let scope = ctx.selected_scope();
     if let Err(reply) = ctx.require_scope_action(Action::MembersManage, scope) {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_user_teams(user_id).await {
         Ok(teams) => match teams
@@ -1737,7 +1746,7 @@ pub async fn list_user_teams<T: AuthStore + RbacStore + RuntimeStore>(
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1750,7 +1759,7 @@ pub async fn create_team<T: AuthStore + RbacStore + RuntimeStore>(
 ) -> Reply {
     let scope = ctx.selected_scope();
     if let Err(reply) = ctx.require_scope_action(Action::MembersManage, scope) {
-        return reply;
+        return reply.into_reply();
     }
     match db.create_team(request.name, scope).await {
         Ok(team) => ok_value(&team),
@@ -1765,7 +1774,7 @@ pub async fn update_team<T: AuthStore + RbacStore + RuntimeStore>(
     ValidatedJson(request): ValidatedJson<UpdateTeamRequest>,
 ) -> Reply {
     if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match db.update_team(team_id, request.name).await {
         Ok(team) => ok_value(&team),
@@ -1779,7 +1788,7 @@ pub async fn delete_team<T: AuthStore + RbacStore + RuntimeStore>(
     Path(team_id): Path<Uuid>,
 ) -> Reply {
     if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match db.delete_team(team_id).await {
         Ok(()) => task_response_success("Team deleted"),
@@ -1793,12 +1802,12 @@ pub async fn list_team_members<T: AuthStore + RbacStore + RuntimeStore>(
     Path(team_id): Path<Uuid>,
 ) -> Reply {
     if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match db.list_team_members(team_id).await {
         Ok(users) => match users.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
+            Err(reply) => reply.into_reply(),
         },
         Err(err) => api_error(err.to_string()),
     }
@@ -1811,7 +1820,7 @@ pub async fn add_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     ValidatedJson(request): ValidatedJson<AddTeamMemberRequest>,
 ) -> Reply {
     if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match db
         .add_team_member(team_id, request.user_id, request.role)
@@ -1828,7 +1837,7 @@ pub async fn remove_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
     if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
-        return reply;
+        return reply.into_reply();
     }
     match db.remove_team_member(team_id, user_id).await {
         Ok(()) => task_response_success("Member removed"),

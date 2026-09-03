@@ -11,7 +11,8 @@ use runinator_service_bootstrap::{
 use uuid::Uuid;
 
 use runinator_ws::{
-    AuthOptions, CorsConfig, OverloadConfig, RateLimitConfig, ReplicaAdvertisement, run_webserver,
+    AuthOptions, CorsConfig, OverloadConfig, RateLimitConfig, ReplicaAdvertisement,
+    WebserverRuntime, run_webserver,
 };
 
 use crate::config::CliArgs;
@@ -243,20 +244,20 @@ async fn run_process() -> Result<(), SendableError> {
         None,
     );
     dispatch_server_database!(database, |db| {
-        run_webserver(
-            db,
-            notify.clone(),
+        run_webserver(WebserverRuntime {
+            pool: db,
+            notify: notify.clone(),
             port,
-            broker.clone(),
-            blobs.clone(),
-            advertisement.clone(),
-            auth_options.clone(),
-            cors_options.clone(),
-            rate_limit_options,
-            overload_options,
+            broker: broker.clone(),
+            blobs: blobs.clone(),
+            advertisement: advertisement.clone(),
+            auth: auth_options.clone(),
+            cors: cors_options.clone(),
+            rate_limit: rate_limit_options,
+            overload: overload_options,
             run_engine,
             max_concurrent_ingress,
-        )
+        })
         .await?;
     });
 

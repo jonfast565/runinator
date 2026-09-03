@@ -35,30 +35,44 @@ pub async fn announce_agent_replica(
     let availability = AgentAvailability::from_config(config);
     publish_agent_availability(
         broker,
-        &availability,
-        reporter,
-        report_context,
-        replica_id,
-        runtime_id,
-        0,
-        None,
+        AvailabilityPublication {
+            availability: &availability,
+            reporter,
+            report_context,
+            replica_id,
+            runtime_id,
+            heartbeat_seq: 0,
+            telemetry: None,
+        },
     )
     .await
 }
 
 /// Heartbeat the agent through broker ingress and explicitly retire it on a clean stop.
-pub fn spawn_agent_heartbeat(
-    broker: Arc<dyn Broker>,
-    config: &AgentRuntimeConfig,
-    replica_id: Uuid,
-    runtime_id: String,
-    reporter: Arc<StatusReporter>,
-    report_context: Arc<AgentReportContext>,
-    telemetry: Option<Arc<TelemetryCollector>>,
-    shutdown: Shutdown,
-) -> JoinHandle<()> {
-    let availability = AgentAvailability::from_config(config);
-    let heartbeat_interval = config.heartbeat_interval;
+pub(crate) struct AgentHeartbeat {
+    pub(crate) broker: Arc<dyn Broker>,
+    pub(crate) availability: AgentAvailability,
+    pub(crate) heartbeat_interval: std::time::Duration,
+    pub(crate) replica_id: Uuid,
+    pub(crate) runtime_id: String,
+    pub(crate) reporter: Arc<StatusReporter>,
+    pub(crate) report_context: Arc<AgentReportContext>,
+    pub(crate) telemetry: Option<Arc<TelemetryCollector>>,
+    pub(crate) shutdown: Shutdown,
+}
+
+pub(crate) fn spawn_agent_heartbeat(heartbeat: AgentHeartbeat) -> JoinHandle<()> {
+    let AgentHeartbeat {
+        broker,
+        availability,
+        heartbeat_interval,
+        replica_id,
+        runtime_id,
+        reporter,
+        report_context,
+        telemetry,
+        shutdown,
+    } = heartbeat;
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(heartbeat_interval);
         let mut heartbeat_seq = 0u64;
@@ -77,13 +91,15 @@ pub fn spawn_agent_heartbeat(
                     heartbeat_seq = heartbeat_seq.saturating_add(1);
                     if let Err(err) = publish_agent_availability(
                         broker.as_ref(),
-                        &availability,
-                        reporter.as_ref(),
-                        report_context.as_ref(),
-                        replica_id,
-                        &runtime_id,
-                        heartbeat_seq,
-                        telemetry.as_deref(),
+                        AvailabilityPublication {
+                            availability: &availability,
+                            reporter: reporter.as_ref(),
+                            report_context: report_context.as_ref(),
+                            replica_id,
+                            runtime_id: &runtime_id,
+                            heartbeat_seq,
+                            telemetry: telemetry.as_deref(),
+                        },
                     ).await {
                         reporter.record_error(format!("availability heartbeat failed: {err}"));
                     }
@@ -113,7 +129,7 @@ async fn mark_offline(
 }
 
 #[derive(Clone)]
-struct AgentAvailability {
+pub(crate) struct AgentAvailability {
     instance_id: String,
     display_name: Option<String>,
     host: Option<String>,
@@ -124,7 +140,7 @@ struct AgentAvailability {
 }
 
 impl AgentAvailability {
-    fn from_config(config: &AgentRuntimeConfig) -> Self {
+    pub(crate) fn from_config(config: &AgentRuntimeConfig) -> Self {
         Self {
             instance_id: config.instance_id.clone(),
             display_name: config.display_name.clone(),
@@ -136,16 +152,29 @@ impl AgentAvailability {
         }
     }
 }
+struct AvailabilityPublication<'a> {
+    availability: &'a AgentAvailability,
+    reporter: &'a StatusReporter,
+    report_context: &'a AgentReportContext,
+    replica_id: Uuid,
+    runtime_id: &'a str,
+    heartbeat_seq: u64,
+    telemetry: Option<&'a TelemetryCollector>,
+}
+
 async fn publish_agent_availability(
     broker: &dyn Broker,
-    availability: &AgentAvailability,
-    reporter: &StatusReporter,
-    report_context: &AgentReportContext,
-    replica_id: Uuid,
-    runtime_id: &str,
-    heartbeat_seq: u64,
-    telemetry: Option<&TelemetryCollector>,
+    publication: AvailabilityPublication<'_>,
 ) -> Result<(), runinator_broker::BrokerError> {
+    let AvailabilityPublication {
+        availability,
+        reporter,
+        report_context,
+        replica_id,
+        runtime_id,
+        heartbeat_seq,
+        telemetry,
+    } = publication;
     let mut attributes = availability.attributes.clone();
     if let Some(telemetry) = telemetry {
         attributes = attributes_with_telemetry(&attributes, telemetry);

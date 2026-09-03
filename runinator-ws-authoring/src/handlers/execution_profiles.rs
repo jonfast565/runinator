@@ -34,7 +34,7 @@ use runinator_ws_core::{
     openapi::docs::{EndpointDoc, Example, ParamDoc, endpoint, json_body},
     responses::{api_error, bad_request, not_found},
 };
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -50,13 +50,15 @@ async fn audit<T: AuthorizationStore>(
 ) {
     runinator_engine::audit::record_audit(
         db,
-        ctx.principal_id,
-        ctx.actor_kind(),
-        action,
-        runinator_engine::audit::AuditOutcome::Success,
-        Some("execution_profile"),
-        Some(id),
-        Some(&detail),
+        runinator_engine::audit::AuditEntry::new(
+            ctx.principal_id,
+            ctx.actor_kind(),
+            action,
+            runinator_engine::audit::AuditOutcome::Success,
+            Some("execution_profile"),
+            Some(id),
+            Some(&detail),
+        ),
     )
     .await;
 }
@@ -110,7 +112,7 @@ pub async fn list<T: AuthorizationStore + ExecutionProfileStore>(
         && let Err(reply) =
             ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.list(ctx.org_id).await {
         Ok(mut values) => {
@@ -120,7 +122,7 @@ pub async fn list<T: AuthorizationStore + ExecutionProfileStore>(
                     .await
                 {
                     Ok(ids) => ids,
-                    Err(reply) => return reply,
+                    Err(reply) => return reply.into_reply(),
                 };
                 if let Some(visible) = visible {
                     values.retain(|value| visible.contains(&value.id));
@@ -152,14 +154,14 @@ pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
         && let Err(reply) =
             ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     if !system
         && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
             .require_resource(ResourceType::ExecutionProfile, id, Permission::View)
             .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if ctx.system_role == Some(SystemRole::Worker)
         && !run_admitted_profile(service.as_ref(), query.consumer_run_id, id).await
@@ -190,7 +192,7 @@ pub async fn resolve<T: AuthorizationStore + ExecutionProfileStore>(
         && let Err(reply) =
             ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     let Some(name) = query.name else {
         return bad_request("profile name is required");
@@ -228,7 +230,7 @@ pub async fn put_profile<T: AuthorizationStore + ExecutionProfileStore>(
     ValidatedJson(request): ValidatedJson<ExecutionProfilePutRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     let existing = match service.fetch(id).await {
         Ok(value) => value,
@@ -239,7 +241,7 @@ pub async fn put_profile<T: AuthorizationStore + ExecutionProfileStore>(
             .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
             .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service
         .configure(id, ctx.org_id, request, Some(Utc::now()), true)
@@ -251,7 +253,7 @@ pub async fn put_profile<T: AuthorizationStore + ExecutionProfileStore>(
                     .grant_resource_owner(ResourceType::ExecutionProfile, id)
                     .await
             {
-                return reply;
+                return reply.into_reply();
             }
             audit(
                 db.as_ref(),
@@ -283,7 +285,7 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
         && let Err(reply) =
             ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope())
     {
-        return reply;
+        return reply.into_reply();
     }
     if body.len() > MAX_BUNDLE_BYTES {
         return bad_request("execution profile bundle exceeds 10 MiB");
@@ -298,7 +300,7 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
             .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
             .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let digest = sha256_hex(&body);
     if !digest.eq_ignore_ascii_case(&request.digest) {
@@ -474,13 +476,13 @@ pub async fn remove<T: AuthorizationStore + DefinitionStore + ExecutionProfileSt
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_resource(ResourceType::ExecutionProfile, id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let profile = match service.fetch(id).await {
         Ok(Some(profile)) if profile.org_id == ctx.org_id => profile,
@@ -552,13 +554,13 @@ pub async fn rotate<T: AuthorizationStore + ExecutionProfileStore>(
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.request_refresh(id, ctx.org_id, Utc::now()).await {
         Ok(true) => {
@@ -589,13 +591,13 @@ pub async fn test_collection<T: AuthorizationStore + ExecutionProfileStore>(
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
-        return reply;
+        return reply.into_reply();
     }
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let profile = match service.fetch(id).await {
         Ok(Some(profile)) if profile.org_id == ctx.org_id && profile.enabled => profile,

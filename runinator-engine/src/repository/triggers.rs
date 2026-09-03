@@ -218,22 +218,24 @@ pub async fn create_workflow_run_for_trigger<T: ScheduleStore + RuntimeStore + W
     }
     super::runs::create_workflow_vm_run(
         db,
-        trigger.workflow_id,
-        workflow_snapshot,
-        parameters,
-        state,
-        None,
-        runinator_models::replicas::WorkflowRunProvenance {
-            source_kind: Some(runinator_models::replicas::TriggerSourceKind::Manual),
-            actor_type: Some(runinator_models::replicas::TriggerActorType::User),
-            actor_replica_id,
-            actor_display_name,
-            request_host: None,
-            request_ip: None,
-            metadata: trigger.metadata.clone(),
+        super::runs::WorkflowVmRunRequest {
+            workflow_id: trigger.workflow_id,
+            workflow_snapshot,
+            parameters,
+            state,
+            name: None,
+            provenance: runinator_models::replicas::WorkflowRunProvenance {
+                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Manual),
+                actor_type: Some(runinator_models::replicas::TriggerActorType::User),
+                actor_replica_id,
+                actor_display_name,
+                request_host: None,
+                request_ip: None,
+                metadata: trigger.metadata.clone(),
+            },
+            pipeline_run_id: None,
+            start_node_id: None,
         },
-        None,
-        None,
     )
     .await
 }

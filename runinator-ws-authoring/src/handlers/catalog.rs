@@ -27,7 +27,7 @@ pub async fn get_catalog_items<T: DefinitionStore>(
         runinator_models::rbac::Action::View,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     if let Some(uri) = query.uri {
         return match service.fetch(uri.clone()).await {
@@ -51,7 +51,7 @@ pub async fn upsert_catalog_item<T: DefinitionStore>(
         runinator_models::rbac::Action::CatalogManage,
         runinator_models::rbac::ScopeRef::PLATFORM,
     ) {
-        return reply;
+        return reply.into_reply();
     }
     match service.upsert(item).await {
         Ok(item) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),

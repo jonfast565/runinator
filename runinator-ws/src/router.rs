@@ -101,17 +101,30 @@ impl Default for CorsConfig {
         .expect("built-in CORS origins are valid")
     }
 }
-pub fn build_router<T: DatabaseImpl>(
-    pool: Arc<T>,
-    events: EventSender,
-    broker: Arc<dyn Broker>,
-    blobs: Arc<dyn BlobStore>,
-    provisioner: Arc<ProvisionerRegistry>,
-    auth: AuthConfig,
-    cors: CorsConfig,
-    rate_limit: RateLimitConfig,
-    overload: OverloadConfig,
-) -> Router {
+pub struct RouterDependencies<T> {
+    pub pool: Arc<T>,
+    pub events: EventSender,
+    pub broker: Arc<dyn Broker>,
+    pub blobs: Arc<dyn BlobStore>,
+    pub provisioner: Arc<ProvisionerRegistry>,
+    pub auth: AuthConfig,
+    pub cors: CorsConfig,
+    pub rate_limit: RateLimitConfig,
+    pub overload: OverloadConfig,
+}
+
+pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Router {
+    let RouterDependencies {
+        pool,
+        events,
+        broker,
+        blobs,
+        provisioner,
+        auth,
+        cors,
+        rate_limit,
+        overload,
+    } = dependencies;
     let auth_config_arc = Arc::new(auth);
     let rate_limiter = Arc::new(RateLimiter::new(rate_limit));
     let run_operations = Arc::new(RunOperations::new(

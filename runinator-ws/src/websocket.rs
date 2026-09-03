@@ -30,7 +30,7 @@ use crate::models;
 use crate::openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy};
 use crate::repository;
 use runinator_ws_middleware::auth::WEBSOCKET_AUTH_PROTOCOL;
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker, IntoReply};
 
 fn event_scope_visible(ctx: &AuthContext, event: &runinator_comm::UiEvent) -> bool {
     let scope = event.scope.unwrap_or_else(|| {
@@ -86,7 +86,7 @@ pub(crate) async fn ws_events(
         .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
         .unwrap_or(ScopeRef::PLATFORM);
     if let Err(reply) = ctx.require_scope_action(Action::View, scope) {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     log::info!("WebSocket upgrade request for /ws/events");
     let mut rx = events.subscribe();
@@ -160,7 +160,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
         .require_run_workflow(run_id, Permission::View)
         .await
     {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     log::info!("WebSocket upgrade request for /ws/workflow-runs/{}", run_id);
     ws.protocols([WEBSOCKET_AUTH_PROTOCOL]).on_upgrade(move |socket| async move {
@@ -235,7 +235,7 @@ pub(crate) async fn ws_broker_relay<T: DatabaseImpl>(
         SystemRole::Engine,
         SystemRole::Replica,
     ]) {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     let relay_role = RelayRole::for_context(&ctx);
     upgrade_broker_relay(db, broker, ctx, ws, relay_role)

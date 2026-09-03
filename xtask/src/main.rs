@@ -385,13 +385,15 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
         println!("==> Building container images (tag: {image_tag})");
         let built = k8s::images::build_container_images(
             workspace_root,
-            image_repository.as_deref(),
-            &image_tag,
-            include_names.as_deref(),
-            None,
-            should_push,
-            &args.database_backend,
-            &args.broker_backend,
+            k8s::images::ContainerImageBuild {
+                repository: image_repository.as_deref(),
+                tag: &image_tag,
+                include_names: include_names.as_deref(),
+                exclude_names: None,
+                push_images: should_push,
+                database_backend: &args.database_backend,
+                broker_backend: &args.broker_backend,
+            },
         )?;
 
         if let Some(registry) = local_registry

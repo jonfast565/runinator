@@ -37,6 +37,17 @@ pub struct RunOperations<T> {
     signals: Option<EmbeddedEngineSignals>,
 }
 
+pub struct CreateWorkflowRunRequest {
+    pub workflow_id: Uuid,
+    pub parameters: Value,
+    pub debug: bool,
+    pub name: Option<String>,
+    pub provenance: WorkflowRunProvenance,
+    pub file_ids: Vec<Uuid>,
+    pub org_id: Option<Uuid>,
+    pub principal_id: Option<Uuid>,
+}
+
 impl<T> RunOperations<T> {
     pub fn new(
         store: Arc<T>,
@@ -106,15 +117,18 @@ impl<
     /// Start a run from a workflow definition and publish its invalidation after it is durable.
     pub async fn create(
         &self,
-        workflow_id: Uuid,
-        parameters: Value,
-        debug: bool,
-        name: Option<String>,
-        provenance: WorkflowRunProvenance,
-        file_ids: Vec<Uuid>,
-        org_id: Option<Uuid>,
-        principal_id: Option<Uuid>,
+        request: CreateWorkflowRunRequest,
     ) -> Result<WorkflowRun, SendableError> {
+        let CreateWorkflowRunRequest {
+            workflow_id,
+            parameters,
+            debug,
+            name,
+            provenance,
+            file_ids,
+            org_id,
+            principal_id,
+        } = request;
         let workflow = self
             .store
             .fetch_workflow(workflow_id)

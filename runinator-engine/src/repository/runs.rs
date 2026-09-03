@@ -7,6 +7,17 @@ use uuid::Uuid;
 
 use runinator_store::roles::NewWorkflowVmRun;
 
+pub(crate) struct WorkflowVmRunRequest {
+    pub workflow_id: Uuid,
+    pub workflow_snapshot: WorkflowDefinition,
+    pub parameters: Value,
+    pub state: Value,
+    pub name: Option<String>,
+    pub provenance: runinator_models::replicas::WorkflowRunProvenance,
+    pub pipeline_run_id: Option<Uuid>,
+    pub start_node_id: Option<String>,
+}
+
 pub async fn delete_workflow_run<T: RunStore>(
     db: &T,
     workflow_run_id: Uuid,
@@ -46,28 +57,33 @@ pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     let trimmed = support::normalized_run_name(name);
     create_workflow_vm_run(
         db,
-        workflow_id,
-        workflow_snapshot,
-        parameters,
-        state,
-        trimmed,
-        provenance,
-        None,
-        None,
+        WorkflowVmRunRequest {
+            workflow_id,
+            workflow_snapshot,
+            parameters,
+            state,
+            name: trimmed,
+            provenance,
+            pipeline_run_id: None,
+            start_node_id: None,
+        },
     )
     .await
 }
 pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
-    workflow_id: Uuid,
-    workflow_snapshot: WorkflowDefinition,
-    parameters: Value,
-    state: Value,
-    name: Option<String>,
-    provenance: runinator_models::replicas::WorkflowRunProvenance,
-    pipeline_run_id: Option<Uuid>,
-    start_node_id: Option<&str>,
+    request: WorkflowVmRunRequest,
 ) -> Result<WorkflowRun, SendableError> {
+    let WorkflowVmRunRequest {
+        workflow_id,
+        workflow_snapshot,
+        parameters,
+        state,
+        name,
+        provenance,
+        pipeline_run_id,
+        start_node_id,
+    } = request;
     let module = runinator_workflows::compile_workflow_module(&workflow_snapshot)
         .map_err(|error| -> SendableError { Box::new(error) })?;
     let instruction_pointer = if let Some(node_id) = start_node_id {

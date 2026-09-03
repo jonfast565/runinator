@@ -16,7 +16,9 @@ use uuid::Uuid;
 use crate::agent::config::AgentRuntimeConfig;
 use crate::agent::observer::AgentObserver;
 use crate::agent::outbox::{FileOutbox, ResultOutbox};
-use crate::agent::registration::{announce_agent_replica, spawn_agent_heartbeat};
+use crate::agent::registration::{
+    AgentAvailability, AgentHeartbeat, announce_agent_replica, spawn_agent_heartbeat,
+};
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
 use crate::agent::status::{AgentConnection, AgentReportContext, AgentStatus};
@@ -72,16 +74,16 @@ impl AgentRuntime {
         let shutdown = Shutdown::new();
         let state = reporter.subscribe();
 
-        let task = tokio::spawn(run_lifecycle(
+        let task = tokio::spawn(run_lifecycle(AgentLifecycle {
             config,
             api_client,
             libraries,
-            telemetry.clone(),
+            telemetry: telemetry.clone(),
             report_context,
             result_outbox,
-            Arc::clone(&reporter),
-            shutdown.clone(),
-        ));
+            reporter: Arc::clone(&reporter),
+            shutdown: shutdown.clone(),
+        }));
 
         Ok(AgentHandle {
             shutdown,
@@ -154,7 +156,7 @@ impl AgentHandle {
         self.task.is_finished()
     }
 }
-async fn run_lifecycle(
+struct AgentLifecycle {
     config: AgentRuntimeConfig,
     api_client: AsyncApiClient<StaticLocator>,
     libraries: Arc<std::collections::HashMap<String, runinator_plugin::plugin::Plugin>>,
@@ -163,7 +165,19 @@ async fn run_lifecycle(
     result_outbox: Arc<dyn ResultOutbox>,
     reporter: Arc<StatusReporter>,
     shutdown: Shutdown,
-) -> Result<(), SendableError> {
+}
+
+async fn run_lifecycle(lifecycle: AgentLifecycle) -> Result<(), SendableError> {
+    let AgentLifecycle {
+        config,
+        api_client,
+        libraries,
+        telemetry,
+        report_context,
+        result_outbox,
+        reporter,
+        shutdown,
+    } = lifecycle;
     reporter.log(format!("Connecting to {} ...", config.service_url));
     reporter.set_connection(AgentConnection::Registering);
 
@@ -212,16 +226,17 @@ async fn run_lifecycle(
     }
 
     // The broker heartbeat keeps the replica live and marks it offline on shutdown.
-    let availability_heartbeat = spawn_agent_heartbeat(
-        presence_broker,
-        &config,
+    let availability_heartbeat = spawn_agent_heartbeat(AgentHeartbeat {
+        broker: presence_broker,
+        availability: AgentAvailability::from_config(&config),
+        heartbeat_interval: config.heartbeat_interval,
         replica_id,
         runtime_id,
-        Arc::clone(&reporter),
+        reporter: Arc::clone(&reporter),
         report_context,
         telemetry,
-        shutdown.clone(),
-    );
+        shutdown: shutdown.clone(),
+    });
     reporter.log(format!("Broker: {}", config.broker_description));
 
     let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries, result_outbox);

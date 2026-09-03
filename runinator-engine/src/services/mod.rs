@@ -35,15 +35,17 @@ pub use function_invocations::FunctionInvocations;
 pub use function_packages::FunctionPackages;
 pub use ingress_operations::IngressOperations;
 pub use notification_operations::NotificationOperations;
-pub use orchestration_operations::{IntentDecision, OrchestrationOperations, choose_intent};
-pub use pack_operations::PackOperations;
+pub use orchestration_operations::{
+    IntentDecision, OrchestrationOperations, OutOfBandOverrideRequest, choose_intent,
+};
+pub use pack_operations::{PackImportRequest, PackOperations};
 pub use pipeline_ingress::{PipelineIngressError, PipelineIngressRequest, PipelineIngressResult};
 pub use pipeline_operations::PipelineOperations;
 pub use replica_registry::{
     AgentMachineInvalidation, DEFAULT_REPLICA_DELETE_SECONDS, DEFAULT_REPLICA_REAP_SECONDS,
     REPLICA_SAMPLE_RETENTION_SECONDS, REPLICA_STALE_SECONDS, ReplicaRegistry,
 };
-pub use run_operations::RunOperations;
+pub use run_operations::{CreateWorkflowRunRequest, RunOperations};
 pub use scheduling_operations::SchedulingOperations;
 pub use setting_operations::{SettingConfiguration, SettingOperations};
 pub use workflow_authoring::WorkflowAuthoring;

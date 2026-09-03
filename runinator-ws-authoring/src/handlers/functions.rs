@@ -39,7 +39,7 @@ use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
 
 fn selected_scope(ctx: &AuthContext) -> ScopeRef {
     ctx.org_id
@@ -60,7 +60,7 @@ pub async fn get_functions<
         .await
     {
         Ok(visible) => visible,
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match service.list().await {
         Ok(packages) => {
@@ -105,7 +105,7 @@ pub async fn get_function_catalog<
             .map(|package| package.id)
             .collect::<Vec<_>>(),
         Ok(Some(ids)) => ids.into_iter().collect(),
-        Err(reply) => return reply,
+        Err(reply) => return reply.into_reply(),
     };
     match service.catalog().await {
         Ok(entries) => {
@@ -129,7 +129,7 @@ pub async fn publish_function<
     ValidatedJson(mut request): ValidatedJson<NewFunctionVersion>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
-        return reply;
+        return reply.into_reply();
     }
     // the owning org is the caller's, never the request's: a manifest that named an org would be
     // publishing into a tenant the publisher may not belong to.
@@ -150,7 +150,7 @@ pub async fn publish_function<
             .require_resource(ResourceType::FunctionPackage, package.id, Permission::Edit)
             .await
     {
-        return reply;
+        return reply.into_reply();
     }
     if !is_valid_digest(&request.artifact_digest) {
         return bad_request(format!(
@@ -168,7 +168,7 @@ pub async fn publish_function<
                     .grant_resource_owner(ResourceType::FunctionPackage, version.package_id)
                     .await
             {
-                return reply;
+                return reply.into_reply();
             }
             (StatusCode::OK, Json(ApiResponse::FunctionVersion(version)))
         }
@@ -206,7 +206,7 @@ pub async fn get_function<
                 )
                 .await
             {
-                return reply;
+                return reply.into_reply();
             }
             (StatusCode::OK, Json(ApiResponse::FunctionPackage(detail)))
         }
@@ -233,7 +233,7 @@ pub async fn delete_function<
         .require_resource(ResourceType::FunctionPackage, found.id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.archive(found.id).await {
         Ok(true) => (
@@ -270,7 +270,7 @@ pub async fn restore_function<
         .require_resource(ResourceType::FunctionPackage, found.id, Permission::Own)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.restore(found.id).await {
         Ok(true) => (
@@ -363,7 +363,7 @@ pub async fn move_function_package<
         .require_resource(ResourceType::FunctionPackage, found.id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let namespace = request
         .namespace
@@ -402,7 +402,7 @@ pub async fn set_function_alias<
         .require_resource(ResourceType::FunctionPackage, found.id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     let target = match (&request.version, &request.from_alias) {
         (Some(_), Some(_)) => {
@@ -442,7 +442,7 @@ pub async fn delete_function_alias<
         .require_resource(ResourceType::FunctionPackage, found.id, Permission::Edit)
         .await
     {
-        return reply;
+        return reply.into_reply();
     }
     match service.delete_alias(found.id, &alias).await {
         Ok(true) => (
@@ -473,7 +473,7 @@ pub async fn resolve_function_export<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply;
+        return reply.into_reply();
     }
     if !function_export_visible(db.as_ref(), &service, &ctx, export_id).await {
         return not_found(format!("function export {export_id} not found"));
@@ -497,7 +497,7 @@ pub async fn get_function_artifact<
     Path(digest): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
-        return reply;
+        return reply.into_reply();
     }
     if !is_valid_digest(&digest) {
         return bad_request(format!("'{digest}' is not a sha256 artifact digest"));
@@ -523,7 +523,7 @@ pub async fn upload_function_artifact<
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
-        return reply;
+        return reply.into_reply();
     }
     if !is_valid_digest(&digest) {
         return bad_request(format!("'{digest}' is not a sha256 artifact digest"));
@@ -550,7 +550,7 @@ pub async fn download_function_artifact<
         runinator_models::rbac::SystemRole::Worker,
         runinator_models::rbac::SystemRole::Agent,
     ]) {
-        return reply.into_response();
+        return reply.into_reply().into_response();
     }
     if !is_valid_digest(&digest) {
         return (
