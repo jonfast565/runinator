@@ -118,13 +118,23 @@ pub async fn kick_replica<T: ReplicaStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::NodesOperate,
-        runinator_models::rbac::ScopeRef::PLATFORM,
+        ctx.selected_scope(),
     ) {
         return reply;
     }
+    if let Some(org_id) = ctx.org_id {
+        match registry.fetch(replica_id).await {
+            Ok(Some(replica)) if replica.registered_by_org_id == Some(org_id) => {}
+            Ok(_) => return not_found("Replica not found"),
+            Err(err) => return api_error(err.to_string()),
+        }
+    }
     match registry.kick(replica_id).await {
         Ok(Some(replica)) => {
-            emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
+            emit(
+                &events,
+                AppEvent::new(replica.registered_by_org_id, AppEventKind::ReplicasChanged),
+            );
             (StatusCode::OK, Json(ApiResponse::Replica(replica)))
         }
         Ok(None) => not_found(format!("Replica {replica_id} not found")),
@@ -142,9 +152,14 @@ pub async fn kick_replica<T: ReplicaStore>(
 pub async fn get_replicas<T: ReplicaStore + RuntimeStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(db): Extension<Arc<T>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<ReplicaQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
+        return reply;
+    }
     let settings = runinator_engine::settings::load_server_settings(db.as_ref())
         .await
         .unwrap_or_default();
@@ -156,7 +171,52 @@ pub async fn get_replicas<T: ReplicaStore + RuntimeStore>(
         )
         .await
     {
-        Ok(replicas) => (StatusCode::OK, Json(ApiResponse::ReplicaList(replicas))),
+        Ok(mut replicas) => {
+            if let Some(org_id) = ctx.org_id {
+                replicas
+                    .replicas
+                    .retain(|replica| replica.registered_by_org_id == Some(org_id));
+                replicas.running_tasks.retain(|id, _| {
+                    replicas
+                        .replicas
+                        .iter()
+                        .any(|replica| replica.replica_id == *id)
+                });
+                replicas.counts.workers = replicas
+                    .replicas
+                    .iter()
+                    .filter(|r| {
+                        r.replica_type == runinator_models::replicas::ReplicaKind::Worker
+                            && r.status == runinator_models::replicas::ReplicaStatus::Live
+                    })
+                    .count() as i64;
+                replicas.counts.wakers = replicas
+                    .replicas
+                    .iter()
+                    .filter(|r| {
+                        r.replica_type == runinator_models::replicas::ReplicaKind::Waker
+                            && r.status == runinator_models::replicas::ReplicaStatus::Live
+                    })
+                    .count() as i64;
+                replicas.counts.webservices = replicas
+                    .replicas
+                    .iter()
+                    .filter(|r| {
+                        r.replica_type == runinator_models::replicas::ReplicaKind::Webservice
+                            && r.status == runinator_models::replicas::ReplicaStatus::Live
+                    })
+                    .count() as i64;
+                replicas.counts.background = replicas
+                    .replicas
+                    .iter()
+                    .filter(|r| {
+                        r.replica_type == runinator_models::replicas::ReplicaKind::Background
+                            && r.status == runinator_models::replicas::ReplicaStatus::Live
+                    })
+                    .count() as i64;
+            }
+            (StatusCode::OK, Json(ApiResponse::ReplicaList(replicas)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -165,10 +225,22 @@ pub async fn get_replicas<T: ReplicaStore + RuntimeStore>(
 pub async fn get_replica_samples<T: ReplicaStore + RuntimeStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(db): Extension<Arc<T>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Query(query): Query<ReplicaSampleQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
+        return reply;
+    }
+    if let Some(org_id) = ctx.org_id {
+        match registry.fetch(replica_id).await {
+            Ok(Some(replica)) if replica.registered_by_org_id == Some(org_id) => {}
+            Ok(_) => return not_found("Replica not found"),
+            Err(err) => return api_error(err.to_string()),
+        }
+    }
     let settings = runinator_engine::settings::load_server_settings(db.as_ref())
         .await
         .unwrap_or_default();
@@ -212,9 +284,21 @@ pub async fn upsert_replica_provider<T: ReplicaStore>(
 
 pub async fn get_replica_providers<T: ReplicaStore>(
     Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
+        return reply;
+    }
+    if let Some(org_id) = ctx.org_id {
+        match registry.fetch(replica_id).await {
+            Ok(Some(replica)) if replica.registered_by_org_id == Some(org_id) => {}
+            Ok(_) => return not_found("Replica not found"),
+            Err(err) => return api_error(err.to_string()),
+        }
+    }
     match registry.providers(replica_id).await {
         Ok(registrations) => (
             StatusCode::OK,

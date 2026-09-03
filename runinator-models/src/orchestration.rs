@@ -1336,6 +1336,7 @@ pub enum IdempotencyClaim {
 /// request body for reserving an action node's idempotency key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdempotencyClaimRequest {
+    pub consumer_run_id: Uuid,
     pub scope: String,
     pub key: String,
     pub owner_node_run_id: Uuid,
@@ -1352,6 +1353,7 @@ fn default_idempotency_lease_seconds() -> i64 {
 /// request body for releasing an unfinished reservation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdempotencyReleaseRequest {
+    pub consumer_run_id: Uuid,
     pub scope: String,
     pub key: String,
     pub owner_node_run_id: Uuid,
@@ -1360,6 +1362,7 @@ pub struct IdempotencyReleaseRequest {
 /// request body for recording a completed execution against a reserved key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdempotencyCompleteRequest {
+    pub consumer_run_id: Uuid,
     pub scope: String,
     pub key: String,
     pub owner_node_run_id: Uuid,

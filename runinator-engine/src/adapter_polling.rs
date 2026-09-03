@@ -6,7 +6,7 @@ use std::{sync::Arc, time::Duration};
 use chrono::{TimeDelta, Utc};
 use runinator_adapter_contract::AdapterPollRequest;
 use runinator_broker_core::{Broker, EmbeddedEngineSignals};
-use runinator_models::orchestration::AdapterTransport;
+use runinator_models::{auth::ResourceType, orchestration::AdapterTransport};
 use tokio::sync::Notify;
 use tracing::{debug, error, warn};
 
@@ -103,6 +103,24 @@ async fn poll_one<T: BackgroundEngineStore>(
             .to_string()
             .into());
     }
+    for setting_id in revision.secret_bindings.values().copied() {
+        if !runinator_store::resource_access::resource_can_consume(
+            store.as_ref(),
+            ResourceType::OrchestrationAdapter,
+            adapter.id,
+            ResourceType::Setting,
+            setting_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "adapter {} is not permitted to use setting {setting_id}",
+                adapter.id
+            )
+            .into());
+        }
+    }
     let secrets = adapters
         .resolve_secrets(adapter.org_id, &revision.secret_bindings)
         .await?;
@@ -167,6 +185,22 @@ async fn poll_one<T: BackgroundEngineStore>(
                 continue;
             }
         };
+        if !runinator_store::resource_access::resource_can_consume(
+            store.as_ref(),
+            ResourceType::Pipeline,
+            pipeline_id,
+            ResourceType::OrchestrationAdapter,
+            adapter.id,
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "pipeline {pipeline_id} is not permitted to use adapter {}",
+                adapter.id
+            )
+            .into());
+        }
         let outcome = pipelines
             .process_ingress(
                 pipeline_id,

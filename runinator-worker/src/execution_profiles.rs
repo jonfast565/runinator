@@ -40,12 +40,17 @@ impl Drop for ProfileLease {
 pub async fn materialize(
     client: &AsyncApiClient<StaticLocator>,
     effect_id: uuid::Uuid,
+    workflow_run_id: uuid::Uuid,
     binding: &ExecutionProfileBinding,
 ) -> Result<ProfileLease, SendableError> {
     let profile = if binding.id().is_nil() {
-        client.resolve_execution_profile(binding.name()).await?
+        client
+            .resolve_execution_profile_for_run(binding.name(), workflow_run_id)
+            .await?
     } else {
-        client.fetch_execution_profile(binding.id()).await?
+        client
+            .fetch_execution_profile_for_run(binding.id(), workflow_run_id)
+            .await?
     };
     if !profile.enabled {
         return Err(Box::new(std::io::Error::new(
@@ -90,7 +95,7 @@ pub async fn materialize(
         )) as SendableError
     })?;
     let bytes = client
-        .download_execution_profile(profile.id, revision)
+        .download_execution_profile_for_run(profile.id, revision, workflow_run_id)
         .await?;
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(Box::new(std::io::Error::new(

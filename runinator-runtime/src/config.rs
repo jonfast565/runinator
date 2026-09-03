@@ -51,7 +51,9 @@ pub async fn config_tree_for_workflow<T: RuntimeStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
 ) -> Value {
-    let mut tree = config_tree(db, workflow.org_id).await;
+    // Only UUID-bound config is admitted into the run snapshot. Loading the whole organization
+    // tree here would bypass ownership by making unrelated settings addressable at runtime.
+    let mut tree = Value::Object(Map::new());
     let Some(bindings) = workflow
         .definition
         .metadata

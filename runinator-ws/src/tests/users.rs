@@ -617,8 +617,9 @@ async fn invalidating_an_enrolled_machine_revokes_its_key_and_kicks_its_replicas
         kind: PrincipalKind::User,
         org_id: None,
     };
+    let registry = Arc::new(ReplicaRegistry::new(db.clone()));
     let (status, body) = crate::handlers::agents::list_machines::<SqliteDb>(
-        Extension(db.clone()),
+        Extension(registry.clone()),
         Extension(admin_ctx.clone()),
     )
     .await;
@@ -644,7 +645,7 @@ async fn invalidating_an_enrolled_machine_revokes_its_key_and_kicks_its_replicas
     let (events, _receiver) = tokio::sync::broadcast::channel(8);
     let event_bus = crate::events::EventBus::new(events, Arc::new(InMemoryBroker::new()));
     let (status, _) = crate::handlers::agents::invalidate_machine::<SqliteDb>(
-        Extension(db.clone()),
+        Extension(registry),
         Extension(event_bus),
         Extension(admin_ctx),
         Path(machine_id),

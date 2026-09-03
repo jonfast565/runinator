@@ -18,6 +18,7 @@ pub(crate) fn is_transient_secret_error(err: &SendableError) -> bool {
 
 pub(crate) async fn resolve_secret_refs(
     api_client: &AsyncApiClient<StaticLocator>,
+    workflow_run_id: Uuid,
     parameters: Value,
 ) -> Result<Value, SendableError> {
     let mut refs = BTreeSet::new();
@@ -31,12 +32,14 @@ pub(crate) async fn resolve_secret_refs(
     for secret_ref in refs {
         // never log the secret value itself; scope/name identify the reference, not its contents.
         let secret = match secret_ref.id {
-            Some(id) => api_client.fetch_credential_by_id(id).await,
-            None => {
+            Some(id) => {
                 api_client
-                    .fetch_credential(&secret_ref.scope, &secret_ref.name)
+                    .fetch_credential_by_id_for_run(id, workflow_run_id)
                     .await
             }
+            None => Err(ApiError::UnexpectedResponse(
+                "workflow secret reference was not admitted with a resource UUID".into(),
+            )),
         }
         .map_err(|err| {
             tracing::warn!(

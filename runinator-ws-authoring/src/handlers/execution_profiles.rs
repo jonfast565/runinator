@@ -16,7 +16,7 @@ use runinator_blob_core::{
 };
 use runinator_engine::services::ExecutionProfileOperations;
 use runinator_models::{
-    auth::AuthContext,
+    auth::{AuthContext, Permission, ResourceType},
     execution_profiles::{
         ExecutionProfile, ExecutionProfileHealth, ExecutionProfilePublishRequest,
         ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileStatusRequest,
@@ -24,14 +24,17 @@ use runinator_models::{
     rbac::{Action, SystemRole},
 };
 use runinator_secrets::secret_cipher::SecretCipher;
-use runinator_store::roles::{DefinitionStore, ExecutionProfileStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, ExecutionProfileStore},
+};
 use runinator_ws_core::{
     ValidatedJson,
     models::ApiResponse,
     openapi::docs::{EndpointDoc, Example, ParamDoc, endpoint, json_body},
     responses::{api_error, bad_request, not_found},
 };
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -61,6 +64,22 @@ async fn audit<T: AuthorizationStore>(
 #[derive(Debug, Deserialize)]
 pub struct ProfileLookup {
     pub name: Option<String>,
+    #[serde(default)]
+    pub consumer_run_id: Option<Uuid>,
+}
+
+async fn run_admitted_profile<T: RuntimeStore>(
+    service: &ExecutionProfileOperations<T>,
+    run_id: Option<Uuid>,
+    profile_id: Uuid,
+) -> bool {
+    let Some(run_id) = run_id else {
+        return false;
+    };
+    service
+        .run_admitted_profile(run_id, profile_id)
+        .await
+        .unwrap_or(false)
 }
 
 fn effective_health(mut profile: ExecutionProfile) -> ExecutionProfile {
@@ -83,6 +102,7 @@ fn effective_health(mut profile: ExecutionProfile) -> ExecutionProfile {
 }
 
 pub async fn list<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -93,20 +113,36 @@ pub async fn list<T: AuthorizationStore + ExecutionProfileStore>(
         return reply;
     }
     match service.list(ctx.org_id).await {
-        Ok(values) => (
-            StatusCode::OK,
-            Json(ApiResponse::ExecutionProfileList(
-                values.into_iter().map(effective_health).collect(),
-            )),
-        ),
+        Ok(mut values) => {
+            if ctx.system_role != Some(SystemRole::Agent) {
+                let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+                    .visible_resource_ids(ResourceType::ExecutionProfile)
+                    .await
+                {
+                    Ok(ids) => ids,
+                    Err(reply) => return reply,
+                };
+                if let Some(visible) = visible {
+                    values.retain(|value| visible.contains(&value.id));
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::ExecutionProfileList(
+                    values.into_iter().map(effective_health).collect(),
+                )),
+            )
+        }
         Err(error) => api_error(error.to_string()),
     }
 }
 
 pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
+    Query(query): Query<ProfileLookup>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let system = matches!(
         ctx.system_role,
@@ -117,6 +153,18 @@ pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
             ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope())
     {
         return reply;
+    }
+    if !system
+        && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(ResourceType::ExecutionProfile, id, Permission::View)
+            .await
+    {
+        return reply;
+    }
+    if ctx.system_role == Some(SystemRole::Worker)
+        && !run_admitted_profile(service.as_ref(), query.consumer_run_id, id).await
+    {
+        return not_found("execution profile not found");
     }
     match service.fetch(id).await {
         Ok(Some(value)) if value.org_id == ctx.org_id => (
@@ -129,6 +177,7 @@ pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
 }
 
 pub async fn resolve<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<ProfileLookup>,
@@ -147,10 +196,25 @@ pub async fn resolve<T: AuthorizationStore + ExecutionProfileStore>(
         return bad_request("profile name is required");
     };
     match service.fetch_by_name(ctx.org_id, &name).await {
-        Ok(Some(value)) => (
-            StatusCode::OK,
-            Json(ApiResponse::ExecutionProfile(effective_health(value))),
-        ),
+        Ok(Some(value)) => {
+            if ctx.system_role == Some(SystemRole::Worker)
+                && !run_admitted_profile(service.as_ref(), query.consumer_run_id, value.id).await
+            {
+                return not_found("execution profile not found");
+            }
+            if !system
+                && AuthzChecker::new(db.as_ref(), &ctx)
+                    .require_resource(ResourceType::ExecutionProfile, value.id, Permission::View)
+                    .await
+                    .is_err()
+            {
+                return not_found("execution profile not found");
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::ExecutionProfile(effective_health(value))),
+            )
+        }
         Ok(None) => not_found("execution profile not found"),
         Err(error) => api_error(error.to_string()),
     }
@@ -166,11 +230,29 @@ pub async fn put_profile<T: AuthorizationStore + ExecutionProfileStore>(
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
         return reply;
     }
+    let existing = match service.fetch(id).await {
+        Ok(value) => value,
+        Err(error) => return api_error(error.to_string()),
+    };
+    if existing.is_some()
+        && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
+            .await
+    {
+        return reply;
+    }
     match service
         .configure(id, ctx.org_id, request, Some(Utc::now()), true)
         .await
     {
         Ok(value) => {
+            if existing.is_none()
+                && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                    .grant_resource_owner(ResourceType::ExecutionProfile, id)
+                    .await
+            {
+                return reply;
+            }
             audit(
                 db.as_ref(),
                 &ctx,
@@ -211,6 +293,13 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
         Ok(_) => return not_found("execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
+    if ctx.system_role != Some(SystemRole::Agent)
+        && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
+            .await
+    {
+        return reply;
+    }
     let digest = sha256_hex(&body);
     if !digest.eq_ignore_ascii_case(&request.digest) {
         return bad_request("bundle digest does not match its bytes");
@@ -299,8 +388,12 @@ pub async fn content<T: AuthorizationStore + ExecutionProfileStore>(
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
     Path((id, revision)): Path<(Uuid, i64)>,
+    Query(query): Query<ProfileLookup>,
 ) -> Response {
     if ctx.system_role != Some(SystemRole::Worker) {
+        return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
+    }
+    if !run_admitted_profile(service.as_ref(), query.consumer_run_id, id).await {
         return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
     }
     let profile = match service.fetch(id).await {
@@ -383,6 +476,12 @@ pub async fn remove<T: AuthorizationStore + DefinitionStore + ExecutionProfileSt
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
         return reply;
     }
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::ExecutionProfile, id, Permission::Own)
+        .await
+    {
+        return reply;
+    }
     let profile = match service.fetch(id).await {
         Ok(Some(profile)) if profile.org_id == ctx.org_id => profile,
         Ok(_) => return not_found("execution profile not found"),
@@ -455,6 +554,12 @@ pub async fn rotate<T: AuthorizationStore + ExecutionProfileStore>(
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
         return reply;
     }
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
     match service.request_refresh(id, ctx.org_id, Utc::now()).await {
         Ok(true) => {
             audit(
@@ -484,6 +589,12 @@ pub async fn test_collection<T: AuthorizationStore + ExecutionProfileStore>(
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
+        return reply;
+    }
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::ExecutionProfile, id, Permission::Edit)
+        .await
+    {
         return reply;
     }
     let profile = match service.fetch(id).await {

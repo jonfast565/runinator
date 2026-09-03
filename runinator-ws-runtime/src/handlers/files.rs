@@ -10,16 +10,19 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use runinator_engine::services::WorkflowFiles;
-use runinator_models::{auth::AuthContext, rbac::Action};
-use runinator_store::roles::FileStore;
+use runinator_models::{
+    auth::{AuthContext, Permission, ResourceType},
+    rbac::Action,
+};
+use runinator_store::{RuntimeStore, roles::FileStore};
 use runinator_ws_core::{
     models::ApiResponse,
     openapi::docs::{
         EndpointDoc, EndpointPolicy, Example, ParamDoc, RequestDoc, endpoint_with_policy,
     },
-    responses::{api_error, not_found},
+    responses::{api_error, bad_request, not_found},
 };
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -28,6 +31,11 @@ pub struct UploadFileQuery {
     pub path: String,
     #[serde(default)]
     pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RuntimeFileQuery {
+    pub consumer_run_id: Option<Uuid>,
 }
 
 fn mime_for(path: &str, supplied: Option<String>) -> String {
@@ -44,6 +52,7 @@ fn mime_for(path: &str, supplied: Option<String>) -> String {
 /// Upload a reusable file. The current revision at the same virtual path is replaced atomically
 /// in metadata, while the previous bytes remain available to already-started VM runs.
 pub async fn upload_library_file<T: AuthorizationStore + FileStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkflowFiles<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<UploadFileQuery>,
@@ -51,6 +60,9 @@ pub async fn upload_library_file<T: AuthorizationStore + FileStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::Edit, ctx.selected_scope()) {
         return reply;
+    }
+    if ctx.org_id.is_none() {
+        return bad_request("library files must be created inside an organization");
     }
     match service
         .publish_library(
@@ -62,12 +74,21 @@ pub async fn upload_library_file<T: AuthorizationStore + FileStore>(
         )
         .await
     {
-        Ok(file) => (StatusCode::CREATED, Json(ApiResponse::WorkflowFile(file))),
+        Ok(file) => {
+            if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                .grant_resource_owner(ResourceType::LibraryFile, file.descriptor.id)
+                .await
+            {
+                return reply;
+            }
+            (StatusCode::CREATED, Json(ApiResponse::WorkflowFile(file)))
+        }
         Err(error) => api_error(error.to_string()),
     }
 }
 
 pub async fn list_library_files<T: AuthorizationStore + FileStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkflowFiles<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -75,7 +96,19 @@ pub async fn list_library_files<T: AuthorizationStore + FileStore>(
         return reply;
     }
     match service.list_library(ctx.org_id).await {
-        Ok(files) => (StatusCode::OK, Json(ApiResponse::WorkflowFileList(files))),
+        Ok(mut files) => {
+            let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+                .visible_resource_ids(ResourceType::LibraryFile)
+                .await
+            {
+                Ok(ids) => ids,
+                Err(reply) => return reply,
+            };
+            if let Some(visible) = visible {
+                files.retain(|file| visible.contains(&file.descriptor.id));
+            }
+            (StatusCode::OK, Json(ApiResponse::WorkflowFileList(files)))
+        }
         Err(error) => api_error(error.to_string()),
     }
 }
@@ -107,11 +140,18 @@ pub async fn stage_workflow_file<T: AuthorizationStore + FileStore>(
 }
 
 pub async fn archive_library_file<T: AuthorizationStore + FileStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkflowFiles<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::Edit, ctx.selected_scope()) {
+        return reply;
+    }
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::LibraryFile, id, Permission::Edit)
+        .await
+    {
         return reply;
     }
     match service.archive(id, ctx.org_id).await {
@@ -129,10 +169,12 @@ pub async fn archive_library_file<T: AuthorizationStore + FileStore>(
 /// Stream a file only after checking the authenticated caller has workspace-level view access.
 /// The object-store URI never reaches the browser, and workers use this same route with their
 /// system credential when materializing an input for a provider.
-pub async fn download_workflow_file<T: AuthorizationStore + FileStore>(
+pub async fn download_workflow_file<T: AuthorizationStore + FileStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<WorkflowFiles<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
+    Query(query): Query<RuntimeFileQuery>,
 ) -> Response {
     let worker_or_agent = ctx
         .require_system_role(&[
@@ -156,6 +198,55 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore>(
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
         }
     };
+    if worker_or_agent {
+        let admitted = match query.consumer_run_id {
+            Some(run_id) => service
+                .run_admitted_file(run_id, id, file.workflow_run_id)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if !admitted {
+            return (StatusCode::NOT_FOUND, "workflow file not found").into_response();
+        }
+    } else {
+        match file.scope {
+            runinator_models::files::FileScope::Staged => {
+                if file.owner_id.is_none() || file.owner_id != ctx.principal_id {
+                    return (StatusCode::NOT_FOUND, "workflow file not found").into_response();
+                }
+            }
+            runinator_models::files::FileScope::Library => {
+                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                    .require_resource(ResourceType::LibraryFile, id, Permission::View)
+                    .await
+                {
+                    return reply.into_response();
+                }
+            }
+            runinator_models::files::FileScope::Run => {
+                let Some(run_id) = file.workflow_run_id else {
+                    return (StatusCode::NOT_FOUND, "workflow file not found").into_response();
+                };
+                let workflow_id = match service.workflow_id_for_run(run_id).await {
+                    Ok(Some(workflow_id)) => workflow_id,
+                    Ok(None) => {
+                        return (StatusCode::NOT_FOUND, "workflow file not found").into_response();
+                    }
+                    Err(error) => {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+                            .into_response();
+                    }
+                };
+                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                    .require_workflow(workflow_id, Permission::View)
+                    .await
+                {
+                    return reply.into_response();
+                }
+            }
+        }
+    }
     let content = match service.open(&file).await {
         Ok(content) => content,
         Err(error) => return (StatusCode::NOT_FOUND, error.to_string()).into_response(),
@@ -179,7 +270,7 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore>(
         })
 }
 
-pub fn routes<T: AuthorizationStore + FileStore>() -> axum::Router {
+pub fn routes<T: AuthorizationStore + FileStore + RuntimeStore>() -> axum::Router {
     use axum::routing::{delete, get, post};
     axum::Router::new()
         .route(

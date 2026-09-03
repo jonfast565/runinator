@@ -4,9 +4,10 @@ use uuid::Uuid;
 
 pub async fn fetch_notification_policies<T: NotificationStore>(
     db: &T,
+    org_id: Option<Uuid>,
     workflow_id: Option<Uuid>,
 ) -> Result<Vec<NotificationPolicy>, SendableError> {
-    db.fetch_notification_policies(workflow_id).await
+    db.fetch_notification_policies(org_id, workflow_id).await
 }
 
 pub async fn fetch_notification_policy<T: NotificationStore>(

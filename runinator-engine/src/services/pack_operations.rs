@@ -5,17 +5,19 @@ use std::sync::Arc;
 use runinator_blob_core::BlobStore;
 use runinator_broker_core::{UiEventPublisher, emit_workflows_changed};
 use runinator_models::{
+    auth::ResourceType,
     bundles::{PackImportResult, SettingsBundle},
     errors::SendableError,
     functions::{FunctionArtifact, FunctionVersion, NewFunctionVersion},
     pipelines::{Pipeline, PipelineBundle},
+    rbac::{ResourceOwnership, ScopeRef},
     workflows::WorkflowBundle,
 };
 use runinator_store::{
     PackTransactionStore, RuntimeStore,
     roles::{
-        DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore, ScheduleStore,
-        SettingStore,
+        AuthStore, DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore,
+        RbacStore, ScheduleStore, SettingStore,
     },
 };
 use uuid::Uuid;
@@ -200,6 +202,36 @@ impl PackImportError {
     }
 }
 
+async fn ensure_pack_ownership<T: RbacStore>(
+    store: &T,
+    resource_type: ResourceType,
+    resource_id: Uuid,
+    tenant: ScopeRef,
+    owner: ScopeRef,
+    created_by: Option<Uuid>,
+) -> Result<(), SendableError> {
+    if store
+        .fetch_resource_ownership(resource_type, resource_id)
+        .await?
+        .is_none()
+    {
+        let now = chrono::Utc::now();
+        store
+            .put_resource_ownership(ResourceOwnership {
+                resource_type,
+                resource_id,
+                tenant,
+                owner,
+                created_by,
+                authz_version: 1,
+                created_at: now,
+                updated_at: now,
+            })
+            .await?;
+    }
+    Ok(())
+}
+
 impl<
     T: DefinitionStore
         + RuntimeStore
@@ -208,7 +240,9 @@ impl<
         + NotificationStore
         + ScheduleStore
         + SettingStore
-        + ExecutionProfileStore,
+        + ExecutionProfileStore
+        + AuthStore
+        + RbacStore,
 > PackOperations<T>
 {
     /// Apply every mutable part of a compiled pack under one database transaction. Existing role
@@ -223,12 +257,17 @@ impl<
         functions: &[NewFunctionVersion],
         artifacts: &[FunctionArtifact],
         import_org: Option<Uuid>,
+        owner: ScopeRef,
+        created_by: Option<Uuid>,
         overwrite: bool,
     ) -> Result<PackImportResult, PackImportError> {
         let transaction = Arc::new(self.store.begin_pack_transaction().await.map_err(|error| {
             PackImportError::internal(format!("could not begin pack transaction: {error}"))
         })?);
         let transactional = self.with_store(transaction.clone());
+        let tenant = import_org
+            .and_then(|id| ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(id)))
+            .unwrap_or(ScopeRef::PLATFORM);
 
         let applied: Result<PackImportResult, PackImportError> = async {
             for artifact in artifacts {
@@ -256,6 +295,16 @@ impl<
                             request.package.name
                         ))
                     })?;
+                ensure_pack_ownership(
+                    transaction.as_ref(),
+                    ResourceType::FunctionPackage,
+                    version.package_id,
+                    tenant,
+                    owner,
+                    created_by,
+                )
+                .await
+                .map_err(|error| PackImportError::internal(error.to_string()))?;
                 published.push(version);
             }
             if !published.is_empty() {
@@ -303,10 +352,98 @@ impl<
                         })?,
                 );
             }
+            for entry in &settings.settings {
+                let record = transaction
+                    .fetch_setting(
+                        import_org,
+                        entry.kind,
+                        entry.scope.clone(),
+                        entry.name.clone(),
+                    )
+                    .await
+                    .map_err(|error| PackImportError::internal(error.to_string()))?
+                    .ok_or_else(|| {
+                        PackImportError::internal("imported setting could not be reloaded")
+                    })?;
+                ensure_pack_ownership(
+                    transaction.as_ref(),
+                    ResourceType::Setting,
+                    record.id,
+                    tenant,
+                    owner,
+                    created_by,
+                )
+                .await
+                .map_err(|error| PackImportError::internal(error.to_string()))?;
+            }
+            for profile in &execution_profiles {
+                ensure_pack_ownership(
+                    transaction.as_ref(),
+                    ResourceType::ExecutionProfile,
+                    profile.id,
+                    tenant,
+                    owner,
+                    created_by,
+                )
+                .await
+                .map_err(|error| PackImportError::internal(error.to_string()))?;
+            }
             let workflows = transactional
                 .import_workflows(workflows, overwrite)
                 .await
                 .map_err(|error| PackImportError::internal(error.to_string()))?;
+            for workflow in &workflows.workflows {
+                let Some(workflow_id) = workflow.id else {
+                    continue;
+                };
+                ensure_pack_ownership(
+                    transaction.as_ref(),
+                    ResourceType::Workflow,
+                    workflow_id,
+                    tenant,
+                    owner,
+                    created_by,
+                )
+                .await
+                .map_err(|error| PackImportError::internal(error.to_string()))?;
+                if let Some(importing_user) = created_by {
+                    for (dependency_type, dependency_id) in
+                        crate::repository::workflow_dependency_refs(workflow)
+                    {
+                        let actor_can_use = runinator_store::resource_access::owner_can_consume(
+                            transaction.as_ref(),
+                            ScopeRef::new(
+                                runinator_models::rbac::ScopeKind::User,
+                                Some(importing_user),
+                            )
+                            .expect("user scope has an id"),
+                            tenant,
+                            dependency_type,
+                            dependency_id,
+                        )
+                        .await
+                        .map_err(|error| PackImportError::internal(error.to_string()))?;
+                        if !actor_can_use {
+                            return Err(PackImportError {
+                                bad_request: true,
+                                message: format!(
+                                    "importing user is not permitted to use {} {dependency_id}",
+                                    dependency_type.as_str()
+                                ),
+                            });
+                        }
+                    }
+                }
+                crate::repository::validate_workflow_dependency_access(
+                    transaction.as_ref(),
+                    workflow,
+                )
+                .await
+                .map_err(|error| PackImportError {
+                    bad_request: true,
+                    message: error.to_string(),
+                })?;
+            }
             let pipelines = match pipelines {
                 Some(bundle) => transactional
                     .import_pipelines(bundle, import_org)
@@ -314,6 +451,20 @@ impl<
                     .map_err(|error| PackImportError::internal(error.to_string()))?,
                 None => Vec::new(),
             };
+            for pipeline in &pipelines {
+                if let Some(pipeline_id) = pipeline.id {
+                    ensure_pack_ownership(
+                        transaction.as_ref(),
+                        ResourceType::Pipeline,
+                        pipeline_id,
+                        tenant,
+                        owner,
+                        created_by,
+                    )
+                    .await
+                    .map_err(|error| PackImportError::internal(error.to_string()))?;
+                }
+            }
 
             Ok(PackImportResult {
                 workflows,

@@ -12,7 +12,10 @@ use runinator_models::{
     },
     validation::Validate,
 };
-use runinator_store::roles::{DefinitionStore, ExecutionProfileStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, ExecutionProfileStore},
+};
 use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
@@ -203,6 +206,27 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         error: Option<String>,
     ) -> Result<bool, SendableError> {
         repository::update_health(self.store.as_ref(), id, health, error).await
+    }
+}
+
+impl<T: RuntimeStore> ExecutionProfileOperations<T> {
+    /// Check that a profile was frozen into the admitted workflow snapshot.
+    pub async fn run_admitted_profile(
+        &self,
+        run_id: Uuid,
+        profile_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        Ok(self
+            .store
+            .fetch_workflow_run(run_id)
+            .await?
+            .and_then(|run| run.workflow_snapshot)
+            .is_some_and(|workflow| {
+                crate::repository::workflow_dependency_refs(&workflow).contains(&(
+                    runinator_models::auth::ResourceType::ExecutionProfile,
+                    profile_id,
+                ))
+            }))
     }
 }
 

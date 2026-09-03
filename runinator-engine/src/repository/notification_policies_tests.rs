@@ -3,6 +3,7 @@ use runinator_models::notifications::NotificationSeverity;
 
 fn base() -> NewNotificationPolicy {
     NewNotificationPolicy {
+        org_id: None,
         workflow_id: None,
         name: "oncall".into(),
         event: NotificationEvent::RunFailed,

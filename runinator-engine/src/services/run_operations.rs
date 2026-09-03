@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use runinator_broker_core::{Broker, EmbeddedEngineSignals, UiEventPublisher, emit_workflow_run};
 use runinator_models::{
+    auth::ResourceType,
     errors::SendableError,
-    files::referenced_file_ids,
+    files::{FileScope, referenced_file_ids},
     interrupt::InterruptSource,
     replicas::WorkflowRunProvenance,
     value::Value,
@@ -85,7 +86,16 @@ impl<T: RuntimeStore + OrchestrationStore> RunOperations<T> {
     }
 }
 
-impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> RunOperations<T> {
+impl<
+    T: RuntimeStore
+        + WorkflowVmStore
+        + RunStore
+        + ScheduleStore
+        + FileStore
+        + runinator_store::roles::AuthStore
+        + runinator_store::roles::RbacStore,
+> RunOperations<T>
+{
     pub async fn fetch_workflow_definition(
         &self,
         workflow_id: Uuid,
@@ -109,6 +119,17 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> R
         org_id: Option<Uuid>,
         principal_id: Option<Uuid>,
     ) -> Result<WorkflowRun, SendableError> {
+        let workflow = self
+            .store
+            .fetch_workflow(workflow_id)
+            .await?
+            .ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "workflow not found",
+                )) as SendableError
+            })?;
+        repository::validate_workflow_dependency_access(self.store.as_ref(), &workflow).await?;
         let supplied_file_ids = file_ids.into_iter().collect::<BTreeSet<_>>();
         let referenced_ids = referenced_file_ids(&parameters)
             .into_iter()
@@ -118,6 +139,31 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> R
                 std::io::ErrorKind::InvalidInput,
                 "file_ids must exactly match file descriptors in workflow parameters",
             )));
+        }
+        for file_id in &supplied_file_ids {
+            let Some(file) = self.store.fetch_file(*file_id).await? else {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "selected workflow file no longer exists",
+                )));
+            };
+            if file.scope == FileScope::Library
+                && !runinator_store::resource_access::resource_can_consume(
+                    self.store.as_ref(),
+                    ResourceType::Workflow,
+                    workflow_id,
+                    ResourceType::LibraryFile,
+                    *file_id,
+                )
+                .await?
+            {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "workflow {workflow_id} is not permitted to use library file {file_id}"
+                    ),
+                )));
+            }
         }
         let run = repository::create_workflow_run(
             self.store.as_ref(),
@@ -152,6 +198,27 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> R
         pipeline_run_id: Option<Uuid>,
         actor_display_name: Option<String>,
     ) -> Result<WorkflowRun, SendableError> {
+        let trigger = self
+            .store
+            .fetch_workflow_trigger(trigger_id)
+            .await?
+            .ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "workflow trigger not found",
+                )) as SendableError
+            })?;
+        let workflow = self
+            .store
+            .fetch_workflow(trigger.workflow_id)
+            .await?
+            .ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "workflow not found",
+                )) as SendableError
+            })?;
+        repository::validate_workflow_dependency_access(self.store.as_ref(), &workflow).await?;
         let run = repository::create_workflow_run_for_trigger(
             self.store.as_ref(),
             trigger_id,

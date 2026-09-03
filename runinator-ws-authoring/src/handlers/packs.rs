@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, body::Bytes, extract::Query, http::StatusCode};
 use runinator_models::{
-    auth::AuthContext,
+    auth::{AuthContext, PrincipalKind},
     rbac::{Action, ScopeKind, ScopeRef},
     workflows::WorkflowBundle,
 };
@@ -22,7 +22,7 @@ use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, PACK_IMPORT_PARAMS, RequestDoc, endpoint,
 };
 use runinator_ws_core::responses::{api_error, bad_request};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore};
 
 // query parameters for the pack import endpoint.
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -52,6 +52,7 @@ pub struct PackImportParams {
 )]
 pub async fn import_pack<
     T: DefinitionStore
+        + AuthorizationStore
         + RuntimeStore
         + PackTransactionStore
         + FunctionStore
@@ -71,6 +72,10 @@ pub async fn import_pack<
     let import_scope = import_org
         .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
         .unwrap_or(ScopeRef::PLATFORM);
+    let owner = match (ctx.kind, ctx.principal_id) {
+        (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
+        _ => import_scope,
+    };
     if let Err(reply) = ctx.require_scope_action(Action::Edit, import_scope) {
         return reply;
     }
@@ -80,6 +85,9 @@ pub async fn import_pack<
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };
     let settings_section = contents.settings.as_ref();
+    if import_org.is_none() && settings_section.is_some_and(|bundle| !bundle.settings.is_empty()) {
+        return bad_request("pack settings must be imported into an organization");
+    }
     if settings_section.is_some_and(|bundle| {
         bundle
             .settings
@@ -138,6 +146,8 @@ pub async fn import_pack<
             &contents.functions,
             &artifacts,
             import_org,
+            owner,
+            ctx.principal_id,
             overwrite,
         )
         .await
@@ -160,6 +170,7 @@ fn stamp_bundle_org(bundle: &mut WorkflowBundle, org_id: Option<uuid::Uuid>) {
 /// the `packs` endpoints.
 pub fn routes<
     T: DefinitionStore
+        + AuthorizationStore
         + RuntimeStore
         + PackTransactionStore
         + FunctionStore

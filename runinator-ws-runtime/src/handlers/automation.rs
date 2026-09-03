@@ -225,6 +225,31 @@ pub async fn create_approval<
     create_record(&service, &ctx, "approval_requests", json).await
 }
 
+fn scoped_idempotency_scope(org_id: Option<Uuid>, scope: &str) -> String {
+    match org_id {
+        Some(org_id) => format!("organization:{org_id}:{scope}"),
+        None => format!("platform:{scope}"),
+    }
+}
+
+async fn idempotency_scope_for_run<T: RuntimeStore>(
+    service: &AutomationOperations<T>,
+    ctx: &AuthContext,
+    workflow_run_id: Uuid,
+    authored_scope: &str,
+) -> Result<String, (StatusCode, Json<ApiResponse>)> {
+    match service.workflow_run(workflow_run_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(not_found("workflow run not found")),
+        Err(err) => return Err(api_error(err.to_string())),
+    }
+    let org_id = service.workflow_run_org_id(workflow_run_id).await;
+    if ctx.org_id.is_some() && ctx.org_id != org_id {
+        return Err(not_found("workflow run not found"));
+    }
+    Ok(scoped_idempotency_scope(org_id, authored_scope))
+}
+
 pub async fn get_idempotency_key<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
@@ -245,6 +270,17 @@ pub async fn get_idempotency_key<
     let Some(key) = query.get("key").cloned() else {
         return api_error("idempotency query requires key");
     };
+    let Some(consumer_run_id) = query
+        .get("consumer_run_id")
+        .and_then(|value| value.parse::<Uuid>().ok())
+    else {
+        return api_error("idempotency query requires consumer_run_id");
+    };
+    let scope =
+        match idempotency_scope_for_run(service.as_ref(), &ctx, consumer_run_id, &scope).await {
+            Ok(scope) => scope,
+            Err(reply) => return reply,
+        };
     match service.fetch_idempotency_key(scope, key).await {
         Ok(Some(record)) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
         Ok(None) => not_found("idempotency key not found"),
@@ -257,7 +293,7 @@ pub async fn put_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    ValidatedJson(request): ValidatedJson<IdempotencyRequest>,
+    ValidatedJson(mut request): ValidatedJson<IdempotencyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -266,6 +302,17 @@ pub async fn put_idempotency_key<
     ]) {
         return reply;
     }
+    request.scope = match idempotency_scope_for_run(
+        service.as_ref(),
+        &ctx,
+        request.consumer_run_id,
+        &request.scope,
+    )
+    .await
+    {
+        Ok(scope) => scope,
+        Err(reply) => return reply,
+    };
     match service
         .put_idempotency_key(request.scope, request.key, request.result)
         .await
@@ -280,7 +327,7 @@ pub async fn claim_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    ValidatedJson(request): ValidatedJson<IdempotencyClaimRequest>,
+    ValidatedJson(mut request): ValidatedJson<IdempotencyClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -289,6 +336,17 @@ pub async fn claim_idempotency_key<
     ]) {
         return reply;
     }
+    request.scope = match idempotency_scope_for_run(
+        service.as_ref(),
+        &ctx,
+        request.consumer_run_id,
+        &request.scope,
+    )
+    .await
+    {
+        Ok(scope) => scope,
+        Err(reply) => return reply,
+    };
     match service.claim_idempotency_key(request).await {
         Ok(claim) => match Value::encode(&claim) {
             Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
@@ -303,7 +361,7 @@ pub async fn complete_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    ValidatedJson(request): ValidatedJson<IdempotencyCompleteRequest>,
+    ValidatedJson(mut request): ValidatedJson<IdempotencyCompleteRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -312,6 +370,17 @@ pub async fn complete_idempotency_key<
     ]) {
         return reply;
     }
+    request.scope = match idempotency_scope_for_run(
+        service.as_ref(),
+        &ctx,
+        request.consumer_run_id,
+        &request.scope,
+    )
+    .await
+    {
+        Ok(scope) => scope,
+        Err(reply) => return reply,
+    };
     match service.complete_idempotency_key(request).await {
         Ok(recorded) => (
             StatusCode::OK,
@@ -333,7 +402,7 @@ pub async fn release_idempotency_key<
 >(
     Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    ValidatedJson(request): ValidatedJson<IdempotencyReleaseRequest>,
+    ValidatedJson(mut request): ValidatedJson<IdempotencyReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
         runinator_models::rbac::SystemRole::Engine,
@@ -342,6 +411,17 @@ pub async fn release_idempotency_key<
     ]) {
         return reply;
     }
+    request.scope = match idempotency_scope_for_run(
+        service.as_ref(),
+        &ctx,
+        request.consumer_run_id,
+        &request.scope,
+    )
+    .await
+    {
+        Ok(scope) => scope,
+        Err(reply) => return reply,
+    };
     match service.release_idempotency_key(request).await {
         Ok(released) => (
             StatusCode::OK,

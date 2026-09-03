@@ -5,6 +5,13 @@
 
 use super::*;
 
+fn scoped_dedupe_key(org_id: Option<Uuid>, key: Option<&str>) -> Option<String> {
+    key.map(|key| match org_id {
+        Some(org_id) => format!("organization:{org_id}:{key}"),
+        None => format!("platform:{key}"),
+    })
+}
+
 // the bound list is repeated verbatim in every role impl in this directory. it stays spelled out
 // rather than hidden behind a macro so that type errors inside the query bodies — the part that
 // actually gets edited — keep pointing at real source lines instead of a macro expansion.
@@ -56,15 +63,19 @@ where
         &self,
         notification: &NewNotification,
     ) -> Result<Notification, SendableError> {
-        let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
+        let columns = NOTIFICATION_COLUMNS;
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
+        let dedupe_key = scoped_dedupe_key(notification.org_id, notification.dedupe_key.as_deref());
         if self.dialect() == SqlDialect::MariaDb {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO notifications (id, org_id, source_resource_type, source_resource_id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
+            .bind(notification.org_id)
+            .bind(notification.source_resource_type.map(|kind| kind.as_str().to_string()))
+            .bind(notification.source_resource_id)
             .bind(notification.workflow_run_id)
             .bind(notification.workflow_node_id.clone())
             .bind(notification.channel.as_str())
@@ -73,7 +84,7 @@ where
             .bind(notification.body.clone())
             .bind(notification.target.clone())
             .bind(notification.metadata.to_string())
-            .bind(notification.dedupe_key.clone())
+            .bind(dedupe_key.clone())
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
@@ -86,11 +97,14 @@ where
             return Ok(mappers::row_to_notification(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO notifications (id, org_id, source_resource_type, source_resource_id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
         .bind(id)
+        .bind(notification.org_id)
+        .bind(notification.source_resource_type.map(|kind| kind.as_str().to_string()))
+        .bind(notification.source_resource_id)
         .bind(notification.workflow_run_id)
         .bind(notification.workflow_node_id.clone())
         .bind(notification.channel.as_str())
@@ -99,7 +113,7 @@ where
         .bind(notification.body.clone())
         .bind(notification.target.clone())
         .bind(notification.metadata.to_string())
-        .bind(notification.dedupe_key.clone())
+        .bind(dedupe_key)
         .bind(created_at)
         .fetch_one(self.pool())
         .await?;
@@ -108,102 +122,178 @@ where
 
     async fn fetch_notifications(
         &self,
+        org_id: Option<Uuid>,
+        user_id: Uuid,
         unread_only: bool,
         limit: i64,
     ) -> Result<Vec<Notification>, SendableError> {
         let bounded_limit = limit.clamp(1, 1000);
-        let rows = if unread_only {
-            sqlx::query(&self.render(
-                "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC LIMIT ?",
-            ))
-            .bind(bounded_limit)
-            .fetch_all(self.pool())
-            .await?
+        let unread = if unread_only {
+            "AND COALESCE(r.read_at, n.read_at) IS NULL"
         } else {
-            sqlx::query(&self.render(
-                "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications ORDER BY created_at DESC LIMIT ?",
-            ))
-            .bind(bounded_limit)
-            .fetch_all(self.pool())
-            .await?
+            ""
         };
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT n.id, n.org_id, n.source_resource_type, n.source_resource_id,
+                    n.workflow_run_id, n.workflow_node_id, n.channel, n.severity, n.title,
+                    n.body, n.target, n.metadata, COALESCE(r.read_at, n.read_at) AS read_at,
+                    n.created_at
+             FROM notifications n
+             LEFT JOIN notification_receipts r ON r.notification_id = n.id AND r.user_id = ?
+             WHERE ((n.org_id = ?) OR (n.org_id IS NULL AND ? IS NULL))
+               AND r.dismissed_at IS NULL {unread}
+             ORDER BY n.created_at DESC LIMIT ?"
+        )))
+        .bind(user_id)
+        .bind(org_id)
+        .bind(org_id)
+        .bind(bounded_limit)
+        .fetch_all(self.pool())
+        .await?;
         Ok(rows.iter().map(mappers::row_to_notification).collect())
     }
 
-    async fn mark_notification_read(
+    async fn fetch_notification(
         &self,
+        org_id: Option<Uuid>,
         notification_id: Uuid,
+        user_id: Uuid,
     ) -> Result<Option<Notification>, SendableError> {
-        let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
-
-        // mysql has no UPDATE ... RETURNING, so update then read the row back by id.
-        if self.dialect() == SqlDialect::MariaDb {
-            sqlx::query(
-                &self
-                    .render("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ?"),
-            )
-            .bind(Utc::now().timestamp())
-            .bind(notification_id)
-            .execute(self.pool())
-            .await?;
-            let row = sqlx::query(
-                &self.render(&format!("SELECT {columns} FROM notifications WHERE id = ?",)),
-            )
-            .bind(notification_id)
-            .fetch_optional(self.pool())
-            .await?;
-            return Ok(row.map(|row| mappers::row_to_notification(&row)));
-        }
-
-        let row = sqlx::query(&self.render(&format!(
-            "UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ? RETURNING {columns}",
-        )))
-        .bind(Utc::now().timestamp())
+        let row = sqlx::query(&self.render(
+            "SELECT n.id, n.org_id, n.source_resource_type, n.source_resource_id,
+                    n.workflow_run_id, n.workflow_node_id, n.channel, n.severity, n.title,
+                    n.body, n.target, n.metadata, COALESCE(r.read_at, n.read_at) AS read_at,
+                    n.created_at
+             FROM notifications n
+             LEFT JOIN notification_receipts r ON r.notification_id = n.id AND r.user_id = ?
+             WHERE n.id = ? AND ((n.org_id = ?) OR (n.org_id IS NULL AND ? IS NULL))
+               AND r.dismissed_at IS NULL",
+        ))
+        .bind(user_id)
         .bind(notification_id)
+        .bind(org_id)
+        .bind(org_id)
         .fetch_optional(self.pool())
         .await?;
         Ok(row.map(|row| mappers::row_to_notification(&row)))
     }
 
-    async fn mark_all_notifications_read(&self) -> Result<u64, SendableError> {
-        let result =
-            sqlx::query(&self.render("UPDATE notifications SET read_at = ? WHERE read_at IS NULL"))
-                .bind(Utc::now().timestamp())
-                .execute(self.pool())
-                .await?;
-        Ok(result.affected())
+    async fn mark_notification_read(
+        &self,
+        org_id: Option<Uuid>,
+        notification_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<Notification>, SendableError> {
+        let exists = sqlx::query(&self.render(
+            "SELECT id FROM notifications WHERE id = ? AND ((org_id = ?) OR (org_id IS NULL AND ? IS NULL))",
+        ))
+        .bind(notification_id)
+        .bind(org_id)
+        .bind(org_id)
+        .fetch_optional(self.pool())
+        .await?;
+        if exists.is_none() {
+            return Ok(None);
+        }
+        let conflict = self
+            .dialect()
+            .on_conflict_update("notification_id, user_id", &["read_at"]);
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO notification_receipts (notification_id, user_id, read_at, dismissed_at)
+             VALUES (?, ?, ?, NULL) {conflict}"
+        )))
+        .bind(notification_id)
+        .bind(user_id)
+        .bind(Utc::now().timestamp())
+        .execute(self.pool())
+        .await?;
+        let mut rows = self
+            .fetch_notifications(org_id, user_id, false, 1000)
+            .await?;
+        Ok(rows.drain(..).find(|row| row.id == notification_id))
     }
 
-    async fn delete_notification(&self, notification_id: Uuid) -> Result<bool, SendableError> {
-        Ok(retry_delete(|| async {
-            sqlx::query(&self.render("DELETE FROM notifications WHERE id = ?"))
-                .bind(notification_id)
-                .execute(self.pool())
-                .await
-                .map(|result| result.affected() > 0)
-        })
-        .await?)
+    async fn mark_all_notifications_read(
+        &self,
+        org_id: Option<Uuid>,
+        user_id: Uuid,
+    ) -> Result<u64, SendableError> {
+        let unread = self
+            .fetch_notifications(org_id, user_id, true, 1000)
+            .await?;
+        let mut count = 0;
+        for notification in unread {
+            if self
+                .mark_notification_read(org_id, notification.id, user_id)
+                .await?
+                .is_some()
+            {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    async fn delete_notification(
+        &self,
+        org_id: Option<Uuid>,
+        notification_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let exists = sqlx::query(&self.render(
+            "SELECT id FROM notifications WHERE id = ? AND ((org_id = ?) OR (org_id IS NULL AND ? IS NULL))",
+        ))
+        .bind(notification_id)
+        .bind(org_id)
+        .bind(org_id)
+        .fetch_optional(self.pool())
+        .await?;
+        if exists.is_none() {
+            return Ok(false);
+        }
+        let conflict = self
+            .dialect()
+            .on_conflict_update("notification_id, user_id", &["dismissed_at"]);
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO notification_receipts (notification_id, user_id, read_at, dismissed_at)
+             VALUES (?, ?, NULL, ?) {conflict}"
+        )))
+        .bind(notification_id)
+        .bind(user_id)
+        .bind(Utc::now().timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(true)
     }
 
     async fn create_notification_if_absent(
         &self,
         notification: &NewNotification,
     ) -> Result<Option<Notification>, SendableError> {
-        let Some(dedupe_key) = notification.dedupe_key.clone() else {
+        let Some(dedupe_key) =
+            scoped_dedupe_key(notification.org_id, notification.dedupe_key.as_deref())
+        else {
             return self.create_notification(notification).await.map(Some);
         };
-        let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
+        let columns = NOTIFICATION_COLUMNS;
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         let sql = self.dialect().insert_ignore(
             "notifications",
-            "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at",
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+            "id, org_id, source_resource_type, source_resource_id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at",
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
             "dedupe_key",
             None,
         );
         let result = sqlx::query(&self.render(&sql))
             .bind(id)
+            .bind(notification.org_id)
+            .bind(
+                notification
+                    .source_resource_type
+                    .map(|kind| kind.as_str().to_string()),
+            )
+            .bind(notification.source_resource_id)
             .bind(notification.workflow_run_id)
             .bind(notification.workflow_node_id.clone())
             .bind(notification.channel.as_str())
@@ -231,22 +321,31 @@ where
 
     async fn fetch_notification_policies(
         &self,
+        org_id: Option<Uuid>,
         workflow_id: Option<Uuid>,
     ) -> Result<Vec<NotificationPolicy>, SendableError> {
         let columns = NOTIFICATION_POLICY_COLUMNS;
         let rows = match workflow_id {
             Some(workflow_id) => {
                 sqlx::query(&self.render(&format!(
-                    "SELECT {columns} FROM notification_policies WHERE workflow_id = ? ORDER BY created_at DESC"
+                    "SELECT {columns} FROM notification_policies
+                     WHERE workflow_id = ? AND ((org_id = ?) OR (org_id IS NULL AND ? IS NULL))
+                     ORDER BY created_at DESC"
                 )))
                 .bind(workflow_id)
+                .bind(org_id)
+                .bind(org_id)
                 .fetch_all(self.pool())
                 .await?
             }
             None => {
                 sqlx::query(&self.render(&format!(
-                    "SELECT {columns} FROM notification_policies ORDER BY created_at DESC"
+                    "SELECT {columns} FROM notification_policies
+                     WHERE (org_id = ?) OR (org_id IS NULL AND ? IS NULL)
+                     ORDER BY created_at DESC"
                 )))
+                .bind(org_id)
+                .bind(org_id)
                 .fetch_all(self.pool())
                 .await?
             }
@@ -280,10 +379,19 @@ where
         let enabled = self.dialect().bool_true();
         let rows = sqlx::query(&self.render(&format!(
             "SELECT {columns} FROM notification_policies
-             WHERE enabled = {enabled} AND event = ? AND (workflow_id = ? OR workflow_id IS NULL)
+             WHERE enabled = {enabled} AND event = ? AND (
+                 workflow_id = ? OR (
+                     workflow_id IS NULL AND (
+                         org_id = (SELECT org_id FROM workflows WHERE id = ?)
+                         OR (org_id IS NULL AND (SELECT org_id FROM workflows WHERE id = ?) IS NULL)
+                     )
+                 )
+             )
              ORDER BY created_at",
         )))
         .bind(event.as_str())
+        .bind(workflow_id)
+        .bind(workflow_id)
         .bind(workflow_id)
         .fetch_all(self.pool())
         .await?;
@@ -336,10 +444,11 @@ where
         let updated_at = Utc::now().timestamp();
         let result = sqlx::query(&self.render(
             "UPDATE notification_policies
-             SET workflow_id = ?, name = ?, event = ?, severity = ?, channel = ?, target = ?,
+             SET org_id = ?, workflow_id = ?, name = ?, event = ?, severity = ?, channel = ?, target = ?,
                  threshold_seconds = ?, enabled = ?, managed_by = ?, configuration = ?, updated_at = ?
              WHERE id = ?",
         ))
+        .bind(policy.org_id)
         .bind(policy.workflow_id)
         .bind(policy.name.as_str())
         .bind(policy.event.as_str())

@@ -17,34 +17,40 @@ use uuid::Uuid;
 pub async fn materialize(
     client: &AsyncApiClient<StaticLocator>,
     effect_id: Uuid,
+    workflow_run_id: Uuid,
     value: Value,
 ) -> Result<Value, SendableError> {
     let root = std::env::temp_dir()
         .join("runinator-worker-files")
         .join(effect_id.to_string());
-    materialize_value(client, &root, value).await
+    materialize_value(client, &root, workflow_run_id, value).await
 }
 
 async fn materialize_value(
     client: &AsyncApiClient<StaticLocator>,
     root: &Path,
+    workflow_run_id: Uuid,
     value: Value,
 ) -> Result<Value, SendableError> {
     if let Ok(descriptor) = FileDescriptor::from_value(&value) {
-        return materialize_file(client, root, &descriptor).await;
+        return materialize_file(client, root, workflow_run_id, &descriptor).await;
     }
     match value {
         Value::Array(values) => {
             let mut materialized = Vec::with_capacity(values.len());
             for value in values {
-                materialized.push(Box::pin(materialize_value(client, root, value)).await?);
+                materialized
+                    .push(Box::pin(materialize_value(client, root, workflow_run_id, value)).await?);
             }
             Ok(Value::Array(materialized))
         }
         Value::Object(values) => {
             let mut materialized = Map::new();
             for (key, value) in values {
-                materialized.insert(key, Box::pin(materialize_value(client, root, value)).await?);
+                materialized.insert(
+                    key,
+                    Box::pin(materialize_value(client, root, workflow_run_id, value)).await?,
+                );
             }
             Ok(Value::Object(materialized))
         }
@@ -55,6 +61,7 @@ async fn materialize_value(
 async fn materialize_file(
     client: &AsyncApiClient<StaticLocator>,
     root: &Path,
+    workflow_run_id: Uuid,
     descriptor: &FileDescriptor,
 ) -> Result<Value, SendableError> {
     validate_relative_path(&descriptor.path).map_err(|message| {
@@ -63,7 +70,9 @@ async fn materialize_file(
             message,
         )) as SendableError
     })?;
-    let bytes = client.download_workflow_file(descriptor.id).await?;
+    let bytes = client
+        .download_workflow_file_for_run(descriptor.id, workflow_run_id)
+        .await?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
     if !digest.eq_ignore_ascii_case(&descriptor.sha256) {
         return Err(Box::new(std::io::Error::new(

@@ -592,6 +592,7 @@ pub struct GateResolutionRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct IdempotencyRequest {
+    pub consumer_run_id: Uuid,
     pub scope: String,
     pub key: String,
     #[serde(default)]

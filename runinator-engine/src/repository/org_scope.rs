@@ -1,8 +1,8 @@
 use runinator_store::RuntimeStore;
 use uuid::Uuid;
 
-/// resolve the owning org for a workflow run. prefers the live workflow row so an org reassignment
-/// is reflected; falls back to the run snapshot when the workflow row is gone.
+/// Resolve the owning org frozen into a workflow run. A live ownership transfer applies to future
+/// admissions; it must not move an already-admitted run into another tenant's coordination space.
 pub async fn org_id_for_workflow_run<T: RuntimeStore>(
     db: &T,
     workflow_run_id: Uuid,
@@ -12,15 +12,17 @@ pub async fn org_id_for_workflow_run<T: RuntimeStore>(
         .await
         .ok()
         .flatten()?;
-    if let Ok(Some(workflow)) = db.fetch_workflow(run.workflow_id).await
-        && workflow.org_id.is_some()
-    {
-        return workflow.org_id;
+    if let Some(snapshot) = run.workflow_snapshot {
+        return snapshot.org_id;
     }
-    run.workflow_snapshot.and_then(|snapshot| snapshot.org_id)
+    db.fetch_workflow(run.workflow_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|workflow| workflow.org_id)
 }
 
-/// resolve the owning org for a pipeline run via the live pipeline row, then the snapshot.
+/// Resolve the owning org frozen into a pipeline run, with the live row only as legacy fallback.
 pub async fn org_id_for_pipeline_run<T: RuntimeStore>(
     db: &T,
     pipeline_run_id: Uuid,
@@ -30,10 +32,12 @@ pub async fn org_id_for_pipeline_run<T: RuntimeStore>(
         .await
         .ok()
         .flatten()?;
-    if let Ok(Some(pipeline)) = db.fetch_pipeline(run.pipeline_id).await
-        && pipeline.org_id.is_some()
-    {
-        return pipeline.org_id;
+    if let Some(snapshot) = run.pipeline_snapshot {
+        return snapshot.org_id;
     }
-    run.pipeline_snapshot.and_then(|snapshot| snapshot.org_id)
+    db.fetch_pipeline(run.pipeline_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|pipeline| pipeline.org_id)
 }

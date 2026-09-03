@@ -393,7 +393,16 @@ export async function revokeResourceGrant(
 }
 
 export async function transferResourceOwner(
-  resourceType: "workflow" | "pipeline" | "function_package" | "console_session",
+  resourceType:
+    | "workflow"
+    | "pipeline"
+    | "function_package"
+    | "console_session"
+    | "setting"
+    | "execution_profile"
+    | "orchestration_adapter"
+    | "library_file"
+    | "notification_policy",
   resourceId: string,
   scopeKind: "platform" | "organization" | "team" | "user",
   scopeId: string | null,
@@ -404,6 +413,10 @@ export async function transferResourceOwner(
     scopeKind,
     scopeId,
   });
+}
+
+export async function fetchResourceOwner(resourceType: string, resourceId: string) {
+  return command<JsonRecord>("fetch_resource_owner", { resourceType, resourceId });
 }
 
 export interface CreateUserInput {

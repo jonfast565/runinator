@@ -38,6 +38,23 @@ impl<T> SettingOperations<T> {
 }
 
 impl<T: SettingStore + RuntimeStore> SettingOperations<T> {
+    /// Check that a runtime setting was frozen into the admitted workflow snapshot.
+    pub async fn run_admitted_setting(
+        &self,
+        run_id: Uuid,
+        setting_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        Ok(self
+            .store
+            .fetch_workflow_run(run_id)
+            .await?
+            .and_then(|run| run.workflow_snapshot)
+            .is_some_and(|workflow| {
+                crate::repository::workflow_dependency_refs(&workflow)
+                    .contains(&(runinator_models::auth::ResourceType::Setting, setting_id))
+            }))
+    }
+
     pub async fn configure(
         &self,
         configuration: SettingConfiguration,

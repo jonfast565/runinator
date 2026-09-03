@@ -63,6 +63,11 @@ pub enum ResourceType {
     Pipeline,
     FunctionPackage,
     ConsoleSession,
+    Setting,
+    ExecutionProfile,
+    OrchestrationAdapter,
+    LibraryFile,
+    NotificationPolicy,
 }
 
 impl ResourceType {
@@ -72,6 +77,11 @@ impl ResourceType {
             ResourceType::Pipeline => "pipeline",
             ResourceType::FunctionPackage => "function_package",
             ResourceType::ConsoleSession => "console_session",
+            ResourceType::Setting => "setting",
+            ResourceType::ExecutionProfile => "execution_profile",
+            ResourceType::OrchestrationAdapter => "orchestration_adapter",
+            ResourceType::LibraryFile => "library_file",
+            ResourceType::NotificationPolicy => "notification_policy",
         }
     }
 
@@ -81,6 +91,11 @@ impl ResourceType {
             "pipeline" => Some(Self::Pipeline),
             "function_package" => Some(Self::FunctionPackage),
             "console_session" => Some(Self::ConsoleSession),
+            "setting" => Some(Self::Setting),
+            "execution_profile" => Some(Self::ExecutionProfile),
+            "orchestration_adapter" => Some(Self::OrchestrationAdapter),
+            "library_file" => Some(Self::LibraryFile),
+            "notification_policy" => Some(Self::NotificationPolicy),
             _ => None,
         }
     }

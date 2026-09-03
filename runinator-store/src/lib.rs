@@ -20,6 +20,7 @@ use runinator_models::errors::SendableError;
 
 pub mod archive;
 pub mod pack_transaction;
+pub mod resource_access;
 pub mod roles;
 pub mod runtime_store;
 pub mod workflow_mutex;

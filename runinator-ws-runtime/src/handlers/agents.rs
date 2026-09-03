@@ -27,7 +27,7 @@ use runinator_ws_middleware::authz::AuthContextExt;
 use uuid::Uuid;
 
 pub async fn create<T: ReplicaStore>(
-    Extension(db): Extension<std::sync::Arc<T>>,
+    Extension(registry): Extension<std::sync::Arc<ReplicaRegistry<T>>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
@@ -37,8 +37,11 @@ pub async fn create<T: ReplicaStore>(
     if let Err(reply) = ctx.require_scope_action(action, scope) {
         return reply;
     }
+    if let Err(reply) = require_visible_replica(registry.as_ref(), &ctx, replica_id).await {
+        return reply;
+    }
     let ttl = request.expires_in_seconds.unwrap_or(300).clamp(1, 86_400);
-    match ReplicaRegistry::new(db)
+    match registry
         .issue_directive(
             replica_id,
             request.kind,
@@ -50,7 +53,10 @@ pub async fn create<T: ReplicaStore>(
             // The durable outbox is authoritative; these optional hints only reduce local delivery
             // and WebSocket-update latency when this replica embeds the engine.
             nudge_agent_directives(&events);
-            emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
+            emit(
+                &events,
+                AppEvent::new(ctx.org_id, AppEventKind::ReplicasChanged),
+            );
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::AgentDirective(record)),
@@ -62,15 +68,15 @@ pub async fn create<T: ReplicaStore>(
 }
 
 pub async fn list<T: ReplicaStore>(
-    Extension(db): Extension<std::sync::Arc<T>>,
+    Extension(registry): Extension<std::sync::Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Query(query): Query<AgentDirectiveQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::AuditRead,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    if let Err(reply) = ctx.require_scope_action(Action::AuditRead, ctx.selected_scope()) {
+        return reply;
+    }
+    if let Err(reply) = require_visible_replica(registry.as_ref(), &ctx, replica_id).await {
         return reply;
     }
     let can_read_files = ctx
@@ -79,7 +85,7 @@ pub async fn list<T: ReplicaStore>(
             ctx.selected_scope(),
         )
         .is_ok();
-    match ReplicaRegistry::new(db)
+    match registry
         .directives(replica_id, query.limit.unwrap_or(100))
         .await
     {
@@ -102,13 +108,13 @@ pub async fn list<T: ReplicaStore>(
 }
 
 pub async fn list_machines<T: AuthStore + RbacStore>(
-    Extension(db): Extension<std::sync::Arc<T>>,
+    Extension(registry): Extension<std::sync::Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::AgentsEnroll, ScopeRef::PLATFORM) {
         return reply;
     }
-    match ReplicaRegistry::new(db).agent_machines().await {
+    match registry.agent_machines().await {
         Ok(machines) => match machines
             .into_iter()
             .map(|machine| serde_json::to_value(machine).map(runinator_models::value::Value::from))
@@ -122,7 +128,7 @@ pub async fn list_machines<T: AuthStore + RbacStore>(
 }
 
 pub async fn invalidate_machine<T: AuthStore + RbacStore + ReplicaStore + RuntimeStore>(
-    Extension(db): Extension<std::sync::Arc<T>>,
+    Extension(registry): Extension<std::sync::Arc<ReplicaRegistry<T>>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(machine_id): Path<Uuid>,
@@ -130,10 +136,7 @@ pub async fn invalidate_machine<T: AuthStore + RbacStore + ReplicaStore + Runtim
     if let Err(reply) = ctx.require_scope_action(Action::AgentsEnroll, ScopeRef::PLATFORM) {
         return reply;
     }
-    match ReplicaRegistry::new(db)
-        .invalidate_machine(machine_id, &ctx)
-        .await
-    {
+    match registry.invalidate_machine(machine_id, &ctx).await {
         Ok(Some(result)) => {
             emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
             task_response_success(format!(
@@ -150,7 +153,7 @@ fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, Sco
     match kind {
         AgentDirectiveKind::Diagnostics
         | AgentDirectiveKind::TailLogs { .. }
-        | AgentDirectiveKind::ListSandbox { .. } => (Action::AuditRead, ScopeRef::PLATFORM),
+        | AgentDirectiveKind::ListSandbox { .. } => (Action::AuditRead, ctx.selected_scope()),
         AgentDirectiveKind::FetchFile { .. } => (Action::SecretsRead, ctx.selected_scope()),
         AgentDirectiveKind::CleanupWorkspace { .. }
         | AgentDirectiveKind::SetLabels { .. }
@@ -161,7 +164,23 @@ fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, Sco
         | AgentDirectiveKind::Undrain
         | AgentDirectiveKind::Restart
         | AgentDirectiveKind::RotateCredential
-        | AgentDirectiveKind::Unknown => (Action::NodesOperate, ScopeRef::PLATFORM),
+        | AgentDirectiveKind::Unknown => (Action::NodesOperate, ctx.selected_scope()),
+    }
+}
+
+async fn require_visible_replica<T: ReplicaStore>(
+    registry: &ReplicaRegistry<T>,
+    ctx: &AuthContext,
+    replica_id: Uuid,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    if let Some(org_id) = ctx.org_id {
+        match registry.fetch(replica_id).await {
+            Ok(Some(replica)) if replica.registered_by_org_id == Some(org_id) => Ok(()),
+            Ok(_) => Err(not_found("Replica not found")),
+            Err(err) => Err(api_error(err.to_string())),
+        }
+    } else {
+        Ok(())
     }
 }
 
@@ -169,20 +188,21 @@ pub fn routes<T: ReplicaStore + AuthStore + RbacStore + RuntimeStore>(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::routing::{delete, get};
+    let registry = std::sync::Arc::new(ReplicaRegistry::new(pool));
     axum::Router::new()
         .route(
             "/replicas/{replica_id}/directives",
             get(list::<T>)
                 .post(create::<T>)
-                .layer(Extension(pool.clone())),
+                .layer(Extension(registry.clone())),
         )
         .route(
             "/agents/machines",
-            get(list_machines::<T>).layer(Extension(pool.clone())),
+            get(list_machines::<T>).layer(Extension(registry.clone())),
         )
         .route(
             "/agents/machines/{machine_id}",
-            delete(invalidate_machine::<T>).layer(Extension(pool)),
+            delete(invalidate_machine::<T>).layer(Extension(registry)),
         )
 }
 

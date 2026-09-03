@@ -5,7 +5,7 @@
         title="Notifications"
         icon="bell"
         eyebrow="Inbox"
-        description="Review unread alerts first. Deleting a notification removes it permanently from this inbox."
+        description="Review your unread alerts. Dismissing a notification removes it only from your inbox."
       >
         <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
           <input v-model="store.unreadOnly" type="checkbox" class="w-auto" @change="refresh" />
@@ -21,7 +21,7 @@
         </button>
         <button class="btn" :disabled="loading || !hasRead" @click="deleteRead">
           <Icon name="trash" />
-          <span>Delete read</span>
+          <span>Dismiss read</span>
         </button>
       </PanelHeader>
       <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -65,7 +65,7 @@
             >
               <Icon name="check" />
             </button>
-            <button class="btn btn-icon btn-ghost" title="Delete" @click.stop="remove(row.id)">
+            <button class="btn btn-icon btn-ghost" title="Dismiss from my inbox" @click.stop="remove(row.id)">
               <Icon name="trash" />
             </button>
           </span>
@@ -282,7 +282,7 @@ async function markAllRead() {
 async function remove(id: string) {
   const notification = store.notifications.find((candidate) => candidate.id === id);
 
-  if (!notification || !window.confirm(`Delete notification “${notification.title}”?`)) {
+  if (!notification || !window.confirm(`Dismiss notification “${notification.title}” from my inbox?`)) {
     return;
   }
 
@@ -294,7 +294,7 @@ async function deleteRead() {
 
   if (
     !count ||
-    !window.confirm(`Delete ${String(count)} read notification${count === 1 ? "" : "s"}?`)
+    !window.confirm(`Dismiss ${String(count)} read notification${count === 1 ? "" : "s"} from my inbox?`)
   ) {
     return;
   }

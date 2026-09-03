@@ -69,7 +69,7 @@ export function createNotificationsService(app: AppService) {
     },
     async remove(id: string) {
       await app
-        .runOperation("Deleting notification", () => deleteNotification(id))
+        .runOperation("Dismissing notification", () => deleteNotification(id))
         .catch((error: unknown) => {
           app.setError(String(error));
         });
@@ -130,7 +130,7 @@ export function createNotificationsService(app: AppService) {
       }
 
       await app
-        .runOperation("Deleting read notifications", async () => {
+        .runOperation("Dismissing read notifications", async () => {
           for (const notificationId of readIds) {
             await deleteNotification(notificationId);
           }

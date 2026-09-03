@@ -7,7 +7,7 @@
         title="Permissions"
         icon="shield"
         eyebrow="Access control"
-        description="Manage platform users, teams, workflow grants, and scoped API keys."
+        description="Manage platform users, teams, reusable resource grants, and scoped API keys."
       >
         <button class="btn" :disabled="loading" @click="refresh">
           <LoadingSpinner v-if="loading" size="sm" label="Refreshing permissions" />
@@ -67,7 +67,7 @@ const workflows = useWorkflowsStore();
 const { isLoading: loading } = useOperationLoading([
   "Loading permissions",
   "Loading API keys",
-  "Loading workflow access",
+  "Loading resource access",
 ]);
 const activeTab = ref<PermissionsTab>("users");
 

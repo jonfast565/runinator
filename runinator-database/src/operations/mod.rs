@@ -93,7 +93,8 @@ const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configur
 const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata, orchestration_binding_id, execution_epoch, start_member";
 const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at";
 
-const NOTIFICATION_POLICY_COLUMNS: &str = "id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
+const NOTIFICATION_POLICY_COLUMNS: &str = "id, org_id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
+const NOTIFICATION_COLUMNS: &str = "id, org_id, source_resource_type, source_resource_id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
 const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, command_json, published_at, claimed_by, claimed_until, created_at, updated_at";
 
 /// true when an insert lost a unique-constraint race rather than failing for a reason worth
@@ -133,9 +134,10 @@ where
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(&format!(
             "INSERT INTO notification_policies ({NOTIFICATION_POLICY_COLUMNS})
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )))
         .bind(id)
+        .bind(policy.org_id)
         .bind(policy.workflow_id)
         .bind(policy.name.as_str())
         .bind(policy.event.as_str())
@@ -949,7 +951,9 @@ impl ArchiveTableSql for ArchiveTable {
                 "note" => OptionalText, "created_at" => Integer,
             ],
             ArchiveTable::Notifications => archive_columns![
-                "id" => Uuid, "workflow_run_id" => OptionalUuid,
+                "id" => Uuid, "org_id" => OptionalUuid,
+                "source_resource_type" => OptionalText,
+                "source_resource_id" => OptionalUuid, "workflow_run_id" => OptionalUuid,
                 "workflow_node_id" => OptionalText, "channel" => Text, "severity" => Text,
                 "title" => Text, "body" => OptionalText, "target" => OptionalText,
                 "metadata" => Text, "read_at" => OptionalInteger, "created_at" => Integer,

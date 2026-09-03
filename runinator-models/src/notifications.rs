@@ -1,3 +1,4 @@
+use crate::auth::ResourceType;
 use crate::value::Value;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,12 @@ use crate::validation::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
     pub id: Uuid,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub source_resource_type: Option<ResourceType>,
+    #[serde(default)]
+    pub source_resource_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
@@ -30,6 +37,12 @@ pub struct Notification {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NewNotification {
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub source_resource_type: Option<ResourceType>,
+    #[serde(default)]
+    pub source_resource_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
@@ -210,6 +223,8 @@ impl TryFrom<&str> for NotificationChannel {
 pub struct NotificationPolicy {
     pub id: Uuid,
     #[serde(default)]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
     pub workflow_id: Option<Uuid>,
     pub name: String,
     pub event: NotificationEvent,
@@ -235,6 +250,8 @@ pub struct NotificationPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NewNotificationPolicy {
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_id: Option<Uuid>,
     pub name: String,

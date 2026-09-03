@@ -7,7 +7,7 @@
       :initial-first-pct="68"
       :min-first="360"
       :min-second="180"
-      :second-enabled="canManageAgent"
+      :second-enabled="isPlatformView && canManageAgent"
       collapsible-second
       second-label="Node pools"
       second-icon="grid"
@@ -754,6 +754,7 @@ import {
 import type { ReplicaSample } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useActionsStore } from "../../ui/adapters/pinia/actions";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import type {
   AgentDirectiveKind,
@@ -768,6 +769,8 @@ import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
 const actions = useActionsStore();
+const orgs = useOrgsStore();
+const isPlatformView = computed(() => orgs.activeOrgId == null);
 const canEnrollAgents = computed(() => actions.has("agents:enroll"));
 const canReadAgent = computed(() => actions.has("audit:read"));
 const canManageAgent = computed(() => actions.has("nodes:operate"));

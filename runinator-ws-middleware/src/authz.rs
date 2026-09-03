@@ -24,6 +24,25 @@ use runinator_ws_core::models::{ApiError, ApiResponse};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
+/// Whether one owned resource may consume another reusable resource. This is evaluated again at
+/// run admission so an ownership transfer or revoked grant applies to future runs.
+pub async fn resource_can_consume<T: AuthorizationStore>(
+    db: &T,
+    consumer_type: ResourceType,
+    consumer_id: Uuid,
+    dependency_type: ResourceType,
+    dependency_id: Uuid,
+) -> Result<bool, runinator_models::errors::SendableError> {
+    runinator_store::resource_access::resource_can_consume(
+        db,
+        consumer_type,
+        consumer_id,
+        dependency_type,
+        dependency_id,
+    )
+    .await
+}
+
 /// Persistence needed to make one authorization decision, including parent-resource lookups and
 /// its best-effort denial audit. This is deliberately narrower than the full database surface:
 /// authorization does not need workflow definitions, credentials settings, functions, or task
@@ -258,7 +277,9 @@ fn scope_permission(ctx: &AuthContext, scope: ScopeRef) -> Option<Permission> {
     if scope.kind == ScopeKind::User && scope.id == ctx.principal_id {
         return Some(Permission::Own);
     }
-    ctx.platform_role
+    (scope.kind == ScopeKind::Platform)
+        .then_some(ctx.platform_role)
+        .flatten()
         .map(Role::Platform)
         .into_iter()
         .chain(
@@ -473,7 +494,7 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
             .await
     }
 
-    async fn resource_permission(
+    pub async fn resource_permission(
         &self,
         resource_type: ResourceType,
         resource_id: Uuid,
@@ -495,14 +516,10 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
             return Ok(None);
         }
 
-        let inherited = if ownership.owner.kind == ScopeKind::User {
-            scope_permission(self.ctx, ownership.owner)
-        } else {
-            scope_permission(self.ctx, ownership.owner)
-                .into_iter()
-                .chain(scope_permission(self.ctx, ownership.tenant))
-                .max()
-        };
+        // The tenant is an isolation boundary, not an implicit grant. Organization-owned
+        // resources inherit the organization role because owner == tenant; team- and user-owned
+        // resources are discoverable only through that owner scope or an explicit grant.
+        let inherited = scope_permission(self.ctx, ownership.owner);
         let direct = if let Some(principal_id) = self.ctx.principal_id {
             self.db
                 .list_effective_resource_grants(resource_type, resource_id, principal_id)
@@ -730,6 +747,28 @@ mod policy_tests {
         ctx.action_ceiling = vec![Action::View];
         assert!(ctx.authorize_scope(Action::View, team));
         assert!(!ctx.authorize_scope(Action::Edit, team));
+    }
+
+    #[test]
+    fn tenant_membership_does_not_leak_into_team_or_user_ownership() {
+        let user = Uuid::now_v7();
+        let org = ScopeRef::new(ScopeKind::Organization, Some(Uuid::now_v7())).unwrap();
+        let team = ScopeRef::new(ScopeKind::Team, Some(Uuid::now_v7())).unwrap();
+        let other_user = ScopeRef::new(ScopeKind::User, Some(Uuid::now_v7())).unwrap();
+        let org_member = context(
+            Some(PlatformRole::Member),
+            vec![assignment(user, org, Role::Organization(OrgRole::Member))],
+        );
+
+        assert_eq!(scope_permission(&org_member, org), Some(Permission::View));
+        assert_eq!(scope_permission(&org_member, team), None);
+        assert_eq!(scope_permission(&org_member, other_user), None);
+
+        let team_member = context(
+            Some(PlatformRole::Member),
+            vec![assignment(user, team, Role::Team(TeamRole::Operator))],
+        );
+        assert_eq!(scope_permission(&team_member, team), Some(Permission::Edit));
     }
 
     #[test]

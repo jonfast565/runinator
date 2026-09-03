@@ -651,6 +651,21 @@ pub async fn requeue<
         },
         None => None,
     };
+    if let Some((adapter_id, _)) = adapter {
+        match runinator_store::resource_access::resource_can_consume(
+            db.as_ref(),
+            ResourceType::Pipeline,
+            binding.pipeline_id,
+            ResourceType::OrchestrationAdapter,
+            adapter_id,
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => return bad_request("pipeline is not permitted to use this adapter"),
+            Err(error) => return api_error(error.to_string()),
+        }
+    }
     match operations
         .admit_with_adapter(&next_admission, &pipeline, adapter)
         .await

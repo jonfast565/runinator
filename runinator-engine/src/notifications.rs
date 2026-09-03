@@ -221,6 +221,9 @@ async fn scan_secret_expiry<T: RuntimeStore + NotificationStore + RunStore + Wor
         };
         let seconds_until_expiry = (expires_at - now).num_seconds();
         for policy in &policies {
+            if policy.org_id != record.org_id {
+                continue;
+            }
             let warning_seconds = policy
                 .threshold_seconds
                 .unwrap_or(settings.notifications.secret_expiry_warning_seconds as i64);
@@ -275,6 +278,7 @@ fn secret_expiry_context(
         ),
         metadata: runinator_models::json!({
             "event": NotificationEvent::SecretExpiring.as_str(),
+            "setting_id": record.id,
             "setting_kind": SettingKind::Secret.as_str(),
             "scope": record.scope,
             "name": record.name,
@@ -353,7 +357,32 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
     /// best-effort by design: a failure to alert must never fail the run that triggered it, so
     /// errors are logged and swallowed rather than propagated back into the drive path.
     async fn fire(&self, policy: &NotificationPolicy, context: &EmissionContext) {
+        let (org_id, source_resource_type, source_resource_id) =
+            if let Some(run_id) = context.workflow_run_id {
+                match self.db.fetch_workflow_run(run_id).await {
+                    Ok(Some(run)) => (
+                        repository::org_id_for_workflow_run(self.db, run_id).await,
+                        Some(runinator_models::auth::ResourceType::Workflow),
+                        Some(run.workflow_id),
+                    ),
+                    _ => (None, None, None),
+                }
+            } else {
+                let setting_id = context
+                    .metadata
+                    .get("setting_id")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse().ok());
+                (
+                    policy.org_id,
+                    setting_id.map(|_| runinator_models::auth::ResourceType::Setting),
+                    setting_id,
+                )
+            };
         let notification = NewNotification {
+            org_id,
+            source_resource_type,
+            source_resource_id,
             workflow_run_id: context.workflow_run_id,
             workflow_node_id: context.node_id.clone(),
             channel: policy.channel.as_str().to_string(),

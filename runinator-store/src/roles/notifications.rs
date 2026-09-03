@@ -35,25 +35,41 @@ pub trait NotificationStore: Send + Sync + 'static {
     /// Fetch notifications, optionally only unread, most-recent first.
     fn fetch_notifications(
         &self,
+        org_id: Option<Uuid>,
+        user_id: Uuid,
         unread_only: bool,
         limit: i64,
     ) -> impl Future<Output = Result<Vec<Notification>, SendableError>> + Send;
 
+    /// Fetch one notification in a tenant with the requesting user's projected receipt state.
+    fn fetch_notification(
+        &self,
+        org_id: Option<Uuid>,
+        notification_id: Uuid,
+        user_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Notification>, SendableError>> + Send;
+
     /// Mark a notification as read; returns the updated row.
     fn mark_notification_read(
         &self,
+        org_id: Option<Uuid>,
         notification_id: Uuid,
+        user_id: Uuid,
     ) -> impl Future<Output = Result<Option<Notification>, SendableError>> + Send;
 
     /// Mark all unread notifications as read; returns the number updated.
     fn mark_all_notifications_read(
         &self,
+        org_id: Option<Uuid>,
+        user_id: Uuid,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 
     /// Delete a notification; returns true when a row was removed.
     fn delete_notification(
         &self,
+        org_id: Option<Uuid>,
         notification_id: Uuid,
+        user_id: Uuid,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Persist a notification only if its dedupe key is unclaimed; `None` means one already exists.
@@ -65,6 +81,7 @@ pub trait NotificationStore: Send + Sync + 'static {
     /// List notification policies, optionally narrowed to one workflow's own policies.
     fn fetch_notification_policies(
         &self,
+        org_id: Option<Uuid>,
         workflow_id: Option<Uuid>,
     ) -> impl Future<Output = Result<Vec<NotificationPolicy>, SendableError>> + Send;
 

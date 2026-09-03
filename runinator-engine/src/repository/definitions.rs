@@ -39,6 +39,17 @@ pub async fn upsert_workflow<
     workflow: &WorkflowDefinition,
     author: &RevisionAuthor,
 ) -> Result<WorkflowDefinition, SendableError> {
+    let workflow = prepare_workflow_for_save(db, workflow).await?;
+    let known_subflows = workflow.id.into_iter().collect();
+    upsert_prepared_workflow(db, &workflow, &known_subflows, author).await
+}
+
+pub async fn prepare_workflow_for_save<
+    T: DefinitionStore + RuntimeStore + ExecutionProfileStore,
+>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<WorkflowDefinition, SendableError> {
     let workflow = prepare_workflows_for_save(db, vec![workflow.clone()])
         .await?
         .pop()
@@ -48,16 +59,14 @@ pub async fn upsert_workflow<
         triggers: Vec::new(),
     };
     resolve_chained_targets(db, &mut bundle).await?;
-    let workflow = bundle.workflows.pop().expect("one workflow was supplied");
-    let known_subflows = workflow.id.into_iter().collect();
-    upsert_prepared_workflow(db, &workflow, &known_subflows, author).await
+    Ok(bundle.workflows.pop().expect("one workflow was supplied"))
 }
 
 /// Save a definition whose artifact references were already resolved as one pack-wide operation.
 /// `known_subflows` permits mutually-recursive workflows in the same pack: their UUIDs are
 /// preassigned and committed exactly once, instead of using a name lookup or creating a second
 /// revision just to backfill their edges.
-async fn upsert_prepared_workflow<T: DefinitionStore + RuntimeStore + FunctionStore>(
+pub async fn upsert_prepared_workflow<T: DefinitionStore + RuntimeStore + FunctionStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     known_subflows: &HashSet<Uuid>,
@@ -1097,6 +1106,7 @@ async fn materialize_workflow_notifications<T: NotificationStore>(
             .and_then(|severity| NotificationSeverity::try_from(severity).ok())
             .unwrap_or(NotificationSeverity::Warning);
         policies.push(NewNotificationPolicy {
+            org_id: workflow.org_id,
             workflow_id: Some(workflow_id),
             // the declaration has no name of its own; derive a stable, readable one.
             name: format!("{} {}", workflow.name, event.as_str()),

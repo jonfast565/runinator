@@ -140,11 +140,19 @@ impl<T: RuntimeStore + AutomationStore + DeliveryStore> AutomationOperations<T> 
         )
         .await
     }
+}
 
+impl<T: RuntimeStore> AutomationOperations<T> {
     pub async fn workflow_run(
         &self,
         workflow_run_id: Uuid,
     ) -> Result<Option<WorkflowRun>, SendableError> {
         repository::fetch_workflow_run(self.store.as_ref(), workflow_run_id).await
+    }
+
+    /// Resolve the tenant from the frozen run snapshot, retaining the repository's legacy
+    /// fallback for runs created before snapshots carried organization identity.
+    pub async fn workflow_run_org_id(&self, workflow_run_id: Uuid) -> Option<Uuid> {
+        repository::org_id_for_workflow_run(self.store.as_ref(), workflow_run_id).await
     }
 }

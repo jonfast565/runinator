@@ -98,7 +98,7 @@ struct AuthzCatalog {
     platform_roles: [PlatformRole; 4],
     organization_roles: [OrgRole; 4],
     team_roles: [TeamRole; 4],
-    resource_types: [ResourceType; 4],
+    resource_types: [ResourceType; 9],
 }
 
 fn ok<T: Serialize>(value: &T) -> Reply {
@@ -251,6 +251,11 @@ pub async fn catalog(Extension(_ctx): Extension<AuthContext>) -> Reply {
             ResourceType::Pipeline,
             ResourceType::FunctionPackage,
             ResourceType::ConsoleSession,
+            ResourceType::Setting,
+            ResourceType::ExecutionProfile,
+            ResourceType::OrchestrationAdapter,
+            ResourceType::LibraryFile,
+            ResourceType::NotificationPolicy,
         ],
     })
 }
@@ -431,6 +436,30 @@ pub async fn list_resource_grants<T: AuthorizationStore>(
     }
 }
 
+pub async fn get_resource_owner<T: AuthorizationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((kind, resource_id)): Path<(String, Uuid)>,
+) -> Reply {
+    let Some(resource_type) = ResourceType::from_str_lossy(&kind) else {
+        return bad_request("unknown resource type");
+    };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(resource_type, resource_id, Permission::View)
+        .await
+    {
+        return reply;
+    }
+    match db
+        .fetch_resource_ownership(resource_type, resource_id)
+        .await
+    {
+        Ok(Some(ownership)) => ok(&ownership),
+        Ok(None) => not_found("Resource not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub async fn create_resource_grant<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -455,10 +484,25 @@ pub async fn create_resource_grant<T: AuthorizationStore>(
         Err(err) => return api_error(err.to_string()),
     };
     let valid = match request.principal_type {
-        PrincipalType::User => db
-            .fetch_user(request.principal_id)
-            .await
-            .map(|v| v.is_some_and(|u| !u.disabled)),
+        PrincipalType::User => {
+            let user_exists = match db.fetch_user(request.principal_id).await {
+                Ok(user) => user.is_some_and(|user| !user.disabled),
+                Err(err) => return api_error(err.to_string()),
+            };
+            if !user_exists {
+                Ok(false)
+            } else if ownership.tenant.kind == ScopeKind::Organization {
+                db.list_principal_role_assignments(PrincipalKind::User, request.principal_id)
+                    .await
+                    .map(|assignments| {
+                        assignments
+                            .iter()
+                            .any(|assignment| assignment.scope == ownership.tenant)
+                    })
+            } else {
+                Ok(true)
+            }
+        }
         PrincipalType::Team => db.list_teams().await.map(|rows| {
             rows.iter()
                 .any(|team| team.id == Some(request.principal_id) && team.scope == ownership.tenant)
@@ -545,6 +589,30 @@ pub async fn transfer_resource<T: AuthorizationStore>(
     {
         return reply;
     }
+    let ownership = match db
+        .fetch_resource_ownership(resource_type, resource_id)
+        .await
+    {
+        Ok(Some(ownership)) => ownership,
+        Ok(None) => return not_found("Resource not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if ownership.tenant.kind == ScopeKind::Platform && request.owner.kind != ScopeKind::Platform {
+        return bad_request("platform resources must remain platform-owned");
+    }
+    if request.owner.kind == ScopeKind::Platform {
+        if !ctx.is_platform_admin() {
+            return forbidden("only platform administrators can assign platform ownership");
+        }
+        if !matches!(
+            resource_type,
+            ResourceType::Setting
+                | ResourceType::ExecutionProfile
+                | ResourceType::NotificationPolicy
+        ) {
+            return bad_request("this resource type cannot be platform-owned");
+        }
+    }
     if request.owner.kind != ScopeKind::User {
         match authorize_scope_with_ancestry(db.as_ref(), &ctx, Action::Own, request.owner).await {
             Ok(true) => {}
@@ -554,6 +622,14 @@ pub async fn transfer_resource<T: AuthorizationStore>(
             Err(reply) => return reply,
         }
     }
+    let target_team = if request.owner.kind == ScopeKind::Team {
+        match db.list_teams().await {
+            Ok(rows) => rows.into_iter().find(|team| team.id == request.owner.id),
+            Err(err) => return api_error(err.to_string()),
+        }
+    } else {
+        None
+    };
     let target_exists = match (request.owner.kind, request.owner.id) {
         (ScopeKind::Platform, None) => Ok(true),
         (ScopeKind::User, Some(id)) => db
@@ -564,10 +640,7 @@ pub async fn transfer_resource<T: AuthorizationStore>(
             .fetch_org(id)
             .await
             .map(|row| row.is_some_and(|org| !org.disabled)),
-        (ScopeKind::Team, Some(id)) => db
-            .list_teams()
-            .await
-            .map(|rows| rows.iter().any(|team| team.id == Some(id))),
+        (ScopeKind::Team, Some(_)) => Ok(target_team.is_some()),
         _ => return bad_request("invalid owner scope"),
     };
     match target_exists {
@@ -575,16 +648,17 @@ pub async fn transfer_resource<T: AuthorizationStore>(
         Ok(false) => return bad_request("target owner scope does not exist or is disabled"),
         Err(err) => return api_error(err.to_string()),
     }
-    if request.owner.kind == ScopeKind::User {
-        let ownership = match db
-            .fetch_resource_ownership(resource_type, resource_id)
-            .await
-        {
-            Ok(Some(ownership)) => ownership,
-            Ok(None) => return not_found("Resource not found"),
-            Err(err) => return api_error(err.to_string()),
+    if ownership.tenant.kind == ScopeKind::Organization {
+        let target_tenant = match request.owner.kind {
+            ScopeKind::Organization => Some(request.owner),
+            ScopeKind::Team => target_team.as_ref().map(|team| team.scope),
+            ScopeKind::User => None,
+            ScopeKind::Platform => Some(ScopeRef::PLATFORM),
         };
-        if ownership.tenant.kind == ScopeKind::Organization {
+        if target_tenant.is_some_and(|tenant| tenant != ownership.tenant) {
+            return bad_request("target owner is outside the resource organization");
+        }
+        if request.owner.kind == ScopeKind::User {
             let target_id = request.owner.id.expect("validated user scope");
             let assignments = match db
                 .list_principal_role_assignments(PrincipalKind::User, target_id)
@@ -696,7 +770,7 @@ pub async fn update_service_account<T: AuthorizationStore>(
 }
 
 pub fn routes<T: AuthorizationStore>(pool: Arc<T>) -> axum::Router {
-    use axum::routing::{delete, get, patch, post, put};
+    use axum::routing::{delete, get, patch, put};
     axum::Router::new()
         .route("/authz/catalog", get(catalog))
         .route(
@@ -717,7 +791,7 @@ pub fn routes<T: AuthorizationStore>(pool: Arc<T>) -> axum::Router {
         )
         .route(
             "/authz/resources/{kind}/{resource_id}/owner",
-            post(transfer_resource::<T>),
+            get(get_resource_owner::<T>).post(transfer_resource::<T>),
         )
         .route(
             "/service_accounts",
@@ -791,6 +865,19 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "resource grants",
+        Example::None,
+    ),
+    endpoint_with_policy(
+        "get",
+        "/authz/resources/{kind}/{resource_id}/owner",
+        "Authorization",
+        "Read resource owner",
+        "Returns the effective generic owner after requiring view access to the resource.",
+        EndpointPolicy::AnyResourceAction(Action::View),
+        None,
+        &[],
+        200,
+        "resource ownership",
         Example::None,
     ),
     endpoint_with_policy(

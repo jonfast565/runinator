@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query},
     http::StatusCode,
 };
-use runinator_models::auth::AuthContext;
+use runinator_models::auth::{AuthContext, Permission, ResourceType};
 use runinator_models::value::Value;
 use runinator_models::{
     server_settings::is_reserved_server_setting, settings::SettingKind, web::TaskResponse,
@@ -27,7 +27,7 @@ use runinator_ws_core::openapi::docs::{
     CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 // the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY` (plus any
 // rotation-overlap keys in `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`). the value column holds ciphertext;
@@ -44,7 +44,12 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-pub async fn get_credential<T: SettingStore + RuntimeStore>(
+#[derive(serde::Deserialize)]
+pub struct RuntimeConsumerQuery {
+    pub consumer_run_id: uuid::Uuid,
+}
+
+pub async fn get_credential<T: AuthorizationStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
@@ -69,12 +74,20 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
         return reply;
     }
     if query.scope.is_none() && query.name.is_none() {
+        let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+            .visible_resource_ids(ResourceType::Setting)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(reply) => return reply,
+        };
         return match db.list_settings(ctx.org_id).await {
             Ok(entries) => (
                 StatusCode::OK,
                 Json(ApiResponse::JsonList(
                     entries
                         .into_iter()
+                        .filter(|entry| visible.as_ref().is_none_or(|ids| ids.contains(&entry.id)))
                         .filter(|entry| {
                             !is_reserved_server_setting(entry.kind, &entry.scope, &entry.name)
                         })
@@ -116,6 +129,12 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
     {
         // Config is readable. Human-facing secret reads are metadata-only/write-only.
         Ok(Some(record)) => {
+            if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                .require_resource(ResourceType::Setting, record.id, Permission::View)
+                .await
+            {
+                return reply;
+            }
             let Some(bytes) = cipher.try_decrypt(&record.value) else {
                 return api_error(
                     "stored credential could not be decrypted; the encryption key may be unavailable",
@@ -156,7 +175,7 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
     }
 }
 
-pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
+pub async fn get_credential_by_id<T: AuthorizationStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(setting_id): Path<uuid::Uuid>,
@@ -173,6 +192,12 @@ pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
         runinator_models::rbac::Action::SecretsRead,
         ctx.selected_scope(),
     ) {
+        return reply;
+    }
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::Setting, setting_id, Permission::View)
+        .await
+    {
         return reply;
     }
     if record.kind != SettingKind::Secret {
@@ -202,6 +227,7 @@ pub async fn resolve_runtime_secret<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(setting_id): Path<uuid::Uuid>,
+    Query(query): Query<RuntimeConsumerQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if !matches!(
         ctx.system_role,
@@ -209,6 +235,13 @@ pub async fn resolve_runtime_secret<T: SettingStore + RuntimeStore>(
             runinator_models::rbac::SystemRole::Worker | runinator_models::rbac::SystemRole::Agent
         )
     ) {
+        return not_found("credential not found");
+    }
+    let admitted = SettingOperations::new(db.clone())
+        .run_admitted_setting(query.consumer_run_id, setting_id)
+        .await
+        .unwrap_or(false);
+    if !admitted {
         return not_found("credential not found");
     }
     let record = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
@@ -241,7 +274,7 @@ pub async fn resolve_runtime_secret<T: SettingStore + RuntimeStore>(
     }
 }
 
-pub async fn put_credential<T: SettingStore + RuntimeStore>(
+pub async fn put_credential<T: AuthorizationStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     ValidatedJson(request): ValidatedJson<CredentialPutRequest>,
@@ -257,7 +290,29 @@ pub async fn put_credential<T: SettingStore + RuntimeStore>(
             "server/operational_policy must be changed through the server settings endpoint",
         );
     }
-    match SettingOperations::new(db)
+    if ctx.org_id.is_none() {
+        return bad_request("settings must be created inside an organization");
+    }
+    let existing = match db
+        .fetch_setting(
+            ctx.org_id,
+            request.kind,
+            request.scope.clone(),
+            request.name.clone(),
+        )
+        .await
+    {
+        Ok(record) => record,
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Some(record) = &existing
+        && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(ResourceType::Setting, record.id, Permission::Edit)
+            .await
+    {
+        return reply;
+    }
+    match SettingOperations::new(db.clone())
         .configure(SettingConfiguration {
             org_id: ctx.org_id,
             kind: request.kind,
@@ -269,16 +324,39 @@ pub async fn put_credential<T: SettingStore + RuntimeStore>(
         })
         .await
     {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(runinator_models::json!({
-                "scope": request.scope,
-                "name": request.name,
-                "kind": request.kind.as_str(),
-                "expires_at": request.expires_at,
-                "stored": true
-            }))),
-        ),
+        Ok(_) => {
+            if existing.is_none() {
+                let created = match db
+                    .fetch_setting(
+                        ctx.org_id,
+                        request.kind,
+                        request.scope.clone(),
+                        request.name.clone(),
+                    )
+                    .await
+                {
+                    Ok(Some(record)) => record,
+                    Ok(None) => return api_error("created setting was not found"),
+                    Err(err) => return api_error(err.to_string()),
+                };
+                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                    .grant_resource_owner(ResourceType::Setting, created.id)
+                    .await
+                {
+                    return reply;
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::JsonValue(runinator_models::json!({
+                    "scope": request.scope,
+                    "name": request.name,
+                    "kind": request.kind.as_str(),
+                    "expires_at": request.expires_at,
+                    "stored": true
+                }))),
+            )
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -286,7 +364,7 @@ pub async fn put_credential<T: SettingStore + RuntimeStore>(
 /// Re-encrypt stored settings sealed by a secondary key with the current primary key. Run it while
 /// the old key is still configured as a secondary, then retire that key. Values already sealed by
 /// the primary key are left untouched.
-pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
+pub async fn reencrypt_settings<T: AuthorizationStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -304,6 +382,14 @@ pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
     let mut rewritten = 0usize;
     let mut skipped = 0usize;
     for entry in entries {
+        if AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(ResourceType::Setting, entry.id, Permission::Edit)
+            .await
+            .is_err()
+        {
+            skipped += 1;
+            continue;
+        }
         // values already sealed by the primary key need no work.
         if !cipher.needs_reencrypt(&entry.value) {
             continue;
@@ -337,7 +423,9 @@ pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
     )
 }
 
-pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
+pub async fn delete_credential<
+    T: AuthorizationStore + DefinitionStore + SettingStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
@@ -353,6 +441,20 @@ pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>
     };
     if is_reserved_server_setting(query.kind, &scope, &name) {
         return bad_request("server/operational_policy cannot be deleted through credentials");
+    }
+    let record = match db
+        .fetch_setting(ctx.org_id, query.kind, scope.clone(), name.clone())
+        .await
+    {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found("credential not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::Setting, record.id, Permission::Edit)
+        .await
+    {
+        return reply;
     }
 
     match SettingOperations::new(db)
@@ -373,7 +475,9 @@ pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>
     }
 }
 
-pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
+pub async fn move_credential<
+    T: AuthorizationStore + DefinitionStore + SettingStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(setting_id): Path<uuid::Uuid>,
@@ -394,6 +498,12 @@ pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
         Ok(None) => return not_found("setting not found"),
         Err(err) => return api_error(err.to_string()),
     };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::Setting, setting_id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
     if existing.kind != request.kind {
         return bad_request("a setting move cannot change its kind");
     }
@@ -427,7 +537,7 @@ pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
 }
 
 /// the `credentials` endpoints.
-pub fn routes<T: DefinitionStore + SettingStore + RuntimeStore>(
+pub fn routes<T: AuthorizationStore + DefinitionStore + SettingStore + RuntimeStore>(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::Extension;

@@ -4,6 +4,12 @@ macro_rules! notification_from_row {
     ($row:expr) => {{
         Notification {
             id: $row.get::<Uuid, _>("id"),
+            org_id: $row.get::<Option<Uuid>, _>("org_id"),
+            source_resource_type: $row
+                .get::<Option<String>, _>("source_resource_type")
+                .as_deref()
+                .and_then(runinator_models::auth::ResourceType::from_str_lossy),
+            source_resource_id: $row.get::<Option<Uuid>, _>("source_resource_id"),
             workflow_run_id: $row.get::<Option<Uuid>, _>("workflow_run_id"),
             workflow_node_id: $row.get::<Option<String>, _>("workflow_node_id"),
             channel: $row.get::<String, _>("channel"),
@@ -27,6 +33,7 @@ macro_rules! notification_policy_from_row {
     ($row:expr) => {{
         NotificationPolicy {
             id: $row.get::<Uuid, _>("id"),
+            org_id: $row.get::<Option<Uuid>, _>("org_id"),
             workflow_id: $row.get::<Option<Uuid>, _>("workflow_id"),
             name: $row.get::<String, _>("name"),
             // an unrecognized event/severity/channel means a newer writer or hand-edited row; fall

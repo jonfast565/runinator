@@ -128,7 +128,9 @@ async fn archive_marking_includes_stale_unread_notifications() {
         })
         .await
         .unwrap();
-    db.mark_notification_read(read.id).await.unwrap();
+    db.mark_notification_read(None, read.id, Uuid::now_v7())
+        .await
+        .unwrap();
     let old_timestamp = (Utc::now() - Duration::days(40)).timestamp();
     for id in [unread.id, read.id] {
         sqlx::query("UPDATE notifications SET created_at = ? WHERE id = ?")

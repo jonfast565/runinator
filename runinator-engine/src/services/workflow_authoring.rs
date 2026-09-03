@@ -40,6 +40,13 @@ impl<T> WorkflowAuthoring<T> {
     fn publish_changed(&self, org_id: Option<Uuid>) {
         emit_workflows_changed(&self.events, org_id);
     }
+
+    pub fn dependency_refs(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Vec<(runinator_models::auth::ResourceType, Uuid)> {
+        repository::workflow_dependency_refs(workflow)
+    }
 }
 
 impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + ScheduleStore>
@@ -56,6 +63,33 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
         T: ExecutionProfileStore,
     {
         let saved = repository::upsert_workflow(self.store.as_ref(), workflow, author).await?;
+        self.publish_changed(saved.org_id);
+        Ok(saved)
+    }
+
+    pub async fn prepare(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<WorkflowDefinition, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
+        repository::prepare_workflow_for_save(self.store.as_ref(), workflow).await
+    }
+
+    pub async fn save_prepared(
+        &self,
+        workflow: &WorkflowDefinition,
+        author: &RevisionAuthor,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        let known_subflows = workflow.id.into_iter().collect();
+        let saved = repository::upsert_prepared_workflow(
+            self.store.as_ref(),
+            workflow,
+            &known_subflows,
+            author,
+        )
+        .await?;
         self.publish_changed(saved.org_id);
         Ok(saved)
     }

@@ -1431,6 +1431,21 @@ where
         Ok(response.bytes().await?.to_vec())
     }
 
+    pub async fn download_workflow_file_for_run(
+        &self,
+        file_id: Uuid,
+        run_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let mut url = self
+            .build_url(&format!("{API_WORKFLOW_FILES}/{file_id}/content"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
     /// Resolve the current metadata for a named execution profile in this worker's organization.
     pub async fn resolve_execution_profile(&self, name: &str) -> Result<ExecutionProfile> {
         let mut url = self
@@ -1442,10 +1457,41 @@ where
         Ok(response.json::<ExecutionProfile>().await?)
     }
 
+    pub async fn resolve_execution_profile_for_run(
+        &self,
+        name: &str,
+        run_id: Uuid,
+    ) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/resolve"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("name", name)
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
     /// Fetch a profile by its stable workflow binding identity.
     pub async fn fetch_execution_profile(&self, id: Uuid) -> Result<ExecutionProfile> {
         self.get_json_path(&format!("{API_EXECUTION_PROFILES}/{id}"))
             .await
+    }
+
+    pub async fn fetch_execution_profile_for_run(
+        &self,
+        id: Uuid,
+        run_id: Uuid,
+    ) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
     }
 
     /// List the execution-profile definitions assigned to this agent's organization.
@@ -1544,6 +1590,24 @@ where
                 "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
             ))
             .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    pub async fn download_execution_profile_for_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        run_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let mut url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
+            ))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())
@@ -2110,9 +2174,16 @@ where
         Ok(response.json::<Value>().await?)
     }
 
-    pub async fn fetch_idempotency_key(&self, scope: &str, key: &str) -> Result<Option<Value>> {
+    pub async fn fetch_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+        consumer_run_id: Uuid,
+    ) -> Result<Option<Value>> {
         let url = self
-            .build_url(&format!("{API_IDEMPOTENCY_KEYS}?scope={scope}&key={key}"))
+            .build_url(&format!(
+                "{API_IDEMPOTENCY_KEYS}?scope={scope}&key={key}&consumer_run_id={consumer_run_id}"
+            ))
             .await?;
         let response = self.http_get(url.clone()).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -2128,12 +2199,14 @@ where
         &self,
         key: &str,
         owner_node_run_id: Uuid,
+        consumer_run_id: Uuid,
         lease_seconds: i64,
     ) -> Result<IdempotencyClaim> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS_CLAIM).await?;
         let response = self
             .http_post(url.clone())
             .json(&IdempotencyClaimRequest {
+                consumer_run_id,
                 scope: ACTION_IDEMPOTENCY_SCOPE.into(),
                 key: key.to_string(),
                 owner_node_run_id,
@@ -2151,12 +2224,14 @@ where
         &self,
         key: &str,
         owner_node_run_id: Uuid,
+        consumer_run_id: Uuid,
         result: Value,
     ) -> Result<bool> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS_COMPLETE).await?;
         let response = self
             .http_post(url.clone())
             .json(&IdempotencyCompleteRequest {
+                consumer_run_id,
                 scope: ACTION_IDEMPOTENCY_SCOPE.into(),
                 key: key.to_string(),
                 owner_node_run_id,
@@ -2173,11 +2248,13 @@ where
         &self,
         key: &str,
         owner_node_run_id: Uuid,
+        consumer_run_id: Uuid,
     ) -> Result<bool> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS_RELEASE).await?;
         let response = self
             .http_post(url.clone())
             .json(&IdempotencyReleaseRequest {
+                consumer_run_id,
                 scope: ACTION_IDEMPOTENCY_SCOPE.into(),
                 key: key.to_string(),
                 owner_node_run_id,
@@ -2192,12 +2269,18 @@ where
         &self,
         scope: &str,
         key: &str,
+        consumer_run_id: Uuid,
         result: Value,
     ) -> Result<Value> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS).await?;
         let response = self
             .http_post(url.clone())
-            .json(&json!({ "scope": scope, "key": key, "result": result }))
+            .json(&json!({
+                "consumer_run_id": consumer_run_id,
+                "scope": scope,
+                "key": key,
+                "result": result
+            }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
@@ -2222,6 +2305,19 @@ where
     /// this path so moving the human-readable scope/name alias cannot break a queued action.
     pub async fn fetch_credential_by_id(&self, id: Uuid) -> Result<String> {
         let url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("value")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
+    }
+
+    pub async fn fetch_credential_by_id_for_run(&self, id: Uuid, run_id: Uuid) -> Result<String> {
+        let mut url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_run_id", &run_id.to_string());
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;

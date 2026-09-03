@@ -3,6 +3,138 @@
 use super::*;
 
 #[tokio::test]
+async fn reusable_dependencies_follow_owner_membership_grants_and_tenant_boundaries() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-resource-dependencies-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let org_id = db
+        .create_org("Dependency Org".into(), "dependency-org".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let other_org_id = db
+        .create_org("Other Dependency Org".into(), "other-dependency-org".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let tenant = ScopeRef::new(
+        runinator_models::rbac::ScopeKind::Organization,
+        Some(org_id),
+    )
+    .unwrap();
+    let member = db
+        .create_user("dependency-member".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let outsider = db
+        .create_user("dependency-outsider".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    db.add_org_member(org_id, member, OrgRole::Member)
+        .await
+        .unwrap();
+    db.add_org_member(org_id, outsider, OrgRole::Member)
+        .await
+        .unwrap();
+    let team = db
+        .create_team("dependency-team".into(), tenant)
+        .await
+        .unwrap();
+    let team_id = team.id.unwrap();
+    db.add_team_member(team_id, member, TeamRole::Member)
+        .await
+        .unwrap();
+
+    let dependency_id = Uuid::now_v7();
+    let now = Utc::now();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::Setting,
+        resource_id: dependency_id,
+        tenant,
+        owner: ScopeRef::new(runinator_models::rbac::ScopeKind::Team, Some(team_id)).unwrap(),
+        created_by: Some(member),
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        runinator_store::resource_access::owner_can_consume(
+            &db,
+            ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(member)).unwrap(),
+            tenant,
+            ResourceType::Setting,
+            dependency_id,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        !runinator_store::resource_access::owner_can_consume(
+            &db,
+            ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(outsider)).unwrap(),
+            tenant,
+            ResourceType::Setting,
+            dependency_id,
+        )
+        .await
+        .unwrap()
+    );
+
+    db.create_grant(Grant {
+        id: None,
+        resource_type: ResourceType::Setting,
+        resource_id: dependency_id,
+        principal_type: PrincipalType::User,
+        principal_id: outsider,
+        permission: Permission::Run,
+        created_at: now,
+    })
+    .await
+    .unwrap();
+    assert!(
+        runinator_store::resource_access::owner_can_consume(
+            &db,
+            ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(outsider)).unwrap(),
+            tenant,
+            ResourceType::Setting,
+            dependency_id,
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        !runinator_store::resource_access::owner_can_consume(
+            &db,
+            ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(outsider)).unwrap(),
+            ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(other_org_id),
+            )
+            .unwrap(),
+            ResourceType::Setting,
+            dependency_id,
+        )
+        .await
+        .unwrap()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn users_grants_and_teams_round_trip() {
     let path = std::env::temp_dir().join(format!(
         "runinator-authz-{}.db",

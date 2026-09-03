@@ -163,6 +163,19 @@ pub async fn list_resource_grants(
 }
 
 #[tauri::command]
+pub async fn fetch_resource_owner(
+    state: State<'_, CommandCenterState>,
+    resource_type: String,
+    resource_id: Uuid,
+) -> CommandResult<Value> {
+    get_json(
+        &state,
+        &format!("authz/resources/{resource_type}/{resource_id}/owner"),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn create_resource_grant(
     state: State<'_, CommandCenterState>,
     resource_type: String,

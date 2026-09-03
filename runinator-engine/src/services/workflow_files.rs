@@ -14,7 +14,7 @@ use runinator_models::{
     errors::SendableError,
     files::{FileDescriptor, FileScope, StoredFile, validate_relative_path},
 };
-use runinator_store::roles::FileStore;
+use runinator_store::{RuntimeStore, roles::FileStore};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -198,6 +198,34 @@ impl<T: FileStore> WorkflowFiles<T> {
             created_at: Utc::now(),
         };
         self.store.insert_file(&file).await
+    }
+}
+
+impl<T: RuntimeStore> WorkflowFiles<T> {
+    /// Check whether a file belongs to, or was frozen as an input of, an admitted run.
+    pub async fn run_admitted_file(
+        &self,
+        run_id: Uuid,
+        file_id: Uuid,
+        file_run_id: Option<Uuid>,
+    ) -> Result<bool, SendableError> {
+        Ok(self
+            .store
+            .fetch_workflow_run(run_id)
+            .await?
+            .is_some_and(|run| {
+                file_run_id == Some(run_id)
+                    || runinator_models::files::referenced_file_ids(&run.parameters)
+                        .contains(&file_id)
+            }))
+    }
+
+    pub async fn workflow_id_for_run(&self, run_id: Uuid) -> Result<Option<Uuid>, SendableError> {
+        Ok(self
+            .store
+            .fetch_workflow_run(run_id)
+            .await?
+            .map(|run| run.workflow_id))
     }
 }
 

@@ -30,8 +30,10 @@ export const usePermissionsStore = defineStore("permissions", () => {
     selectedUserId: computed(() => state.value.selectedUserId),
     selectedTeamId: computed(() => state.value.selectedTeamId),
     selectedApiKeyId: computed(() => state.value.selectedApiKeyId),
-    selectedWorkflowId: computed(() => state.value.selectedWorkflowId),
-    workflowGrants: computed(() => state.value.workflowGrants),
+    selectedResourceType: computed(() => state.value.selectedResourceType),
+    selectedResourceId: computed(() => state.value.selectedResourceId),
+    accessResources: computed(() => state.value.accessResources),
+    resourceGrants: computed(() => state.value.resourceGrants),
     teamMembers: computed(() => state.value.teamMembers),
     userTeams: computed(() => state.value.userTeams),
     userDraft,
@@ -109,13 +111,16 @@ export const usePermissionsStore = defineStore("permissions", () => {
     addSelectedTeamMember: (userId: string) => permissionsService.addSelectedTeamMember(userId),
     removeSelectedTeamMember: (userId: string) =>
       permissionsService.removeSelectedTeamMember(userId),
-    selectWorkflow: async (workflowId: string | null) => {
-      Object.assign(grantDraft, await permissionsService.selectWorkflow(workflowId));
+    refreshAccessResources: (resourceType?: import("../../../core/services/permissions").AccessResourceType) =>
+      permissionsService.refreshAccessResources(resourceType),
+    selectResource: async (resourceId: string | null) => {
+      Object.assign(grantDraft, await permissionsService.selectResource(resourceId));
     },
-    refreshWorkflowGrants: () => permissionsService.refreshWorkflowGrants(),
-    saveGrantDraft: async () => {
-      Object.assign(grantDraft, await permissionsService.saveGrantDraft({ ...grantDraft }));
+    refreshResourceGrants: () => permissionsService.refreshResourceGrants(),
+    saveResourceGrant: async () => {
+      Object.assign(grantDraft, await permissionsService.saveResourceGrant({ ...grantDraft }));
     },
-    revokeGrant: (grantId: string | null) => permissionsService.revokeGrant(grantId),
+    revokeSelectedResourceGrant: (grantId: string | null) =>
+      permissionsService.revokeSelectedResourceGrant(grantId),
   };
 });

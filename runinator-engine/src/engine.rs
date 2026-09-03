@@ -5,9 +5,9 @@ use runinator_models::errors::SendableError;
 use runinator_store::{
     RuntimeStore,
     roles::{
-        DefinitionStore, DeliveryStore, IngressStore, NotificationStore, OrchestrationStore,
-        OrgStore, RbacStore, ReplicaStore, RunStore, ScheduleStore, SettingStore, WorkflowVmStore,
-        WorkspaceStore,
+        AuthStore, DefinitionStore, DeliveryStore, IngressStore, NotificationStore,
+        OrchestrationStore, OrgStore, RbacStore, ReplicaStore, RunStore, ScheduleStore,
+        SettingStore, WorkflowVmStore, WorkspaceStore,
     },
 };
 use tokio::sync::Notify;
@@ -70,6 +70,7 @@ pub trait BackgroundEngineStore:
     + SettingStore
     + DeliveryStore
     + RbacStore
+    + AuthStore
 {
 }
 
@@ -88,6 +89,7 @@ impl<T> BackgroundEngineStore for T where
         + SettingStore
         + DeliveryStore
         + RbacStore
+        + AuthStore
 {
 }
 

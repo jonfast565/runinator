@@ -308,6 +308,17 @@ async fn execute<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     }
 }
 
+async fn scoped_coordination_name<T: RuntimeStore>(
+    db: &T,
+    workflow_run_id: uuid::Uuid,
+    name: &str,
+) -> String {
+    match crate::repository::org_id_for_workflow_run(db, workflow_run_id).await {
+        Some(org_id) => format!("organization:{org_id}:{name}"),
+        None => format!("platform:{name}"),
+    }
+}
+
 async fn execute_mutex<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
@@ -315,6 +326,7 @@ async fn execute_mutex<T: RuntimeStore + WorkflowVmStore>(
     poll_interval: Duration,
     deadline: Option<DateTime<Utc>>,
 ) -> EffectResult {
+    let scoped_key = scoped_coordination_name(db, command.workflow_run_id, key).await;
     loop {
         if deadline.is_some_and(|deadline| Utc::now() >= deadline) {
             return EffectResult::status(
@@ -326,7 +338,7 @@ async fn execute_mutex<T: RuntimeStore + WorkflowVmStore>(
         }
         match db
             .claim_workflow_vm_mutex(
-                key.to_string(),
+                scoped_key.clone(),
                 command.workflow_run_id,
                 command.continuation_id,
                 chrono::Utc::now().timestamp(),
@@ -382,6 +394,7 @@ async fn execute_coordination<T: RuntimeStore + WorkflowVmStore>(
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
                 .unwrap_or("default");
+            let scoped_key = scoped_coordination_name(db, command.workflow_run_id, key).await;
             if input
                 .get("release")
                 .and_then(runinator_models::value::Value::as_bool)
@@ -390,7 +403,7 @@ async fn execute_coordination<T: RuntimeStore + WorkflowVmStore>(
                 return Outcome::Settle(
                     match db
                         .release_workflow_vm_mutex(
-                            key.to_string(),
+                            scoped_key,
                             command.workflow_run_id,
                             command.continuation_id,
                             chrono::Utc::now().timestamp(),
@@ -439,13 +452,14 @@ async fn execute_coordination<T: RuntimeStore + WorkflowVmStore>(
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
                 .unwrap_or("default");
+            let scoped_name = scoped_coordination_name(db, command.workflow_run_id, name).await;
             let window = input
                 .get("window_seconds")
                 .and_then(runinator_models::value::Value::as_i64)
                 .unwrap_or(60);
             return Outcome::Settle(
                 match db
-                    .claim_cooldown(name.to_string(), window, chrono::Utc::now().timestamp())
+                    .claim_cooldown(scoped_name, window, chrono::Utc::now().timestamp())
                     .await
                 {
                     Ok(remaining) => EffectResult::status(
@@ -489,10 +503,11 @@ async fn execute_barrier<T: RuntimeStore + WorkflowVmStore>(
     command: &runinator_comm::EffectCommand,
     input: &runinator_models::value::Value,
 ) -> EffectResult {
-    let name = input
+    let authored_name = input
         .get("name")
         .and_then(runinator_models::value::Value::as_str)
         .unwrap_or("default");
+    let name = scoped_coordination_name(db, command.workflow_run_id, authored_name).await;
     let expected = input
         .get("count")
         .and_then(runinator_models::value::Value::as_i64)
@@ -512,7 +527,7 @@ async fn execute_barrier<T: RuntimeStore + WorkflowVmStore>(
             record
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
-                == Some(name)
+                == Some(name.as_str())
         });
         let mut arrivals = existing
             .as_ref()
@@ -550,7 +565,7 @@ async fn execute_barrier<T: RuntimeStore + WorkflowVmStore>(
                 command,
                 WorkflowEffectStatus::Succeeded,
                 Some(runinator_models::json!({
-                    "name": name,
+                    "name": authored_name,
                     "arrivals": arrivals,
                     "count": arrivals.len(),
                 })),
@@ -568,10 +583,11 @@ async fn execute_record_coordination<T: RuntimeStore + WorkflowVmStore>(
     input: &runinator_models::value::Value,
 ) -> EffectResult {
     let record_type = format!("workflow_{kind}");
-    let name = input
+    let authored_name = input
         .get("name")
         .and_then(runinator_models::value::Value::as_str)
         .unwrap_or("default");
+    let name = scoped_coordination_name(db, command.workflow_run_id, authored_name).await;
     if kind == "circuit_breaker" {
         let records = match db
             .fetch_automation_records(record_type.clone(), None, None)
@@ -584,7 +600,7 @@ async fn execute_record_coordination<T: RuntimeStore + WorkflowVmStore>(
             record
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
-                == Some(name)
+                == Some(name.as_str())
         });
         let now = chrono::Utc::now().timestamp();
         let open = existing.as_ref().is_some_and(|record| {
@@ -605,7 +621,7 @@ async fn execute_record_coordination<T: RuntimeStore + WorkflowVmStore>(
         return EffectResult::status(
             command,
             WorkflowEffectStatus::Succeeded,
-            Some(runinator_models::json!({ "name": name, "open": open })),
+            Some(runinator_models::json!({ "name": authored_name, "open": open })),
             None,
         );
     }
@@ -629,7 +645,7 @@ async fn execute_record_coordination<T: RuntimeStore + WorkflowVmStore>(
             record
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
-                == Some(name)
+                == Some(name.as_str())
         });
         let now = chrono::Utc::now().timestamp();
         let used = existing
@@ -665,12 +681,17 @@ async fn execute_record_coordination<T: RuntimeStore + WorkflowVmStore>(
                     .await
             };
             return match stored {
-                Ok(record) => EffectResult::status(
-                    command,
-                    WorkflowEffectStatus::Succeeded,
-                    Some(record),
-                    None,
-                ),
+                Ok(mut record) => {
+                    if let Some(record) = record.as_object_mut() {
+                        record.insert("name".into(), authored_name.into());
+                    }
+                    EffectResult::status(
+                        command,
+                        WorkflowEffectStatus::Succeeded,
+                        Some(record),
+                        None,
+                    )
+                }
                 Err(error) => failed(command, error.to_string()),
             };
         }

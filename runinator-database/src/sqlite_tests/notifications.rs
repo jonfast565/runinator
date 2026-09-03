@@ -7,6 +7,93 @@ use runinator_models::{
     workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest},
 };
 
+fn inbox_notification(org_id: Uuid, dedupe_key: &str) -> NewNotification {
+    NewNotification {
+        org_id: Some(org_id),
+        source_resource_type: None,
+        source_resource_id: None,
+        workflow_run_id: None,
+        workflow_node_id: None,
+        channel: "in_app".into(),
+        severity: "info".into(),
+        title: "scoped inbox event".into(),
+        body: None,
+        target: None,
+        metadata: Value::Null,
+        dedupe_key: Some(dedupe_key.into()),
+    }
+}
+
+#[tokio::test]
+async fn notifications_dedupe_by_tenant_and_keep_personal_receipts() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-notification-receipts-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let first_org = Uuid::now_v7();
+    let second_org = Uuid::now_v7();
+    let first = db
+        .create_notification_if_absent(&inbox_notification(first_org, "same-alias"))
+        .await
+        .unwrap()
+        .unwrap();
+    let duplicate = db
+        .create_notification_if_absent(&inbox_notification(first_org, "same-alias"))
+        .await
+        .unwrap();
+    let other_tenant = db
+        .create_notification_if_absent(&inbox_notification(second_org, "same-alias"))
+        .await
+        .unwrap();
+    assert!(duplicate.is_none());
+    assert!(other_tenant.is_some());
+
+    let reader = Uuid::now_v7();
+    let other_reader = Uuid::now_v7();
+    db.mark_notification_read(Some(first_org), first.id, reader)
+        .await
+        .unwrap();
+    assert!(
+        db.fetch_notification(Some(first_org), first.id, reader)
+            .await
+            .unwrap()
+            .unwrap()
+            .read_at
+            .is_some()
+    );
+    assert!(
+        db.fetch_notification(Some(first_org), first.id, other_reader)
+            .await
+            .unwrap()
+            .unwrap()
+            .read_at
+            .is_none()
+    );
+
+    assert!(
+        db.delete_notification(Some(first_org), first.id, reader)
+            .await
+            .unwrap()
+    );
+    assert!(
+        db.fetch_notification(Some(first_org), first.id, reader)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.fetch_notification(Some(first_org), first.id, other_reader)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test]
 async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched() {
     let path = std::env::temp_dir().join(format!(
@@ -18,6 +105,9 @@ async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched
 
     let notification = db
         .create_notification(&NewNotification {
+            org_id: None,
+            source_resource_type: None,
+            source_resource_id: None,
             workflow_run_id: None,
             workflow_node_id: None,
             channel: "slack".into(),

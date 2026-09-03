@@ -14,6 +14,7 @@ use runinator_broker_core::UiEventPublisher;
 fn policy(channel: NotificationChannel, target: Option<&str>) -> NotificationPolicy {
     NotificationPolicy {
         id: Uuid::nil(),
+        org_id: None,
         workflow_id: None,
         name: "oncall".into(),
         event: NotificationEvent::RunFailed,
@@ -204,6 +205,7 @@ async fn repeated_secret_expiry_scans_emit_one_notification() {
     let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
     db.run_init_scripts(&Vec::new()).await.unwrap();
     let policy = NewNotificationPolicy {
+        org_id: None,
         workflow_id: None,
         name: "expiring secrets".into(),
         event: NotificationEvent::SecretExpiring,
@@ -245,7 +247,10 @@ async fn repeated_secret_expiry_scans_emit_one_notification() {
         .await
         .unwrap();
 
-    let notifications = db.fetch_notifications(false, 10).await.unwrap();
+    let notifications = db
+        .fetch_notifications(None, Uuid::now_v7(), false, 10)
+        .await
+        .unwrap();
     assert_eq!(notifications.len(), 1);
     assert!(
         !notifications[0]

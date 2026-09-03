@@ -5,6 +5,15 @@ import {
   createUser,
   deleteTeam,
   deleteUser,
+  fetchAdapters,
+  fetchConsoleSessions,
+  fetchCredentials,
+  fetchExecutionProfiles,
+  fetchFunctionPackages,
+  fetchNotificationPolicies,
+  fetchPipelines,
+  fetchWorkflowFiles,
+  fetchWorkflows,
   grantResourceAccess,
   listApiKeys,
   listTeamMembers,
@@ -38,6 +47,12 @@ import type { AppService } from "./app";
 
 export const permissionLevels: PermissionLevel[] = ["view", "run", "edit", "own"];
 
+export type AccessResourceType = "workflow" | "pipeline" | "function_package" | "console_session"
+  | "setting" | "execution_profile" | "orchestration_adapter" | "library_file"
+  | "notification_policy";
+
+export interface AccessResource { id: string; label: string }
+
 export interface UserDraft {
   username: string;
   email: string;
@@ -68,8 +83,10 @@ export interface PermissionsState {
   selectedUserId: string | null;
   selectedTeamId: string | null;
   selectedApiKeyId: string | null;
-  selectedWorkflowId: string | null;
-  workflowGrants: Grant[];
+  selectedResourceType: AccessResourceType;
+  selectedResourceId: string | null;
+  accessResources: AccessResource[];
+  resourceGrants: Grant[];
   teamMembers: User[];
   userTeams: Team[];
   revealedApiKey: CreateApiKeyResponse | null;
@@ -133,8 +150,10 @@ export function createPermissionsService(app: AppService) {
     selectedUserId: null,
     selectedTeamId: null,
     selectedApiKeyId: null,
-    selectedWorkflowId: null,
-    workflowGrants: [],
+    selectedResourceType: "workflow",
+    selectedResourceId: null,
+    accessResources: [],
+    resourceGrants: [],
     teamMembers: [],
     userTeams: [],
     revealedApiKey: null,
@@ -257,8 +276,10 @@ export function createPermissionsService(app: AppService) {
         selectedUserId: null,
         selectedTeamId: null,
         selectedApiKeyId: null,
-        selectedWorkflowId: null,
-        workflowGrants: [],
+        selectedResourceType: "workflow",
+        selectedResourceId: null,
+        accessResources: [],
+        resourceGrants: [],
         teamMembers: [],
         userTeams: [],
         revealedApiKey: null,
@@ -586,67 +607,73 @@ export function createPermissionsService(app: AppService) {
       ]);
       app.setStatus("Member removed.");
     },
-    async selectWorkflow(workflowId: string | null) {
+    async refreshAccessResources(resourceType: AccessResourceType = store.getState().selectedResourceType) {
+      const accessResources = await app.runOperation("Loading resource access", async () => {
+        switch (resourceType) {
+          case "workflow": return (await fetchWorkflows()).flatMap((item) => item.id ? [{ id: item.id, label: item.name }] : []);
+          case "pipeline": return (await fetchPipelines()).flatMap((item) => item.id ? [{ id: item.id, label: item.name }] : []);
+          case "function_package": return (await fetchFunctionPackages()).map((item) => ({ id: item.id, label: [item.namespace, item.name].filter(Boolean).join(".") }));
+          case "console_session": return (await fetchConsoleSessions()).map((item) => ({ id: item.id, label: item.name }));
+          case "setting": return (await fetchCredentials()).flatMap((item) => item.id ? [{ id: item.id, label: `${item.kind ?? "secret"}:${item.scope}/${item.name}` }] : []);
+          case "execution_profile": return (await fetchExecutionProfiles()).map((item) => ({ id: item.id, label: item.name }));
+          case "orchestration_adapter": return (await fetchAdapters()).map((item) => ({ id: item.id, label: item.name }));
+          case "library_file": return (await fetchWorkflowFiles()).filter((item) => item.scope === "library").map((item) => ({ id: item.descriptor.id, label: item.descriptor.path }));
+          case "notification_policy": return (await fetchNotificationPolicies()).filter((item) => !item.workflow_id).map((item) => ({ id: item.id, label: item.name }));
+        }
+      });
       store.setState((state) => ({
         ...state,
-        selectedWorkflowId: workflowId,
-        workflowGrants: workflowId ? state.workflowGrants : [],
+        selectedResourceType: resourceType,
+        selectedResourceId: accessResources.some((item) => item.id === state.selectedResourceId) ? state.selectedResourceId : null,
+        accessResources,
+        resourceGrants: [],
       }));
+    },
+    async selectResource(resourceId: string | null) {
+      store.setState((state) => ({ ...state, selectedResourceId: resourceId, resourceGrants: resourceId ? state.resourceGrants : [] }));
 
-      if (workflowId) {
-        await service.refreshWorkflowGrants();
+      if (resourceId) {
+        await service.refreshResourceGrants();
       }
 
       return blankGrantDraft();
     },
-    async refreshWorkflowGrants() {
-      const workflowId = store.getState().selectedWorkflowId;
+    async refreshResourceGrants() {
+      const { selectedResourceType, selectedResourceId } = store.getState();
 
-      if (!workflowId) {
-        store.setState((state) => ({ ...state, workflowGrants: [] }));
+      if (!selectedResourceId) {
+        store.setState((state) => ({ ...state, resourceGrants: [] }));
         return;
       }
 
-      const workflowGrants = (await app.runOperation("Loading workflow access", () =>
-        listResourceGrants("workflow", workflowId),
-      )) as unknown as Grant[];
-      store.setState((state) => ({ ...state, workflowGrants }));
+      const resourceGrants = (await app.runOperation("Loading resource access", () =>
+        listResourceGrants(selectedResourceType, selectedResourceId))) as unknown as Grant[];
+      store.setState((state) => ({ ...state, resourceGrants }));
     },
-    async saveGrantDraft(grantDraft: GrantDraft) {
-      const workflowId = store.getState().selectedWorkflowId;
+    async saveResourceGrant(grantDraft: GrantDraft) {
+      const { selectedResourceType, selectedResourceId } = store.getState();
 
-      if (!workflowId) {
-        app.setError("Select a workflow first.");
-        return blankGrantDraft();
-      }
-
-      if (!grantDraft.principal_id) {
-        app.setError("Select a user or team first.");
+      if (!selectedResourceId || !grantDraft.principal_id) {
         return grantDraft;
       }
 
-      await app.runOperation("Saving access", () =>
-        grantResourceAccess(
-          "workflow",
-          workflowId,
-          grantDraft.principal_type,
-          grantDraft.principal_id,
-          grantDraft.permission,
-        ),
-      );
-      await service.refreshWorkflowGrants();
+      await app.runOperation("Saving access", () => grantResourceAccess(
+        selectedResourceType, selectedResourceId, grantDraft.principal_type,
+        grantDraft.principal_id, grantDraft.permission,
+      ));
+      await service.refreshResourceGrants();
       app.setStatus("Access saved.");
       return blankGrantDraft();
     },
-    async revokeGrant(grantId: string | null) {
-      const workflowId = store.getState().selectedWorkflowId;
+    async revokeSelectedResourceGrant(grantId: string | null) {
+      const { selectedResourceType, selectedResourceId } = store.getState();
 
-      if (!workflowId || !grantId) {
+      if (!selectedResourceId || !grantId) {
         return;
       }
 
-      await app.runOperation("Revoking access", () => revokeResourceGrant("workflow", workflowId, grantId));
-      await service.refreshWorkflowGrants();
+      await app.runOperation("Revoking access", () => revokeResourceGrant(selectedResourceType, selectedResourceId, grantId));
+      await service.refreshResourceGrants();
       app.setStatus("Access revoked.");
     },
   };

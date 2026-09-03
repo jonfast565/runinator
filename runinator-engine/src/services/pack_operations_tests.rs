@@ -4,6 +4,7 @@ use runinator_blob_core::{BlobStore, FUNCTION_ARTIFACT_BUCKET, FsBlobStore, sha2
 use runinator_broker_core::{UiEventPublisher, in_memory::InMemoryBroker};
 use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
+    auth::ResourceType,
     bundles::{ExecutionProfileBundleEntry, SecretBundle, SecretBundleEntry, SettingsBundle},
     execution_profiles::{
         ExecutionProfileBinding, ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
@@ -26,7 +27,7 @@ use runinator_models::{
 };
 use runinator_store::{
     DatabaseImpl, RuntimeStore,
-    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore},
+    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore, RbacStore},
 };
 use uuid::Uuid;
 
@@ -152,6 +153,8 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
             Some(&pipelines),
             &functions,
             &[artifact],
+            None,
+            runinator_models::rbac::ScopeRef::PLATFORM,
             None,
             true,
         )
@@ -347,6 +350,7 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
         UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
     );
     let org_id = Uuid::new_v4();
+    let importing_user = Uuid::new_v4();
     db.upsert_catalog_item(crate::repository::provider_catalog_item(
         &ProviderMetadata {
             name: "github".into(),
@@ -361,6 +365,15 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
     .await
     .unwrap();
     let settings = SettingsBundle {
+        settings: vec![SecretBundleEntry {
+            scope: "acme.auth".into(),
+            name: "api_token".into(),
+            value: Value::String("secret".into()),
+            schema: None,
+            kind: SettingKind::Secret,
+            updated_at: None,
+            expires_at: None,
+        }],
         execution_profiles: vec![ExecutionProfileBundleEntry {
             configuration: ExecutionProfilePutRequest {
                 name: "github-default".into(),
@@ -422,6 +435,12 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
             &[],
             &[],
             Some(org_id),
+            runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::User,
+                Some(importing_user),
+            )
+            .unwrap(),
+            Some(importing_user),
             true,
         )
         .await
@@ -439,6 +458,35 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
         .and_then(|action| action.execution_profile.as_ref())
         .expect("bound profile");
     assert_eq!(binding.id(), profile_id);
+    let profile_owner = db
+        .fetch_resource_ownership(ResourceType::ExecutionProfile, profile_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(profile_owner.owner.id, Some(importing_user));
+    let setting_id = db
+        .fetch_setting(
+            Some(org_id),
+            SettingKind::Secret,
+            "acme.auth".into(),
+            "api_token".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let setting_owner = db
+        .fetch_resource_ownership(ResourceType::Setting, setting_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(setting_owner.owner.id, Some(importing_user));
+    let workflow_owner = db
+        .fetch_resource_ownership(ResourceType::Workflow, stored[0].id.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(workflow_owner.owner.id, Some(importing_user));
 
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_dir_all(blob_root);

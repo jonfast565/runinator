@@ -489,20 +489,69 @@ where
         let org_id = (tenant.kind == ScopeKind::Organization)
             .then_some(tenant.id)
             .flatten();
+        if matches!(
+            resource_type,
+            runinator_models::auth::ResourceType::OrchestrationAdapter
+                | runinator_models::auth::ResourceType::LibraryFile
+        ) && org_id.is_none()
+        {
+            return Err(invalid_rbac(
+                "this resource must remain organization scoped",
+            ));
+        }
+        if resource_type == runinator_models::auth::ResourceType::Setting && org_id.is_none() {
+            let row =
+                sqlx::query(&self.render("SELECT kind, scope, name FROM settings WHERE id = ?"))
+                    .bind(resource_id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .ok_or_else(|| invalid_rbac("setting not found"))?;
+            let kind: String = row.try_get("kind")?;
+            let scope: String = row.try_get("scope")?;
+            let name: String = row.try_get("name")?;
+            if !runinator_models::server_settings::is_reserved_server_setting(
+                runinator_models::settings::SettingKind::from_str_lossy(&kind),
+                &scope,
+                &name,
+            ) {
+                return Err(invalid_rbac(
+                    "ordinary settings must remain organization scoped",
+                ));
+            }
+        }
         let table = match resource_type {
             runinator_models::auth::ResourceType::Workflow => "workflows",
             runinator_models::auth::ResourceType::Pipeline => "pipelines",
             runinator_models::auth::ResourceType::FunctionPackage => "function_packages",
             runinator_models::auth::ResourceType::ConsoleSession => "console_sessions",
+            runinator_models::auth::ResourceType::Setting => "settings",
+            runinator_models::auth::ResourceType::ExecutionProfile => "execution_profiles",
+            runinator_models::auth::ResourceType::OrchestrationAdapter => "orchestration_adapters",
+            runinator_models::auth::ResourceType::LibraryFile => "workflow_files",
+            runinator_models::auth::ResourceType::NotificationPolicy => "notification_policies",
         };
-        sqlx::query(&self.render(&format!(
-            "UPDATE {table} SET org_id = ?, updated_at = ? WHERE id = ?"
-        )))
-        .bind(org_id)
-        .bind(now)
-        .bind(resource_id)
-        .execute(&mut *tx)
-        .await?;
+        if resource_type == runinator_models::auth::ResourceType::LibraryFile {
+            let owner_id = (owner.kind == ScopeKind::User)
+                .then_some(owner.id)
+                .flatten();
+            sqlx::query(&self.render(
+                "UPDATE workflow_files SET org_id = ?, owner_id = ? WHERE id = ? AND scope = 'library'",
+            ))
+            .bind(org_id)
+            .bind(owner_id)
+            .bind(resource_id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query(&self.render(&format!(
+                "UPDATE {table} SET org_id = ?, updated_at = ? WHERE id = ?"
+            )))
+            .bind(org_id)
+            .bind(now)
+            .bind(resource_id)
+            .execute(&mut *tx)
+            .await?;
+        }
 
         // `Own` is singular ownership authority, not a permanent share. Remove the old explicit
         // owner grant and materialize a matching one only for a user owner; scoped owners inherit

@@ -216,7 +216,7 @@ async fn process_provider_effect(
         return Ok(());
     };
 
-    let input = match resolve_secret_refs(&api_client, input).await {
+    let input = match resolve_secret_refs(&api_client, command.workflow_run_id, input).await {
         Ok(input) => input,
         Err(error) if is_transient_secret_error(&error) => {
             warn!(effect_id = %command.effect_id, %error, "returning provider effect after transient secret resolution failure");
@@ -265,11 +265,22 @@ async fn process_provider_effect(
     } else {
         input
     };
-    let input = crate::file_inputs::materialize(&api_client, command.effect_id, input).await?;
+    let input = crate::file_inputs::materialize(
+        &api_client,
+        command.effect_id,
+        command.workflow_run_id,
+        input,
+    )
+    .await?;
     let profile_lease = match execution_profile.as_ref() {
         Some(binding) => {
-            match crate::execution_profiles::materialize(&api_client, command.effect_id, binding)
-                .await
+            match crate::execution_profiles::materialize(
+                &api_client,
+                command.effect_id,
+                command.workflow_run_id,
+                binding,
+            )
+            .await
             {
                 Ok(lease) => Some(lease),
                 Err(error) => {
@@ -386,6 +397,7 @@ async fn process_provider_effect(
         .claim_idempotency_key(
             &command.idempotency_key,
             command.effect_id,
+            command.workflow_run_id,
             action.timeout_seconds,
         )
         .await
@@ -432,7 +444,11 @@ async fn process_provider_effect(
     else {
         if idempotency_acquired {
             let _ = api_client
-                .release_idempotency_key(&command.idempotency_key, command.effect_id)
+                .release_idempotency_key(
+                    &command.idempotency_key,
+                    command.effect_id,
+                    command.workflow_run_id,
+                )
                 .await;
         }
         warn!(effect_id = %command.effect_id, ?expires_at, "provider effect expired before provider invocation; skipping execution");
@@ -579,12 +595,21 @@ async fn process_provider_effect(
         };
         if let Ok(value) = Value::encode(&recorded) {
             let _ = api_client
-                .complete_idempotency_key(&command.idempotency_key, command.effect_id, value)
+                .complete_idempotency_key(
+                    &command.idempotency_key,
+                    command.effect_id,
+                    command.workflow_run_id,
+                    value,
+                )
                 .await;
         }
     } else {
         let _ = api_client
-            .release_idempotency_key(&command.idempotency_key, command.effect_id)
+            .release_idempotency_key(
+                &command.idempotency_key,
+                command.effect_id,
+                command.workflow_run_id,
+            )
             .await;
     }
     publish_terminal(

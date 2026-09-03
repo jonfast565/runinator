@@ -14,9 +14,9 @@ use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse, Adapte
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
 use runinator_engine::services::{AdapterOperations, PipelineOperations};
 use runinator_models::{
-    auth::AuthContext,
+    auth::{AuthContext, Permission, PrincipalKind, ResourceType},
     orchestration::{AdapterDefinition, AdapterKindMetadata, AdapterTransport},
-    rbac::Action,
+    rbac::{Action, ScopeKind, ScopeRef},
     web::TaskResponse,
 };
 use runinator_store::{
@@ -35,7 +35,7 @@ use runinator_ws_core::{
     openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body},
     responses::{api_error, bad_request, not_found},
 };
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 use uuid::Uuid;
 
 use super::pipelines::process_pipeline_ingress;
@@ -98,27 +98,78 @@ fn adapter_list_scope(
     }
 }
 
-async fn authorized_adapter<T: OrchestrationStore>(
+async fn authorized_adapter<T: OrchestrationStore + AuthorizationStore>(
+    db: &T,
     operations: &AdapterOperations<T>,
     ctx: &AuthContext,
     adapter_id: Uuid,
     action: Action,
 ) -> Result<AdapterDefinition, (StatusCode, Json<ApiResponse>)> {
-    if ctx.is_platform_admin() {
-        ctx.require_scope_action(action, ctx.selected_scope())?;
-        return match operations.fetch(adapter_id).await {
-            Ok(Some(adapter)) => Ok(adapter),
-            Ok(None) => Err(not_found("adapter not found")),
-            Err(error) => Err(api_error(error.to_string())),
-        };
-    }
-
-    let org_id = require_scope(ctx, action)?;
+    let permission = match action {
+        Action::View => Permission::View,
+        Action::Own => Permission::Own,
+        _ => Permission::Edit,
+    };
+    AuthzChecker::new(db, ctx)
+        .require_resource(ResourceType::OrchestrationAdapter, adapter_id, permission)
+        .await?;
     match operations.fetch(adapter_id).await {
-        Ok(Some(adapter)) if adapter.org_id == org_id => Ok(adapter),
+        Ok(Some(adapter)) => Ok(adapter),
         Ok(_) => Err(not_found("adapter not found")),
         Err(error) => Err(api_error(error.to_string())),
     }
+}
+
+async fn validate_adapter_secret_access<T: AuthorizationStore>(
+    db: &T,
+    ctx: Option<&AuthContext>,
+    adapter_id: Option<Uuid>,
+    org_id: Uuid,
+    bindings: &BTreeMap<String, Uuid>,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    let tenant = ScopeRef::new(ScopeKind::Organization, Some(org_id)).unwrap();
+    let prospective_owner = ctx
+        .and_then(|ctx| match (ctx.kind, ctx.principal_id) {
+            (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)),
+            _ => None,
+        })
+        .unwrap_or(tenant);
+    for setting_id in bindings.values().copied() {
+        if let Some(ctx) = ctx {
+            AuthzChecker::new(db, ctx)
+                .require_resource(ResourceType::Setting, setting_id, Permission::Run)
+                .await?;
+        }
+        let allowed = match adapter_id {
+            Some(adapter_id) => {
+                runinator_store::resource_access::resource_can_consume(
+                    db,
+                    ResourceType::OrchestrationAdapter,
+                    adapter_id,
+                    ResourceType::Setting,
+                    setting_id,
+                )
+                .await
+            }
+            None => {
+                runinator_store::resource_access::owner_can_consume(
+                    db,
+                    prospective_owner,
+                    tenant,
+                    ResourceType::Setting,
+                    setting_id,
+                )
+                .await
+            }
+        }
+        .map_err(|error| api_error(error.to_string()))?;
+        if !allowed {
+            return Err(bad_request(format!(
+                "adapter is not permitted to use setting {setting_id}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 async fn current_revision<T: OrchestrationStore>(
@@ -291,7 +342,7 @@ pub async fn kinds<T: RbacStore>(
     }
 }
 
-pub async fn list<T: OrchestrationStore + RbacStore>(
+pub async fn list<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -301,21 +352,32 @@ pub async fn list<T: OrchestrationStore + RbacStore>(
     };
     let operations = AdapterOperations::new(db.clone());
     match operations.list(org_id).await {
-        Ok(values) => (
-            StatusCode::OK,
-            Json(ApiResponse::OrchestrationAdapterList(values)),
-        ),
+        Ok(mut values) => {
+            if let Some(visible) = match AuthzChecker::new(db.as_ref(), &ctx)
+                .visible_resource_ids(ResourceType::OrchestrationAdapter)
+                .await
+            {
+                Ok(value) => value,
+                Err(reply) => return reply,
+            } {
+                values.retain(|value| visible.contains(&value.id));
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::OrchestrationAdapterList(values)),
+            )
+        }
         Err(error) => api_error(error.to_string()),
     }
 }
 
-pub async fn get_one<T: OrchestrationStore + RbacStore>(
+pub async fn get_one<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    match authorized_adapter(&operations, &ctx, id, Action::View).await {
+    match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
         Ok(value) => (
             StatusCode::OK,
             Json(ApiResponse::OrchestrationAdapter(value)),
@@ -324,13 +386,13 @@ pub async fn get_one<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn revisions<T: OrchestrationStore + RbacStore>(
+pub async fn revisions<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    if let Err(reply) = authorized_adapter(&operations, &ctx, id, Action::View).await {
+    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
         return reply;
     }
     match operations.revisions(id).await {
@@ -342,13 +404,13 @@ pub async fn revisions<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn poll_status<T: OrchestrationStore + RbacStore>(
+pub async fn poll_status<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let operations = AdapterOperations::new(db);
-    if let Err(reply) = authorized_adapter(&operations, &ctx, id, Action::View).await {
+    let operations = AdapterOperations::new(db.clone());
+    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
         return reply;
     }
     match operations.poll_status(id).await {
@@ -363,7 +425,7 @@ pub async fn poll_status<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn create<T: OrchestrationStore + RbacStore>(
+pub async fn create<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -386,6 +448,17 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
     };
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
+    }
+    if let Err(reply) = validate_adapter_secret_access(
+        db.as_ref(),
+        Some(&ctx),
+        None,
+        org_id,
+        &request.secret_bindings,
+    )
+    .await
+    {
+        return reply;
     }
     let now = Utc::now();
     let adapter_id = Uuid::now_v7();
@@ -410,6 +483,12 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
         .await
     {
         Ok((adapter, _)) => {
+            if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                .grant_resource_owner(ResourceType::OrchestrationAdapter, adapter.id)
+                .await
+            {
+                return reply;
+            }
             emit_adapter(&publisher, adapter.id, Some(org_id));
             (
                 StatusCode::CREATED,
@@ -420,7 +499,7 @@ pub async fn create<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn update<T: OrchestrationStore + RbacStore>(
+pub async fn update<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -428,7 +507,7 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     ValidatedJson(request): ValidatedJson<AdapterApplyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    let adapter = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
+    let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Edit).await {
         Ok(value) => value,
         Err(reply) => return reply,
     };
@@ -448,6 +527,17 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     };
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
+    }
+    if let Err(reply) = validate_adapter_secret_access(
+        db.as_ref(),
+        Some(&ctx),
+        Some(id),
+        adapter.org_id,
+        &request.secret_bindings,
+    )
+    .await
+    {
+        return reply;
     }
     if adapter.has_admitted_binding {
         let current = match current_revision(&operations, &adapter).await {
@@ -507,7 +597,7 @@ pub async fn update<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
+pub async fn set_enabled<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -515,10 +605,11 @@ pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
     ValidatedJson(request): ValidatedJson<AdapterEnableRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    let authorized = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
-        Ok(adapter) => adapter,
-        Err(reply) => return reply,
-    };
+    let authorized =
+        match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Edit).await {
+            Ok(adapter) => adapter,
+            Err(reply) => return reply,
+        };
     match operations
         .set_enabled(id, request.enabled, Utc::now())
         .await
@@ -535,14 +626,14 @@ pub async fn set_enabled<T: OrchestrationStore + RbacStore>(
     }
 }
 
-pub async fn remove<T: OrchestrationStore + RbacStore>(
+pub async fn remove<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    let adapter = match authorized_adapter(&operations, &ctx, id, Action::Own).await {
+    let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Own).await {
         Ok(adapter) => adapter,
         Err(reply) => return reply,
     };
@@ -565,7 +656,12 @@ pub async fn remove<T: OrchestrationStore + RbacStore>(
 }
 
 pub async fn test<
-    T: OrchestrationStore + RbacStore + SettingStore + RuntimeStore + DefinitionStore + IngressStore,
+    T: OrchestrationStore
+        + AuthorizationStore
+        + SettingStore
+        + RuntimeStore
+        + DefinitionStore
+        + IngressStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -573,7 +669,7 @@ pub async fn test<
     ValidatedJson(request): ValidatedJson<AdapterTestRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    let adapter = match authorized_adapter(&operations, &ctx, id, Action::Edit).await {
+    let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::Edit).await {
         Ok(value) => value,
         Err(reply) => return reply,
     };
@@ -582,6 +678,12 @@ pub async fn test<
         Err(reply) => return reply,
     };
     let bindings = request.secret_bindings.unwrap_or(revision.secret_bindings);
+    if let Err(reply) =
+        validate_adapter_secret_access(db.as_ref(), Some(&ctx), Some(id), adapter.org_id, &bindings)
+            .await
+    {
+        return reply;
+    }
     let secrets = match operations.resolve_secrets(adapter.org_id, &bindings).await {
         Ok(value) => value,
         Err(error) => return bad_request(error),
@@ -702,6 +804,7 @@ pub async fn reload<T: RbacStore>(
 /// before any event is allowed to reach durable ingress.
 pub async fn webhook<
     T: OrchestrationStore
+        + AuthorizationStore
         + SettingStore
         + RuntimeStore
         + DefinitionStore
@@ -744,6 +847,17 @@ pub async fn webhook<
     };
     if revision.transport != AdapterTransport::Webhook {
         return not_found("adapter is configured for polling, not webhook delivery");
+    }
+    if let Err(reply) = validate_adapter_secret_access(
+        db.as_ref(),
+        None,
+        Some(adapter.id),
+        adapter.org_id,
+        &revision.secret_bindings,
+    )
+    .await
+    {
+        return reply;
     }
     let secrets = match operations
         .resolve_secrets(adapter.org_id, &revision.secret_bindings)
@@ -799,6 +913,19 @@ pub async fn webhook<
             Ok(value) => value,
             Err(error) => return bad_request(error),
         };
+        match runinator_store::resource_access::resource_can_consume(
+            db.as_ref(),
+            ResourceType::Pipeline,
+            pipeline_id,
+            ResourceType::OrchestrationAdapter,
+            adapter.id,
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => return bad_request("pipeline is not permitted to use this adapter"),
+            Err(error) => return api_error(error.to_string()),
+        }
         let reply = process_pipeline_ingress(
             pipelines.clone(),
             pipeline_id,
@@ -836,7 +963,7 @@ pub async fn webhook<
 pub fn routes<T>(pool: Arc<T>, publisher: UiEventPublisher) -> axum::Router
 where
     T: OrchestrationStore
-        + RbacStore
+        + AuthorizationStore
         + SettingStore
         + RuntimeStore
         + DefinitionStore

@@ -38,10 +38,13 @@ impl<T> NotificationOperations<T> {
 impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
     pub async fn list(
         &self,
+        org_id: Option<Uuid>,
+        user_id: Uuid,
         unread_only: bool,
         limit: i64,
     ) -> Result<Vec<Notification>, SendableError> {
-        repository::fetch_notifications(self.store.as_ref(), unread_only, limit).await
+        repository::fetch_notifications(self.store.as_ref(), org_id, user_id, unread_only, limit)
+            .await
     }
 
     pub async fn create(
@@ -61,37 +64,66 @@ impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
         Ok(created.notification)
     }
 
+    pub async fn fetch(
+        &self,
+        org_id: Option<Uuid>,
+        notification_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<Notification>, SendableError> {
+        repository::fetch_notification(self.store.as_ref(), org_id, notification_id, user_id).await
+    }
+
     pub async fn mark_read(
         &self,
+        org_id: Option<Uuid>,
         notification_id: Uuid,
+        user_id: Uuid,
     ) -> Result<Option<Notification>, SendableError> {
-        let notification =
-            repository::mark_notification_read(self.store.as_ref(), notification_id).await?;
+        let notification = repository::mark_notification_read(
+            self.store.as_ref(),
+            org_id,
+            notification_id,
+            user_id,
+        )
+        .await?;
         if notification.is_some() {
             self.changed();
         }
         Ok(notification)
     }
 
-    pub async fn delete(&self, notification_id: Uuid) -> Result<bool, SendableError> {
-        let deleted = repository::delete_notification(self.store.as_ref(), notification_id).await?;
+    pub async fn delete(
+        &self,
+        org_id: Option<Uuid>,
+        notification_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let deleted =
+            repository::delete_notification(self.store.as_ref(), org_id, notification_id, user_id)
+                .await?;
         if deleted {
             self.changed();
         }
         Ok(deleted)
     }
 
-    pub async fn mark_all_read(&self) -> Result<u64, SendableError> {
-        let count = repository::mark_all_notifications_read(self.store.as_ref()).await?;
+    pub async fn mark_all_read(
+        &self,
+        org_id: Option<Uuid>,
+        user_id: Uuid,
+    ) -> Result<u64, SendableError> {
+        let count =
+            repository::mark_all_notifications_read(self.store.as_ref(), org_id, user_id).await?;
         self.changed();
         Ok(count)
     }
 
     pub async fn list_policies(
         &self,
+        org_id: Option<Uuid>,
         workflow_id: Option<Uuid>,
     ) -> Result<Vec<NotificationPolicy>, SendableError> {
-        repository::fetch_notification_policies(self.store.as_ref(), workflow_id).await
+        repository::fetch_notification_policies(self.store.as_ref(), org_id, workflow_id).await
     }
 
     pub async fn fetch_policy(

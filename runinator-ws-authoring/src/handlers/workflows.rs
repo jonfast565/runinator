@@ -7,7 +7,8 @@ use axum::{
     http::StatusCode,
 };
 use runinator_models::{
-    auth::{AuthContext, Permission},
+    auth::{AuthContext, Permission, PrincipalKind, ResourceType},
+    rbac::{ScopeKind, ScopeRef},
     value::Value,
     workflows::{WorkflowDefinition, WorkflowDuplicateRequest, WorkflowSimulateRequest},
 };
@@ -74,7 +75,62 @@ pub async fn upsert_workflow<
     if let Some(error) = workflow_identity_error(&workflow, &workflows, strict_identity) {
         return bad_request(error);
     }
-    match authoring.save(&workflow, &ctx.revision_author()).await {
+    let workflow = match authoring.prepare(&workflow).await {
+        Ok(workflow) => workflow,
+        Err(err) => return api_error(err.to_string()),
+    };
+    let tenant = ctx
+        .org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    let prospective_owner = match (ctx.kind, ctx.principal_id) {
+        (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
+        _ => tenant,
+    };
+    let workflow_id = workflow
+        .id
+        .expect("HTTP workflow writes assign an id before preparation");
+    for (dependency_type, dependency_id) in authoring.dependency_refs(&workflow) {
+        if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(dependency_type, dependency_id, Permission::Run)
+            .await
+        {
+            return reply;
+        }
+        let permitted = if is_update {
+            runinator_store::resource_access::resource_can_consume(
+                db.as_ref(),
+                ResourceType::Workflow,
+                workflow_id,
+                dependency_type,
+                dependency_id,
+            )
+            .await
+        } else {
+            runinator_store::resource_access::owner_can_consume(
+                db.as_ref(),
+                prospective_owner,
+                tenant,
+                dependency_type,
+                dependency_id,
+            )
+            .await
+        };
+        match permitted {
+            Ok(true) => {}
+            Ok(false) => {
+                return bad_request(format!(
+                    "workflow is not permitted to use {} {dependency_id}",
+                    dependency_type.as_str()
+                ));
+            }
+            Err(err) => return api_error(err.to_string()),
+        }
+    }
+    match authoring
+        .save_prepared(&workflow, &ctx.revision_author())
+        .await
+    {
         Ok(workflow) => {
             if !is_update
                 && let Some(id) = workflow.id

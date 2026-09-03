@@ -1773,10 +1773,15 @@ async fn assert_ingress_admission_claim<T: DatabaseImpl>(db: &T, workflow_id: Uu
 
 async fn assert_notifications<T: DatabaseImpl>(db: &T) {
     let note = db.create_notification(&Default::default()).await.unwrap();
-    let read = db.mark_notification_read(note.id).await.unwrap().unwrap();
+    let user_id = Uuid::now_v7();
+    let read = db
+        .mark_notification_read(None, note.id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(read.read_at.is_some());
     assert!(
-        db.mark_notification_read(Uuid::nil())
+        db.mark_notification_read(None, Uuid::nil(), user_id)
             .await
             .unwrap()
             .is_none(),

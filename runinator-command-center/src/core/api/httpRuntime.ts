@@ -121,6 +121,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) =>
       `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
   },
+  fetch_resource_owner: {
+    method: "GET",
+    path: (args) =>
+      `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/owner`,
+  },
   create_resource_grant: {
     method: "POST",
     path: (args) =>

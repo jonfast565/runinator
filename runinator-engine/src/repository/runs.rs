@@ -2,6 +2,7 @@ use super::support;
 use super::*;
 use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_state::WorkflowExecutionState;
+use runinator_models::{auth::ResourceType, settings::SettingBinding};
 use uuid::Uuid;
 
 use runinator_store::roles::NewWorkflowVmRun;
@@ -98,6 +99,62 @@ pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
         instruction_pointer,
     })
     .await
+}
+
+pub async fn validate_workflow_dependency_access<
+    T: RuntimeStore + runinator_store::roles::AuthStore + runinator_store::roles::RbacStore,
+>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<(), SendableError> {
+    let Some(workflow_id) = workflow.id else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow has no durable identity",
+        )));
+    };
+    for (dependency_type, dependency_id) in workflow_dependency_refs(workflow) {
+        if !runinator_store::resource_access::resource_can_consume(
+            db,
+            ResourceType::Workflow,
+            workflow_id,
+            dependency_type,
+            dependency_id,
+        )
+        .await?
+        {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "workflow {workflow_id} is not permitted to use {} {dependency_id}",
+                    dependency_type.as_str()
+                ),
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub fn workflow_dependency_refs(workflow: &WorkflowDefinition) -> Vec<(ResourceType, Uuid)> {
+    let settings = workflow
+        .definition
+        .metadata
+        .pointer("/artifact_refs/settings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| serde_json::from_value::<SettingBinding>(value.clone().into()).ok())
+        .filter(|binding| !binding.reference.id.is_nil())
+        .map(|binding| (ResourceType::Setting, binding.reference.id));
+    let profiles = workflow
+        .definition
+        .nodes
+        .iter()
+        .flat_map(|node| node.action.iter().chain(node.compensation.iter()))
+        .filter_map(|action| action.execution_profile.as_ref())
+        .filter(|binding| !binding.id().is_nil())
+        .map(|binding| (ResourceType::ExecutionProfile, binding.id()));
+    settings.chain(profiles).collect()
 }
 
 pub async fn fetch_workflow_runs_by_status<T: RunStore>(

@@ -7,8 +7,8 @@ use axum::{
     http::StatusCode,
 };
 use runinator_models::{
-    auth::{AuthContext, Permission},
-    notifications::{NewNotification, NewNotificationPolicy},
+    auth::{AuthContext, Permission, ResourceType},
+    notifications::{NewNotification, NewNotificationPolicy, Notification},
     web::TaskResponse,
 };
 use runinator_store::{RuntimeStore, roles::NotificationStore};
@@ -18,10 +18,39 @@ use runinator_engine::services::NotificationOperations;
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
-use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 type Reply = (StatusCode, Json<ApiResponse>);
+
+async fn notification_visible<T: AuthorizationStore>(
+    db: &T,
+    ctx: &AuthContext,
+    notification: &Notification,
+) -> Result<bool, Reply> {
+    match (
+        notification.source_resource_type,
+        notification.source_resource_id,
+    ) {
+        (Some(resource_type), Some(resource_id)) => Ok(AuthzChecker::new(db, ctx)
+            .resource_permission(resource_type, resource_id)
+            .await?
+            .is_some_and(|permission| permission.allows(Permission::View))),
+        (None, None) => {
+            Ok(ctx.authorize_scope(runinator_models::rbac::Action::View, ctx.selected_scope()))
+        }
+        _ => Ok(false),
+    }
+}
+
+fn forbidden(message: &str) -> Reply {
+    (
+        StatusCode::FORBIDDEN,
+        Json(ApiResponse::ApiError(
+            runinator_ws_core::models::ApiError::new(message),
+        )),
+    )
+}
 
 #[derive(Deserialize, Default)]
 pub struct NotificationsListQuery {
@@ -32,6 +61,7 @@ pub struct NotificationsListQuery {
 }
 
 pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + NotificationStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationsListQuery>,
@@ -43,11 +73,22 @@ pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + Notificat
     }
     let unread_only = query.unread.unwrap_or(false);
     let limit = query.limit.unwrap_or(200);
-    match service.list(unread_only, limit).await {
-        Ok(notifications) => (
-            StatusCode::OK,
-            Json(ApiResponse::NotificationList(notifications)),
-        ),
+    let Some(user_id) = ctx.principal_id else {
+        return forbidden("notifications require a user principal");
+    };
+    match service.list(ctx.org_id, user_id, unread_only, 1000).await {
+        Ok(notifications) => {
+            let mut visible = Vec::with_capacity(notifications.len());
+            for notification in notifications {
+                match notification_visible(db.as_ref(), &ctx, &notification).await {
+                    Ok(true) => visible.push(notification),
+                    Ok(false) => {}
+                    Err(reply) => return reply,
+                }
+            }
+            visible.truncate(limit.clamp(1, 1000) as usize);
+            (StatusCode::OK, Json(ApiResponse::NotificationList(visible)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -70,17 +111,34 @@ pub async fn create_notification<T: AuthorizationStore + RuntimeStore + Notifica
 }
 
 pub async fn mark_notification_read<T: AuthorizationStore + RuntimeStore + NotificationStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::NotificationsManage,
-        ctx.selected_scope(),
-    ) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
         return reply;
     }
-    match service.mark_read(notification_id).await {
+    let Some(user_id) = ctx.principal_id else {
+        return forbidden("notifications require a user principal");
+    };
+    let notification = match service.fetch(ctx.org_id, notification_id, user_id).await {
+        Ok(Some(notification)) => notification,
+        Ok(None) => return not_found(format!("Notification {notification_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if !matches!(
+        notification_visible(db.as_ref(), &ctx, &notification).await,
+        Ok(true)
+    ) {
+        return not_found(format!("Notification {notification_id} not found"));
+    }
+    match service
+        .mark_read(ctx.org_id, notification_id, user_id)
+        .await
+    {
         Ok(Some(notification)) => (
             StatusCode::OK,
             Json(ApiResponse::Notification(notification)),
@@ -91,22 +149,36 @@ pub async fn mark_notification_read<T: AuthorizationStore + RuntimeStore + Notif
 }
 
 pub async fn delete_notification<T: AuthorizationStore + RuntimeStore + NotificationStore>(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::NotificationsManage,
-        ctx.selected_scope(),
-    ) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
         return reply;
     }
-    match service.delete(notification_id).await {
+    let Some(user_id) = ctx.principal_id else {
+        return forbidden("notifications require a user principal");
+    };
+    let notification = match service.fetch(ctx.org_id, notification_id, user_id).await {
+        Ok(Some(notification)) => notification,
+        Ok(None) => return not_found(format!("Notification {notification_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if !matches!(
+        notification_visible(db.as_ref(), &ctx, &notification).await,
+        Ok(true)
+    ) {
+        return not_found(format!("Notification {notification_id} not found"));
+    }
+    match service.delete(ctx.org_id, notification_id, user_id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {
                 success: true,
-                message: "Notification deleted".to_string(),
+                message: "Notification dismissed from my inbox".to_string(),
             })),
         ),
         Ok(false) => not_found(format!("Notification {notification_id} not found")),
@@ -136,17 +208,41 @@ pub async fn list_notification_policies<
         {
             return reply;
         }
-    } else if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::View,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    } else if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
         return reply;
     }
-    match service.list_policies(query.workflow_id).await {
-        Ok(policies) => (
-            StatusCode::OK,
-            Json(ApiResponse::NotificationPolicyList(policies)),
-        ),
+    match service.list_policies(ctx.org_id, query.workflow_id).await {
+        Ok(mut policies) => {
+            let mut visible = Vec::with_capacity(policies.len());
+            for policy in policies.drain(..) {
+                let permission = match policy.workflow_id {
+                    Some(workflow_id) => {
+                        AuthzChecker::new(db.as_ref(), &ctx)
+                            .resource_permission(ResourceType::Workflow, workflow_id)
+                            .await
+                    }
+                    None if policy.org_id == ctx.org_id => {
+                        AuthzChecker::new(db.as_ref(), &ctx)
+                            .resource_permission(ResourceType::NotificationPolicy, policy.id)
+                            .await
+                    }
+                    None => continue,
+                };
+                match permission {
+                    Ok(Some(permission)) if permission.allows(Permission::View) => {
+                        visible.push(policy)
+                    }
+                    Ok(_) => {}
+                    Err(reply) => return reply,
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::NotificationPolicyList(visible)),
+            )
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -157,18 +253,31 @@ pub async fn create_notification_policy<
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
-    ValidatedJson(policy): ValidatedJson<NewNotificationPolicy>,
+    ValidatedJson(mut policy): ValidatedJson<NewNotificationPolicy>,
 ) -> Reply {
+    policy.org_id = ctx.org_id;
     if let Err(reply) =
         require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
     {
         return reply;
     }
     match service.create_policy(&policy).await {
-        Ok(policy) => (
-            StatusCode::CREATED,
-            Json(ApiResponse::NotificationPolicy(policy)),
-        ),
+        Ok(policy) => {
+            if policy.workflow_id.is_none()
+                && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                    .grant_resource_owner(
+                        runinator_models::auth::ResourceType::NotificationPolicy,
+                        policy.id,
+                    )
+                    .await
+            {
+                return reply;
+            }
+            (
+                StatusCode::CREATED,
+                Json(ApiResponse::NotificationPolicy(policy)),
+            )
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -180,17 +289,37 @@ pub async fn update_notification_policy<
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
-    ValidatedJson(policy): ValidatedJson<NewNotificationPolicy>,
+    ValidatedJson(mut policy): ValidatedJson<NewNotificationPolicy>,
 ) -> Reply {
     let current = match service.fetch_policy(policy_id).await {
         Ok(Some(policy)) => policy,
         Ok(None) => return not_found(format!("Notification policy {policy_id} not found")),
         Err(err) => return api_error(err.to_string()),
     };
-    if let Err(reply) =
-        require_policy_target(db.as_ref(), &ctx, current.workflow_id, Permission::Edit).await
-    {
+    policy.org_id = current.org_id;
+    let current_access = match current.workflow_id {
+        Some(workflow_id) => {
+            AuthzChecker::new(db.as_ref(), &ctx)
+                .require_workflow(workflow_id, Permission::Edit)
+                .await
+        }
+        None => {
+            AuthzChecker::new(db.as_ref(), &ctx)
+                .require_resource(
+                    ResourceType::NotificationPolicy,
+                    policy_id,
+                    Permission::Edit,
+                )
+                .await
+        }
+    };
+    if let Err(reply) = current_access {
         return reply;
+    }
+    if policy.workflow_id != current.workflow_id {
+        return bad_request(
+            "a notification policy cannot switch between standalone and workflow-specific scope",
+        );
     }
     if let Err(reply) =
         require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
@@ -220,9 +349,19 @@ pub async fn delete_notification_policy<
         Ok(None) => return not_found(format!("Notification policy {policy_id} not found")),
         Err(err) => return api_error(err.to_string()),
     };
-    if let Err(reply) =
-        require_policy_target(db.as_ref(), &ctx, current.workflow_id, Permission::Own).await
-    {
+    let access = match current.workflow_id {
+        Some(workflow_id) => {
+            AuthzChecker::new(db.as_ref(), &ctx)
+                .require_workflow(workflow_id, Permission::Own)
+                .await
+        }
+        None => {
+            AuthzChecker::new(db.as_ref(), &ctx)
+                .require_resource(ResourceType::NotificationPolicy, policy_id, Permission::Own)
+                .await
+        }
+    };
+    if let Err(reply) = access {
         return reply;
     }
     match service.delete_policy(policy_id).await {
@@ -252,7 +391,7 @@ async fn require_policy_target<T: AuthorizationStore + RuntimeStore + Notificati
         }
         None => ctx.require_scope_action(
             runinator_models::rbac::Action::NotificationsManage,
-            runinator_models::rbac::ScopeRef::PLATFORM,
+            ctx.selected_scope(),
         ),
     }
 }
@@ -262,9 +401,25 @@ async fn require_policy_target<T: AuthorizationStore + RuntimeStore + Notificati
 pub async fn list_notification_deliveries<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    let Some(user_id) = ctx.principal_id else {
+        return forbidden("notifications require a user principal");
+    };
+    let notification = match service.fetch(ctx.org_id, notification_id, user_id).await {
+        Ok(Some(notification)) => notification,
+        Ok(None) => return not_found(format!("Notification {notification_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if !matches!(
+        notification_visible(db.as_ref(), &ctx, &notification).await,
+        Ok(true)
+    ) {
+        return not_found(format!("Notification {notification_id} not found"));
+    }
     match service.deliveries(notification_id).await {
         Ok(deliveries) => (
             StatusCode::OK,
@@ -277,18 +432,44 @@ pub async fn list_notification_deliveries<
 pub async fn mark_all_notifications_read<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
+    Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<NotificationOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match service.mark_all_read().await {
-        Ok(count) => (
-            StatusCode::OK,
-            Json(ApiResponse::TaskResponse(TaskResponse {
-                success: true,
-                message: format!("Marked {count} notification(s) as read"),
-            })),
-        ),
-        Err(err) => api_error(err.to_string()),
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
+        return reply;
     }
+    let Some(user_id) = ctx.principal_id else {
+        return forbidden("notifications require a user principal");
+    };
+    let notifications = match service.list(ctx.org_id, user_id, true, 1000).await {
+        Ok(notifications) => notifications,
+        Err(err) => return api_error(err.to_string()),
+    };
+    let mut count = 0;
+    for notification in notifications {
+        match notification_visible(db.as_ref(), &ctx, &notification).await {
+            Ok(true) => match service
+                .mark_read(ctx.org_id, notification.id, user_id)
+                .await
+            {
+                Ok(Some(_)) => count += 1,
+                Ok(None) => {}
+                Err(err) => return api_error(err.to_string()),
+            },
+            Ok(false) => {}
+            Err(reply) => return reply,
+        }
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::TaskResponse(TaskResponse {
+            success: true,
+            message: format!("Marked {count} notification(s) as read"),
+        })),
+    )
 }
 
 /// the `notifications` endpoints.

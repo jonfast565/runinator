@@ -5,6 +5,9 @@ export type NotificationSeverity = "info" | "success" | "warning" | "error";
 
 export interface Notification {
   id: string;
+  org_id?: string | null;
+  source_resource_type?: string | null;
+  source_resource_id?: string | null;
   workflow_run_id?: string | null;
   workflow_node_id?: string | null;
   channel: NotificationChannel;
@@ -36,6 +39,7 @@ export type NotificationPolicySeverity = "info" | "warning" | "critical";
 
 export interface NotificationPolicy {
   id: string;
+  org_id?: string | null;
   // null makes the policy global: it covers every workflow.
   workflow_id?: string | null;
   name: string;
