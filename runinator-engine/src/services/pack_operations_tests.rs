@@ -197,6 +197,73 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
     let _ = std::fs::remove_dir_all(blob_root);
 }
 
+#[tokio::test]
+async fn portable_pack_preserves_an_unresolved_environment_secret() {
+    let (db, db_path) = test_db().await;
+    let blob_root = std::env::temp_dir().join(format!("runinator-pack-blobs-{}", Uuid::now_v7()));
+    let service = PackOperations::new(
+        db,
+        Arc::new(FsBlobStore::open(&blob_root).await.unwrap()),
+        UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
+    );
+    let org_id = Uuid::now_v7();
+    let importing_user = Uuid::now_v7();
+    let workflow = WorkflowDefinition {
+        id: None,
+        name: "environment secret".into(),
+        key: Some("environment-secret".into()),
+        namespace: Some("portable".into()),
+        org_id: Some(org_id),
+        version: SemVer::new(1, 0, 0),
+        enabled: true,
+        input_type: RuninatorType::Any,
+        definition: WorkflowGraph::from_value(json!({
+            "start": "start",
+            "metadata": { "environment_secret": "secret://github/token" },
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
+                { "id": "end", "kind": "end" }
+            ]
+        }))
+        .unwrap(),
+        created_at: None,
+        updated_at: None,
+    };
+
+    let result = service
+        .import_compiled_pack(
+            WorkflowBundle {
+                workflows: vec![workflow],
+                triggers: Vec::new(),
+            },
+            None,
+            None,
+            &[],
+            &[],
+            Some(org_id),
+            runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::User,
+                Some(importing_user),
+            )
+            .unwrap(),
+            Some(importing_user),
+            true,
+        )
+        .await
+        .expect("portable alias remains importable");
+
+    let reference = result.workflows.workflows[0]
+        .definition
+        .metadata
+        .pointer("/artifact_refs/settings/0/reference/id")
+        .and_then(Value::as_str)
+        .expect("unresolved setting reference");
+    assert_eq!(reference, Uuid::nil().to_string());
+
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_dir_all(blob_root);
+}
+
 fn workflow_with_binding(binding: FunctionBinding) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,

@@ -50,7 +50,7 @@ pub async fn prepare_workflow_for_save<
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowDefinition, SendableError> {
-    let workflow = prepare_workflows_for_save(db, vec![workflow.clone()])
+    let workflow = prepare_workflows_for_save(db, vec![workflow.clone()], false)
         .await?
         .pop()
         .expect("one workflow was supplied");
@@ -478,7 +478,10 @@ pub async fn import_workflow_bundle_with<
         .iter()
         .filter_map(|workflow| workflow.id)
         .collect();
-    let workflows = prepare_workflows_for_save(db, bundle.workflows).await?;
+    // Portable packs may intentionally reference organization-local settings or profiles that
+    // are provisioned after the pack. Preserve those authored aliases; run admission remains the
+    // enforcement point and refuses execution until they resolve and are authorized.
+    let workflows = prepare_workflows_for_save(db, bundle.workflows, true).await?;
     let known_subflows: HashSet<Uuid> = workflows
         .iter()
         .filter_map(|workflow| workflow.id)
@@ -545,6 +548,7 @@ pub async fn import_workflow_bundle_with<
 async fn prepare_workflows_for_save<T: DefinitionStore + RuntimeStore + ExecutionProfileStore>(
     db: &T,
     mut incoming: Vec<WorkflowDefinition>,
+    allow_unresolved_dependencies: bool,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
     let stored = db.fetch_workflows().await?;
     let mut stored_identities = HashMap::<String, Vec<Uuid>>::new();
@@ -606,14 +610,15 @@ async fn prepare_workflows_for_save<T: DefinitionStore + RuntimeStore + Executio
     }
     let mut prepared = prepare_workflows_against(incoming, index)?;
     resolve_requested_subflow_revisions(db, &mut prepared).await?;
-    resolve_setting_bindings(db, &mut prepared).await?;
-    resolve_execution_profile_bindings(db, &mut prepared).await?;
+    resolve_setting_bindings(db, &mut prepared, allow_unresolved_dependencies).await?;
+    resolve_execution_profile_bindings(db, &mut prepared, allow_unresolved_dependencies).await?;
     Ok(prepared)
 }
 
 async fn resolve_execution_profile_bindings<T: DefinitionStore + ExecutionProfileStore>(
     db: &T,
     workflows: &mut [WorkflowDefinition],
+    allow_unresolved: bool,
 ) -> Result<(), SendableError> {
     let providers = provider_metadata_from_items(
         fetch_catalog_items(db, Some("provider_metadata".into())).await?,
@@ -634,7 +639,7 @@ async fn resolve_execution_profile_bindings<T: DefinitionStore + ExecutionProfil
                         .await?
                 };
                 let Some(profile) = profile else {
-                    if workflow.enabled {
+                    if workflow.enabled && !allow_unresolved {
                         return Err(invalid_definition(format!(
                             "execution profile '{authored_name}' was not found"
                         )));
@@ -681,6 +686,7 @@ async fn resolve_execution_profile_bindings<T: DefinitionStore + ExecutionProfil
 async fn resolve_setting_bindings<T: RuntimeStore>(
     db: &T,
     workflows: &mut [WorkflowDefinition],
+    allow_unresolved: bool,
 ) -> Result<(), SendableError> {
     for workflow in workflows {
         let mut paths = std::collections::BTreeSet::new();
@@ -726,7 +732,7 @@ async fn resolve_setting_bindings<T: RuntimeStore>(
                         Some(authored_path),
                     ),
                 });
-            } else if workflow.enabled {
+            } else if workflow.enabled && !allow_unresolved {
                 return Err(invalid_definition(format!(
                     "{} setting '{scope}/{name}' was not found",
                     kind.as_str()
