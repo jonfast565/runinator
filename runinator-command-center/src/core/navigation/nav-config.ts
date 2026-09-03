@@ -40,7 +40,7 @@ export const navSections: NavSection[] = [
     items: [
       {
         tab: "Runs",
-        label: "Runs",
+        label: "Workflow Runs",
         icon: "runs",
         description: "Select a run to inspect its timeline, outputs, logs, and recovery actions.",
         searchPlaceholder: "Search runs",

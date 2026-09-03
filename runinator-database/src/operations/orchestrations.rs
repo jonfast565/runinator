@@ -915,13 +915,24 @@ where
     }
 
     async fn delete_orchestration_adapter(&self, adapter_id: Uuid) -> Result<bool, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        for table in ["resource_grants", "resource_ownership"] {
+            sqlx::query(&self.render(&format!(
+                "DELETE FROM {table} WHERE resource_type = 'orchestration_adapter' AND resource_id IN (SELECT id FROM orchestration_adapters WHERE id = ? AND has_admitted_binding = ?)"
+            )))
+            .bind(adapter_id)
+            .bind(false)
+            .execute(&mut *tx)
+            .await?;
+        }
         let changed = sqlx::query(&self.render(
             "DELETE FROM orchestration_adapters WHERE id = ? AND has_admitted_binding = ?",
         ))
         .bind(adapter_id)
         .bind(false)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(changed.affected() > 0)
     }
 

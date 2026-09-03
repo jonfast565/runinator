@@ -119,6 +119,29 @@ where
     async fn delete_org(&self, id: Uuid) -> Result<(), SendableError> {
         retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
+            let team_count: i64 = sqlx::query_scalar(&self.render(
+                "SELECT COUNT(*) FROM teams WHERE scope_kind = 'organization' AND scope_id = ?",
+            ))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if team_count > 0 {
+                return Err(sqlx::Error::Protocol(
+                    "delete organization teams before deleting the organization".to_string(),
+                ));
+            }
+            let resource_count: i64 = sqlx::query_scalar(&self.render(
+                "SELECT COUNT(*) FROM resource_ownership WHERE tenant_scope_kind = 'organization' AND tenant_scope_id = ?",
+            ))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if resource_count > 0 {
+                return Err(sqlx::Error::Protocol(
+                    "transfer or delete organization resources before deleting the organization"
+                        .to_string(),
+                ));
+            }
             sqlx::query(&self.render("DELETE FROM role_assignments WHERE scope_key = ?"))
                 .bind(format!("organization:{id}"))
                 .execute(&mut *tx)
@@ -139,6 +162,32 @@ where
         user_id: Uuid,
         role: OrgRole,
     ) -> Result<(), SendableError> {
+        let user_count: i64 = sqlx::query_scalar(
+            &self.render("SELECT COUNT(*) FROM users WHERE id = ? AND disabled = ?"),
+        )
+        .bind(user_id)
+        .bind(false)
+        .fetch_one(self.pool())
+        .await?;
+        if user_count == 0 {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "organization member does not exist or is disabled",
+            )));
+        }
+        let org_count: i64 = sqlx::query_scalar(
+            &self.render("SELECT COUNT(*) FROM organizations WHERE id = ? AND disabled = ?"),
+        )
+        .bind(org_id)
+        .bind(false)
+        .fetch_one(self.pool())
+        .await?;
+        if org_count == 0 {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "organization does not exist or is disabled",
+            )));
+        }
         let now = Utc::now().timestamp();
         let key = format!("organization:{org_id}");
         let conflict = self.dialect().on_conflict_update(
@@ -155,10 +204,51 @@ where
     }
 
     async fn remove_org_member(&self, org_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let owned_resources: i64 = sqlx::query_scalar(&self.render(
+            "SELECT COUNT(*) FROM resource_ownership WHERE tenant_scope_kind = 'organization' AND tenant_scope_id = ? AND owner_scope_kind = 'user' AND owner_scope_id = ?",
+        ))
+        .bind(org_id)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if owned_resources > 0 {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "transfer resources owned by this user before removing them from the organization",
+            )));
+        }
+        let teams = sqlx::query(
+            &self.render("SELECT id FROM teams WHERE scope_kind = 'organization' AND scope_id = ?"),
+        )
+        .bind(org_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for team in teams {
+            let team_id: Uuid = team.try_get("id")?;
+            sqlx::query(&self.render(
+                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_key = ?",
+            ))
+            .bind(user_id)
+            .bind(format!("team:{team_id}"))
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query(&self.render(
+            "DELETE FROM resource_grants WHERE principal_type = 'user' AND principal_id = ? AND (resource_type, resource_id) IN (SELECT resource_type, resource_id FROM resource_ownership WHERE tenant_scope_kind = 'organization' AND tenant_scope_id = ?)",
+        ))
+        .bind(user_id)
+        .bind(org_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(&self.render(
             "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_key = ?",
-        )).bind(user_id).bind(format!("organization:{org_id}"))
-            .execute(self.pool()).await?;
+        ))
+        .bind(user_id)
+        .bind(format!("organization:{org_id}"))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 

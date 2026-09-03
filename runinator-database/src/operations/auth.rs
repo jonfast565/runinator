@@ -740,6 +740,12 @@ where
     }
 
     async fn create_team(&self, name: String, scope: ScopeRef) -> Result<Team, SendableError> {
+        if !matches!(scope.kind, ScopeKind::Platform | ScopeKind::Organization) {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "teams must be platform- or organization-scoped",
+            )));
+        }
         let id = Uuid::now_v7();
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
@@ -761,12 +767,7 @@ where
     }
 
     async fn update_team(&self, id: Uuid, name: String) -> Result<Team, SendableError> {
-        let Some(current) = self
-            .list_teams()
-            .await?
-            .into_iter()
-            .find(|team| team.id == Some(id))
-        else {
+        let Some(current) = self.fetch_team(id).await? else {
             return Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Team {id} not found"),
@@ -785,6 +786,17 @@ where
         })
     }
 
+    async fn fetch_team(&self, id: Uuid) -> Result<Option<Team>, SendableError> {
+        let row =
+            sqlx::query(&self.render(
+                "SELECT id, name, scope_kind, scope_id, created_at FROM teams WHERE id = ?",
+            ))
+            .bind(id)
+            .fetch_optional(self.pool())
+            .await?;
+        Ok(row.as_ref().map(mappers::row_to_team))
+    }
+
     async fn list_teams(&self) -> Result<Vec<Team>, SendableError> {
         let rows =
             sqlx::query(&self.render(
@@ -798,6 +810,17 @@ where
     async fn delete_team(&self, id: Uuid) -> Result<(), SendableError> {
         retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
+            let owned_resources: i64 = sqlx::query_scalar(&self.render(
+                "SELECT COUNT(*) FROM resource_ownership WHERE owner_scope_kind = 'team' AND owner_scope_id = ?",
+            ))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if owned_resources > 0 {
+                return Err(sqlx::Error::Protocol(
+                    "transfer resources owned by this team before deleting it".to_string(),
+                ));
+            }
             sqlx::query(&self.render("DELETE FROM role_assignments WHERE scope_key = ?"))
                 .bind(format!("team:{id}"))
                 .execute(&mut *tx)
@@ -823,17 +846,25 @@ where
         user_id: Uuid,
         role: TeamRole,
     ) -> Result<(), SendableError> {
-        let team = self
-            .list_teams()
-            .await?
-            .into_iter()
-            .find(|team| team.id == Some(team_id))
-            .ok_or_else(|| {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "team not found",
-                )) as SendableError
-            })?;
+        let Some(team) = self.fetch_team(team_id).await? else {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "team not found",
+            )));
+        };
+        let user_exists: i64 = sqlx::query_scalar(
+            &self.render("SELECT COUNT(*) FROM users WHERE id = ? AND disabled = ?"),
+        )
+        .bind(user_id)
+        .bind(false)
+        .fetch_one(self.pool())
+        .await?;
+        if user_exists == 0 {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "team member does not exist or is disabled",
+            )));
+        }
         if team.scope.kind == ScopeKind::Organization {
             let org_id = team.scope.id.expect("organization scope has id");
             let row = sqlx::query(&self.render(

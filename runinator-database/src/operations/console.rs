@@ -183,6 +183,18 @@ where
             .bind(session_id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query(&self.render(
+            "DELETE FROM resource_grants WHERE resource_type = 'console_session' AND resource_id = ?",
+        ))
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(&self.render(
+            "DELETE FROM resource_ownership WHERE resource_type = 'console_session' AND resource_id = ?",
+        ))
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
         let result = sqlx::query(&self.render("DELETE FROM console_sessions WHERE id = ?"))
             .bind(session_id)
             .execute(&mut *tx)

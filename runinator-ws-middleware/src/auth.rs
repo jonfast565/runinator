@@ -14,7 +14,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use runinator_models::auth::AuthContext;
-use runinator_store::roles::{AuthStore, RbacStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{AuthStore, RbacStore},
+};
 use uuid::Uuid;
 
 // the crypto/token primitives live in the transport-agnostic `runinator-auth` crate; re-export the
@@ -25,7 +28,7 @@ pub use runinator_auth::{
 };
 
 /// state threaded into the auth middleware: config + db for API key/session lookups.
-pub struct AuthState<T: AuthStore + RbacStore> {
+pub struct AuthState<T: AuthStore + RbacStore + RuntimeStore> {
     pub config: Arc<AuthConfig>,
     pub db: Arc<T>,
 }
@@ -37,7 +40,7 @@ pub const WEBSOCKET_AUTH_PROTOCOL: &str = "runinator-auth";
 pub const WEBSOCKET_TOKEN_PROTOCOL_PREFIX: &str = "runinator-token.";
 
 // manual Clone: the fields are `Arc`, so cloning never requires `T: Clone` (the derive would).
-impl<T: AuthStore + RbacStore> Clone for AuthState<T> {
+impl<T: AuthStore + RbacStore + RuntimeStore> Clone for AuthState<T> {
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
@@ -47,7 +50,7 @@ impl<T: AuthStore + RbacStore> Clone for AuthState<T> {
 }
 
 // bridge the database to the auth library's storage trait so credential resolution lives in the lib.
-impl<T: AuthStore + RbacStore> runinator_auth::CredentialStore for AuthState<T> {
+impl<T: AuthStore + RbacStore + RuntimeStore> runinator_auth::CredentialStore for AuthState<T> {
     async fn api_key_by_prefix(
         &self,
         prefix: String,
@@ -80,6 +83,10 @@ impl<T: AuthStore + RbacStore> runinator_auth::CredentialStore for AuthState<T> 
         id: Uuid,
     ) -> Option<Vec<runinator_models::rbac::RoleAssignment>> {
         self.db.list_principal_role_assignments(kind, id).await.ok()
+    }
+
+    async fn organization_by_id(&self, id: Uuid) -> Option<runinator_models::orgs::Organization> {
+        self.db.fetch_org(id).await.ok().flatten()
     }
 }
 
@@ -155,7 +162,7 @@ fn url_query_value(query: &str, key: &str) -> Option<String> {
 
 /// gate every non-public request. when auth is disabled, inject a synthetic admin so existing
 /// behavior is unchanged.
-pub async fn auth_middleware<T: AuthStore + RbacStore>(
+pub async fn auth_middleware<T: AuthStore + RbacStore + RuntimeStore>(
     State(state): State<AuthState<T>>,
     mut req: Request<Body>,
     next: Next,
@@ -209,16 +216,24 @@ pub async fn auth_middleware<T: AuthStore + RbacStore>(
 }
 
 /// Bind an `X-Org-Id` only when a live assignment authorizes that organization.
-async fn resolve_header_org<T: AuthStore + RbacStore>(
-    _state: &AuthState<T>,
+async fn resolve_header_org<T: AuthStore + RbacStore + RuntimeStore>(
+    state: &AuthState<T>,
     context: &mut AuthContext,
     org_id: Uuid,
 ) {
-    if context.platform_role == Some(runinator_models::rbac::PlatformRole::Admin)
-        || context.assignments.iter().any(|assignment| {
-            assignment.scope.kind == runinator_models::rbac::ScopeKind::Organization
-                && assignment.scope.id == Some(org_id)
-        })
+    let enabled = state
+        .db
+        .fetch_org(org_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|org| !org.disabled);
+    if enabled
+        && (context.platform_role == Some(runinator_models::rbac::PlatformRole::Admin)
+            || context.assignments.iter().any(|assignment| {
+                assignment.scope.kind == runinator_models::rbac::ScopeKind::Organization
+                    && assignment.scope.id == Some(org_id)
+            }))
     {
         context.org_id = Some(org_id);
     }

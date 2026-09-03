@@ -232,7 +232,14 @@ pub trait AuthStore: Send + Sync + 'static {
         name: String,
     ) -> impl Future<Output = Result<Team, SendableError>> + Send;
 
-    /// List all teams.
+    /// Fetch one team by id.
+    fn fetch_team(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Result<Option<Team>, SendableError>> + Send;
+
+    /// List all teams. Callers must filter this platform-wide administrative view to an
+    /// authorized tenant before returning it to a user.
     fn list_teams(&self) -> impl Future<Output = Result<Vec<Team>, SendableError>> + Send;
 
     /// Delete a team and its memberships.

@@ -7,7 +7,7 @@ const DEFAULT_TAB_KEY = "command-center.defaultTab";
 
 export const DEFAULT_TAB_OPTIONS = [
   { value: "Workflows", label: "Workflows" },
-  { value: "Runs", label: "Runs" },
+  { value: "Runs", label: "Workflow Runs" },
   { value: "Providers", label: "Providers" },
   { value: "Replicas", label: "Replicas" },
   { value: "Approvals", label: "Approvals" },

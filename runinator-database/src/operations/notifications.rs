@@ -478,11 +478,21 @@ where
 
     async fn delete_notification_policy(&self, policy_id: Uuid) -> Result<bool, SendableError> {
         Ok(retry_delete(|| async {
-            sqlx::query(&self.render("DELETE FROM notification_policies WHERE id = ?"))
+            let mut tx = self.pool().begin().await?;
+            let result = sqlx::query(&self.render("DELETE FROM notification_policies WHERE id = ?"))
                 .bind(policy_id)
-                .execute(self.pool())
-                .await
-                .map(|result| result.affected() > 0)
+                .execute(&mut *tx)
+                .await?;
+            for table in ["resource_grants", "resource_ownership"] {
+                sqlx::query(&self.render(&format!(
+                    "DELETE FROM {table} WHERE resource_type = 'notification_policy' AND resource_id = ?"
+                )))
+                .bind(policy_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+            Ok(result.affected() > 0)
         })
         .await?)
     }

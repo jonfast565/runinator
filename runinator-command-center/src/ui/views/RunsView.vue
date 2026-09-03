@@ -7,7 +7,7 @@
       :min-first="340"
       :min-second="720"
       collapsible-first
-      first-label="Runs"
+      first-label="Workflow Runs"
       first-icon="runs"
       mobile-mode="toggle"
       :mobile-detail-active="!!workflows.selectedWorkflowRunId"
@@ -15,7 +15,7 @@
       <template #first>
         <div class="panel min-h-0">
           <PanelHeader
-            title="Runs"
+            title="Workflow Runs"
             icon="runs"
             eyebrow="Execution history"
             description="Recent workflow executions, filtered by the current search when present."

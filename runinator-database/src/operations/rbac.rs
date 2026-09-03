@@ -351,6 +351,21 @@ where
         &self,
         ownership: ResourceOwnership,
     ) -> Result<ResourceOwnership, SendableError> {
+        if !matches!(
+            ownership.tenant.kind,
+            ScopeKind::Platform | ScopeKind::Organization
+        ) {
+            return Err(invalid_rbac(
+                "resource tenants must be platform or organization scopes",
+            ));
+        }
+        if ownership.tenant.kind == ScopeKind::Platform
+            && ownership.owner.kind != ScopeKind::Platform
+        {
+            return Err(invalid_rbac(
+                "platform resources must remain platform-owned; use a resource grant for individual access",
+            ));
+        }
         let conflict = self.dialect().on_conflict_update(
             "resource_type, resource_id",
             &[
@@ -467,6 +482,11 @@ where
         };
         let tenant = ScopeRef::new(tenant_kind, tenant_id)
             .ok_or_else(|| invalid_rbac("target tenant is invalid"))?;
+        if tenant.kind == ScopeKind::Platform && owner.kind != ScopeKind::Platform {
+            return Err(invalid_rbac(
+                "platform resources must remain platform-owned; use a resource grant for individual access",
+            ));
+        }
         let now = Utc::now().timestamp();
         let result = sqlx::query(&self.render(
             "UPDATE resource_ownership SET tenant_scope_kind = ?, tenant_scope_id = ?, \

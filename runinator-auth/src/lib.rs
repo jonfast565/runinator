@@ -241,6 +241,13 @@ pub trait CredentialStore {
         kind: PrincipalKind,
         id: Uuid,
     ) -> impl Future<Output = Option<Vec<RoleAssignment>>> + Send;
+
+    /// Resolve an organization selected by a token or scoped API key. Authentication must reject
+    /// disabled tenants before a request reaches any resource handler.
+    fn organization_by_id(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Option<runinator_models::orgs::Organization>> + Send;
 }
 
 /// Resolve a credential to a principal. Try a JWT first, then look up a
@@ -272,6 +279,11 @@ pub async fn resolve_credential<S: CredentialStore>(
                 assignment.scope.kind == runinator_models::rbac::ScopeKind::Organization
                     && assignment.scope.id == Some(org_id)
             })
+        {
+            return None;
+        }
+        if let Some(org_id) = org_id
+            && store.organization_by_id(org_id).await?.disabled
         {
             return None;
         }
@@ -316,6 +328,11 @@ pub async fn resolve_credential<S: CredentialStore>(
     let assignments = store
         .role_assignments(record.key.principal_kind, record.key.principal_id)
         .await?;
+    if let Some(org_id) = record.key.org_id
+        && store.organization_by_id(org_id).await?.disabled
+    {
+        return None;
+    }
     if let Some(id) = record.key.id {
         store.touch_api_key(id, Utc::now().timestamp()).await;
     }

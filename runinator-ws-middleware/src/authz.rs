@@ -427,8 +427,9 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
             .await
     }
 
-    /// Register a newly-created top-level resource under the caller's selected tenant. Human
-    /// creators own their resource directly; machine principals create for the selected scope.
+    /// Register a newly-created top-level resource under the caller's selected tenant. A platform
+    /// resource is always platform-owned; a human creator receives a direct `own` grant instead
+    /// of turning the global resource into a user-owned one.
     pub async fn grant_resource_owner(
         &self,
         resource_type: ResourceType,
@@ -439,9 +440,15 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
             .org_id
             .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
             .unwrap_or(ScopeRef::PLATFORM);
-        let owner = match (self.ctx.kind, self.ctx.principal_id) {
-            (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
-            _ => tenant,
+        let owner = if tenant.kind == ScopeKind::Platform {
+            ScopeRef::PLATFORM
+        } else {
+            match (self.ctx.kind, self.ctx.principal_id) {
+                (PrincipalKind::User, Some(id)) => {
+                    ScopeRef::new(ScopeKind::User, Some(id)).unwrap()
+                }
+                _ => tenant,
+            }
         };
         let now = Utc::now();
         self.db

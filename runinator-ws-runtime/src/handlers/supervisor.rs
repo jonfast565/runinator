@@ -1,10 +1,22 @@
-use axum::{Json, http::StatusCode};
+use axum::{
+    Extension, Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use runinator_models::{
+    auth::AuthContext,
+    rbac::{Action, ScopeRef},
+};
 use runinator_platform::app_data;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 use crate::handlers::runs::compute_stale_seconds;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint};
 
-pub async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
+pub async fn get_supervisor_status(Extension(ctx): Extension<AuthContext>) -> Response {
+    if let Err(reply) = ctx.require_scope_action(Action::View, ScopeRef::PLATFORM) {
+        return reply.into_response();
+    }
     let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|_| {
         app_data::default_supervisor_state_dir()
             .map(|path| path.join("state.json").to_string_lossy().into_owned())
@@ -21,7 +33,8 @@ pub async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
                 "configured": false,
                 "path": path
             })),
-        );
+        )
+            .into_response();
     }
     match runinator_supervisor::snapshot::read_snapshot(&path_buf) {
         Ok(snapshot) => {
@@ -32,7 +45,7 @@ pub async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
                 obj.insert("stale_seconds".into(), serde_json::json!(stale_seconds));
                 obj.insert("configured".into(), serde_json::json!(true));
             }
-            (StatusCode::OK, Json(body))
+            (StatusCode::OK, Json(body)).into_response()
         }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -40,7 +53,8 @@ pub async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
                 "configured": true,
                 "error": err.to_string()
             })),
-        ),
+        )
+            .into_response(),
     }
 }
 

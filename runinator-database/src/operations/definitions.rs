@@ -255,6 +255,8 @@ where
                 // deleted explicitly rather than left to the declared cascade: sqlite only enforces
                 // foreign keys when the pragma is on, so the history would otherwise outlive its workflow.
                 "DELETE FROM workflow_revisions WHERE workflow_id = ?".to_string(),
+                "DELETE FROM resource_grants WHERE resource_type = 'workflow' AND resource_id = ?".to_string(),
+                "DELETE FROM resource_ownership WHERE resource_type = 'workflow' AND resource_id = ?".to_string(),
                 "DELETE FROM workflows WHERE id = ?".to_string(),
             ] {
                 sqlx::query(&self.render(&sql))
@@ -630,6 +632,8 @@ where
                 "DELETE FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)".to_string(),
                 "DELETE FROM pipeline_runs WHERE pipeline_id = ?".to_string(),
                 "DELETE FROM pipeline_revisions WHERE pipeline_id = ?".to_string(),
+                "DELETE FROM resource_grants WHERE resource_type = 'pipeline' AND resource_id = ?".to_string(),
+                "DELETE FROM resource_ownership WHERE resource_type = 'pipeline' AND resource_id = ?".to_string(),
                 "DELETE FROM pipelines WHERE id = ?".to_string(),
             ] {
                 sqlx::query(&self.render(&sql))

@@ -95,17 +95,31 @@ where
         name: String,
     ) -> Result<(), SendableError> {
         retry_delete(|| async {
-            sqlx::query(
-                &self.render("DELETE FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) AND kind = ? AND scope = ? AND name = ?"),
-            )
+            let mut tx = self.pool().begin().await?;
+            let setting_filter = "id IN (SELECT id FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) AND kind = ? AND scope = ? AND name = ?)";
+            for table in ["resource_grants", "resource_ownership"] {
+                sqlx::query(&self.render(&format!(
+                    "DELETE FROM {table} WHERE resource_type = 'setting' AND resource_id IN (SELECT id FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) AND kind = ? AND scope = ? AND name = ?)"
+                )))
+                .bind(org_id)
+                .bind(org_id)
+                .bind(kind.as_str())
+                .bind(scope.as_str())
+                .bind(name.as_str())
+                .execute(&mut *tx)
+                .await?;
+            }
+            sqlx::query(&self.render(&format!(
+                "DELETE FROM settings WHERE {setting_filter}"
+            )))
             .bind(org_id)
             .bind(org_id)
             .bind(kind.as_str())
             .bind(scope.as_str())
             .bind(name.as_str())
-            .execute(self.pool())
-            .await
-            .map(|_| ())
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
         })
         .await?;
         Ok(())

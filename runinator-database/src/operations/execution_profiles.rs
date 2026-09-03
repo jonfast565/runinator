@@ -136,8 +136,16 @@ where
         id: Uuid,
         org_id: Option<Uuid>,
     ) -> Result<bool, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        for table in ["resource_grants", "resource_ownership"] {
+            sqlx::query(&self.render(&format!(
+                "DELETE FROM {table} WHERE resource_type = 'execution_profile' AND resource_id IN (SELECT id FROM execution_profiles WHERE id = ? AND (org_id = ? OR (org_id IS NULL AND ? IS NULL)))"
+            )))
+            .bind(id).bind(org_id).bind(org_id).execute(&mut *tx).await?;
+        }
         let result = sqlx::query(&self.render("DELETE FROM execution_profiles WHERE id = ? AND (org_id = ? OR (org_id IS NULL AND ? IS NULL))"))
-            .bind(id).bind(org_id).bind(org_id).execute(self.pool()).await?;
+            .bind(id).bind(org_id).bind(org_id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(result.affected() == 1)
     }
 

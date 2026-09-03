@@ -1687,20 +1687,36 @@ async fn authorize_enrollment<T: AuthStore + RbacStore + RuntimeStore>(
     }))
 }
 
-// ---- teams (admin only) ----
+// ---- teams (scoped administration) ----
+
+async fn require_team_management<T: AuthStore + RbacStore + RuntimeStore>(
+    db: &T,
+    ctx: &AuthContext,
+    team_id: Uuid,
+) -> Result<(), Reply> {
+    let team = match db.fetch_team(team_id).await {
+        Ok(Some(team)) => team,
+        Ok(None) => return Err(not_found("team not found")),
+        Err(err) => return Err(api_error(err.to_string())),
+    };
+    ctx.require_scope_action(Action::MembersManage, team.scope)
+}
 
 pub async fn list_teams<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    let scope = ctx.selected_scope();
+    if let Err(reply) = ctx.require_scope_action(Action::MembersManage, scope) {
         return reply;
     }
     match db.list_teams().await {
-        Ok(teams) => match teams.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+        Ok(teams) => match teams
+            .iter()
+            .filter(|team| team.scope == scope)
+            .map(json_value)
+            .collect::<Result<Vec<_>, _>>()
+        {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
             Err(reply) => reply,
         },
@@ -1713,14 +1729,17 @@ pub async fn list_user_teams<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    let scope = ctx.selected_scope();
+    if let Err(reply) = ctx.require_scope_action(Action::MembersManage, scope) {
         return reply;
     }
     match db.list_user_teams(user_id).await {
-        Ok(teams) => match teams.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+        Ok(teams) => match teams
+            .iter()
+            .filter(|team| team.scope == scope)
+            .map(json_value)
+            .collect::<Result<Vec<_>, _>>()
+        {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
             Err(reply) => reply,
         },
@@ -1733,16 +1752,10 @@ pub async fn create_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(ctx): Extension<AuthContext>,
     ValidatedJson(request): ValidatedJson<CreateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    let scope = ctx.selected_scope();
+    if let Err(reply) = ctx.require_scope_action(Action::MembersManage, scope) {
         return reply;
     }
-    let scope = ctx
-        .org_id
-        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
-        .unwrap_or(ScopeRef::PLATFORM);
     match db.create_team(request.name, scope).await {
         Ok(team) => ok_value(&team),
         Err(err) => api_error(err.to_string()),
@@ -1755,10 +1768,7 @@ pub async fn update_team<T: AuthStore + RbacStore + RuntimeStore>(
     Path(team_id): Path<Uuid>,
     ValidatedJson(request): ValidatedJson<UpdateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
         return reply;
     }
     match db.update_team(team_id, request.name).await {
@@ -1772,10 +1782,7 @@ pub async fn delete_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
         return reply;
     }
     match db.delete_team(team_id).await {
@@ -1789,10 +1796,7 @@ pub async fn list_team_members<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
         return reply;
     }
     match db.list_team_members(team_id).await {
@@ -1810,10 +1814,7 @@ pub async fn add_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     Path(team_id): Path<Uuid>,
     ValidatedJson(request): ValidatedJson<AddTeamMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
         return reply;
     }
     match db
@@ -1830,10 +1831,7 @@ pub async fn remove_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(ctx): Extension<AuthContext>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::MembersManage,
-        runinator_models::rbac::ScopeRef::PLATFORM,
-    ) {
+    if let Err(reply) = require_team_management(db.as_ref(), &ctx, team_id).await {
         return reply;
     }
     match db.remove_team_member(team_id, user_id).await {
@@ -2392,7 +2390,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams",
         "Auth",
         "List teams",
-        "Admin endpoint that lists teams.",
+        "Lists teams in the caller's selected platform or organization scope.",
         false,
         None,
         &[],
@@ -2405,7 +2403,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams",
         "Auth",
         "Create a team",
-        "Admin endpoint that creates a team.",
+        "Creates a team in the caller's selected platform or organization scope.",
         false,
         json_body("Team creation payload.", Example::Team),
         &[],
@@ -2418,7 +2416,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams/{id}",
         "Auth",
         "Delete a team",
-        "Admin endpoint that deletes a team.",
+        "Deletes a team in its owning scope after its resources have been transferred.",
         false,
         None,
         &[],
@@ -2431,7 +2429,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams/{id}",
         "Auth",
         "Update a team",
-        "Admin endpoint that renames a team.",
+        "Renames a team in its owning scope.",
         false,
         json_body("Team update payload.", Example::Team),
         &[],
@@ -2444,7 +2442,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams/{id}/members",
         "Auth",
         "List team members",
-        "Admin endpoint that lists users assigned to a team.",
+        "Lists users assigned to a team in the caller's authorized scope.",
         false,
         None,
         &[],
@@ -2457,7 +2455,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams/{id}/members",
         "Auth",
         "Add a team member",
-        "Admin endpoint that adds a user to a team.",
+        "Adds an enabled user to a team in the caller's authorized scope.",
         false,
         json_body("Team member payload.", Example::Team),
         &[],
@@ -2470,7 +2468,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/teams/{id}/members/{user_id}",
         "Auth",
         "Remove a team member",
-        "Admin endpoint that removes a user from a team.",
+        "Removes a user from a team in the caller's authorized scope.",
         false,
         None,
         &[],

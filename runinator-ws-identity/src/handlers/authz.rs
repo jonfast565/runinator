@@ -194,11 +194,14 @@ async fn authorize_scope_with_ancestry<T: AuthorizationStore>(
     if scope.kind != ScopeKind::Team {
         return Ok(false);
     }
-    let teams = db
-        .list_teams()
+    let Some(team_id) = scope.id else {
+        return Ok(false);
+    };
+    let Some(team) = db
+        .fetch_team(team_id)
         .await
-        .map_err(|err| api_error(err.to_string()))?;
-    let Some(team) = teams.into_iter().find(|team| team.id == scope.id) else {
+        .map_err(|err| api_error(err.to_string()))?
+    else {
         return Ok(false);
     };
     Ok(ctx.authorize_scope(action, team.scope))
@@ -503,10 +506,10 @@ pub async fn create_resource_grant<T: AuthorizationStore>(
                 Ok(true)
             }
         }
-        PrincipalType::Team => db.list_teams().await.map(|rows| {
-            rows.iter()
-                .any(|team| team.id == Some(request.principal_id) && team.scope == ownership.tenant)
-        }),
+        PrincipalType::Team => db
+            .fetch_team(request.principal_id)
+            .await
+            .map(|team| team.is_some_and(|team| team.scope == ownership.tenant)),
     };
     match valid {
         Ok(true) => {}
@@ -623,9 +626,12 @@ pub async fn transfer_resource<T: AuthorizationStore>(
         }
     }
     let target_team = if request.owner.kind == ScopeKind::Team {
-        match db.list_teams().await {
-            Ok(rows) => rows.into_iter().find(|team| team.id == request.owner.id),
-            Err(err) => return api_error(err.to_string()),
+        match request.owner.id {
+            Some(id) => match db.fetch_team(id).await {
+                Ok(team) => team,
+                Err(err) => return api_error(err.to_string()),
+            },
+            None => return bad_request("invalid team owner scope"),
         }
     } else {
         None

@@ -409,11 +409,25 @@ async fn hierarchical_assignments_ownership_and_scoped_grants_are_enforced() {
 
     let resource_id = Uuid::now_v7();
     let now = Utc::now();
+    assert!(
+        db.put_resource_ownership(ResourceOwnership {
+            resource_type: ResourceType::ConsoleSession,
+            resource_id,
+            tenant: ScopeRef::PLATFORM,
+            owner: ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(user_id)).unwrap(),
+            created_by: Some(user_id),
+            authz_version: 1,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .is_err()
+    );
     db.put_resource_ownership(ResourceOwnership {
         resource_type: ResourceType::ConsoleSession,
         resource_id,
         tenant: ScopeRef::PLATFORM,
-        owner: ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(user_id)).unwrap(),
+        owner: ScopeRef::PLATFORM,
         created_by: Some(user_id),
         authz_version: 1,
         created_at: now,
@@ -426,7 +440,7 @@ async fn hierarchical_assignments_ownership_and_scoped_grants_are_enforced() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(ownership.owner.id, Some(user_id));
+    assert_eq!(ownership.owner, ScopeRef::PLATFORM);
 
     let other_resource_id = Uuid::now_v7();
     let grant = db
@@ -455,6 +469,121 @@ async fn hierarchical_assignments_ownership_and_scoped_grants_are_enforced() {
             .await
             .unwrap()
     );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn team_names_and_memberships_are_tenant_bounded() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-team-tenancy-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let member = db
+        .create_user("tenant-team-member".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let first_org = db
+        .create_org("First Teams".into(), "first-teams".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let second_org = db
+        .create_org("Second Teams".into(), "second-teams".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let first_scope = ScopeRef::new(
+        runinator_models::rbac::ScopeKind::Organization,
+        Some(first_org),
+    )
+    .unwrap();
+    let second_scope = ScopeRef::new(
+        runinator_models::rbac::ScopeKind::Organization,
+        Some(second_org),
+    )
+    .unwrap();
+
+    let first_team = db
+        .create_team("operators".into(), first_scope)
+        .await
+        .unwrap();
+    db.create_team("operators".into(), second_scope)
+        .await
+        .unwrap();
+    assert!(
+        db.create_team("operators".into(), first_scope)
+            .await
+            .is_err()
+    );
+
+    db.add_org_member(first_org, member, OrgRole::Member)
+        .await
+        .unwrap();
+    db.add_team_member(first_team.id.unwrap(), member, TeamRole::Member)
+        .await
+        .unwrap();
+
+    db.upsert_setting(
+        Some(first_org),
+        SettingKind::Config,
+        "team-boundary".into(),
+        "retired-setting".into(),
+        b"value".to_vec(),
+        Utc::now().timestamp(),
+    )
+    .await
+    .unwrap();
+    let setting = db
+        .fetch_setting(
+            Some(first_org),
+            SettingKind::Config,
+            "team-boundary".into(),
+            "retired-setting".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let setting_id = setting.id;
+    let now = Utc::now();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::Setting,
+        resource_id: setting_id,
+        tenant: first_scope,
+        owner: ScopeRef::new(runinator_models::rbac::ScopeKind::Team, first_team.id).unwrap(),
+        created_by: Some(member),
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    assert!(db.delete_team(first_team.id.unwrap()).await.is_err());
+    db.delete_setting(
+        Some(first_org),
+        SettingKind::Config,
+        "team-boundary".into(),
+        "retired-setting".into(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.fetch_resource_ownership(ResourceType::Setting, setting_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    db.delete_team(first_team.id.unwrap()).await.unwrap();
+
+    db.remove_org_member(first_org, member).await.unwrap();
+    assert!(db.list_user_team_ids(member).await.unwrap().is_empty());
 
     let _ = std::fs::remove_file(path);
 }

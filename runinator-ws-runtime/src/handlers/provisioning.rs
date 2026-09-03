@@ -21,10 +21,10 @@ pub async fn get_node_backends(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Replica,
-    ]) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NodesOperate,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let backends = registry.backends().await;
@@ -45,10 +45,10 @@ pub async fn get_nodes(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Replica,
-    ]) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NodesOperate,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let groups = registry.list_all().await;

@@ -83,9 +83,13 @@ pub async fn upsert_workflow<
         .org_id
         .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
         .unwrap_or(ScopeRef::PLATFORM);
-    let prospective_owner = match (ctx.kind, ctx.principal_id) {
-        (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
-        _ => tenant,
+    let prospective_owner = if tenant.kind == ScopeKind::Platform {
+        ScopeRef::PLATFORM
+    } else {
+        match (ctx.kind, ctx.principal_id) {
+            (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
+            _ => tenant,
+        }
     };
     let workflow_id = workflow
         .id

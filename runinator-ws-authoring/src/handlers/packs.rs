@@ -72,9 +72,13 @@ pub async fn import_pack<
     let import_scope = import_org
         .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
         .unwrap_or(ScopeRef::PLATFORM);
-    let owner = match (ctx.kind, ctx.principal_id) {
-        (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
-        _ => import_scope,
+    let owner = if import_scope.kind == ScopeKind::Platform {
+        ScopeRef::PLATFORM
+    } else {
+        match (ctx.kind, ctx.principal_id) {
+            (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
+            _ => import_scope,
+        }
     };
     if let Err(reply) = ctx.require_scope_action(Action::Edit, import_scope) {
         return reply;

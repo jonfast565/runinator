@@ -20,9 +20,15 @@ use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn get_catalog_items<T: DefinitionStore>(
     Extension(service): Extension<Arc<CatalogOperations<T>>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CatalogQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::View,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
+        return reply;
+    }
     if let Some(uri) = query.uri {
         return match service.fetch(uri.clone()).await {
             Ok(Some(item)) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),

@@ -24,8 +24,14 @@ use runinator_ws_middleware::authz::AuthContextExt;
 )]
 pub async fn get_providers<T: DefinitionStore>(
     Extension(service): Extension<Arc<CatalogOperations<T>>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::View,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
+        return reply;
+    }
     let items = match service.list(Some("provider_metadata".into())).await {
         Ok(items) => items,
         Err(err) => return api_error(err.to_string()),
