@@ -21,8 +21,8 @@ use runinator_models::{
 use runinator_store::{
     RuntimeStore,
     roles::{
-        AutomationStore, DefinitionStore, DeliveryStore, FunctionStore, NotificationStore,
-        RunStore, ScheduleStore, WorkflowVmStore,
+        AutomationStore, DefinitionStore, DeliveryStore, ExecutionProfileStore, FunctionStore,
+        NotificationStore, RunStore, ScheduleStore, WorkflowVmStore,
     },
 };
 

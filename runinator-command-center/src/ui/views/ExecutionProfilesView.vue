@@ -9,7 +9,7 @@
       >
         <button class="btn" :disabled="loading" @click="refresh">
           <Icon name="refresh" /> Refresh</button
-        ><button class="btn btn-primary" @click="beginCreate">
+        ><button class="btn btn-primary" :disabled="!canMutate" @click="beginCreate">
           <Icon name="plus" /> New profile
         </button>
       </PanelHeader>
@@ -80,16 +80,17 @@
               <td class="entity-banner-actions whitespace-nowrap">
                 <button
                   class="btn btn-sm"
-                  :disabled="!profile.enabled"
+                  :disabled="!profile.enabled || !canMutate"
                   @click="testProfile(profile)"
                 >
                   <Icon name="check" :size="13" /> Test</button
-                ><button class="btn btn-sm" :disabled="!profile.enabled" @click="rotate(profile)">
+                ><button class="btn btn-sm" :disabled="!profile.enabled || !canMutate" @click="rotate(profile)">
                   <Icon name="refresh" :size="13" /> Rotate</button
-                ><button class="btn btn-sm" @click="beginEdit(profile)">
+                ><button class="btn btn-sm" :disabled="!canMutate" @click="beginEdit(profile)">
                   <Icon name="edit" :size="13" /> Edit</button
                 ><button
                   class="btn btn-sm btn-danger"
+                  :disabled="!canMutate"
                   :aria-label="`Delete ${profile.name}`"
                   @click="remove(profile)"
                 >
@@ -284,7 +285,7 @@
           {{ validation.summary }}
         </div>
         <button class="btn" @click="closeEditor">Cancel</button
-        ><button class="btn btn-primary" :disabled="saving || !validation.valid" @click="save">
+        ><button class="btn btn-primary" :disabled="saving || !validation.valid || !canMutate" @click="save">
           <Icon name="save" /> {{ saving ? "Saving…" : "Save profile" }}
         </button></template
       >
@@ -301,15 +302,10 @@ import type {
   ExecutionProfileSource,
 } from "../../core/domain/models";
 import { validateExecutionProfile } from "../../core/domain/models/execution-profile/validation";
-import {
-  deleteExecutionProfile,
-  fetchExecutionProfiles,
-  putExecutionProfile,
-  rotateExecutionProfile,
-  testExecutionProfile,
-} from "../../core/api/commandCenterApi";
 import { formatDate } from "../../core/utils/format";
 import { useAppStore } from "../adapters/pinia/app";
+import { useExecutionProfilesStore } from "../adapters/pinia/executionProfiles";
+import { storeToRefs } from "pinia";
 import CommandArgvEditor from "../components/execution-profiles/CommandArgvEditor.vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
@@ -325,7 +321,7 @@ interface EnvRow {
   value: string;
 }
 const app = useAppStore(),
-  profiles = ref<ExecutionProfile[]>([]),
+  profileStore = useExecutionProfilesStore(),
   loading = ref(false),
   saving = ref(false),
   editing = ref(false),
@@ -335,21 +331,14 @@ const app = useAppStore(),
   scopeEntry = ref(""),
   activeTab = ref<Tab>("identity"),
   environmentRows = ref<EnvRow[]>([]);
+const { profiles, filteredProfiles: filtered } = storeToRefs(profileStore);
+const canMutate = computed(() => app.can("credentials:manage"));
 const draft = reactive<ExecutionProfileInput>(emptyProfile());
 const tabs: { id: Tab; label: string }[] = [
   { id: "identity", label: "1. Identity" },
   { id: "collection", label: "2. Collection" },
   { id: "exposure", label: "3. Exposure" },
 ];
-const filtered = computed(() =>
-  !app.normalizedSearch
-    ? profiles.value
-    : profiles.value.filter((p) =>
-        [p.name, p.description, ...p.credential_scopes].some((v) =>
-          v.toLowerCase().includes(app.normalizedSearch),
-        ),
-      ),
-);
 
 function buildInput() {
   return {
@@ -573,7 +562,7 @@ async function refresh() {
   error.value = "";
 
   try {
-    profiles.value = await fetchExecutionProfiles();
+    await profileStore.refresh();
   } catch (reason) {
     error.value = String(reason);
   } finally {
@@ -590,12 +579,8 @@ async function save() {
   formError.value = "";
 
   try {
-    await putExecutionProfile(
-      editingId.value ? editingId.value : crypto.randomUUID(),
-      buildInput(),
-    );
+    await profileStore.save(editingId.value ? editingId.value : crypto.randomUUID(), buildInput());
     editing.value = false;
-    await refresh();
   } catch (reason) {
     formError.value = String(reason);
   } finally {
@@ -609,19 +594,16 @@ async function remove(p: ExecutionProfile) {
       `Delete execution profile “${p.name}”? Its encrypted revisions will also be removed.`,
     )
   ) {
-    await deleteExecutionProfile(p.id);
-    await refresh();
+    await profileStore.remove(p.id);
   }
 }
 
 async function rotate(p: ExecutionProfile) {
-  await rotateExecutionProfile(p.id);
-  await refresh();
+  await profileStore.rotate(p.id);
 }
 
 async function testProfile(p: ExecutionProfile) {
-  await testExecutionProfile(p.id);
-  await refresh();
+  await profileStore.test(p.id);
 }
 
 onMounted(refresh);

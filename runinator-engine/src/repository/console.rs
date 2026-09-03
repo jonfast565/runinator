@@ -22,8 +22,8 @@ use runinator_models::workflows::WorkflowRun;
 use runinator_store::{
     RuntimeStore,
     roles::{
-        ConsoleStore, DefinitionStore, FunctionStore, NotificationStore, ScheduleStore,
-        WorkflowVmStore,
+        ConsoleStore, DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore,
+        ScheduleStore, WorkflowVmStore,
     },
 };
 use uuid::Uuid;
@@ -134,6 +134,7 @@ pub async fn run_cell<
         + RuntimeStore
         + DefinitionStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,
@@ -272,6 +273,7 @@ async fn run_scratch_workflow<
         + RuntimeStore
         + DefinitionStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,

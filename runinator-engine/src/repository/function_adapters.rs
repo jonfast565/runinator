@@ -18,7 +18,7 @@ use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowDefinition;
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, FunctionStore},
+    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore},
 };
 use uuid::Uuid;
 
@@ -44,7 +44,9 @@ pub fn adapter_workflow_name(entry: &FunctionCatalogEntry) -> String {
 /// keyed on the export id, so republishing a package mints new adapters for the new version's
 /// exports and leaves the old ones pointing at the old code — which is what keeps an in-flight
 /// invocation of the previous version running exactly what it started.
-pub async fn sync_adapter_workflows<T: FunctionStore + RuntimeStore + DefinitionStore>(
+pub async fn sync_adapter_workflows<
+    T: FunctionStore + RuntimeStore + DefinitionStore + ExecutionProfileStore,
+>(
     db: &T,
     package_id: Uuid,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {

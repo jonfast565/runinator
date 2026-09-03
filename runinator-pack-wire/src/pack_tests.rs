@@ -27,7 +27,7 @@ fn pack_zip_round_trips() {
         triggers: Vec::new(),
     };
     let secrets = SecretBundle {
-        secrets: vec![SecretBundleEntry {
+        settings: vec![SecretBundleEntry {
             scope: "jira".into(),
             name: "token".into(),
             value: Value::from("abc"),
@@ -36,6 +36,7 @@ fn pack_zip_round_trips() {
             expires_at: None,
             updated_at: None,
         }],
+        ..Default::default()
     };
 
     let pipelines = PipelineBundle {
@@ -64,17 +65,20 @@ fn pack_zip_round_trips() {
     };
 
     let zipped = build_pack_zip(&workflows, Some(&secrets), Some(&pipelines)).expect("zip");
+    let mut archive = zip::ZipArchive::new(Cursor::new(&zipped)).expect("open zip");
+    assert!(archive.by_name(SETTINGS_ENTRY).is_ok());
+    assert!(archive.by_name(SECRETS_ENTRY).is_err());
     let contents = read_pack_zip(&zipped).expect("unzip");
     assert_eq!(contents.workflows.workflows.len(), 1);
     assert_eq!(contents.workflows.workflows[0].name, "demo");
-    let read_secrets = contents.secrets.expect("secrets present");
-    assert_eq!(read_secrets.secrets, secrets.secrets);
+    let read_secrets = contents.settings.expect("settings present");
+    assert_eq!(read_secrets.settings, secrets.settings);
     assert_eq!(contents.pipelines.expect("pipelines present"), pipelines);
 
     // secrets and pipelines are optional.
     let contents =
         read_pack_zip(&build_pack_zip(&workflows, None, None).expect("zip")).expect("unzip");
-    assert!(contents.secrets.is_none());
+    assert!(contents.settings.is_none());
     assert!(contents.pipelines.is_none());
 }
 
@@ -235,4 +239,54 @@ fn rejects_an_oversized_uncompressed_entry() {
         .err()
         .expect("oversized entry must fail");
     assert!(error.to_string().contains("per-entry limit"));
+}
+
+#[test]
+fn reads_legacy_secrets_json_as_version_one_settings() {
+    let workflows = WorkflowBundle::default();
+    let legacy = serde_json::json!({
+        "secrets": [{
+            "scope": "github",
+            "name": "token",
+            "value": "legacy",
+            "kind": "secret"
+        }]
+    });
+    let zipped = raw_zip(vec![
+        (
+            WORKFLOWS_ENTRY.into(),
+            serde_json::to_vec(&workflows).unwrap(),
+        ),
+        (SECRETS_ENTRY.into(), serde_json::to_vec(&legacy).unwrap()),
+    ]);
+
+    let settings = read_pack_zip(&zipped)
+        .expect("legacy pack")
+        .settings
+        .expect("legacy settings");
+    assert_eq!(settings.version, 1);
+    assert_eq!(settings.settings.len(), 1);
+    assert!(settings.execution_profiles.is_empty());
+}
+
+#[test]
+fn rejects_both_settings_entry_names() {
+    let workflows = WorkflowBundle::default();
+    let settings = SecretBundle::default();
+    let zipped = raw_zip(vec![
+        (
+            WORKFLOWS_ENTRY.into(),
+            serde_json::to_vec(&workflows).unwrap(),
+        ),
+        (
+            SETTINGS_ENTRY.into(),
+            serde_json::to_vec(&settings).unwrap(),
+        ),
+        (SECRETS_ENTRY.into(), serde_json::to_vec(&settings).unwrap()),
+    ]);
+
+    let error = read_pack_zip(&zipped)
+        .err()
+        .expect("ambiguous pack must fail");
+    assert!(error.to_string().contains("cannot contain both"));
 }

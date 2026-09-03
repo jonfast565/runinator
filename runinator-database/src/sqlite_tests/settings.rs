@@ -14,6 +14,7 @@ async fn settings_round_trip_by_kind_scope_name() {
 
     // insert a secret and a config that share a scope/name but differ by kind: they must not collide.
     db.upsert_setting(
+        None,
         SettingKind::Secret,
         "jira".into(),
         "token".into(),
@@ -23,6 +24,7 @@ async fn settings_round_trip_by_kind_scope_name() {
     .await
     .unwrap();
     db.upsert_setting(
+        None,
         SettingKind::Config,
         "jira".into(),
         "token".into(),
@@ -33,7 +35,7 @@ async fn settings_round_trip_by_kind_scope_name() {
     .unwrap();
 
     let secret = db
-        .fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+        .fetch_setting(None, SettingKind::Secret, "jira".into(), "token".into())
         .await
         .unwrap()
         .unwrap();
@@ -43,7 +45,7 @@ async fn settings_round_trip_by_kind_scope_name() {
     assert!(!secret.id.is_nil());
 
     let config = db
-        .fetch_setting(SettingKind::Config, "jira".into(), "token".into())
+        .fetch_setting(None, SettingKind::Config, "jira".into(), "token".into())
         .await
         .unwrap()
         .unwrap();
@@ -51,6 +53,7 @@ async fn settings_round_trip_by_kind_scope_name() {
 
     // upsert replaces value and timestamp in place.
     db.upsert_setting(
+        None,
         SettingKind::Secret,
         "jira".into(),
         "token".into(),
@@ -60,7 +63,7 @@ async fn settings_round_trip_by_kind_scope_name() {
     .await
     .unwrap();
     let updated = db
-        .fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+        .fetch_setting(None, SettingKind::Secret, "jira".into(), "token".into())
         .await
         .unwrap()
         .unwrap();
@@ -72,22 +75,79 @@ async fn settings_round_trip_by_kind_scope_name() {
     );
 
     // list returns both rows; delete is kind-scoped.
-    assert_eq!(db.list_settings().await.unwrap().len(), 2);
-    db.delete_setting(SettingKind::Secret, "jira".into(), "token".into())
+    assert_eq!(db.list_settings(None).await.unwrap().len(), 2);
+    db.delete_setting(None, SettingKind::Secret, "jira".into(), "token".into())
         .await
         .unwrap();
     assert!(
-        db.fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+        db.fetch_setting(None, SettingKind::Secret, "jira".into(), "token".into())
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        db.fetch_setting(SettingKind::Config, "jira".into(), "token".into())
+        db.fetch_setting(None, SettingKind::Config, "jira".into(), "token".into())
             .await
             .unwrap()
             .is_some()
     );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn identical_aliases_are_isolated_by_organization_and_platform() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-settings-orgs-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let first_org = Uuid::new_v4();
+    let second_org = Uuid::new_v4();
+
+    for (org_id, value) in [
+        (None, b"platform".to_vec()),
+        (Some(first_org), b"first".to_vec()),
+        (Some(second_org), b"second".to_vec()),
+    ] {
+        db.upsert_setting(
+            org_id,
+            SettingKind::Secret,
+            "github".into(),
+            "token".into(),
+            value,
+            100,
+        )
+        .await
+        .unwrap();
+    }
+
+    let first = db
+        .fetch_setting(
+            Some(first_org),
+            SettingKind::Secret,
+            "github".into(),
+            "token".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let second = db
+        .fetch_setting(
+            Some(second_org),
+            SettingKind::Secret,
+            "github".into(),
+            "token".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.value, b"first");
+    assert_eq!(second.value, b"second");
+    assert_ne!(first.id, second.id);
+    assert_eq!(db.list_settings(Some(first_org)).await.unwrap().len(), 1);
+    assert_eq!(db.list_settings(None).await.unwrap().len(), 1);
 
     let _ = std::fs::remove_file(path);
 }
@@ -107,7 +167,12 @@ async fn jwt_secret_is_encrypted_at_rest_and_round_trips() {
 
     // the stored bytes must be sealed (carry the aead header), never the raw secret.
     let stored = db
-        .fetch_setting(SettingKind::Secret, "auth".into(), "jwt_secret".into())
+        .fetch_setting(
+            None,
+            SettingKind::Secret,
+            "auth".into(),
+            "jwt_secret".into(),
+        )
         .await
         .unwrap()
         .unwrap()

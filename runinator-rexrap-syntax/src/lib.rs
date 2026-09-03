@@ -20,4 +20,5 @@ pub use includes::included_file_paths;
 pub use parser::{
     ConsoleModule, parse_condition_fragment, parse_console_module, parse_do_fragment,
     parse_document, parse_expression_fragment, parse_pipeline_document, parse_secrets_document,
+    parse_settings_document,
 };

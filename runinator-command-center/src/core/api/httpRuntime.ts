@@ -972,6 +972,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) =>
       `credentials?scope=${escape(arg(args, "scope"))}&name=${escape(arg(args, "name"))}&kind=${escape(arg(args, "kind"))}`,
   },
+  move_credential: {
+    method: "PATCH",
+    path: (args) => `credentials/${escape(arg(args, "settingId"))}`,
+    body: (args) => arg(args, "request"),
+  },
   fetch_approvals: {
     method: "GET",
     path: (args) => {

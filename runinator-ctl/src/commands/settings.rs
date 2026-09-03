@@ -18,6 +18,18 @@ pub(super) async fn settings(
             print_settings(&entries);
         }
         SettingsCommands::Get { scope, name, kind } => {
+            if SettingKind::from(*kind) == SettingKind::Secret {
+                if json_output {
+                    return output::json(&json!({
+                        "scope": scope,
+                        "name": name,
+                        "kind": "secret",
+                        "write_only": true
+                    }));
+                }
+                println!("secret {scope}/{name} is write-only");
+                return Ok(());
+            }
             let value = client
                 .get_setting(SettingKind::from(*kind), scope, name)
                 .await?;
@@ -36,6 +48,7 @@ pub(super) async fn settings(
             value_file,
             kind,
             schema,
+            expires_at,
         } => {
             let kind = SettingKind::from(*kind);
             let raw = resolve_set_value(value.as_deref(), value_file.as_deref())?;
@@ -53,7 +66,7 @@ pub(super) async fn settings(
                 None => None,
             };
             let response = client
-                .put_setting(kind, scope, name, &value, schema.as_ref())
+                .put_setting_with_expiry(kind, scope, name, &value, schema.as_ref(), *expires_at)
                 .await?;
             if json_output {
                 return output::json(&response);
@@ -71,7 +84,7 @@ pub(super) async fn settings(
             let blocks =
                 runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| err(e.render(&data)))?;
             let source = blocks.settings.join("\n");
-            let bundle = runinator_rexrap::parse_secrets_str(&source).map_err(|e| {
+            let bundle = runinator_rexrap::parse_settings_str(&source).map_err(|e| {
                 err(format!(
                     "failed to parse {}:\n{}",
                     file.display(),
@@ -82,11 +95,12 @@ pub(super) async fn settings(
                 .import_pack(&WorkflowBundle::default(), Some(&bundle), None, false)
                 .await?;
             if json_output {
-                return output::json(&imported.secrets);
+                return output::json(&imported);
             }
             println!(
-                "imported {} setting(s) from {}",
-                imported.secrets.secrets.len(),
+                "imported {} setting(s) and {} execution profile(s) from {}",
+                imported.settings.settings.len(),
+                imported.execution_profiles.len(),
                 file.display()
             );
         }

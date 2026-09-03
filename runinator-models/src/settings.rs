@@ -37,6 +37,8 @@ impl SettingKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingSummary {
     pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<Uuid>,
     pub scope: String,
     pub name: String,
     #[serde(default)]
@@ -54,6 +56,7 @@ pub struct SettingRecord {
     /// Durable logical identity. Scope/name are the human-facing alias and may move without
     /// changing a persisted consumer reference.
     pub id: Uuid,
+    pub org_id: Option<Uuid>,
     pub kind: SettingKind,
     pub scope: String,
     pub name: String,

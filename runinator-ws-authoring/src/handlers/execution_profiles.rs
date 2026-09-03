@@ -19,13 +19,12 @@ use runinator_models::{
     auth::AuthContext,
     execution_profiles::{
         ExecutionProfile, ExecutionProfileHealth, ExecutionProfilePublishRequest,
-        ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileSource,
-        ExecutionProfileStatusRequest, validate_bundle_path, validate_environment_template,
+        ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileStatusRequest,
     },
     rbac::{Action, SystemRole},
 };
 use runinator_secrets::secret_cipher::SecretCipher;
-use runinator_store::roles::ExecutionProfileStore;
+use runinator_store::roles::{DefinitionStore, ExecutionProfileStore};
 use runinator_ws_core::{
     ValidatedJson,
     models::ApiResponse,
@@ -34,7 +33,6 @@ use runinator_ws_core::{
 };
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
@@ -63,60 +61,6 @@ async fn audit<T: AuthorizationStore>(
 #[derive(Debug, Deserialize)]
 pub struct ProfileLookup {
     pub name: Option<String>,
-}
-
-fn validate_request(request: &ExecutionProfilePutRequest) -> Result<(), String> {
-    if request.collection.version != 1 || request.exposure.version != 1 {
-        return Err(
-            "only execution profile collection/exposure specification version 1 is supported"
-                .into(),
-        );
-    }
-    if request.name.trim().is_empty() {
-        return Err("profile name is required".into());
-    }
-    if request.credential_scopes.is_empty() {
-        return Err("at least one credential scope is required".into());
-    }
-    if request.collection.sources.is_empty() {
-        return Err("at least one collection source is required".into());
-    }
-    for (label, command) in [
-        ("probe", request.collection.probe.as_ref()),
-        ("refresh", request.collection.refresh.as_ref()),
-    ] {
-        if command.is_some_and(|command| command.argv.is_empty()) {
-            return Err(format!("{label} command argv cannot be empty"));
-        }
-        if label == "probe" && command.is_some_and(|command| command.interactive) {
-            return Err("probe commands cannot be interactive".into());
-        }
-    }
-    for source in &request.collection.sources {
-        let (target, argv) = match source {
-            ExecutionProfileSource::File { target, .. }
-            | ExecutionProfileSource::Directory { target, .. } => (target, None),
-            ExecutionProfileSource::Command { target, command } => {
-                if command.interactive {
-                    return Err("command sources cannot be interactive".into());
-                }
-                (target, Some(&command.argv))
-            }
-        };
-        validate_bundle_path(target)?;
-        if argv.is_some_and(Vec::is_empty) {
-            return Err("collection command argv cannot be empty".into());
-        }
-    }
-    for value in request.exposure.environment.values() {
-        validate_environment_template(value)?;
-    }
-    Ok(())
-}
-
-fn config_digest(request: &ExecutionProfilePutRequest) -> String {
-    let bytes = serde_json::to_vec(request).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn effective_health(mut profile: ExecutionProfile) -> ExecutionProfile {
@@ -222,69 +166,10 @@ pub async fn put_profile<T: AuthorizationStore + ExecutionProfileStore>(
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
         return reply;
     }
-    if let Err(message) = validate_request(&request) {
-        return bad_request(message);
-    }
-    let now = Utc::now();
-    let existing = match service.fetch(id).await {
-        Ok(value) => value,
-        Err(error) => return api_error(error.to_string()),
-    };
-    if existing
-        .as_ref()
-        .is_some_and(|value| value.org_id != ctx.org_id)
+    match service
+        .configure(id, ctx.org_id, request, Some(Utc::now()), true)
+        .await
     {
-        return not_found("execution profile not found");
-    }
-    match service.fetch_by_name(ctx.org_id, &request.name).await {
-        Ok(Some(value)) if value.id != id => {
-            return bad_request("an execution profile with this name already exists");
-        }
-        Err(error) => return api_error(error.to_string()),
-        _ => {}
-    }
-    let digest = config_digest(&request);
-    let configuration_changed = existing
-        .as_ref()
-        .is_some_and(|value| value.config_digest != digest);
-    let version = existing.as_ref().map_or(1, |value| {
-        value.config_version + i64::from(configuration_changed)
-    });
-    let profile = ExecutionProfile {
-        id,
-        org_id: ctx.org_id,
-        name: request.name,
-        description: request.description,
-        credential_scopes: request.credential_scopes,
-        collection: request.collection,
-        exposure: request.exposure,
-        config_version: version,
-        config_digest: digest,
-        enabled: request.enabled,
-        current_revision: existing.as_ref().and_then(|v| v.current_revision),
-        current_digest: existing.as_ref().and_then(|v| v.current_digest.clone()),
-        current_publisher_id: existing.as_ref().and_then(|v| v.current_publisher_id),
-        published_at: existing.as_ref().and_then(|v| v.published_at),
-        expires_at: existing.as_ref().and_then(|v| v.expires_at),
-        refresh_requested_at: existing.as_ref().and_then(|v| v.refresh_requested_at),
-        health: if !request.enabled {
-            ExecutionProfileHealth::Disabled
-        } else if configuration_changed {
-            ExecutionProfileHealth::Unpublished
-        } else {
-            existing
-                .as_ref()
-                .map_or(ExecutionProfileHealth::Unpublished, |v| v.health)
-        },
-        last_error: if configuration_changed {
-            None
-        } else {
-            existing.as_ref().and_then(|v| v.last_error.clone())
-        },
-        created_at: existing.as_ref().map_or(now, |v| v.created_at),
-        updated_at: now,
-    };
-    match service.save(&profile).await {
         Ok(value) => {
             audit(
                 db.as_ref(),
@@ -488,7 +373,7 @@ pub async fn content<T: AuthorizationStore + ExecutionProfileStore>(
         .unwrap()
 }
 
-pub async fn remove<T: AuthorizationStore + ExecutionProfileStore>(
+pub async fn remove<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
@@ -497,6 +382,24 @@ pub async fn remove<T: AuthorizationStore + ExecutionProfileStore>(
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
         return reply;
+    }
+    let profile = match service.fetch(id).await {
+        Ok(Some(profile)) if profile.org_id == ctx.org_id => profile,
+        Ok(_) => return not_found("execution profile not found"),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let inbound = match service
+        .dependent_workflow_paths(id, ctx.org_id, &profile.name)
+        .await
+    {
+        Ok(workflows) => workflows,
+        Err(error) => return api_error(error.to_string()),
+    };
+    if !inbound.is_empty() {
+        return bad_request(format!(
+            "execution profile {id} is referenced by {}",
+            inbound.join(", ")
+        ));
     }
     match service.remove(id, ctx.org_id).await {
         Ok(true) => {
@@ -656,7 +559,7 @@ pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
     }
 }
 
-pub fn routes<T: AuthorizationStore + ExecutionProfileStore>() -> axum::Router {
+pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>() -> axum::Router {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/execution_profiles", get(list::<T>))

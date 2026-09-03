@@ -11,6 +11,7 @@ runinator-rexrap-sema = { path = "../runinator-rexrap-sema" }
 runinator-rexrap-codegen = { path = "../runinator-rexrap-codegen" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }

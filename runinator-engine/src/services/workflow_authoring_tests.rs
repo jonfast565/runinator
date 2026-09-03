@@ -226,6 +226,7 @@ async fn saving_setting_references_records_their_durable_uuids() {
     let (db, path) = test_db().await;
     let cipher = SecretCipher::from_env();
     db.upsert_setting(
+        None,
         SettingKind::Config,
         "acme.shared".into(),
         "message".into(),
@@ -235,6 +236,7 @@ async fn saving_setting_references_records_their_durable_uuids() {
     .await
     .unwrap();
     db.upsert_setting(
+        None,
         SettingKind::Secret,
         "acme.shared".into(),
         "token".into(),
@@ -244,13 +246,23 @@ async fn saving_setting_references_records_their_durable_uuids() {
     .await
     .unwrap();
     let config_id = db
-        .fetch_setting(SettingKind::Config, "acme.shared".into(), "message".into())
+        .fetch_setting(
+            None,
+            SettingKind::Config,
+            "acme.shared".into(),
+            "message".into(),
+        )
         .await
         .unwrap()
         .unwrap()
         .id;
     let secret_id = db
-        .fetch_setting(SettingKind::Secret, "acme.shared".into(), "token".into())
+        .fetch_setting(
+            None,
+            SettingKind::Secret,
+            "acme.shared".into(),
+            "token".into(),
+        )
         .await
         .unwrap()
         .unwrap()
@@ -307,6 +319,7 @@ async fn saving_setting_references_records_their_durable_uuids() {
 
     db.move_setting(
         config_id,
+        None,
         SettingKind::Config,
         "acme.moved".into(),
         "message".into(),

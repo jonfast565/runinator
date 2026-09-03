@@ -382,7 +382,7 @@ runinatorctl settings set github token "ghp_xxx"
 runinatorctl settings set github deploy-key --value-file ./id_ed25519
 
 # bulk import secrets and config from a bundle file
-runinatorctl settings import ./secrets.json
+runinatorctl settings import ./settings.rrx
 
 runinatorctl settings list            # all settings, no values
 runinatorctl settings get api base --kind config

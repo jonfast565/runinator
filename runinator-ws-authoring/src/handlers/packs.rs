@@ -8,7 +8,10 @@ use runinator_models::{
 };
 use runinator_store::{
     PackTransactionStore, RuntimeStore,
-    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, SettingStore},
+    roles::{
+        DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore, ScheduleStore,
+        SettingStore,
+    },
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -54,7 +57,8 @@ pub async fn import_pack<
         + FunctionStore
         + NotificationStore
         + ScheduleStore
-        + SettingStore,
+        + SettingStore
+        + ExecutionProfileStore,
 >(
     Extension(packs): Extension<Arc<PackOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
@@ -75,8 +79,28 @@ pub async fn import_pack<
         Ok(parsed) => parsed,
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };
+    let settings_section = contents.settings.as_ref();
+    if settings_section.is_some_and(|bundle| {
+        bundle
+            .settings
+            .iter()
+            .any(|entry| entry.kind == runinator_models::settings::SettingKind::Secret)
+    }) && let Err(reply) = ctx.require_scope_action(Action::SecretsWrite, import_scope)
+    {
+        return reply;
+    }
+    if settings_section.is_some_and(|bundle| !bundle.execution_profiles.is_empty())
+        && let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, import_scope)
+    {
+        return reply;
+    }
+    if (!contents.functions.is_empty() || !contents.function_artifacts.is_empty())
+        && let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, import_scope)
+    {
+        return reply;
+    }
     let mut workflow_bundle = contents.workflows;
-    let secret_bundle = contents.secrets;
+    let secret_bundle = contents.settings;
     let pipeline_bundle = contents.pipelines;
     stamp_bundle_org(&mut workflow_bundle, import_org);
     log::info!(
@@ -85,7 +109,7 @@ pub async fn import_pack<
         workflow_bundle.triggers.len(),
         secret_bundle
             .as_ref()
-            .map(|bundle| bundle.secrets.len())
+            .map(|bundle| bundle.settings.len())
             .unwrap_or(0),
     );
     // packaged functions land before workflows, for the same reason secrets do: a workflow in this
@@ -141,7 +165,8 @@ pub fn routes<
         + FunctionStore
         + NotificationStore
         + ScheduleStore
-        + SettingStore,
+        + SettingStore
+        + ExecutionProfileStore,
 >(
     _pool: std::sync::Arc<T>,
 ) -> axum::Router {
@@ -158,7 +183,7 @@ pub const DOCS: &[EndpointDoc] = &[endpoint(
     "/packs/import",
     "Packs",
     "Import a compiled pack zip",
-    "Imports a compiled `.rexrapm`/pack zip containing `workflows.json` and optional `secrets.json`. The backend reads compiled JSON only; it does not compile REXRAP.",
+    "Imports a compiled pack zip containing `workflows.json` and optional versioned `settings.json`. Legacy `secrets.json` remains readable for one compatibility release. The backend reads compiled JSON only; it does not compile REXRAP.",
     false,
     Some(RequestDoc {
         description: "Compiled pack zip.",

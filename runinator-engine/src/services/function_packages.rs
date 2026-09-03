@@ -16,7 +16,7 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, FunctionStore},
+    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore},
 };
 use uuid::Uuid;
 
@@ -73,7 +73,10 @@ impl<T: FunctionStore + DefinitionStore + RuntimeStore> FunctionPackages<T> {
     pub async fn publish(
         &self,
         request: &NewFunctionVersion,
-    ) -> Result<FunctionVersion, SendableError> {
+    ) -> Result<FunctionVersion, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
         repository::functions::publish_version(self.store.as_ref(), request).await
     }
 
@@ -90,7 +93,10 @@ impl<T: FunctionStore + DefinitionStore + RuntimeStore> FunctionPackages<T> {
         repository::functions::move_package(self.store.as_ref(), package_id, namespace, name).await
     }
 
-    pub async fn restore(&self, package_id: Uuid) -> Result<bool, SendableError> {
+    pub async fn restore(&self, package_id: Uuid) -> Result<bool, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
         repository::functions::restore_package(self.store.as_ref(), package_id).await
     }
 

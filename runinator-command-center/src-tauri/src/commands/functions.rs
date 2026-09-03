@@ -5,10 +5,42 @@
 //! backend, and duplicating either would give the two clients room to disagree.
 
 use super::*;
+use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_models::execution_profiles::ExecutionProfilePutRequest;
+
+async fn execution_profile_client(
+    state: &CommandCenterState,
+) -> CommandResult<AsyncApiClient<StaticLocator>> {
+    let base_url = state
+        .service_url
+        .read()
+        .await
+        .clone()
+        .ok_or(CommandError::NoService)?;
+    let client = state.client.read().await.clone();
+    Ok(AsyncApiClient::with_client(
+        StaticLocator::new(base_url),
+        client,
+    ))
+}
+
+fn api_error(error: runinator_api::ApiError) -> CommandError {
+    CommandError::Unexpected(error.to_string())
+}
+
+fn json_value(value: impl serde::Serialize) -> CommandResult<Value> {
+    serde_json::to_value(value).map_err(|error| CommandError::Unexpected(error.to_string()))
+}
 
 #[tauri::command]
 pub async fn list_execution_profiles(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
-    get_json(&state, "execution_profiles").await
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .list_execution_profiles()
+            .await
+            .map_err(api_error)?,
+    )
 }
 
 #[tauri::command]
@@ -17,12 +49,17 @@ pub async fn put_execution_profile(
     profile_id: String,
     profile: Value,
 ) -> CommandResult<Value> {
-    put_json(
-        &state,
-        &format!("execution_profiles/{profile_id}"),
-        &profile,
+    let id = Uuid::parse_str(&profile_id)
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let request = serde_json::from_value::<ExecutionProfilePutRequest>(profile)
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .configure_execution_profile(id, &request)
+            .await
+            .map_err(api_error)?,
     )
-    .await
 }
 
 #[tauri::command]
@@ -30,7 +67,15 @@ pub async fn delete_execution_profile(
     state: State<'_, CommandCenterState>,
     profile_id: String,
 ) -> CommandResult<Value> {
-    crate::client::delete(&state, &format!("execution_profiles/{profile_id}")).await
+    let id = Uuid::parse_str(&profile_id)
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .delete_execution_profile(id)
+            .await
+            .map_err(api_error)?,
+    )
 }
 
 #[tauri::command]
@@ -38,7 +83,15 @@ pub async fn rotate_execution_profile(
     state: State<'_, CommandCenterState>,
     profile_id: String,
 ) -> CommandResult<Value> {
-    post_empty(&state, &format!("execution_profiles/{profile_id}/rotate")).await
+    let id = Uuid::parse_str(&profile_id)
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .rotate_execution_profile(id)
+            .await
+            .map_err(api_error)?,
+    )
 }
 
 #[tauri::command]
@@ -46,7 +99,15 @@ pub async fn test_execution_profile(
     state: State<'_, CommandCenterState>,
     profile_id: String,
 ) -> CommandResult<Value> {
-    post_empty(&state, &format!("execution_profiles/{profile_id}/test")).await
+    let id = Uuid::parse_str(&profile_id)
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .test_execution_profile(id)
+            .await
+            .map_err(api_error)?,
+    )
 }
 
 // ---- packaged functions ----

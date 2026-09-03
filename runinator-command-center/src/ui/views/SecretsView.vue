@@ -26,7 +26,7 @@
                 <Icon v-else name="refresh" />
                 <span>Refresh</span>
               </button>
-              <button class="btn btn-primary" @click="openNewSetting">
+              <button class="btn btn-primary" :disabled="!canMutate" @click="openNewSetting">
                 <Icon name="plus" />
                 <span>{{ newLabel }}</span>
               </button>
@@ -88,7 +88,7 @@
               />
             </div>
             <div v-if="selected" class="btn-row">
-              <button class="btn btn-sm" @click="openEditSetting(selected)">
+              <button class="btn btn-sm" :disabled="!canMutate" @click="openEditSetting(selected)">
                 <Icon name="edit" :size="14" />
                 <span>Edit</span>
               </button>
@@ -196,6 +196,19 @@
               :placeholder="valuePlaceholder"
             />
           </label>
+          <label v-if="isConfig" class="col-span-full">
+            <span>JSON Schema (optional on updates)</span>
+            <JsonEditor
+              class="min-h-[100px] [&_.json-editor-container]:min-h-20"
+              :model-value="secrets.draft.schema"
+              title=""
+              @update:model-value="secrets.draft.schema = $event"
+            />
+          </label>
+          <label v-else class="col-span-full">
+            <span>Expires at (optional)</span>
+            <input v-model="secrets.draft.expiresAt" type="datetime-local" />
+          </label>
         </div>
         <p v-if="editorError" class="error m-0 text-xs" role="alert">{{ editorError }}</p>
         <datalist id="setting-scopes">
@@ -214,14 +227,14 @@
           <button
             class="btn btn-danger"
             type="button"
-            :disabled="!secrets.selectedSecret"
+            :disabled="!secrets.selectedSecret || !canMutate"
             @click="deleteEditorSetting"
           >
             <Icon name="trash" />
             <span>Delete</span>
           </button>
           <button class="btn" type="button" @click="closeEditor">Cancel</button>
-          <button class="btn btn-primary" type="submit" :disabled="Boolean(editorError)">
+          <button class="btn btn-primary" type="submit" :disabled="Boolean(editorError) || !canMutate">
             <Icon name="save" />
             <span>{{ saveLabel }}</span>
           </button>
@@ -265,6 +278,7 @@ const editorOpen = ref(false);
 const modalRoot = ref<HTMLElement | null>(null);
 
 const isConfig = computed(() => props.settingKind === "config");
+const canMutate = computed(() => app.can("secrets:write"));
 const baseEntries = computed(() =>
   isConfig.value ? secrets.configEntries : secrets.secretEntries,
 );
@@ -388,6 +402,7 @@ async function openEditSetting(setting: CredentialSummary) {
   if (isConfig.value) {
     await secrets.loadConfigValue(setting);
     secrets.draft.secret = secrets.configValues[secretKey(setting)] ?? "";
+    secrets.draft.schema = secrets.configSchemas[secretKey(setting)] ?? "";
   }
 
   editorOpen.value = true;

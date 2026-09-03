@@ -152,6 +152,7 @@ fn an_unroutable_channel_has_no_provider() {
 fn secret_expiry_context_contains_metadata_but_not_the_secret() {
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(2);
     let record = SettingRecord {
+        org_id: None,
         id: uuid::Uuid::now_v7(),
         kind: SettingKind::Secret,
         scope: "github".into(),
@@ -179,6 +180,7 @@ fn expiry_is_read_only_from_secret_envelopes() {
         .encode()
         .unwrap();
     let secret = SettingRecord {
+        org_id: None,
         id: uuid::Uuid::now_v7(),
         kind: SettingKind::Secret,
         scope: "github".into(),
@@ -224,6 +226,7 @@ async fn repeated_secret_expiry_scans_emit_one_notification() {
     .encode()
     .unwrap();
     db.upsert_setting(
+        None,
         SettingKind::Secret,
         "github".into(),
         "token".into(),

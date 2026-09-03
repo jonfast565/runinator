@@ -31,6 +31,7 @@ import { createSupervisorService } from "./supervisor";
 import { createAgentEnrollmentService } from "./agent-enrollment";
 import { createAgentDirectivesService } from "./agent-directives";
 import { createProfileSecurityService } from "./profile-security";
+import { createExecutionProfilesService } from "./execution-profiles";
 
 export const appService = createAppService();
 export const authService = createAuthService();
@@ -77,10 +78,12 @@ export const nodePoolsService = createNodePoolsService(appService);
 export const supervisorService = createSupervisorService();
 export const agentEnrollmentService = createAgentEnrollmentService(appService);
 export const agentDirectivesService = createAgentDirectivesService(appService);
+export const executionProfilesService = createExecutionProfilesService(appService);
 
 export type { AppService } from "./app";
 export type { AuthService } from "./auth";
 export type { ProfileSecurityService } from "./profile-security";
+export type { ExecutionProfilesService } from "./execution-profiles";
 export type { ResourcesService } from "./resources";
 export type { ConsoleService } from "./console";
 export type { FunctionsService } from "./functions";

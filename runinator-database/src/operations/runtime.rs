@@ -698,13 +698,43 @@ where
         Ok(mappers::row_to_audit_log(&row))
     }
 
-    async fn list_settings(&self) -> Result<Vec<SettingRecord>, SendableError> {
+    async fn list_settings(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<SettingRecord>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, org_id, kind, scope, name, value, updated_at FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) ORDER BY kind, scope, name",
+        ))
+        .bind(org_id)
+        .bind(org_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_setting).collect())
+    }
+
+    async fn list_all_settings(&self) -> Result<Vec<SettingRecord>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, kind, scope, name, value, updated_at FROM settings ORDER BY kind, scope, name",
+            "SELECT id, org_id, kind, scope, name, value, updated_at FROM settings ORDER BY org_id, kind, scope, name",
         )
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_setting).collect())
+    }
+
+    async fn fetch_setting_by_id(
+        &self,
+        org_id: Option<Uuid>,
+        id: Uuid,
+    ) -> Result<Option<SettingRecord>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, org_id, kind, scope, name, value, updated_at FROM settings WHERE id = ? AND (org_id = ? OR (org_id IS NULL AND ? IS NULL))",
+        ))
+        .bind(id)
+        .bind(org_id)
+        .bind(org_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.as_ref().map(mappers::row_to_setting))
     }
 
     async fn fetch_org(&self, id: Uuid) -> Result<Option<Organization>, SendableError> {
@@ -1095,13 +1125,16 @@ where
 
     async fn fetch_setting(
         &self,
+        org_id: Option<Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,
     ) -> Result<Option<SettingRecord>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, kind, scope, name, value, updated_at FROM settings WHERE kind = ? AND scope = ? AND name = ?",
+            "SELECT id, org_id, kind, scope, name, value, updated_at FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) AND kind = ? AND scope = ? AND name = ?",
         ))
+        .bind(org_id)
+        .bind(org_id)
         .bind(kind.as_str())
         .bind(scope)
         .bind(name)

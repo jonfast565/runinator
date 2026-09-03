@@ -19,6 +19,7 @@ pub enum ArtifactKind {
     Pipeline,
     FunctionPackage,
     Setting,
+    ExecutionProfile,
 }
 
 /// A human-facing, stable-key location. `None` is the package's root namespace.

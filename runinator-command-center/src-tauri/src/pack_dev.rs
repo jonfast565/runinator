@@ -6,7 +6,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use runinator_models::{
     api_routes::API_PACKS_IMPORT,
-    bundles::{PackImportResult, SecretBundle},
+    bundles::{PackImportResult, SettingsBundle},
     settings::SettingSummary,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
@@ -87,12 +87,13 @@ pub fn inspect_dev_pack(
         .as_ref()
         .map(|bundle| {
             bundle
-                .secrets
+                .settings
                 .iter()
                 .map(|entry| SettingSummary {
                     // Authored pack settings have no server identity until import. Completion only
                     // needs their paths, so use the nil UUID as an explicit provisional sentinel.
                     id: uuid::Uuid::nil(),
+                    org_id: None,
                     scope: entry.scope.clone(),
                     name: entry.name.clone(),
                     kind: entry.kind,
@@ -218,7 +219,7 @@ fn source_file_kind(path: &Path) -> String {
     }
 }
 
-fn load_pack_settings(path: &Path) -> CommandResult<Option<SecretBundle>> {
+fn load_pack_settings(path: &Path) -> CommandResult<Option<SettingsBundle>> {
     runinator_pack::source::load_pack_settings(path).map_err(|err| command_error(err.to_string()))
 }
 

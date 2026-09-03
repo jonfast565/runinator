@@ -15,17 +15,21 @@ use chrono::{DateTime, Utc};
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::{
-    bundles::{SecretBundle, SecretBundleEntry},
+    bundles::{SettingBundleEntry, SettingsBundle},
     errors::SendableError,
     server_settings::{SERVER_SETTINGS_NAME, SERVER_SETTINGS_SCOPE, ServerSettings},
     settings::SettingKind,
 };
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_secrets::stored_secret::StoredSecret;
-use runinator_store::{RuntimeStore, roles::SettingStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, SettingStore},
+};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+use uuid::Uuid;
 
 // the persisted form of a config entry: the json value plus the schema it was validated against,
 // so the schema is pinned per (scope, name) and later value-only updates reuse it.
@@ -163,12 +167,13 @@ pub struct SettingBundleImportError {
 /// writes part of the caller's larger operation.
 pub async fn import_setting_bundle_with<T: SettingStore + RuntimeStore>(
     db: &T,
-    bundle: &SecretBundle,
+    org_id: Option<Uuid>,
+    bundle: &SettingsBundle,
     overwrite: bool,
-) -> Result<Vec<SecretBundleEntry>, SettingBundleImportError> {
+) -> Result<Vec<SettingBundleEntry>, SettingBundleImportError> {
     let cipher = settings_cipher();
-    let mut imported = Vec::with_capacity(bundle.secrets.len());
-    for setting in &bundle.secrets {
+    let mut imported = Vec::with_capacity(bundle.settings.len());
+    for setting in &bundle.settings {
         if runinator_models::server_settings::is_reserved_server_setting(
             setting.kind,
             &setting.scope,
@@ -181,7 +186,12 @@ pub async fn import_setting_bundle_with<T: SettingStore + RuntimeStore>(
         }
         let incoming_ts = setting.updated_at.map(|updated_at| updated_at.timestamp());
         let stored = db
-            .fetch_setting(setting.kind, setting.scope.clone(), setting.name.clone())
+            .fetch_setting(
+                org_id,
+                setting.kind,
+                setting.scope.clone(),
+                setting.name.clone(),
+            )
             .await
             .map_err(|error| SettingBundleImportError {
                 bad_request: false,
@@ -220,6 +230,7 @@ pub async fn import_setting_bundle_with<T: SettingStore + RuntimeStore>(
             message,
         })?;
         db.upsert_setting(
+            org_id,
             setting.kind,
             setting.scope.clone(),
             setting.name.clone(),
@@ -236,8 +247,8 @@ pub async fn import_setting_bundle_with<T: SettingStore + RuntimeStore>(
     Ok(imported)
 }
 
-fn redacted_entry(setting: &SecretBundleEntry) -> SecretBundleEntry {
-    SecretBundleEntry {
+fn redacted_entry(setting: &SettingBundleEntry) -> SettingBundleEntry {
+    SettingBundleEntry {
         scope: setting.scope.clone(),
         name: setting.name.clone(),
         value: Value::Null,
@@ -251,9 +262,9 @@ fn redacted_entry(setting: &SecretBundleEntry) -> SecretBundleEntry {
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references
 /// at workflow validation. each level is an open struct, so a not-yet-configured scope or name
 /// stays permissive (`any`) rather than failing validation.
-pub async fn config_type_tree<T: RuntimeStore>(db: &T) -> RuninatorType {
+pub async fn config_type_tree<T: RuntimeStore>(db: &T, org_id: Option<Uuid>) -> RuninatorType {
     let cipher = settings_cipher();
-    let Ok(entries) = db.list_settings().await else {
+    let Ok(entries) = db.list_settings(org_id).await else {
         return RuninatorType::map(RuninatorType::Any);
     };
     let mut scopes: BTreeMap<String, BTreeMap<String, RuninatorType>> = BTreeMap::new();
@@ -288,12 +299,54 @@ pub async fn config_type_tree<T: RuntimeStore>(db: &T) -> RuninatorType {
     RuninatorType::open_structure(scope_fields, RuninatorType::Any)
 }
 
+/// Report organization workflows whose durable setting UUID still points at a platform-owned row.
+/// The migration deliberately does not copy or fall back to those values.
+pub async fn audit_platform_setting_bindings<T: RuntimeStore + DefinitionStore>(db: &T) {
+    let Ok(settings) = db.list_all_settings().await else {
+        return;
+    };
+    let platform_ids = settings
+        .into_iter()
+        .filter(|setting| setting.org_id.is_none())
+        .map(|setting| setting.id)
+        .collect::<std::collections::HashSet<_>>();
+    let Ok(workflows) = db.fetch_workflows().await else {
+        return;
+    };
+    for workflow in workflows
+        .into_iter()
+        .filter(|workflow| workflow.org_id.is_some())
+    {
+        let references_platform = workflow
+            .definition
+            .metadata
+            .pointer("/artifact_refs/settings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| {
+                serde_json::from_value::<runinator_models::settings::SettingBinding>(
+                    value.clone().into(),
+                )
+                .ok()
+            })
+            .any(|binding| platform_ids.contains(&binding.reference.id));
+        if references_platform {
+            log::warn!(
+                "migration audit: organization workflow '{}' references a platform-owned setting; recreate the setting explicitly in organization {:?}",
+                workflow.artifact_path().qualified(),
+                workflow.org_id
+            );
+        }
+    }
+}
+
 /// Load the platform operating policy, falling back field-by-field to the compiled defaults when
 /// no row exists or an older stored document predates newly-added fields.
 pub async fn load_server_settings<T: RuntimeStore>(
     db: &T,
 ) -> Result<ServerSettings, SendableError> {
-    let records = db.list_settings().await?;
+    let records = db.list_settings(None).await?;
     let Some(record) = records.iter().find(|record| {
         record.kind == SettingKind::Config
             && record.scope == SERVER_SETTINGS_SCOPE
@@ -348,7 +401,7 @@ pub async fn load_server_settings<T: RuntimeStore>(
 pub async fn load_persisted_server_settings<T: SettingStore>(
     db: &T,
 ) -> Result<Option<ServerSettings>, SendableError> {
-    let records = db.list_stored_settings().await?;
+    let records = db.list_stored_settings(None).await?;
     let Some(record) = records.iter().find(|record| {
         record.kind == SettingKind::Config
             && record.scope == SERVER_SETTINGS_SCOPE
@@ -409,6 +462,7 @@ pub async fn save_server_settings<T: SettingStore>(
         )) as SendableError
     })?;
     db.upsert_setting(
+        None,
         SettingKind::Config,
         SERVER_SETTINGS_SCOPE.into(),
         SERVER_SETTINGS_NAME.into(),

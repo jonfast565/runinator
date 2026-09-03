@@ -6,12 +6,29 @@ import {
   type SecretDraft,
 } from "../../../core/services/secrets";
 import { appService, secretsService } from "../../../core/services";
+import { secretKey } from "../../../core/utils/secrets";
 import { mirrorServiceState } from "./sync";
 
 export type { SecretDraft };
 
 function blankDraft(kind: SettingKind = "secret"): SecretDraft {
   return blankSecretDraft(kind);
+}
+
+function localDateTime(value?: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.valueOf())) {
+    return "";
+  }
+
+  const offset = date.getTimezoneOffset() * 60_000;
+
+  return new Date(date.valueOf() - offset).toISOString().slice(0, 16);
 }
 
 export const useSecretsStore = defineStore("secrets", () => {
@@ -26,6 +43,7 @@ export const useSecretsStore = defineStore("secrets", () => {
       },
     }),
     configValues: computed(() => state.value.configValues),
+    configSchemas: computed(() => state.value.configSchemas),
     selectedSecretKey: computed({
       get: () => state.value.selectedSecretKey,
       set: (key) => { secretsService.setSelectedSecretKey(key); },
@@ -59,7 +77,10 @@ export const useSecretsStore = defineStore("secrets", () => {
       draft.scope = secret.scope;
       draft.name = secret.name;
       draft.secret = "";
+      draft.schema = "";
       draft.kind = secret.kind ?? "secret";
+      draft.schema = state.value.configSchemas[secretKey(secret)] ?? "";
+      draft.expiresAt = localDateTime(secret.expires_at);
     },
     clearDraft: (kind: SettingKind = "secret") => {
       secretsService.clearSelection();

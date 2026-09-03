@@ -36,7 +36,7 @@ pub use runinator_rexrap_syntax::{
     ConsoleModule, parse_condition_fragment, parse_console_module, parse_do_fragment,
     parse_document, parse_expression_fragment,
 };
-pub use secrets::{parse_secrets_str, secrets_to_rexraps};
+pub use secrets::{parse_secrets_str, parse_settings_str, secrets_to_rexraps, settings_to_rexrap};
 pub use sema::{Diagnostic, Severity};
 
 use runinator_rexrap_codegen::{decompile, lower};

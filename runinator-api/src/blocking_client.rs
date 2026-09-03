@@ -9,7 +9,7 @@ use runinator_models::{
         api_workflow, api_workflow_duplicate, api_workflow_run_command, API_PACKS_IMPORT,
         API_PROVIDERS, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
     },
-    bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
+    bundles::{Bundle, PackImportResult, ProviderBundle, SettingsBundle},
     providers::ProviderMetadata,
     semver::SemVerBump,
     web::TaskResponse,
@@ -135,16 +135,16 @@ where
         Ok(response.json::<B>()?)
     }
 
-    /// Build a compiled pack zip (workflows + optional secrets + pipelines) and POST it to
+    /// Build a compiled pack zip (workflows + optional settings/profiles + pipelines) and POST it to
     /// `/packs/import`.
     pub fn import_pack(
         &self,
         workflows: &WorkflowBundle,
-        secrets: Option<&SecretBundle>,
+        settings: Option<&SettingsBundle>,
         pipelines: Option<&PipelineBundle>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
-        let body = runinator_pack_wire::pack::build_pack_zip(workflows, secrets, pipelines)
+        let body = runinator_pack_wire::pack::build_pack_zip(workflows, settings, pipelines)
             .map_err(|err| ApiError::Pack(err.to_string()))?;
         let mut url = self.build_url(API_PACKS_IMPORT)?;
         if overwrite {

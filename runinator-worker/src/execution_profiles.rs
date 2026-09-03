@@ -42,10 +42,10 @@ pub async fn materialize(
     effect_id: uuid::Uuid,
     binding: &ExecutionProfileBinding,
 ) -> Result<ProfileLease, SendableError> {
-    let profile = if binding.id == uuid::Uuid::nil() {
-        client.resolve_execution_profile(&binding.name).await?
+    let profile = if binding.id().is_nil() {
+        client.resolve_execution_profile(binding.name()).await?
     } else {
-        client.fetch_execution_profile(binding.id).await?
+        client.fetch_execution_profile(binding.id()).await?
     };
     if !profile.enabled {
         return Err(Box::new(std::io::Error::new(

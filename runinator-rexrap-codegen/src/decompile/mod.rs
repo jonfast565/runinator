@@ -1503,7 +1503,7 @@ impl<'a> Decompiler<'a> {
             modifiers.push(format!("@workspace({})", self.expr(affinity)?));
         }
         if let Some(profile) = &action.execution_profile {
-            modifiers.push(format!("@profile({})", quote(&profile.name)));
+            modifiers.push(format!("@profile({})", quote(profile.name())));
         }
         if let Some(key) = &action.idempotency_key {
             modifiers.push(format!("@idempotent(key: {})", self.expr(key)?));

@@ -43,11 +43,12 @@ pub(super) async fn namespaces(
 }
 
 async fn plan(client: &Client, output_path: Option<&PathBuf>, json_output: bool) -> Result<()> {
-    let (workflows, pipelines, functions, settings) = tokio::try_join!(
+    let (workflows, pipelines, functions, settings, profiles) = tokio::try_join!(
         client.fetch_workflows(),
         client.fetch_pipelines(),
         client.fetch_function_packages(),
         client.list_settings(),
+        client.list_execution_profiles(),
     )?;
     let diagnostics = ambiguous_reference_diagnostics(&workflows);
     let mut source_diffs = Vec::new();
@@ -106,6 +107,17 @@ async fn plan(client: &Client, output_path: Option<&PathBuf>, json_output: bool)
             current_path,
         });
     }
+    for profile in profiles {
+        artifacts.push(NamespaceMigrationEntry {
+            kind: ArtifactKind::ExecutionProfile,
+            setting_kind: None,
+            id: profile.id,
+            namespace: None,
+            key: profile.name.clone(),
+            display_name: profile.name.clone(),
+            current_path: profile.name,
+        });
+    }
     artifacts.sort_by(|left, right| {
         format!("{:?}:{}", left.kind, left.current_path)
             .cmp(&format!("{:?}:{}", right.kind, right.current_path))
@@ -148,11 +160,16 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
     let mut pipelines_updated = 0usize;
     let mut settings_moved = 0usize;
     let mut function_packages_moved = 0usize;
+    let mut execution_profiles_renamed = 0usize;
     for entry in &plan.artifacts {
         if entry.key.trim().is_empty() {
             return Err(err(format!("{} has an empty stable key", entry.id)));
         }
-        let namespace = strict_namespace(entry)?;
+        let namespace = if entry.kind == ArtifactKind::ExecutionProfile {
+            String::new()
+        } else {
+            strict_namespace(entry)?
+        };
         match entry.kind {
             ArtifactKind::Workflow => {
                 let mut workflow = client.fetch_workflow(entry.id).await?;
@@ -193,6 +210,25 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
                     function_packages_moved += 1;
                 }
             }
+            ArtifactKind::ExecutionProfile => {
+                if entry.key != entry.current_path {
+                    let profile = client.fetch_execution_profile(entry.id).await?;
+                    client
+                        .configure_execution_profile(
+                            entry.id,
+                            &runinator_models::execution_profiles::ExecutionProfilePutRequest {
+                                name: entry.key.clone(),
+                                description: profile.description,
+                                credential_scopes: profile.credential_scopes,
+                                collection: profile.collection,
+                                exposure: profile.exposure,
+                                enabled: profile.enabled,
+                            },
+                        )
+                        .await?;
+                    execution_profiles_renamed += 1;
+                }
+            }
         }
     }
     let result = json!({
@@ -200,13 +236,14 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
         "pipelines_updated": pipelines_updated,
         "settings_moved": settings_moved,
         "function_packages_moved": function_packages_moved,
+        "execution_profiles_renamed": execution_profiles_renamed,
         "strict_namespace_mode": true,
     });
     if json_output {
         return output::json(&result);
     }
     println!(
-        "updated {workflows_updated} workflow(s) and {pipelines_updated} pipeline(s); moved {settings_moved} setting(s) and {function_packages_moved} function package(s); UUID references were revalidated"
+        "updated {workflows_updated} workflow(s) and {pipelines_updated} pipeline(s); moved {settings_moved} setting(s) and {function_packages_moved} function package(s); renamed {execution_profiles_renamed} execution profile(s); UUID references were revalidated"
     );
     println!("strict namespace enforcement is active");
     Ok(())

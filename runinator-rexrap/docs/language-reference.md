@@ -523,7 +523,9 @@ config app.flags     = { beta: true, region: "us" }
 A dotted name with more than two segments joins the tail with `/` (so `secret jira.api.key` is the
 secret `key` under scope `jira` named `api/key`). `secret` entries are stored as redacted secrets;
 `config` entries are eagerly-resolvable config values. The pack compiler lowers the block to a
-`SecretBundle` and folds it into the same compiled pack zip as workflows and pipelines.
+`SettingsBundle` and folds it into the same compiled pack zip as workflows and pipelines. Readers
+accept legacy `secrets.json` packs for one compatibility release, while writers emit only the
+versioned `settings.json` contract.
 
 Standalone secret/config import requires an `.rrx` source containing a settings block (JSON is not accepted):
 `runinatorctl settings import secrets.rrx`. The MCP `runinator_import_workflow_bundle` tool

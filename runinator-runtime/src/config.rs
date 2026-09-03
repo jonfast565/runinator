@@ -4,6 +4,7 @@ use runinator_models::value::{Map, Value};
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::RuntimeStore;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 
@@ -19,9 +20,9 @@ fn settings_cipher() -> SecretCipher {
 }
 
 /// the config reference tree `{ <scope>: { <name>: <value> } }`.
-pub async fn config_tree<T: RuntimeStore>(db: &T) -> Value {
+pub async fn config_tree<T: RuntimeStore>(db: &T, org_id: Option<Uuid>) -> Value {
     let cipher = settings_cipher();
-    let Ok(entries) = db.list_settings().await else {
+    let Ok(entries) = db.list_settings(org_id).await else {
         return Value::Object(Map::new());
     };
     let mut root = Map::new();
@@ -50,7 +51,7 @@ pub async fn config_tree_for_workflow<T: RuntimeStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
 ) -> Value {
-    let mut tree = config_tree(db).await;
+    let mut tree = config_tree(db, workflow.org_id).await;
     let Some(bindings) = workflow
         .definition
         .metadata
@@ -75,9 +76,15 @@ pub async fn config_tree_for_workflow<T: RuntimeStore>(
         let Some(scope_name) = path.namespace else {
             continue;
         };
-        let Ok(Some(record)) = db.fetch_setting_by_id(binding.reference.id).await else {
+        let Ok(Some(record)) = db
+            .fetch_setting_by_id(workflow.org_id, binding.reference.id)
+            .await
+        else {
             continue;
         };
+        if record.org_id != workflow.org_id {
+            continue;
+        }
         let Some(plaintext) = cipher.try_decrypt(&record.value) else {
             continue;
         };
@@ -97,11 +104,17 @@ pub async fn config_tree_for_workflow<T: RuntimeStore>(
 /// fetch one config value by scope/name, decrypting and decoding the persisted payload.
 pub async fn config_value<T: RuntimeStore>(
     db: &T,
+    org_id: Option<Uuid>,
     scope: &str,
     name: &str,
 ) -> Result<Option<Value>, runinator_models::errors::SendableError> {
     let Some(record) = db
-        .fetch_setting(SettingKind::Config, scope.to_string(), name.to_string())
+        .fetch_setting(
+            org_id,
+            SettingKind::Config,
+            scope.to_string(),
+            name.to_string(),
+        )
         .await?
     else {
         return Ok(None);
@@ -114,9 +127,9 @@ pub async fn config_value<T: RuntimeStore>(
 }
 
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check config refs.
-pub async fn config_type_tree<T: RuntimeStore>(db: &T) -> RuninatorType {
+pub async fn config_type_tree<T: RuntimeStore>(db: &T, org_id: Option<Uuid>) -> RuninatorType {
     let cipher = settings_cipher();
-    let Ok(entries) = db.list_settings().await else {
+    let Ok(entries) = db.list_settings(org_id).await else {
         return RuninatorType::map(RuninatorType::Any);
     };
     let mut scopes: BTreeMap<String, BTreeMap<String, RuninatorType>> = BTreeMap::new();

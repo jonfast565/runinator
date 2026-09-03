@@ -23,7 +23,7 @@ use runinator_models::functions::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, FunctionStore},
+    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore},
 };
 use tokio::io::AsyncRead;
 use uuid::Uuid;
@@ -179,7 +179,9 @@ pub async fn delete_artifact<T: FunctionStore>(
 }
 
 /// publish one version, refusing a publish whose artifact was never uploaded.
-pub async fn publish_version<T: FunctionStore + RuntimeStore + DefinitionStore>(
+pub async fn publish_version<
+    T: FunctionStore + RuntimeStore + DefinitionStore + ExecutionProfileStore,
+>(
     db: &T,
     request: &NewFunctionVersion,
 ) -> Result<FunctionVersion, SendableError> {
@@ -407,7 +409,9 @@ pub async fn delete_package<T: FunctionStore + DefinitionStore>(
 }
 
 /// restore an archived package and rebuild its derived catalog mirror.
-pub async fn restore_package<T: FunctionStore + RuntimeStore + DefinitionStore>(
+pub async fn restore_package<
+    T: FunctionStore + RuntimeStore + DefinitionStore + ExecutionProfileStore,
+>(
     db: &T,
     package_id: Uuid,
 ) -> Result<bool, SendableError> {

@@ -134,6 +134,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     // or pipeline run it belongs to, without giving workers database access.
     let broker: Arc<dyn Broker> = Arc::new(TracingBroker::new(broker, pool.clone()));
     let server_settings = ServerSettingsHandle::load(pool.as_ref()).await?;
+    crate::settings::audit_platform_setting_bindings(pool.as_ref()).await;
     let orchestration_nudge = Arc::new(Notify::new());
 
     let mut loops: JoinSet<()> = JoinSet::new();

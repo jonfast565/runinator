@@ -41,8 +41,13 @@ fn_param     = { ident ~ optional_mark? ~ ":" ~ type_expr ~ field_default? }
 // dotted `scope.name`, each assigned a literal value. mirrors rexrap's `secret.*` / `config.*`
 // reference surface. the value reuses the expression grammar but must be a pure literal (no refs
 // or interpolation); the parser enforces that.
-secrets_document = { SOI ~ secret_decl* ~ EOI }
-secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
+secrets_document = { SOI ~ setting_item* ~ EOI }
+setting_item     = { secret_decl | profile_decl }
+secret_decl      = { setting_attr* ~ secret_kind ~ path ~ "=" ~ expr }
+setting_attr     = { schema_attr | expires_attr }
+schema_attr      = { "@schema" ~ "(" ~ expr ~ ")" }
+expires_attr     = { "@expires_at" ~ "(" ~ string ~ ")" }
+profile_decl     = { "profile" ~ string ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
 // a `.rexrapp` pipeline file: one or more `pipeline "Name" { ... }` blocks. each declares member

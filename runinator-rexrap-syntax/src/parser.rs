@@ -480,19 +480,33 @@ fn span_of(pair: &Pair<Rule>) -> Span {
 }
 
 /// parse a `.rexraps` secrets/config document into its declarations.
-pub fn parse_secrets_document(src: &str) -> Result<Vec<SecretDecl>, RexRapError> {
+pub fn parse_settings_document(src: &str) -> Result<SettingsDocument, RexRapError> {
     let mut pairs = RexRapParser::parse(Rule::secrets_document, src)
         .map_err(|err| RexRapError::Parse(err.to_string()))?;
     let document = pairs
         .next()
         .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
-    let mut decls = Vec::new();
+    let mut document_out = SettingsDocument::default();
     for inner in document.into_inner() {
-        if inner.as_rule() == Rule::secret_decl {
-            decls.push(parse_secret_decl(inner)?);
+        if inner.as_rule() != Rule::setting_item {
+            continue;
+        }
+        let Some(item) = inner.into_inner().next() else {
+            continue;
+        };
+        match item.as_rule() {
+            Rule::secret_decl => document_out.settings.push(parse_secret_decl(item)?),
+            Rule::profile_decl => document_out
+                .execution_profiles
+                .push(parse_profile_decl(item)?),
+            _ => {}
         }
     }
-    Ok(decls)
+    Ok(document_out)
+}
+
+pub fn parse_secrets_document(src: &str) -> Result<Vec<SecretDecl>, RexRapError> {
+    Ok(parse_settings_document(src)?.settings)
 }
 
 fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, RexRapError> {
@@ -500,6 +514,8 @@ fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, RexRapError> {
     let mut is_config = false;
     let mut path = Vec::new();
     let mut value = None;
+    let mut schema = None;
+    let mut expires_at = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::secret_kind => is_config = inner.as_str() == "config",
@@ -509,6 +525,30 @@ fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, RexRapError> {
                 }
             }
             Rule::expr => value = Some(parse_expr(inner)?),
+            Rule::setting_attr => {
+                let Some(attr) = inner.into_inner().next() else {
+                    continue;
+                };
+                match attr.as_rule() {
+                    Rule::schema_attr => {
+                        let expr = attr
+                            .into_inner()
+                            .find(|pair| pair.as_rule() == Rule::expr)
+                            .ok_or_else(|| RexRapError::syntax(span, "@schema requires a value"))?;
+                        schema = Some(parse_expr(expr)?);
+                    }
+                    Rule::expires_attr => {
+                        let text = attr
+                            .into_inner()
+                            .find(|pair| pair.as_rule() == Rule::string)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "@expires_at requires a timestamp")
+                            })?;
+                        expires_at = Some(plain_string(text)?);
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -518,6 +558,27 @@ fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, RexRapError> {
         is_config,
         path,
         value,
+        schema,
+        expires_at,
+        span,
+    })
+}
+
+fn parse_profile_decl(pair: Pair<Rule>) -> Result<ProfileDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut name = None;
+    let mut configuration = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = Some(plain_string(inner)?),
+            Rule::expr => configuration = Some(parse_expr(inner)?),
+            _ => {}
+        }
+    }
+    Ok(ProfileDecl {
+        name: name.ok_or_else(|| RexRapError::syntax(span, "profile requires a name"))?,
+        configuration: configuration
+            .ok_or_else(|| RexRapError::syntax(span, "profile requires a literal object"))?,
         span,
     })
 }

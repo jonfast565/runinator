@@ -164,6 +164,7 @@ pub fn run() {
             crate::commands::fetch_credentials,
             crate::commands::fetch_credential,
             crate::commands::save_credential,
+            crate::commands::move_credential,
             crate::commands::delete_credential,
             crate::commands::fetch_approvals,
             crate::commands::deliver_signal,

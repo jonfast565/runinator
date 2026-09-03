@@ -473,6 +473,7 @@ pub async fn restore_workflow_revision<
         + DefinitionStore
         + RuntimeStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,
@@ -502,6 +503,7 @@ pub async fn duplicate_workflow<
         + DefinitionStore
         + RuntimeStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,

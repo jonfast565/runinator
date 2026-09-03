@@ -1788,6 +1788,7 @@ async fn assert_notifications<T: DatabaseImpl>(db: &T) {
 // dialect storing it as text would corrupt every credential it holds.
 async fn assert_settings<T: DatabaseImpl>(db: &T) {
     db.upsert_setting(
+        None,
         SettingKind::Secret,
         "jira".into(),
         "token".into(),
@@ -1797,7 +1798,7 @@ async fn assert_settings<T: DatabaseImpl>(db: &T) {
     .await
     .unwrap();
     let setting = db
-        .fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+        .fetch_setting(None, SettingKind::Secret, "jira".into(), "token".into())
         .await
         .unwrap()
         .unwrap();

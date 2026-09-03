@@ -264,6 +264,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SettingsCommands,
     },
+    /// Configure and operate execution profiles.
+    ExecutionProfiles {
+        #[command(subcommand)]
+        command: ExecutionProfileCommands,
+    },
     /// Plan and apply the one-time migration to UUID-backed namespace aliases.
     Namespaces {
         #[command(subcommand)]
@@ -518,7 +523,7 @@ pub enum SettingsCommands {
         #[arg(long, value_enum)]
         kind: Option<CliSettingKind>,
     },
-    /// Get a setting value. Config returns json; secrets return the stored string.
+    /// Get a config value. Secret values are write-only and are never returned.
     Get {
         scope: String,
         name: String,
@@ -543,6 +548,9 @@ pub enum SettingsCommands {
         /// JSON-schema for a config value (json text), required on first write of a config slot.
         #[arg(long)]
         schema: Option<String>,
+        /// RFC 3339 expiry timestamp for secrets.
+        #[arg(long)]
+        expires_at: Option<DateTime<Utc>>,
     },
     /// Import settings from an `.rrx` source containing a `settings` block. JSON is not accepted.
     Import { file: PathBuf },
@@ -554,6 +562,26 @@ pub enum SettingsCommands {
         #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
         kind: CliSettingKind,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExecutionProfileCommands {
+    /// List execution profiles in the active organization.
+    List,
+    /// Show one profile by UUID.
+    Show { id: Uuid },
+    /// Apply a JSON profile configuration, preserving the supplied or generated UUID.
+    Apply {
+        file: PathBuf,
+        #[arg(long)]
+        id: Option<Uuid>,
+    },
+    /// Delete a profile unless stored workflows reference it.
+    Delete { id: Uuid },
+    /// Request recollection and publication of a profile.
+    Rotate { id: Uuid },
+    /// Request a collection probe.
+    Test { id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

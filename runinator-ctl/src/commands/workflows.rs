@@ -260,7 +260,7 @@ async fn apply_workflow_source(
                 "imported {} workflows, {} triggers, {} settings, and {} pipelines",
                 result.workflows.workflows.len(),
                 result.workflows.triggers.len(),
-                result.secrets.secrets.len(),
+                result.settings.settings.len(),
                 result.pipelines.len()
             ),
         };

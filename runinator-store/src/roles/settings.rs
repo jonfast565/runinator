@@ -16,11 +16,13 @@ pub trait SettingStore: Send + Sync + 'static {
     /// List stored settings, including encrypted values, in stable logical order.
     fn list_stored_settings(
         &self,
+        org_id: Option<uuid::Uuid>,
     ) -> impl Future<Output = Result<Vec<SettingRecord>, SendableError>> + Send;
 
     /// Insert or replace a setting's stored value (encrypted at rest) and modification time.
     fn upsert_setting(
         &self,
+        org_id: Option<uuid::Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,
@@ -31,6 +33,7 @@ pub trait SettingStore: Send + Sync + 'static {
     /// Delete a setting; succeeds even when the entry is absent.
     fn delete_setting(
         &self,
+        org_id: Option<uuid::Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,
@@ -40,6 +43,7 @@ pub trait SettingStore: Send + Sync + 'static {
     fn move_setting(
         &self,
         id: uuid::Uuid,
+        org_id: Option<uuid::Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,

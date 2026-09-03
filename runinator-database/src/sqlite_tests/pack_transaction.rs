@@ -25,6 +25,7 @@ async fn pack_transaction_commit_makes_mutations_visible() {
 
     transaction
         .upsert_setting(
+            None,
             SettingKind::Config,
             "acme.shared".into(),
             "region".into(),
@@ -36,7 +37,12 @@ async fn pack_transaction_commit_makes_mutations_visible() {
     transaction.commit_pack_transaction().await.unwrap();
 
     let setting = db
-        .fetch_setting(SettingKind::Config, "acme.shared".into(), "region".into())
+        .fetch_setting(
+            None,
+            SettingKind::Config,
+            "acme.shared".into(),
+            "region".into(),
+        )
         .await
         .unwrap()
         .expect("committed setting");
@@ -54,6 +60,7 @@ async fn pack_transaction_rollback_discards_mutations() {
 
     transaction
         .upsert_setting(
+            None,
             SettingKind::Secret,
             "acme.shared".into(),
             "token".into(),
@@ -65,10 +72,15 @@ async fn pack_transaction_rollback_discards_mutations() {
     transaction.rollback_pack_transaction().await.unwrap();
 
     assert!(
-        db.fetch_setting(SettingKind::Secret, "acme.shared".into(), "token".into(),)
-            .await
-            .unwrap()
-            .is_none()
+        db.fetch_setting(
+            None,
+            SettingKind::Secret,
+            "acme.shared".into(),
+            "token".into(),
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
 
     drop(transaction);

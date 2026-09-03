@@ -2040,9 +2040,22 @@ export async function saveCredential(
   value: unknown,
   kind: SettingKind = "secret",
   schema?: unknown,
+  expiresAt?: string | null,
 ) {
   return command<TaskResponse>("save_credential", {
-    request: { scope, name, value, kind, schema },
+    request: { scope, name, value, kind, schema, expires_at: expiresAt },
+  });
+}
+
+export async function moveCredential(
+  id: string,
+  scope: string,
+  name: string,
+  kind: SettingKind,
+) {
+  return command<CredentialSummary>("move_credential", {
+    settingId: id,
+    request: { scope, name, kind },
   });
 }
 

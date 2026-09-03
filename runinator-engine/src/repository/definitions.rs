@@ -1,6 +1,7 @@
 use super::*;
 use super::{catalog, triggers};
 use runinator_models::artifacts::{ArtifactKind, ArtifactPath, ArtifactRef};
+use runinator_models::execution_profiles::ExecutionProfileBinding;
 use runinator_models::semver::SemVerBump;
 use runinator_models::settings::{SettingBinding, SettingKind};
 use runinator_models::workflows::WorkflowGraph;
@@ -31,7 +32,9 @@ pub fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     }
 }
 
-pub async fn upsert_workflow<T: DefinitionStore + RuntimeStore + FunctionStore>(
+pub async fn upsert_workflow<
+    T: DefinitionStore + RuntimeStore + FunctionStore + ExecutionProfileStore,
+>(
     db: &T,
     workflow: &WorkflowDefinition,
     author: &RevisionAuthor,
@@ -130,7 +133,9 @@ pub async fn fetch_workflow_revision<T: DefinitionStore>(
 /// against today's provider catalog and saved as a *new* revision. that is what stops a rollback
 /// from resurrecting a definition referencing an action that has since been removed — it fails
 /// loudly instead of persisting something that cannot run.
-pub async fn restore_workflow_revision<T: DefinitionStore + RuntimeStore + FunctionStore>(
+pub async fn restore_workflow_revision<
+    T: DefinitionStore + RuntimeStore + FunctionStore + ExecutionProfileStore,
+>(
     db: &T,
     workflow_id: Uuid,
     revision: i64,
@@ -179,7 +184,7 @@ async fn validate_workflow_definition_with_catalog_and_known_subflows<
     let providers = catalog::fetch_catalog_items(db, Some("provider_metadata".into())).await?;
     let providers = provider_metadata_from_items(providers)?;
     // type-check `config.*` references against the stored settings schema.
-    let config_type = crate::settings::config_type_tree(db).await;
+    let config_type = crate::settings::config_type_tree(db, workflow.org_id).await;
     runinator_workflows::validate_workflow_with_config(&workflow, &providers, &config_type)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     validate_workflow_subflows(db, &workflow, known_subflows).await?;
@@ -428,7 +433,12 @@ fn incoming_is_newer(incoming: Option<DateTime<Utc>>, stored: Option<DateTime<Ut
 }
 
 pub async fn import_workflow_bundle<
-    T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + ScheduleStore,
+    T: DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + ExecutionProfileStore,
 >(
     db: &T,
     bundle: WorkflowBundle,
@@ -440,7 +450,12 @@ pub async fn import_workflow_bundle<
 // when the incoming copy is not strictly newer, bypassing the reconciliation timestamp gate that
 // background sync relies on. callers that reconcile (gossip, plain imports) pass `false`.
 pub async fn import_workflow_bundle_with<
-    T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + ScheduleStore,
+    T: DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + ExecutionProfileStore,
 >(
     db: &T,
     bundle: WorkflowBundle,
@@ -518,7 +533,7 @@ pub async fn import_workflow_bundle_with<
 /// UUID first and then contribute to the same index. A bare path is accepted for compatibility only
 /// when it identifies exactly one workflow. New strict-namespace clients should emit a qualified
 /// path, while persisted edges no longer depend on either spelling.
-async fn prepare_workflows_for_save<T: DefinitionStore + RuntimeStore>(
+async fn prepare_workflows_for_save<T: DefinitionStore + RuntimeStore + ExecutionProfileStore>(
     db: &T,
     mut incoming: Vec<WorkflowDefinition>,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
@@ -583,7 +598,75 @@ async fn prepare_workflows_for_save<T: DefinitionStore + RuntimeStore>(
     let mut prepared = prepare_workflows_against(incoming, index)?;
     resolve_requested_subflow_revisions(db, &mut prepared).await?;
     resolve_setting_bindings(db, &mut prepared).await?;
+    resolve_execution_profile_bindings(db, &mut prepared).await?;
     Ok(prepared)
+}
+
+async fn resolve_execution_profile_bindings<T: DefinitionStore + ExecutionProfileStore>(
+    db: &T,
+    workflows: &mut [WorkflowDefinition],
+) -> Result<(), SendableError> {
+    let providers = provider_metadata_from_items(
+        fetch_catalog_items(db, Some("provider_metadata".into())).await?,
+    )?;
+    for workflow in workflows {
+        for node in &mut workflow.definition.nodes {
+            for action in node.action.iter_mut().chain(node.compensation.iter_mut()) {
+                let Some(binding) = action.execution_profile.as_mut() else {
+                    continue;
+                };
+                let authored_name = binding.name().trim().to_string();
+                let profile = if !binding.id().is_nil() {
+                    db.fetch_execution_profile(binding.id())
+                        .await?
+                        .filter(|profile| profile.org_id == workflow.org_id)
+                } else {
+                    db.fetch_execution_profile_by_name(workflow.org_id, &authored_name)
+                        .await?
+                };
+                let Some(profile) = profile else {
+                    if workflow.enabled {
+                        return Err(invalid_definition(format!(
+                            "execution profile '{authored_name}' was not found"
+                        )));
+                    }
+                    *binding = ExecutionProfileBinding::unresolved(authored_name);
+                    continue;
+                };
+                if let Some(provider) = providers.iter().find(|item| item.name == action.provider) {
+                    if provider.metadata.execution_profile
+                        == runinator_models::providers::ExecutionProfileSupport::Unsupported
+                    {
+                        return Err(invalid_definition(format!(
+                            "provider '{}' does not support execution profiles",
+                            action.provider
+                        )));
+                    }
+                    let missing = provider
+                        .metadata
+                        .credential_scopes
+                        .iter()
+                        .filter(|scope| !profile.credential_scopes.contains(scope))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        return Err(invalid_definition(format!(
+                            "execution profile '{}' does not declare the scopes required by provider '{}': {}",
+                            authored_name,
+                            action.provider,
+                            missing.join(", ")
+                        )));
+                    }
+                }
+                binding.reference = ArtifactRef::current(
+                    ArtifactKind::ExecutionProfile,
+                    profile.id,
+                    Some(ArtifactPath::new(None, authored_name)),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn resolve_setting_bindings<T: RuntimeStore>(
@@ -608,17 +691,18 @@ async fn resolve_setting_bindings<T: RuntimeStore>(
         let mut secret_ids = BTreeMap::new();
         for (kind, scope, name) in paths {
             let authored_path = ArtifactPath::new(Some(scope.clone()), name.clone());
-            let record = match db.fetch_setting(kind, scope.clone(), name.clone()).await? {
-                Some(record) => Some(record),
+            let prior = previous.iter().find(|binding| {
+                binding.kind == kind
+                    && binding.reference.authored_path.as_ref() == Some(&authored_path)
+            });
+            let record = match prior.filter(|binding| !binding.reference.id.is_nil()) {
+                Some(prior) => db
+                    .fetch_setting_by_id(workflow.org_id, prior.reference.id)
+                    .await?
+                    .filter(|record| record.org_id == workflow.org_id && record.kind == kind),
                 None => {
-                    let prior = previous.iter().find(|binding| {
-                        binding.kind == kind
-                            && binding.reference.authored_path.as_ref() == Some(&authored_path)
-                    });
-                    match prior {
-                        Some(prior) => db.fetch_setting_by_id(prior.reference.id).await?,
-                        None => None,
-                    }
+                    db.fetch_setting(workflow.org_id, kind, scope.clone(), name.clone())
+                        .await?
                 }
             };
             if let Some(record) = record {
@@ -630,6 +714,20 @@ async fn resolve_setting_bindings<T: RuntimeStore>(
                     reference: ArtifactRef::current(
                         ArtifactKind::Setting,
                         record.id,
+                        Some(authored_path),
+                    ),
+                });
+            } else if workflow.enabled {
+                return Err(invalid_definition(format!(
+                    "{} setting '{scope}/{name}' was not found",
+                    kind.as_str()
+                )));
+            } else {
+                bindings.push(SettingBinding {
+                    kind,
+                    reference: ArtifactRef::current(
+                        ArtifactKind::Setting,
+                        Uuid::nil(),
                         Some(authored_path),
                     ),
                 });
@@ -664,7 +762,7 @@ async fn resolve_setting_bindings<T: RuntimeStore>(
     Ok(())
 }
 
-fn collect_setting_paths(
+pub(crate) fn collect_setting_paths(
     value: &serde_json::Value,
     paths: &mut std::collections::BTreeSet<(SettingKind, String, String)>,
 ) {
@@ -1201,7 +1299,9 @@ async fn normalize_persisted_workflow<T: DefinitionStore>(
 // duplicate a workflow into a new row that shares its name but carries a bumped semantic
 // version. the copy is a fresh, disabled draft (new id) so it never clobbers the original or
 // inherits its triggers; the highest-versioned sibling is left to the caller to promote.
-pub async fn duplicate_workflow<T: DefinitionStore + RuntimeStore + FunctionStore>(
+pub async fn duplicate_workflow<
+    T: DefinitionStore + RuntimeStore + FunctionStore + ExecutionProfileStore,
+>(
     db: &T,
     workflow_id: Uuid,
     bump: SemVerBump,

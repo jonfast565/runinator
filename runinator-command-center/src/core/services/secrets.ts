@@ -2,6 +2,7 @@ import {
   deleteCredential,
   fetchCredential,
   fetchCredentials,
+  moveCredential,
   saveCredential,
 } from "../api/commandCenterApi";
 import type { CredentialSummary, SettingKind } from "../domain/models";
@@ -14,11 +15,14 @@ export interface SecretDraft {
   name: string;
   secret: string;
   kind: SettingKind;
+  schema: string;
+  expiresAt: string;
 }
 
 export interface SecretsState {
   secrets: CredentialSummary[];
   configValues: Record<string, string>;
+  configSchemas: Record<string, string>;
   selectedSecretKey: string;
 }
 
@@ -28,6 +32,8 @@ export function blankSecretDraft(kind: SettingKind = "secret"): SecretDraft {
     name: "",
     secret: "",
     kind,
+    schema: "",
+    expiresAt: "",
   };
 }
 
@@ -35,6 +41,7 @@ export function createSecretsService(app: AppService) {
   const store = createStore<SecretsState>({
     secrets: [],
     configValues: {},
+    configSchemas: {},
     selectedSecretKey: "",
   });
 
@@ -136,6 +143,7 @@ export function createSecretsService(app: AppService) {
       store.setState(() => ({
         secrets: [],
         configValues: {},
+        configSchemas: {},
         selectedSecretKey: "",
       }));
     },
@@ -153,6 +161,10 @@ export function createSecretsService(app: AppService) {
         configValues: {
           ...state.configValues,
           [key]: formatConfigValue(detail.value),
+        },
+        configSchemas: {
+          ...state.configSchemas,
+          [key]: formatConfigValue(detail.schema),
         },
       }));
     },
@@ -175,6 +187,7 @@ export function createSecretsService(app: AppService) {
       }
 
       let value: unknown = draft.secret;
+      let schema: unknown = undefined;
 
       if (kind === "config") {
         try {
@@ -183,13 +196,50 @@ export function createSecretsService(app: AppService) {
           app.setError("Config value must be valid JSON");
           return false;
         }
+
+        if (draft.schema.trim()) {
+          try {
+            schema = JSON.parse(draft.schema);
+          } catch {
+            app.setError("Config schema must be valid JSON");
+            return false;
+          }
+        }
       }
 
-      await app.runOperation(`Saving ${kind}`, () => saveCredential(scope, name, value, kind));
+      const selected = selectedSecret();
+      const selectedId = selected?.id;
+
+      if (
+        selectedId &&
+        (selected.scope !== scope || selected.name !== name)
+      ) {
+        await app.runOperation(`Moving ${kind}`, () =>
+          moveCredential(selectedId, scope, name, kind),
+        );
+      }
+
+      let expiresAt: string | null = null;
+
+      if (draft.expiresAt) {
+        const parsed = new Date(draft.expiresAt);
+
+        if (Number.isNaN(parsed.valueOf())) {
+          app.setError("Secret expiry must be a valid date and time");
+          return false;
+        }
+
+        expiresAt = parsed.toISOString();
+      }
+
+      await app.runOperation(`Saving ${kind}`, () =>
+        saveCredential(scope, name, value, kind, schema, expiresAt),
+      );
       store.setState((state) => ({
         ...state,
         selectedSecretKey: secretKey({ scope, name, kind }),
       }));
+
       app.setStatus(`${label} saved: ${scope}/${name}`);
       await service.refreshSecrets();
       return true;

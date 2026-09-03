@@ -5,7 +5,7 @@ use std::sync::Arc;
 use runinator_blob_core::BlobStore;
 use runinator_broker_core::{UiEventPublisher, emit_workflows_changed};
 use runinator_models::{
-    bundles::{PackImportResult, SecretBundle},
+    bundles::{PackImportResult, SettingsBundle},
     errors::SendableError,
     functions::{FunctionArtifact, FunctionVersion, NewFunctionVersion},
     pipelines::{Pipeline, PipelineBundle},
@@ -13,7 +13,10 @@ use runinator_models::{
 };
 use runinator_store::{
     PackTransactionStore, RuntimeStore,
-    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, SettingStore},
+    roles::{
+        DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore, ScheduleStore,
+        SettingStore,
+    },
 };
 use uuid::Uuid;
 
@@ -54,7 +57,10 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
         &self,
         bundle: WorkflowBundle,
         overwrite: bool,
-    ) -> Result<WorkflowBundle, SendableError> {
+    ) -> Result<WorkflowBundle, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
         repository::import_workflow_bundle_with(self.store.as_ref(), bundle, overwrite).await
     }
 
@@ -85,7 +91,10 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
     pub async fn publish_function(
         &self,
         request: &NewFunctionVersion,
-    ) -> Result<FunctionVersion, SendableError> {
+    ) -> Result<FunctionVersion, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
         repository::functions::publish_version(self.store.as_ref(), request).await
     }
 
@@ -198,7 +207,8 @@ impl<
         + FunctionStore
         + NotificationStore
         + ScheduleStore
-        + SettingStore,
+        + SettingStore
+        + ExecutionProfileStore,
 > PackOperations<T>
 {
     /// Apply every mutable part of a compiled pack under one database transaction. Existing role
@@ -208,7 +218,7 @@ impl<
     pub async fn import_compiled_pack(
         &self,
         mut workflows: WorkflowBundle,
-        settings: Option<&SecretBundle>,
+        settings: Option<&SettingsBundle>,
         pipelines: Option<&PipelineBundle>,
         functions: &[NewFunctionVersion],
         artifacts: &[FunctionArtifact],
@@ -261,20 +271,38 @@ impl<
                 })?;
 
             let settings = match settings {
-                Some(bundle) => SecretBundle {
-                    secrets: crate::settings::import_setting_bundle_with(
-                        transaction.as_ref(),
-                        bundle,
-                        overwrite,
-                    )
-                    .await
-                    .map_err(|error| PackImportError {
-                        bad_request: error.bad_request,
-                        message: error.message,
-                    })?,
+                Some(bundle) => SettingsBundle {
+                    settings: crate::services::SettingOperations::new(transaction.clone())
+                        .import(import_org, bundle, overwrite)
+                        .await
+                        .map_err(|error| PackImportError {
+                            bad_request: error.bad_request,
+                            message: error.message,
+                        })?,
+                    execution_profiles: bundle.execution_profiles.clone(),
+                    version: bundle.version,
                 },
-                None => SecretBundle::default(),
+                None => SettingsBundle::default(),
             };
+            let profile_operations =
+                crate::services::ExecutionProfileOperations::new(transaction.clone());
+            let mut execution_profiles = Vec::with_capacity(settings.execution_profiles.len());
+            for entry in &settings.execution_profiles {
+                execution_profiles.push(
+                    profile_operations
+                        .reconcile(
+                            import_org,
+                            entry.configuration.clone(),
+                            entry.updated_at,
+                            overwrite,
+                        )
+                        .await
+                        .map_err(|error| PackImportError {
+                            bad_request: true,
+                            message: error.to_string(),
+                        })?,
+                );
+            }
             let workflows = transactional
                 .import_workflows(workflows, overwrite)
                 .await
@@ -289,7 +317,8 @@ impl<
 
             Ok(PackImportResult {
                 workflows,
-                secrets: settings,
+                settings,
+                execution_profiles: execution_profiles.into_iter().map(Into::into).collect(),
                 pipelines,
             })
         }

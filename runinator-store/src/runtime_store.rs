@@ -221,17 +221,24 @@ pub trait RuntimeStore: Send + Sync + 'static {
     /// List every stored setting (encrypted values included), ordered by kind/scope/name.
     fn list_settings(
         &self,
+        org_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<Vec<SettingRecord>, SendableError>> + Send;
+
+    /// List settings across all owners for platform maintenance scans only.
+    fn list_all_settings(
+        &self,
     ) -> impl Future<Output = Result<Vec<SettingRecord>, SendableError>> + Send;
 
     /// Fetch a setting through its durable logical UUID. The default keeps lightweight fakes
     /// source-compatible; SQL backends may override it with an indexed lookup later.
     fn fetch_setting_by_id(
         &self,
+        org_id: Option<Uuid>,
         id: Uuid,
     ) -> impl Future<Output = Result<Option<SettingRecord>, SendableError>> + Send {
         async move {
             Ok(self
-                .list_settings()
+                .list_settings(org_id)
                 .await?
                 .into_iter()
                 .find(|setting| setting.id == id))
@@ -361,6 +368,7 @@ pub trait RuntimeStore: Send + Sync + 'static {
     /// Fetch a single setting's persisted record, or None when it does not exist.
     fn fetch_setting(
         &self,
+        org_id: Option<Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,

@@ -157,9 +157,9 @@ fn directory_pack_loads_rexraps_settings() {
     let settings = load_pack_settings(&dir)
         .expect("settings should load")
         .expect("settings block should be picked up");
-    assert_eq!(settings.secrets.len(), 2);
-    assert_eq!(settings.secrets[0].scope, "app");
-    assert_eq!(settings.secrets[0].name, "token");
+    assert_eq!(settings.settings.len(), 2);
+    assert_eq!(settings.settings[0].scope, "app");
+    assert_eq!(settings.settings[0].name, "token");
 
     let _ = fs::remove_dir_all(&dir);
 }

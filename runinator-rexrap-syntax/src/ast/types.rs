@@ -38,7 +38,22 @@ pub struct SecretDecl {
     pub is_config: bool,
     pub path: Vec<PathSeg>,
     pub value: Expr,
+    pub schema: Option<Expr>,
+    pub expires_at: Option<String>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileDecl {
+    pub name: String,
+    pub configuration: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SettingsDocument {
+    pub settings: Vec<SecretDecl>,
+    pub execution_profiles: Vec<ProfileDecl>,
 }
 
 // pipelines (.rexrapp) ---------------------------------------------------------

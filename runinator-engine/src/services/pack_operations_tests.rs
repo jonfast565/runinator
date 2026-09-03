@@ -4,13 +4,20 @@ use runinator_blob_core::{BlobStore, FUNCTION_ARTIFACT_BUCKET, FsBlobStore, sha2
 use runinator_broker_core::{UiEventPublisher, in_memory::InMemoryBroker};
 use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
-    bundles::{SecretBundle, SecretBundleEntry},
+    bundles::{ExecutionProfileBundleEntry, SecretBundle, SecretBundleEntry, SettingsBundle},
+    execution_profiles::{
+        ExecutionProfileBinding, ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
+        ExecutionProfilePutRequest, ExecutionProfileSource,
+    },
     functions::{
         FunctionBinding, FunctionRuntimeSpec, NewFunctionExport, NewFunctionPackage,
         NewFunctionVersion, PROVISIONAL_FUNCTION_VERSION, digest_from_hex,
     },
     json,
     pipelines::{PipelineBundle, PipelineSpec},
+    providers::{
+        ActionMetadata, ExecutionProfileSupport, ProviderMetadata, ProviderRuntimeMetadata,
+    },
     semver::SemVer,
     settings::SettingKind,
     types::RuninatorType,
@@ -19,7 +26,7 @@ use runinator_models::{
 };
 use runinator_store::{
     DatabaseImpl, RuntimeStore,
-    roles::{DefinitionStore, FunctionStore},
+    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore},
 };
 use uuid::Uuid;
 
@@ -94,7 +101,7 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
         triggers: Vec::new(),
     };
     let settings = SecretBundle {
-        secrets: vec![SecretBundleEntry {
+        settings: vec![SecretBundleEntry {
             scope: "acme.shared".into(),
             name: "api_token".into(),
             value: Value::String("secret".into()),
@@ -103,6 +110,24 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
             updated_at: None,
             expires_at: None,
         }],
+        execution_profiles: vec![ExecutionProfileBundleEntry {
+            configuration: ExecutionProfilePutRequest {
+                name: "github-default".into(),
+                description: String::new(),
+                credential_scopes: vec!["github".into()],
+                collection: ExecutionProfileCollectionSpec {
+                    sources: vec![ExecutionProfileSource::File {
+                        path: "~/.gitconfig".into(),
+                        target: ".gitconfig".into(),
+                    }],
+                    ..Default::default()
+                },
+                exposure: ExecutionProfileExposureSpec::default(),
+                enabled: true,
+            },
+            updated_at: None,
+        }],
+        version: 1,
     };
     let pipelines = PipelineBundle {
         pipelines: vec![PipelineSpec {
@@ -150,6 +175,7 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
     );
     assert!(
         db.fetch_setting(
+            None,
             SettingKind::Secret,
             "acme.shared".into(),
             "api_token".into(),
@@ -158,6 +184,10 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
         .unwrap()
         .is_none(),
         "a setting written before the pipeline failure must roll back"
+    );
+    assert!(
+        db.list_execution_profiles(None).await.unwrap().is_empty(),
+        "a profile configured before the pipeline failure must roll back"
     );
 
     let _ = std::fs::remove_file(db_path);
@@ -301,6 +331,114 @@ async fn resolves_a_same_pack_function_binding_to_the_published_uuid_tuple() {
     );
     // The already-compiled call is an exact version/export UUID tuple and does not change.
     assert_eq!(binding, &actual);
+
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_dir_all(blob_root);
+}
+
+#[tokio::test]
+async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
+    let (db, db_path) = test_db().await;
+    let blob_root = std::env::temp_dir().join(format!("runinator-pack-blobs-{}", Uuid::now_v7()));
+    let blobs = FsBlobStore::open(&blob_root).await.unwrap();
+    let service = PackOperations::new(
+        db.clone(),
+        Arc::new(blobs),
+        UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
+    );
+    let org_id = Uuid::new_v4();
+    db.upsert_catalog_item(crate::repository::provider_catalog_item(
+        &ProviderMetadata {
+            name: "github".into(),
+            actions: vec![ActionMetadata::new("status", "status")],
+            metadata: ProviderRuntimeMetadata {
+                credential_scopes: vec!["github".into()],
+                execution_profile: ExecutionProfileSupport::Subprocess,
+                ..Default::default()
+            },
+        },
+    ))
+    .await
+    .unwrap();
+    let settings = SettingsBundle {
+        execution_profiles: vec![ExecutionProfileBundleEntry {
+            configuration: ExecutionProfilePutRequest {
+                name: "github-default".into(),
+                description: "GitHub login".into(),
+                credential_scopes: vec!["github".into()],
+                collection: ExecutionProfileCollectionSpec {
+                    sources: vec![ExecutionProfileSource::File {
+                        path: "~/.gitconfig".into(),
+                        target: ".gitconfig".into(),
+                    }],
+                    ..Default::default()
+                },
+                exposure: ExecutionProfileExposureSpec::default(),
+                enabled: true,
+            },
+            updated_at: None,
+        }],
+        ..Default::default()
+    };
+    let workflow = WorkflowDefinition {
+        id: None,
+        name: "same-pack profile".into(),
+        key: Some("same-pack-profile".into()),
+        namespace: Some("acme.auth".into()),
+        org_id: Some(org_id),
+        version: SemVer::new(1, 0, 0),
+        enabled: true,
+        input_type: RuninatorType::Any,
+        definition: WorkflowGraph::from_value(json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "call" } } },
+                {
+                    "id": "call",
+                    "kind": "action",
+                    "action": {
+                        "provider": "github",
+                        "function": "status",
+                        "execution_profile": ExecutionProfileBinding::unresolved("github-default")
+                    },
+                    "transitions": { "next": { "$node": "end" } }
+                },
+                { "id": "end", "kind": "end" }
+            ]
+        }))
+        .unwrap(),
+        created_at: None,
+        updated_at: None,
+    };
+
+    let result = service
+        .import_compiled_pack(
+            WorkflowBundle {
+                workflows: vec![workflow],
+                triggers: Vec::new(),
+            },
+            Some(&settings),
+            None,
+            &[],
+            &[],
+            Some(org_id),
+            true,
+        )
+        .await
+        .expect("same-pack profile import");
+
+    let profile_id = result.execution_profiles[0].id;
+    let result_json = serde_json::to_value(&result).unwrap();
+    let imported_profile = &result_json["execution_profiles"][0];
+    assert!(imported_profile.get("current_revision").is_none());
+    assert!(imported_profile.get("current_digest").is_none());
+    let stored = db.fetch_workflows().await.unwrap();
+    let binding = stored[0].definition.nodes[1]
+        .action
+        .as_ref()
+        .and_then(|action| action.execution_profile.as_ref())
+        .expect("bound profile");
+    assert_eq!(binding.id(), profile_id);
 
     let _ = std::fs::remove_file(db_path);
     let _ = std::fs::remove_dir_all(blob_root);

@@ -106,6 +106,7 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
     if let Some(secret) = explicit.filter(|s| !s.is_empty()) {
         let bytes = secret.into_bytes();
         db.upsert_setting(
+            None,
             SettingKind::Secret,
             SECRET_SCOPE.into(),
             SECRET_NAME.into(),
@@ -116,7 +117,12 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
         return Ok(bytes);
     }
     if let Some(record) = db
-        .fetch_setting(SettingKind::Secret, SECRET_SCOPE.into(), SECRET_NAME.into())
+        .fetch_setting(
+            None,
+            SettingKind::Secret,
+            SECRET_SCOPE.into(),
+            SECRET_NAME.into(),
+        )
         .await?
         && !record.value.is_empty()
     {
@@ -125,6 +131,7 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
     }
     let generated = runinator_auth::random_secret(48);
     db.upsert_setting(
+        None,
         SettingKind::Secret,
         SECRET_SCOPE.into(),
         SECRET_NAME.into(),
@@ -137,7 +144,12 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
 
 pub async fn load_jwt_secret<T: DatabaseImpl>(db: &T) -> Result<Vec<u8>, SendableError> {
     let record = db
-        .fetch_setting(SettingKind::Secret, SECRET_SCOPE.into(), SECRET_NAME.into())
+        .fetch_setting(
+            None,
+            SettingKind::Secret,
+            SECRET_SCOPE.into(),
+            SECRET_NAME.into(),
+        )
         .await?
         .filter(|record| !record.value.is_empty());
     let Some(record) = record else {
@@ -157,6 +169,7 @@ pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
     match explicit.filter(|secret| !secret.is_empty()) {
         Some(secret) => {
             db.upsert_setting(
+                None,
                 SettingKind::Secret,
                 SECRET_SCOPE.into(),
                 SECRET_NAME_PREVIOUS.into(),
@@ -167,6 +180,7 @@ pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
         }
         None => {
             db.delete_setting(
+                None,
                 SettingKind::Secret,
                 SECRET_SCOPE.into(),
                 SECRET_NAME_PREVIOUS.into(),
@@ -182,6 +196,7 @@ pub async fn load_jwt_secret_previous<T: DatabaseImpl>(
 ) -> Result<Option<Vec<u8>>, SendableError> {
     let record = db
         .fetch_setting(
+            None,
             SettingKind::Secret,
             SECRET_SCOPE.into(),
             SECRET_NAME_PREVIOUS.into(),

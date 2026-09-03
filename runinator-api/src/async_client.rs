@@ -33,11 +33,11 @@ use runinator_models::{
         CreateAgentEnrollmentTokenResponse, EnrollAgentRequest, EnrollAgentResponse,
     },
     billing::ScaleOrgNodesRequest,
-    bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
+    bundles::{Bundle, PackImportResult, ProviderBundle, SettingsBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail, NewConsoleCell},
     execution_profiles::{
-        ExecutionProfile, ExecutionProfilePublishRequest, ExecutionProfileRevision,
-        ExecutionProfileStatusRequest,
+        ExecutionProfile, ExecutionProfilePublishRequest, ExecutionProfilePutRequest,
+        ExecutionProfileRevision, ExecutionProfileStatusRequest,
     },
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
@@ -1160,18 +1160,18 @@ where
         Ok(response.json::<B>().await?)
     }
 
-    /// Build a compiled pack zip (workflows + optional secrets + pipelines) and POST it to
+    /// Build a compiled pack zip (workflows + optional settings/profiles + pipelines) and POST it to
     /// `/packs/import`.
     pub async fn import_pack(
         &self,
         workflows: &WorkflowBundle,
-        secrets: Option<&SecretBundle>,
+        settings: Option<&SettingsBundle>,
         pipelines: Option<&PipelineBundle>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
         self.import_pack_zip(
             runinator_pack_wire::pack::PackBuilder::new(workflows)
-                .secrets(secrets)
+                .settings(settings)
                 .pipelines(pipelines)
                 .build()
                 .map_err(|err| ApiError::Pack(err.to_string()))?,
@@ -1189,14 +1189,14 @@ where
     pub async fn import_pack_with_functions(
         &self,
         workflows: &WorkflowBundle,
-        secrets: Option<&SecretBundle>,
+        settings: Option<&SettingsBundle>,
         pipelines: Option<&PipelineBundle>,
         functions: Vec<NewFunctionVersion>,
         artifacts: Vec<(String, Vec<u8>)>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
         let mut builder = runinator_pack_wire::pack::PackBuilder::new(workflows)
-            .secrets(secrets)
+            .settings(settings)
             .pipelines(pipelines)
             .functions(functions);
 
@@ -1451,6 +1451,46 @@ where
     /// List the execution-profile definitions assigned to this agent's organization.
     pub async fn list_execution_profiles(&self) -> Result<Vec<ExecutionProfile>> {
         self.get_json_path(API_EXECUTION_PROFILES).await
+    }
+
+    pub async fn configure_execution_profile(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfilePutRequest,
+    ) -> Result<ExecutionProfile> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        let response = self.http_put(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    pub async fn delete_execution_profile(&self, id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn rotate_execution_profile(&self, id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/rotate"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn test_execution_profile(&self, id: Uuid) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/test"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
     }
 
     /// Atomically publish one deterministic profile archive. The service encrypts it before blob
@@ -2181,7 +2221,7 @@ where
     /// Fetch a secret through its durable logical identity. UUID-backed workflow bindings use
     /// this path so moving the human-readable scope/name alias cannot break a queued action.
     pub async fn fetch_credential_by_id(&self, id: Uuid) -> Result<String> {
-        let url = self.build_url(&format!("/credentials/{id}")).await?;
+        let url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;

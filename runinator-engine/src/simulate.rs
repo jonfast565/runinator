@@ -24,8 +24,12 @@ impl DbSimulationEnv {
     /// load config from the settings store and, when `replay_run` is set, that run's recorded
     /// effect outcomes. Async because both come from the database; the trait methods are then pure
     /// reads.
-    pub async fn load<T: WorkflowVmStore + RuntimeStore>(db: &T, replay_run: Option<Uuid>) -> Self {
-        let config = runinator_runtime::config::config_tree(db).await;
+    pub async fn load<T: WorkflowVmStore + RuntimeStore>(
+        db: &T,
+        org_id: Option<Uuid>,
+        replay_run: Option<Uuid>,
+    ) -> Self {
+        let config = runinator_runtime::config::config_tree(db, org_id).await;
         let mut recorded = HashMap::new();
         if let Some(run_id) = replay_run
             && let (Ok(Some(module)), Ok(effects)) = (
@@ -88,6 +92,6 @@ pub async fn simulate_run<T: WorkflowVmStore + RuntimeStore>(
     inputs: Value,
     replay_run: Option<Uuid>,
 ) -> Result<SimulationRun, SendableError> {
-    let mut env = DbSimulationEnv::load(db, replay_run).await;
+    let mut env = DbSimulationEnv::load(db, workflow.org_id, replay_run).await;
     simulate_workflow(workflow, inputs, &mut env).map_err(|err| -> SendableError { Box::new(err) })
 }

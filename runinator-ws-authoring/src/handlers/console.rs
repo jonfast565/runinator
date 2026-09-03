@@ -20,8 +20,8 @@ use runinator_models::{
 use runinator_store::{
     RuntimeStore,
     roles::{
-        ConsoleStore, DefinitionStore, FunctionStore, NotificationStore, ScheduleStore,
-        WorkflowVmStore,
+        ConsoleStore, DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore,
+        ScheduleStore, WorkflowVmStore,
     },
 };
 use serde::Deserialize;
@@ -70,6 +70,7 @@ pub async fn get_console_sessions<
         + RuntimeStore
         + DefinitionStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,
@@ -395,6 +396,7 @@ pub async fn run_console_cell<
         + RuntimeStore
         + DefinitionStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,
@@ -432,6 +434,7 @@ pub async fn replay_console_cell<
         + RuntimeStore
         + DefinitionStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,
@@ -575,6 +578,7 @@ pub fn routes<
         + RuntimeStore
         + DefinitionStore
         + FunctionStore
+        + ExecutionProfileStore
         + NotificationStore
         + ScheduleStore
         + WorkflowVmStore,

@@ -1446,7 +1446,13 @@ impl Lowerer {
         if let Some(profile) = &action.modifiers.profile {
             action_obj.insert(
                 "execution_profile".into(),
-                runinator_models::json!({ "id": uuid::Uuid::nil(), "name": profile }),
+                runinator_models::json!({
+                    "reference": {
+                        "kind": "execution_profile",
+                        "id": uuid::Uuid::nil(),
+                        "authored_path": { "key": profile }
+                    }
+                }),
             );
         }
         if let Some(key) = &action.modifiers.idempotency_key {
@@ -1523,7 +1529,13 @@ impl Lowerer {
         if let Some(profile) = &action.modifiers.profile {
             obj.insert(
                 "execution_profile".into(),
-                runinator_models::json!({ "id": uuid::Uuid::nil(), "name": profile }),
+                runinator_models::json!({
+                    "reference": {
+                        "kind": "execution_profile",
+                        "id": uuid::Uuid::nil(),
+                        "authored_path": { "key": profile }
+                    }
+                }),
             );
         }
         if let Some(key) = &action.modifiers.idempotency_key {

@@ -124,7 +124,7 @@ impl<T: RuntimeStore> AdapterOperations<T> {
         for (name, id) in bindings {
             let record = self
                 .store
-                .fetch_setting_by_id(*id)
+                .fetch_setting_by_id(Some(org_id), *id)
                 .await
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("secret binding '{name}' does not exist"))?;

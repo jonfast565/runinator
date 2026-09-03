@@ -26,9 +26,9 @@ use runinator_pack::source as pack;
 
 use crate::{output, params};
 use runinator_ctl_core::cli::{
-    AgentCommands, ApprovalCommands, ArtifactCommands, Cli, Commands, FreezeCommands, NodeCommands,
-    OrgCommands, ProviderCommands, RexRapCommands, RunCommands, SettingsCommands, TriggerCommands,
-    WorkflowCommands,
+    AgentCommands, ApprovalCommands, ArtifactCommands, Cli, Commands, ExecutionProfileCommands,
+    FreezeCommands, NodeCommands, OrgCommands, ProviderCommands, RexRapCommands, RunCommands,
+    SettingsCommands, TriggerCommands, WorkflowCommands,
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -127,6 +127,9 @@ pub async fn run_command(
         Commands::Artifacts { command } => artifacts::artifacts(client, command, json_output).await,
         Commands::RexRap { command } => workflows::rexrap(command, json_output),
         Commands::Settings { command } => settings::settings(client, command, json_output).await,
+        Commands::ExecutionProfiles { command } => {
+            execution_profiles::execution_profiles(client, command, json_output).await
+        }
         Commands::Namespaces { command } => {
             namespaces::namespaces(client, command, json_output).await
         }
@@ -152,6 +155,7 @@ mod freeze;
 mod functions;
 pub use functions::functions_validate;
 mod console;
+mod execution_profiles;
 mod mcp;
 mod orchestrations;
 mod pipelines;

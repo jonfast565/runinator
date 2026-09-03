@@ -20,6 +20,7 @@ mod pipeline_operations;
 mod replica_registry;
 mod run_operations;
 mod scheduling_operations;
+mod setting_operations;
 mod workflow_authoring;
 mod workflow_files;
 mod workspace_operations;
@@ -44,6 +45,7 @@ pub use replica_registry::{
 };
 pub use run_operations::RunOperations;
 pub use scheduling_operations::SchedulingOperations;
+pub use setting_operations::{SettingConfiguration, SettingOperations};
 pub use workflow_authoring::WorkflowAuthoring;
 pub use workflow_files::WorkflowFiles;
 pub use workspace_operations::{

@@ -153,6 +153,7 @@ export const useAppStore = defineStore("app", () => {
     eventStreamLabel,
     liveReplicaCount,
     hasReplicaState,
+    can,
     openMobileNav: () => { appService.openMobileNav(); },
     closeMobileNav: () => { appService.closeMobileNav(); },
     toggleMobileNav: () => { appService.toggleMobileNav(); },

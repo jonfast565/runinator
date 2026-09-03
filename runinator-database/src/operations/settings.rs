@@ -37,10 +37,15 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
-    async fn list_stored_settings(&self) -> Result<Vec<SettingRecord>, SendableError> {
-        let rows = sqlx::query(
-            "SELECT id, kind, scope, name, value, updated_at FROM settings ORDER BY kind, scope, name",
-        )
+    async fn list_stored_settings(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<SettingRecord>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, org_id, kind, scope, name, value, updated_at FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) ORDER BY kind, scope, name",
+        ))
+        .bind(org_id)
+        .bind(org_id)
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_setting).collect())
@@ -48,39 +53,53 @@ where
 
     async fn upsert_setting(
         &self,
+        org_id: Option<Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,
         value: Vec<u8>,
         updated_at: i64,
     ) -> Result<(), SendableError> {
-        let conflict = self
-            .dialect()
-            .on_conflict_update("kind, scope, name", &["value", "updated_at"]);
-        sqlx::query(&self.render(&format!(
-            "INSERT INTO settings (id, kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?, ?) {conflict}",
-        )))
-        .bind(Uuid::now_v7())
-        .bind(kind.as_str())
-        .bind(scope)
-        .bind(name)
-        .bind(value)
-        .bind(updated_at)
-        .execute(self.pool())
-        .await?;
+        if let Some(existing) = self
+            .fetch_setting(org_id, kind, scope.clone(), name.clone())
+            .await?
+        {
+            sqlx::query(&self.render("UPDATE settings SET value = ?, updated_at = ? WHERE id = ?"))
+                .bind(value)
+                .bind(updated_at)
+                .bind(existing.id)
+                .execute(self.pool())
+                .await?;
+        } else {
+            sqlx::query(&self.render(
+                "INSERT INTO settings (id, org_id, kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(Uuid::now_v7())
+            .bind(org_id)
+            .bind(kind.as_str())
+            .bind(scope)
+            .bind(name)
+            .bind(value)
+            .bind(updated_at)
+            .execute(self.pool())
+            .await?;
+        }
         Ok(())
     }
 
     async fn delete_setting(
         &self,
+        org_id: Option<Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,
     ) -> Result<(), SendableError> {
         retry_delete(|| async {
             sqlx::query(
-                &self.render("DELETE FROM settings WHERE kind = ? AND scope = ? AND name = ?"),
+                &self.render("DELETE FROM settings WHERE (org_id = ? OR (org_id IS NULL AND ? IS NULL)) AND kind = ? AND scope = ? AND name = ?"),
             )
+            .bind(org_id)
+            .bind(org_id)
             .bind(kind.as_str())
             .bind(scope.as_str())
             .bind(name.as_str())
@@ -95,20 +114,27 @@ where
     async fn move_setting(
         &self,
         id: Uuid,
+        org_id: Option<Uuid>,
         kind: SettingKind,
         scope: String,
         name: String,
     ) -> Result<Option<SettingRecord>, SendableError> {
-        sqlx::query(&self.render(
-            "UPDATE settings SET kind = ?, scope = ?, name = ?, updated_at = ? WHERE id = ?",
+        let result = sqlx::query(&self.render(
+            "UPDATE settings SET kind = ?, scope = ?, name = ?, updated_at = ? WHERE id = ? AND (org_id = ? OR (org_id IS NULL AND ? IS NULL))",
         ))
         .bind(kind.as_str())
         .bind(scope)
         .bind(name)
         .bind(Utc::now().timestamp())
         .bind(id)
+        .bind(org_id)
+        .bind(org_id)
         .execute(self.pool())
         .await?;
-        self.fetch_setting_by_id(id).await
+        if result.affected() == 0 {
+            Ok(None)
+        } else {
+            self.fetch_setting_by_id(org_id, id).await
+        }
     }
 }

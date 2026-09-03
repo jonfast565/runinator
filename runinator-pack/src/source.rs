@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use runinator_models::bundles::SecretBundle;
+use runinator_models::bundles::SettingsBundle;
 use runinator_models::functions::FunctionCatalogEntry;
 use runinator_models::pipelines::PipelineBundle;
 use runinator_models::providers::ProviderMetadata;
@@ -98,22 +98,20 @@ fn extend_rexrap_includes(files: &mut Vec<PathBuf>) {
     }
 }
 
-// load a settings bundle that ships alongside a pack source: a `.rexrapm` manifest's optional
-// "settings" path entry, or a sibling `settings.rexraps`/`settings.json` next to a directory pack. a
-// `.rexraps` settings file is parsed with the rexrap secrets front end; `.json` is read directly. a
-// single .rexrap or a pack without a settings file yields None.
-pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
+// Load and combine every settings block from the unified `.rrx` pack source.
+pub fn load_pack_settings(path: &Path) -> Result<Option<SettingsBundle>> {
     let paths = if path.is_dir() {
         rexrap_directory_paths(path)?
     } else {
         vec![path.to_path_buf()]
     };
-    let mut secrets = Vec::new();
+    let mut settings_entries = Vec::new();
+    let mut execution_profiles = Vec::new();
     for source_path in paths {
         let data = fs::read_to_string(&source_path)?;
         let blocks = parse_pack_source(&source_path, &data)?;
         for settings in blocks.settings {
-            let mut bundle = runinator_rexrap::parse_secrets_str(&settings).map_err(|e| {
+            let mut bundle = runinator_rexrap::parse_settings_str(&settings).map_err(|e| {
                 PackError::compile(format!(
                     "failed to parse {} settings:\n{}",
                     source_path.display(),
@@ -121,14 +119,26 @@ pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
                 ))
             })?;
             if let Some(modified) = file_modified(&source_path) {
-                for entry in &mut bundle.secrets {
+                for entry in &mut bundle.settings {
+                    entry.updated_at.get_or_insert(modified);
+                }
+                for entry in &mut bundle.execution_profiles {
                     entry.updated_at.get_or_insert(modified);
                 }
             }
-            secrets.extend(bundle.secrets);
+            settings_entries.extend(bundle.settings);
+            execution_profiles.extend(bundle.execution_profiles);
         }
     }
-    Ok((!secrets.is_empty()).then_some(SecretBundle { secrets }))
+    Ok(
+        (!settings_entries.is_empty() || !execution_profiles.is_empty()).then_some(
+            SettingsBundle {
+                settings: settings_entries,
+                execution_profiles,
+                version: 1,
+            },
+        ),
+    )
 }
 
 // load pipeline declarations that ship with a pack: a `.rexrapm` manifest's optional "pipelines" array

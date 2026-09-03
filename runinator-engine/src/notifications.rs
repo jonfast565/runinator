@@ -209,7 +209,7 @@ async fn scan_secret_expiry<T: RuntimeStore + NotificationStore + RunStore + Wor
     }
 
     let cipher = SecretCipher::from_env();
-    let secrets = db.list_settings().await?;
+    let secrets = db.list_all_settings().await?;
     let dispatcher = NotificationDispatcher {
         db,
         events,

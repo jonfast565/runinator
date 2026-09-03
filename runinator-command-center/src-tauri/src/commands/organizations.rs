@@ -182,3 +182,22 @@ pub async fn delete_credential(
     let response = handle_response(url, response).await?;
     Ok(response.json::<Value>().await?)
 }
+
+#[tauri::command]
+pub async fn move_credential(
+    state: State<'_, CommandCenterState>,
+    setting_id: uuid::Uuid,
+    request: Value,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("credentials/{setting_id}")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&request)
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}

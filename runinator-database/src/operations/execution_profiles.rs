@@ -35,12 +35,17 @@ where
     ) -> Result<ExecutionProfile, SendableError> {
         let existing = self.fetch_execution_profile(profile.id).await?;
         if existing.is_some() {
-            sqlx::query(&self.render("UPDATE execution_profiles SET name = ?, description = ?, credential_scopes = ?, collection_json = ?, exposure_json = ?, config_version = ?, config_digest = ?, enabled = ?, health = ?, last_error = ?, updated_at = ? WHERE id = ? AND (org_id = ? OR (org_id IS NULL AND ? IS NULL))"))
+            sqlx::query(&self.render("UPDATE execution_profiles SET name = ?, description = ?, credential_scopes = ?, collection_json = ?, exposure_json = ?, config_version = ?, config_digest = ?, enabled = ?, current_revision = ?, current_digest = ?, current_publisher_id = ?, published_at = ?, expires_at = ?, refresh_requested_at = ?, health = ?, last_error = ?, updated_at = ? WHERE id = ? AND (org_id = ? OR (org_id IS NULL AND ? IS NULL))"))
                 .bind(&profile.name).bind(&profile.description)
                 .bind(serde_json::to_string(&profile.credential_scopes)?)
                 .bind(serde_json::to_string(&profile.collection)?)
                 .bind(serde_json::to_string(&profile.exposure)?)
                 .bind(profile.config_version).bind(&profile.config_digest).bind(profile.enabled)
+                .bind(profile.current_revision).bind(profile.current_digest.clone())
+                .bind(profile.current_publisher_id)
+                .bind(profile.published_at.map(|value| value.timestamp()))
+                .bind(profile.expires_at.map(|value| value.timestamp()))
+                .bind(profile.refresh_requested_at.map(|value| value.timestamp()))
                 .bind(profile.health.as_str()).bind(profile.last_error.clone()).bind(profile.updated_at.timestamp()).bind(profile.id)
                 .bind(profile.org_id).bind(profile.org_id).execute(self.pool()).await?;
         } else {

@@ -9,10 +9,7 @@ use axum::{
 use runinator_models::auth::AuthContext;
 use runinator_models::value::Value;
 use runinator_models::{
-    bundles::{SecretBundle, SecretBundleEntry},
-    server_settings::is_reserved_server_setting,
-    settings::{SettingBinding, SettingKind},
-    web::TaskResponse,
+    server_settings::is_reserved_server_setting, settings::SettingKind, web::TaskResponse,
 };
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
@@ -20,9 +17,8 @@ use runinator_store::{
     roles::{DefinitionStore, SettingStore},
 };
 
-use crate::settings::{
-    decode_config_schema, decode_config_value, decode_secret, validate_and_encode_with_expiry,
-};
+use crate::settings::{decode_config_schema, decode_config_value, decode_secret};
+use runinator_engine::services::{SettingConfiguration, SettingOperations};
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::{
     ApiResponse, CredentialPutRequest, CredentialQuery, SettingMoveRequest,
@@ -73,7 +69,7 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
         return reply;
     }
     if query.scope.is_none() && query.name.is_none() {
-        return match db.list_settings().await {
+        return match db.list_settings(ctx.org_id).await {
             Ok(entries) => (
                 StatusCode::OK,
                 Json(ApiResponse::JsonList(
@@ -93,6 +89,7 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
                                 });
                             runinator_models::json!({
                                 "id": entry.id,
+                                "org_id": entry.org_id,
                                 "scope": entry.scope,
                                 "name": entry.name,
                                 "kind": entry.kind.as_str(),
@@ -114,18 +111,22 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
     }
 
     match db
-        .fetch_setting(query.kind, scope.clone(), name.clone())
+        .fetch_setting(ctx.org_id, query.kind, scope.clone(), name.clone())
         .await
     {
-        // config is non-sensitive: return the parsed json value. secrets return the raw string.
+        // Config is readable. Human-facing secret reads are metadata-only/write-only.
         Ok(Some(record)) => {
             let Some(bytes) = cipher.try_decrypt(&record.value) else {
                 return api_error(
                     "stored credential could not be decrypted; the encryption key may be unavailable",
                 );
             };
-            let (value, expires_at) = match query.kind {
-                SettingKind::Config => (decode_config_value(&bytes), None),
+            let (value, schema, expires_at) = match query.kind {
+                SettingKind::Config => (
+                    decode_config_value(&bytes),
+                    decode_config_schema(&bytes),
+                    None,
+                ),
                 SettingKind::Secret => {
                     let secret = match decode_secret(&bytes) {
                         Ok(secret) => secret,
@@ -133,16 +134,19 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
                             return api_error("stored credential has an invalid secret envelope");
                         }
                     };
-                    (Value::String(secret.value), secret.expires_at)
+                    (Value::Null, None, secret.expires_at)
                 }
             };
             (
                 StatusCode::OK,
                 Json(ApiResponse::JsonValue(runinator_models::json!({
+                    "id": record.id,
+                    "org_id": record.org_id,
                     "scope": scope,
                     "name": name,
                     "kind": query.kind.as_str(),
                     "value": value,
+                    "schema": schema,
                     "expires_at": expires_at,
                 }))),
             )
@@ -157,20 +161,15 @@ pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
     Extension(ctx): Extension<AuthContext>,
     Path(setting_id): Path<uuid::Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let record = match db.fetch_setting_by_id(setting_id).await {
+    let record = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
         Ok(Some(record)) => record,
         Ok(None) => return not_found("credential not found"),
         Err(err) => return api_error(err.to_string()),
     };
-    if ctx.system_role == Some(runinator_models::rbac::SystemRole::Agent) {
-        let principal_scope = ctx.principal_id.map(|id| format!("agent:{id}"));
-        let org_scope = ctx.org_id.map(|id| format!("org:{id}"));
-        if principal_scope.as_deref() != Some(record.scope.as_str())
-            && org_scope.as_deref() != Some(record.scope.as_str())
-        {
-            return not_found("credential not found");
-        }
-    } else if let Err(reply) = ctx.require_scope_action(
+    if record.org_id != ctx.org_id || ctx.system_role.is_some() {
+        return not_found("credential not found");
+    }
+    if let Err(reply) = ctx.require_scope_action(
         runinator_models::rbac::Action::SecretsRead,
         ctx.selected_scope(),
     ) {
@@ -179,26 +178,67 @@ pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
     if record.kind != SettingKind::Secret {
         return not_found("credential not found");
     }
-    let Some(bytes) = settings_cipher().try_decrypt(&record.value) else {
-        return api_error(
-            "stored credential could not be decrypted; the encryption key may be unavailable",
-        );
-    };
-    let secret = match decode_secret(&bytes) {
-        Ok(secret) => secret,
-        Err(_) => return api_error("stored credential has an invalid secret envelope"),
-    };
+    let expires_at = settings_cipher()
+        .try_decrypt(&record.value)
+        .and_then(|bytes| decode_secret(&bytes).ok())
+        .and_then(|secret| secret.expires_at);
     (
         StatusCode::OK,
         Json(ApiResponse::JsonValue(runinator_models::json!({
             "id": record.id,
+            "org_id": record.org_id,
             "scope": record.scope,
             "name": record.name,
             "kind": record.kind.as_str(),
-            "expires_at": secret.expires_at,
-            "value": secret.value,
+            "expires_at": expires_at,
+            "write_only": true,
         }))),
     )
+}
+
+/// Runtime-only secret materialization. Only authenticated worker/agent system principals can
+/// resolve plaintext, and the row must belong to their organization.
+pub async fn resolve_runtime_secret<T: SettingStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(setting_id): Path<uuid::Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if !matches!(
+        ctx.system_role,
+        Some(
+            runinator_models::rbac::SystemRole::Worker | runinator_models::rbac::SystemRole::Agent
+        )
+    ) {
+        return not_found("credential not found");
+    }
+    let record = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
+        Ok(Some(record)) if record.org_id == ctx.org_id && record.kind == SettingKind::Secret => {
+            record
+        }
+        Ok(_) => return not_found("credential not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let secret = settings_cipher()
+        .try_decrypt(&record.value)
+        .and_then(|bytes| decode_secret(&bytes).ok());
+    match secret {
+        Some(secret)
+            if secret
+                .expires_at
+                .is_some_and(|expires_at| expires_at <= chrono::Utc::now()) =>
+        {
+            bad_request("secret has expired")
+        }
+        Some(secret) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "id": record.id,
+                "value": secret.value,
+                "expires_at": secret.expires_at,
+            }))),
+        ),
+        None => api_error("stored credential could not be decrypted"),
+    }
 }
 
 pub async fn put_credential<T: SettingStore + RuntimeStore>(
@@ -217,44 +257,19 @@ pub async fn put_credential<T: SettingStore + RuntimeStore>(
             "server/operational_policy must be changed through the server settings endpoint",
         );
     }
-    let cipher = settings_cipher();
-    // reuse the schema pinned by a prior write of this config slot, if any.
-    let stored_schema = match config_stored_schema(
-        db.as_ref(),
-        &cipher,
-        request.kind,
-        &request.scope,
-        &request.name,
-    )
-    .await
-    {
-        Ok(schema) => schema,
-        Err(err) => return api_error(err),
-    };
-    let bytes = match validate_and_encode_with_expiry(
-        request.kind,
-        &request.scope,
-        &request.name,
-        &request.value,
-        request.schema.as_ref(),
-        stored_schema.as_ref(),
-        request.expires_at,
-    ) {
-        Ok(bytes) => bytes,
-        Err(message) => return bad_request(message),
-    };
-    let ciphertext = cipher.encrypt(&bytes);
-    match db
-        .upsert_setting(
-            request.kind,
-            request.scope.clone(),
-            request.name.clone(),
-            ciphertext,
-            now_unix(),
-        )
+    match SettingOperations::new(db)
+        .configure(SettingConfiguration {
+            org_id: ctx.org_id,
+            kind: request.kind,
+            scope: request.scope.clone(),
+            name: request.name.clone(),
+            value: request.value.clone(),
+            schema: request.schema.clone(),
+            expires_at: request.expires_at,
+        })
         .await
     {
-        Ok(()) => (
+        Ok(_) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
                 "scope": request.scope,
@@ -282,7 +297,7 @@ pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
         return reply;
     }
     let cipher = settings_cipher();
-    let entries = match db.list_settings().await {
+    let entries = match db.list_settings(ctx.org_id).await {
         Ok(entries) => entries,
         Err(err) => return api_error(err.to_string()),
     };
@@ -300,6 +315,7 @@ pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
         };
         if let Err(err) = db
             .upsert_setting(
+                ctx.org_id,
                 entry.kind,
                 entry.scope.clone(),
                 entry.name.clone(),
@@ -321,66 +337,6 @@ pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
     )
 }
 
-/// a secret-import failure tagged with whether it is a client (bad request) or server error.
-pub struct SecretImportError {
-    bad_request: bool,
-    message: String,
-}
-
-impl SecretImportError {
-    pub fn into_response(self) -> (StatusCode, Json<ApiResponse>) {
-        if self.bad_request {
-            bad_request(self.message)
-        } else {
-            api_error(self.message)
-        }
-    }
-}
-
-/// Import every entry in a secret bundle into the settings store, reconciling by modification time,
-/// and return the redacted echo. Used by the compiled pack import at `/packs/import`.
-pub async fn import_secret_entries<T: SettingStore + RuntimeStore>(
-    db: &T,
-    bundle: &SecretBundle,
-) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
-    import_secret_entries_with(db, bundle, false).await
-}
-
-// `overwrite` makes an explicit re-apply authoritative: an existing setting is replaced even when
-// the incoming entry is not strictly newer, bypassing the reconciliation timestamp gate.
-pub async fn import_secret_entries_with<T: SettingStore + RuntimeStore>(
-    db: &T,
-    bundle: &SecretBundle,
-    overwrite: bool,
-) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
-    runinator_engine::settings::import_setting_bundle_with(db, bundle, overwrite)
-        .await
-        .map_err(|error| SecretImportError {
-            bad_request: error.bad_request,
-            message: error.message,
-        })
-}
-
-// the schema pinned in a config slot's previously-stored bytes, if any. secrets carry no schema.
-async fn config_stored_schema<T: SettingStore + RuntimeStore>(
-    db: &T,
-    cipher: &SecretCipher,
-    kind: SettingKind,
-    scope: &str,
-    name: &str,
-) -> Result<Option<Value>, String> {
-    if kind != SettingKind::Config {
-        return Ok(None);
-    }
-    let record = db
-        .fetch_setting(kind, scope.to_string(), name.to_string())
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(record
-        .and_then(|record| cipher.try_decrypt(&record.value))
-        .and_then(|bytes| decode_config_schema(&bytes)))
-}
-
 pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -399,46 +355,14 @@ pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>
         return bad_request("server/operational_policy cannot be deleted through credentials");
     }
 
-    let target = match db
-        .fetch_setting(query.kind, scope.clone(), name.clone())
+    match SettingOperations::new(db)
+        .delete(ctx.org_id, query.kind, scope, name)
         .await
     {
-        Ok(target) => target,
-        Err(err) => return api_error(err.to_string()),
-    };
-    if let Some(target) = target {
-        let workflows = match db.fetch_workflows().await {
-            Ok(workflows) => workflows,
-            Err(err) => return api_error(err.to_string()),
-        };
-        let inbound = workflows
-            .into_iter()
-            .filter(|workflow| {
-                workflow
-                    .definition
-                    .metadata
-                    .pointer("/artifact_refs/settings")
-                    .and_then(Value::as_array)
-                    .is_some_and(|bindings| {
-                        bindings.iter().any(|binding| {
-                            serde_json::from_value::<SettingBinding>(binding.clone().into())
-                                .is_ok_and(|binding| binding.reference.id == target.id)
-                        })
-                    })
-            })
-            .map(|workflow| workflow.artifact_path().qualified())
-            .collect::<Vec<_>>();
-        if !inbound.is_empty() {
-            return bad_request(format!(
-                "setting {} is referenced by {}",
-                target.id,
-                inbound.join(", ")
-            ));
+        Ok(inbound) if !inbound.is_empty() => {
+            bad_request(format!("setting is referenced by {}", inbound.join(", ")))
         }
-    }
-
-    match db.delete_setting(query.kind, scope, name).await {
-        Ok(()) => (
+        Ok(_) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {
                 success: true,
@@ -464,8 +388,9 @@ pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
     if request.scope.trim().is_empty() || request.name.trim().is_empty() {
         return bad_request("setting scope and name must not be empty");
     }
-    let existing = match db.fetch_setting_by_id(setting_id).await {
-        Ok(Some(record)) => record,
+    let existing = match db.fetch_setting_by_id(ctx.org_id, setting_id).await {
+        Ok(Some(record)) if record.org_id == ctx.org_id => record,
+        Ok(Some(_)) => return not_found("setting not found"),
         Ok(None) => return not_found("setting not found"),
         Err(err) => return api_error(err.to_string()),
     };
@@ -477,8 +402,14 @@ pub async fn move_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
     {
         return bad_request("server/operational_policy cannot be moved through credentials");
     }
-    match db
-        .move_setting(setting_id, existing.kind, request.scope, request.name)
+    match SettingOperations::new(db)
+        .move_setting(
+            setting_id,
+            ctx.org_id,
+            existing.kind,
+            request.scope,
+            request.name,
+        )
         .await
     {
         Ok(Some(record)) => (
@@ -518,6 +449,10 @@ pub fn routes<T: DefinitionStore + SettingStore + RuntimeStore>(
         .route(
             "/credentials/reencrypt",
             post(reencrypt_settings::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/runtime/secrets/{id}",
+            get(resolve_runtime_secret::<T>).layer(Extension(pool.clone())),
         )
 }
 
@@ -561,6 +496,45 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "credential deleted",
         Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/credentials/{id}",
+        "Credentials",
+        "Get secret metadata by UUID",
+        "Returns scoped metadata for a write-only secret without materializing its plaintext value.",
+        false,
+        None,
+        &[],
+        200,
+        "write-only secret metadata",
+        Example::Credential,
+    ),
+    endpoint(
+        "patch",
+        "/credentials/{id}",
+        "Credentials",
+        "Move or rename a setting",
+        "Changes a setting alias while preserving its durable UUID and workflow references.",
+        false,
+        json_body("New setting kind, scope, and name.", Example::Credential),
+        &[],
+        200,
+        "setting moved",
+        Example::Credential,
+    ),
+    endpoint(
+        "get",
+        "/runtime/secrets/{id}",
+        "Credentials",
+        "Resolve runtime secret plaintext",
+        "System-role-only endpoint used by workers and agents to materialize a scoped secret by UUID.",
+        false,
+        None,
+        &[],
+        200,
+        "runtime secret value",
+        Example::Credential,
     ),
     endpoint(
         "post",

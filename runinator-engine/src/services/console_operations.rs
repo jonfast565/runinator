@@ -11,8 +11,8 @@ use runinator_models::{
 use runinator_store::{
     RuntimeStore,
     roles::{
-        ConsoleStore, DefinitionStore, FunctionStore, NotificationStore, ScheduleStore,
-        WorkflowVmStore,
+        ConsoleStore, DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore,
+        ScheduleStore, WorkflowVmStore,
     },
 };
 use uuid::Uuid;
@@ -121,7 +121,10 @@ impl<
     pub async fn run_cell(
         &self,
         cell_id: Uuid,
-    ) -> Result<repository::console::CellOutcome, SendableError> {
+    ) -> Result<repository::console::CellOutcome, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
         let providers =
             repository::fetch_catalog_items(self.store.as_ref(), Some("provider_metadata".into()))
                 .await

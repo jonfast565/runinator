@@ -31,7 +31,7 @@ For RexRap input, the CLI:
 
 1. reads every workflow signature in the source set;
 2. compiles each workflow with the complete pack-local signature table;
-3. writes `workflows.json` and optional `secrets.json` and `pipelines.json` entries into one pack
+3. writes `workflows.json` and optional versioned `settings.json` and `pipelines.json` entries into one pack
    zip; and
 4. uploads that zip as `application/zip` to `/packs/import`.
 

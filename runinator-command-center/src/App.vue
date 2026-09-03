@@ -61,6 +61,7 @@ import { useDisplayPreferencesStore } from "./ui/adapters/pinia/displayPreferenc
 import { useConsoleStore } from "./ui/adapters/pinia/console";
 import { useFunctionsStore } from "./ui/adapters/pinia/functions";
 import { useGatesStore } from "./ui/adapters/pinia/gates";
+import { useExecutionProfilesStore } from "./ui/adapters/pinia/executionProfiles";
 import { useResizableTables } from "./ui/composables/useResizableTables";
 
 const RunsView = defineAsyncComponent(() => import("./ui/views/RunsView.vue"));
@@ -111,6 +112,7 @@ const adminSettings = useAdminSettingsStore();
 const consoleStore = useConsoleStore();
 const functions = useFunctionsStore();
 const gates = useGatesStore();
+const executionProfiles = useExecutionProfilesStore();
 // instantiate the preference adapter for display controls; bootstrap owns DOM theme application.
 useDisplayPreferencesStore();
 // track viewport size and publish it as document[data-viewport] for css + layout logic.
@@ -259,6 +261,10 @@ watch(
       void secrets.refreshSecrets();
     }
 
+    if (tab === "ExecutionProfiles") {
+      void executionProfiles.refresh();
+    }
+
     if (tab === "AdminSettings") {
       void adminSettings.refresh();
     }
@@ -326,6 +332,7 @@ function clearBackendState() {
   secrets.clearSecrets();
   gates.clearGates();
   functions.clearFunctions();
+  executionProfiles.clear();
   consoleStore.clearConsole();
   adminSettings.clear();
   providers.clearProviders();
@@ -342,6 +349,7 @@ function clearTenantScopedState() {
   permissions.clearPermissions();
   gates.clearGates();
   functions.clearFunctions();
+  executionProfiles.clear();
   consoleStore.clearConsole();
   providers.clearProviders();
   app.clearReplicaState();
@@ -356,6 +364,7 @@ async function refreshTenantScopedState() {
     resources.refreshResources().catch(() => undefined),
     notifications.refreshNotifications().catch(() => undefined),
     secrets.refreshSecrets().catch(() => undefined),
+    executionProfiles.refresh().catch(() => undefined),
     permissions.refreshAll().catch(() => undefined),
     gates.refreshGates().catch(() => undefined),
     providers.fetchProviders().catch(() => undefined),
@@ -375,6 +384,7 @@ async function refreshBackendState(refreshProviders: boolean) {
     resources.refreshResources().catch(() => undefined),
     notifications.refreshNotifications().catch(() => undefined),
     secrets.refreshSecrets().catch(() => undefined),
+    executionProfiles.refresh().catch(() => undefined),
     gates.refreshGates().catch(() => undefined),
     app.refreshReplicas().catch(() => undefined),
     // Enter every authenticated frontend session in the server's first org context. This is

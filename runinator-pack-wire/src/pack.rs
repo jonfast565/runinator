@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 
-use runinator_models::bundles::SecretBundle;
+use runinator_models::bundles::SettingsBundle;
 use runinator_models::functions::NewFunctionVersion;
 use runinator_models::pipelines::PipelineBundle;
 use runinator_models::workflows::WorkflowBundle;
@@ -13,7 +13,9 @@ use zip::write::SimpleFileOptions;
 
 /// zip entry holding the compiled `WorkflowBundle` json (always present).
 pub const WORKFLOWS_ENTRY: &str = "workflows.json";
-/// zip entry holding the compiled `SecretBundle` json (optional).
+/// zip entry holding the compiled versioned `SettingsBundle` json (optional).
+pub const SETTINGS_ENTRY: &str = "settings.json";
+/// Legacy settings entry accepted for one compatibility release.
 pub const SECRETS_ENTRY: &str = "secrets.json";
 /// zip entry holding the compiled `PipelineBundle` json (optional).
 pub const PIPELINES_ENTRY: &str = "pipelines.json";
@@ -38,7 +40,7 @@ pub type PackError = Box<dyn std::error::Error + Send + Sync>;
 /// what a pack zip carries once read back.
 pub struct PackContents {
     pub workflows: WorkflowBundle,
-    pub secrets: Option<SecretBundle>,
+    pub settings: Option<SettingsBundle>,
     pub pipelines: Option<PipelineBundle>,
     /// packaged-function publish requests, imported before workflows so a workflow that binds to
     /// one can be validated against it.
@@ -58,7 +60,7 @@ pub struct PackContents {
 #[derive(Default)]
 pub struct PackBuilder<'a> {
     workflows: Option<&'a WorkflowBundle>,
-    secrets: Option<&'a SecretBundle>,
+    settings: Option<&'a SettingsBundle>,
     pipelines: Option<&'a PipelineBundle>,
     functions: Vec<NewFunctionVersion>,
     function_artifacts: BTreeMap<String, Vec<u8>>,
@@ -72,9 +74,14 @@ impl<'a> PackBuilder<'a> {
         }
     }
 
-    pub fn secrets(mut self, secrets: Option<&'a SecretBundle>) -> Self {
-        self.secrets = secrets;
+    pub fn settings(mut self, settings: Option<&'a SettingsBundle>) -> Self {
+        self.settings = settings;
         self
+    }
+
+    /// Compatibility builder spelling used by callers compiled against the legacy wire name.
+    pub fn secrets(self, settings: Option<&'a SettingsBundle>) -> Self {
+        self.settings(settings)
     }
 
     pub fn pipelines(mut self, pipelines: Option<&'a PipelineBundle>) -> Self {
@@ -107,9 +114,9 @@ impl<'a> PackBuilder<'a> {
                 SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
             zip.start_file(WORKFLOWS_ENTRY, options)?;
             zip.write_all(&serde_json::to_vec(workflows)?)?;
-            if let Some(secrets) = self.secrets {
-                zip.start_file(SECRETS_ENTRY, options)?;
-                zip.write_all(&serde_json::to_vec(secrets)?)?;
+            if let Some(settings) = self.settings {
+                zip.start_file(SETTINGS_ENTRY, options)?;
+                zip.write_all(&serde_json::to_vec(settings)?)?;
             }
             if let Some(pipelines) = self.pipelines.filter(|p| !p.pipelines.is_empty()) {
                 zip.start_file(PIPELINES_ENTRY, options)?;
@@ -135,11 +142,11 @@ impl<'a> PackBuilder<'a> {
 /// kept for the callers that carry nothing else; anything richer goes through [`PackBuilder`].
 pub fn build_pack_zip(
     workflows: &WorkflowBundle,
-    secrets: Option<&SecretBundle>,
+    settings: Option<&SettingsBundle>,
     pipelines: Option<&PipelineBundle>,
 ) -> Result<Vec<u8>, PackError> {
     PackBuilder::new(workflows)
-        .secrets(secrets)
+        .settings(settings)
         .pipelines(pipelines)
         .build()
 }
@@ -156,7 +163,15 @@ pub fn read_pack_zip(bytes: &[u8]) -> Result<PackContents, PackError> {
         let bytes = budget.read(&mut file, WORKFLOWS_ENTRY)?;
         serde_json::from_slice(&bytes)?
     };
-    let secrets = read_optional_entry(&mut archive, SECRETS_ENTRY, &mut budget)?;
+    let settings = read_optional_entry(&mut archive, SETTINGS_ENTRY, &mut budget)?;
+    let legacy_settings = read_optional_entry(&mut archive, SECRETS_ENTRY, &mut budget)?;
+    if settings.is_some() && legacy_settings.is_some() {
+        return Err(format!(
+            "pack zip cannot contain both '{SETTINGS_ENTRY}' and legacy '{SECRETS_ENTRY}'"
+        )
+        .into());
+    }
+    let settings = settings.or(legacy_settings);
     let pipelines = read_optional_entry(&mut archive, PIPELINES_ENTRY, &mut budget)?;
     let functions =
         read_optional_entry(&mut archive, FUNCTIONS_ENTRY, &mut budget)?.unwrap_or_default();
@@ -184,7 +199,7 @@ pub fn read_pack_zip(bytes: &[u8]) -> Result<PackContents, PackError> {
 
     let contents = PackContents {
         workflows,
-        secrets,
+        settings,
         pipelines,
         functions,
         function_artifacts,

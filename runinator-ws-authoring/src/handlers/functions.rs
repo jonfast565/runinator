@@ -29,7 +29,7 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, FunctionStore},
+    roles::{DefinitionStore, ExecutionProfileStore, FunctionStore},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -121,7 +121,7 @@ pub async fn get_function_catalog<
 
 /// publish one version of a package.
 pub async fn publish_function<
-    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore + ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<FunctionPackages<T>>>,
@@ -250,7 +250,7 @@ pub async fn delete_function<
 
 /// restore an archived package.
 pub async fn restore_function<
-    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore + ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<FunctionPackages<T>>>,
@@ -644,7 +644,9 @@ async fn resolve_package<T: AuthorizationStore + FunctionStore + DefinitionStore
 }
 
 /// the `functions` endpoints.
-pub fn routes<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore>(
+pub fn routes<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore + ExecutionProfileStore,
+>(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::Extension;
