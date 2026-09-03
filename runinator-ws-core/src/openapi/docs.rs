@@ -234,67 +234,57 @@ pub const CREDENTIAL_QUERY: &[ParamDoc] = &[
     },
 ];
 
-#[allow(clippy::too_many_arguments)] // call sites are static endpoint declarations with named positions.
-pub const fn endpoint(
-    method: &'static str,
-    path: &'static str,
-    tag: &'static str,
-    summary: &'static str,
-    description: &'static str,
-    public: bool,
-    request: Option<RequestDoc>,
-    query: &'static [ParamDoc],
-    success_status: u16,
-    success_description: &'static str,
-    response_example: Example,
-) -> EndpointDoc {
-    endpoint_with_policy(
-        method,
-        path,
-        tag,
-        summary,
-        description,
-        if public {
-            EndpointPolicy::Public
-        } else {
-            EndpointPolicy::Authenticated
-        },
-        request,
-        query,
-        success_status,
-        success_description,
-        response_example,
-    )
+/// Declare static endpoint documentation without turning a positional declaration into a
+/// wide runtime API.  A macro keeps every declaration const while avoiding an eleven-argument
+/// helper function.
+#[macro_export]
+macro_rules! endpoint {
+    ($method:expr, $path:expr, $tag:expr, $summary:expr, $description:expr, $public:expr,
+     $request:expr, $query:expr, $success_status:expr, $success_description:expr,
+     $response_example:expr $(,)?) => {
+        $crate::openapi::docs::EndpointDoc {
+            method: $method,
+            path: $path,
+            tag: $tag,
+            summary: $summary,
+            description: $description,
+            policy: if $public {
+                $crate::openapi::docs::EndpointPolicy::Public
+            } else {
+                $crate::openapi::docs::EndpointPolicy::Authenticated
+            },
+            request: $request,
+            query: $query,
+            success_status: $success_status,
+            success_description: $success_description,
+            response_example: $response_example,
+        }
+    };
 }
 
-#[allow(clippy::too_many_arguments)]
-pub const fn endpoint_with_policy(
-    method: &'static str,
-    path: &'static str,
-    tag: &'static str,
-    summary: &'static str,
-    description: &'static str,
-    policy: EndpointPolicy,
-    request: Option<RequestDoc>,
-    query: &'static [ParamDoc],
-    success_status: u16,
-    success_description: &'static str,
-    response_example: Example,
-) -> EndpointDoc {
-    EndpointDoc {
-        method,
-        path,
-        tag,
-        summary,
-        description,
-        policy,
-        request,
-        query,
-        success_status,
-        success_description,
-        response_example,
-    }
+/// Declare static endpoint documentation when the route requires a non-default policy.
+#[macro_export]
+macro_rules! endpoint_with_policy {
+    ($method:expr, $path:expr, $tag:expr, $summary:expr, $description:expr, $policy:expr,
+     $request:expr, $query:expr, $success_status:expr, $success_description:expr,
+     $response_example:expr $(,)?) => {
+        $crate::openapi::docs::EndpointDoc {
+            method: $method,
+            path: $path,
+            tag: $tag,
+            summary: $summary,
+            description: $description,
+            policy: $policy,
+            request: $request,
+            query: $query,
+            success_status: $success_status,
+            success_description: $success_description,
+            response_example: $response_example,
+        }
+    };
 }
+
+pub use crate::{endpoint, endpoint_with_policy};
 
 pub const fn json_body(description: &'static str, example: Example) -> Option<RequestDoc> {
     Some(RequestDoc {

@@ -372,7 +372,7 @@ pub fn routes<T: ReplicaStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/replicas",
         "Replicas",
@@ -385,7 +385,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "replicas",
         Example::ReplicaList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/replicas/register",
         "Replicas",
@@ -398,7 +398,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "registered replica",
         Example::Replica,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/replicas/{replica_id}/heartbeat",
         "Replicas",
@@ -411,7 +411,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "heartbeat recorded",
         Example::Replica,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/replicas/{replica_id}/offline",
         "Replicas",
@@ -424,7 +424,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "replica marked offline",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/replicas/{replica_id}/kick",
         "Replicas",
@@ -437,7 +437,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "replica kicked",
         Example::Replica,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/replicas/{replica_id}/providers",
         "Replicas",
@@ -450,7 +450,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "replica providers",
         Example::ProviderList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/replicas/{replica_id}/providers",
         "Replicas",

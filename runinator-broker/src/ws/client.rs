@@ -603,7 +603,12 @@ mod imp {
 
         async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
             match self
-                .request_bounded(TcpRequest::PublishEffect { message }, ONE_SHOT_RETRY_WINDOW)
+                .request_bounded(
+                    TcpRequest::PublishEffect {
+                        message: Box::new(message),
+                    },
+                    ONE_SHOT_RETRY_WINDOW,
+                )
                 .await?
             {
                 TcpResponse::Ok => Ok(()),
@@ -619,7 +624,7 @@ mod imp {
                 })
                 .await?
             {
-                TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+                TcpResponse::EffectDelivery { delivery } => Ok(*delivery),
                 TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
                 _ => Err(unexpected_response()),
             }
@@ -635,7 +640,7 @@ mod imp {
                 })
                 .await?
             {
-                TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+                TcpResponse::EffectDelivery { delivery } => Ok(*delivery),
                 TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
                 _ => Err(unexpected_response()),
             }
@@ -651,7 +656,7 @@ mod imp {
                 })
                 .await?
             {
-                TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+                TcpResponse::EffectDelivery { delivery } => Ok(*delivery),
                 TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
                 _ => Err(unexpected_response()),
             }

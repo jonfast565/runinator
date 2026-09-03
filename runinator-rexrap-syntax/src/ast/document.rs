@@ -199,7 +199,6 @@ impl ChainEvent {
 
 /// the kind-specific payload of a header trigger declaration.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(clippy::large_enum_variant)] // syntax nodes stay directly pattern-matchable throughout the compiler.
 pub enum TriggerDeclKind {
     /// `trigger cron <schedule>`: `schedule` is a string expression (the cron expression), with an
     /// optional blackout window and catch-up policy.

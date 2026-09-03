@@ -568,7 +568,7 @@ pub fn routes<T: AuthorizationStore + DefinitionStore + SettingStore + RuntimeSt
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/credentials",
         "Credentials",
@@ -581,7 +581,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "credential metadata",
         Example::Credential,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/credentials",
         "Credentials",
@@ -594,7 +594,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "credential stored",
         Example::Credential,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/credentials",
         "Credentials",
@@ -607,7 +607,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "credential deleted",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/credentials/{id}",
         "Credentials",
@@ -620,7 +620,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "write-only secret metadata",
         Example::Credential,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/credentials/{id}",
         "Credentials",
@@ -633,7 +633,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "setting moved",
         Example::Credential,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/runtime/secrets/{id}",
         "Credentials",
@@ -646,7 +646,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "runtime secret value",
         Example::Credential,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/credentials/reencrypt",
         "Credentials",

@@ -309,7 +309,7 @@ const RAW_FILE_BODY: RequestDoc = RequestDoc {
 };
 
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/workflow_files",
         "Workflow files",
@@ -322,7 +322,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "file library",
         Example::Workflow,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/workflow_files",
         "Workflow files",
@@ -335,7 +335,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "stored file descriptor",
         Example::Artifact,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/workflow_files/stage",
         "Workflow files",
@@ -348,7 +348,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "staged file descriptor",
         Example::Artifact,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "delete",
         "/workflow_files/{id}",
         "Workflow files",
@@ -361,7 +361,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "archive result",
         Example::TaskResponse,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/workflow_files/{id}/content",
         "Workflow files",

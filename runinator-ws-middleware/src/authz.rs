@@ -84,7 +84,6 @@ fn authorization_error() -> Reply {
 
 /// pure predicates over an [`AuthContext`] with no store access. a local trait since `AuthContext`
 /// lives in `runinator-models`, which stays free of WS-layer response concepts.
-#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub trait AuthContextExt {
     fn is_platform_admin(&self) -> bool;
     fn selected_scope(&self) -> ScopeRef;

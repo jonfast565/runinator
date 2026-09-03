@@ -874,7 +874,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore + FileStore
 }
 
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs/{id}/continuations",
         "Workflow VM",
@@ -887,7 +887,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "continuations",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_effects/{id}/terminal",
         "Workflow VM",
@@ -900,7 +900,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "terminal control accepted",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs/{id}/effects",
         "Workflow VM",
@@ -913,7 +913,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "effects",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs/{id}/journal",
         "Workflow VM",
@@ -926,7 +926,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "journal",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs/{id}/transitions",
         "Workflow VM",
@@ -939,7 +939,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run transitions",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflows/{id}/nodes/{node_id}/transitions",
         "Workflow VM",
@@ -952,7 +952,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow node transition statistics",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs/{id}/cursors",
         "Workflow VM",
@@ -965,7 +965,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "graph cursors",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_continuations/{id}",
         "Workflow VM",
@@ -978,7 +978,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "continuation",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_effects/{id}",
         "Workflow VM",
@@ -991,7 +991,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "effect",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_effects/{id}/output",
         "Workflow VM",
@@ -1004,7 +1004,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "effect output events",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_effects/{id}/output/{event_id}/artifact",
         "Workflow VM",
@@ -1017,7 +1017,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "artifact bytes",
         Example::Artifact,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_effects/{id}/settle",
         "Workflow VM",

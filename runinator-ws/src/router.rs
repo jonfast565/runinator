@@ -101,8 +101,6 @@ impl Default for CorsConfig {
         .expect("built-in CORS origins are valid")
     }
 }
-
-#[allow(clippy::too_many_arguments)] // router assembly keeps each injected runtime dependency explicit.
 pub fn build_router<T: DatabaseImpl>(
     pool: Arc<T>,
     events: EventSender,

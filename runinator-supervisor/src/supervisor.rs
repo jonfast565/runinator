@@ -328,7 +328,7 @@ fn apply_control(
     restart_delay: Duration,
 ) -> Result<(), DynError> {
     match command {
-        ControlCommand::AddProcess { process } => {
+        ControlCommand::Add { process } => {
             // a re-add replaces the existing entry of the same name.
             if let Some(idx) = processes.iter().position(|p| p.config.name == process.name) {
                 stop_one(&mut processes[idx]);
@@ -340,19 +340,19 @@ fn apply_control(
                 attempt_start(added, restart_delay)?;
             }
         }
-        ControlCommand::StartProcess { name } => {
+        ControlCommand::Start { name } => {
             if let Some(process) = processes.iter_mut().find(|p| p.config.name == name)
                 && process.child.is_none()
             {
                 attempt_start(process, restart_delay)?;
             }
         }
-        ControlCommand::StopProcess { name } => {
+        ControlCommand::Stop { name } => {
             if let Some(process) = processes.iter_mut().find(|p| p.config.name == name) {
                 stop_one(process);
             }
         }
-        ControlCommand::RemoveProcess { name } => {
+        ControlCommand::Remove { name } => {
             if let Some(idx) = processes.iter().position(|p| p.config.name == name) {
                 stop_one(&mut processes[idx]);
                 processes.remove(idx);

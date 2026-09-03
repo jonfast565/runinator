@@ -44,19 +44,31 @@ impl ExecutionTaskResult {
         (self.finished_at - self.started_at).num_milliseconds()
     }
 }
+pub(crate) struct TaskExecution {
+    pub libraries: Arc<HashMap<String, Plugin>>,
+    pub action: WorkflowAction,
+    pub execution_id: Uuid,
+    pub parameters: Value,
+    pub idempotency_key: Option<String>,
+    pub execution_profile: Option<MaterializedExecutionProfile>,
+    pub sink: Option<Arc<dyn ProviderEventSink>>,
+    pub token: CancellationToken,
+}
 
-#[allow(clippy::too_many_arguments)] // execution dependencies are explicit lifecycle inputs.
-pub async fn execute_task(
+pub(crate) async fn execute_task(
     providers: &ProviderFactory,
-    libraries: Arc<HashMap<String, Plugin>>,
-    action: WorkflowAction,
-    execution_id: Uuid,
-    parameters: Value,
-    idempotency_key: Option<String>,
-    execution_profile: Option<MaterializedExecutionProfile>,
-    sink: Option<Arc<dyn ProviderEventSink>>,
-    token: CancellationToken,
+    task: TaskExecution,
 ) -> ExecutionOutcome {
+    let TaskExecution {
+        libraries,
+        action,
+        execution_id,
+        parameters,
+        idempotency_key,
+        execution_profile,
+        sink,
+        token,
+    } = task;
     let started_at = Utc::now();
     let timeout = action.timeout_seconds.max(1) as u64;
     let request = build_provider_request(

@@ -181,7 +181,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleS
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/workflows/{id}/triggers",
         "Workflows",
@@ -194,7 +194,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow triggers",
         Example::TriggerList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflows/{id}/triggers",
         "Workflows",
@@ -207,7 +207,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "stored workflow trigger",
         Example::Trigger,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_triggers/due",
         "Control Plane",
@@ -220,7 +220,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "due workflow triggers",
         Example::TriggerList,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_triggers/{id}",
         "Workflows",
@@ -233,7 +233,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow trigger",
         Example::Trigger,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/workflow_triggers/{id}",
         "Workflows",
@@ -246,7 +246,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated workflow trigger",
         Example::Trigger,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/workflow_triggers/{id}",
         "Workflows",

@@ -548,8 +548,6 @@ fn execute(
         } => call(continuation, module, env, target, *argc, names, policy),
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 fn call(
     continuation: &mut InvocationContinuation,
     module: &InvocationModule,
@@ -557,7 +555,7 @@ fn call(
     target: &CallableTarget,
     argc: usize,
     names: &[String],
-    policy: &Option<runinator_models::invocation::CallPolicy>,
+    policy: &Option<Box<runinator_models::invocation::CallPolicy>>,
 ) -> Result<Flow, String> {
     let args = pop_n(continuation, argc)?;
 
@@ -578,7 +576,7 @@ fn call(
             target.clone(),
             args,
             names.to_vec(),
-            policy.clone().unwrap_or_default(),
+            policy.as_deref().cloned().unwrap_or_default(),
         )));
     }
 

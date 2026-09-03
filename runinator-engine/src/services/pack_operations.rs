@@ -248,7 +248,6 @@ impl<
     /// Apply every mutable part of a compiled pack under one database transaction. Existing role
     /// methods that open transactions execute as savepoints on the transaction store's sole
     /// connection. Blob bytes are deliberately staged by the caller before entering this method.
-    #[allow(clippy::too_many_arguments)]
     pub async fn import_compiled_pack(
         &self,
         mut workflows: WorkflowBundle,

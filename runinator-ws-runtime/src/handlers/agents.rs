@@ -207,7 +207,7 @@ pub fn routes<T: ReplicaStore + AuthStore + RbacStore + RuntimeStore>(
 }
 
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "post",
         "/replicas/{replica_id}/directives",
         "Agents",
@@ -223,7 +223,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "directive queued",
         Example::AgentDirective,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/replicas/{replica_id}/directives",
         "Agents",
@@ -236,7 +236,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "directives",
         Example::AgentDirectiveList,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/agents/machines",
         "Agents",
@@ -249,7 +249,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "enrolled machines",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/agents/machines/{machine_id}",
         "Agents",

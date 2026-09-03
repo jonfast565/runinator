@@ -485,10 +485,6 @@ pub struct WorkflowVmInterruptHandler {
 /// and invocation-call bookkeeping; every value needed to resume a branch is serializable here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "durable frames are serialized as a tagged union and keeping variants direct avoids an allocation during every resume"
-)]
 pub enum WorkflowFrame {
     Loop(WorkflowLoopFrame),
     Reentry(WorkflowReentryFrame),
@@ -498,7 +494,7 @@ pub enum WorkflowFrame {
     Join(WorkflowJoinFrame),
     Race(WorkflowRaceFrame),
     Interrupt(WorkflowInterruptFrame),
-    Compensation(WorkflowCompensationFrame),
+    Compensation(Box<WorkflowCompensationFrame>),
     Invocation(WorkflowInvocationFrame),
     Debug(WorkflowDebugFrame),
 }
@@ -867,7 +863,6 @@ impl WorkflowContinuationStatus {
 /// A request emitted by the VM. It is converted to an effect record by the durable host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)] // wire variants intentionally keep their stable, directly serialized shapes.
 pub enum WorkflowEffectRequest {
     Action {
         provider: String,
@@ -898,7 +893,7 @@ pub enum WorkflowEffectRequest {
         /// Packaged functions are addressed by their immutable binding, not by a provider catalog
         /// lookup that may have changed between compile and delivery.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        function_binding: Option<FunctionBinding>,
+        function_binding: Option<Box<FunctionBinding>>,
     },
     Timer {
         due_at: i64,
@@ -1401,11 +1396,11 @@ mod tests {
                 payload: Value::from("payload"),
                 handled_at_instruction_pointers: vec![7],
             }),
-            WorkflowFrame::Compensation(WorkflowCompensationFrame {
+            WorkflowFrame::Compensation(Box::new(WorkflowCompensationFrame {
                 pending: vec![WorkflowEffectRequest::Timer { due_at: 1 }],
                 active: None,
                 resume: Some(8),
-            }),
+            })),
             WorkflowFrame::Invocation(WorkflowInvocationFrame {
                 module: InvocationModule::new(Default::default()),
                 continuation: crate::invocation::InvocationContinuation::start(),

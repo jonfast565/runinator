@@ -632,7 +632,7 @@ pub fn routes<
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/console/sessions",
         "Console",
@@ -645,7 +645,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console sessions",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/console/sessions",
         "Console",
@@ -658,7 +658,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console session",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/console/sessions/{id}",
         "Console",
@@ -671,7 +671,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console session",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/console/sessions/{id}",
         "Console",
@@ -684,7 +684,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console session",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/console/sessions/{id}",
         "Console",
@@ -697,7 +697,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "session deleted",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/console/sessions/{id}/clear",
         "Console",
@@ -710,7 +710,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "session cleared",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/console/sessions/{id}/cells",
         "Console",
@@ -723,7 +723,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console cell",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/console/cells/{id}",
         "Console",
@@ -736,7 +736,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console cell",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/console/cells/{id}",
         "Console",
@@ -750,7 +750,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console cell",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/console/cells/{id}",
         "Console",
@@ -763,7 +763,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "cell deleted",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/console/cells/{id}/run",
         "Console",
@@ -778,7 +778,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console cell",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/console/cells/{id}/cancel",
         "Console",
@@ -792,7 +792,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "console cell",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/console/cells/{id}/replay",
         "Console",

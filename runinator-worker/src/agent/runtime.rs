@@ -154,11 +154,6 @@ impl AgentHandle {
         self.task.is_finished()
     }
 }
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the lifecycle coordinates independently owned runtime services and shutdown state"
-)]
 async fn run_lifecycle(
     config: AgentRuntimeConfig,
     api_client: AsyncApiClient<StaticLocator>,

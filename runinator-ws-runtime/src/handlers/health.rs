@@ -104,7 +104,7 @@ pub fn routes<T: RunStore>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/health",
         "Meta",
@@ -117,7 +117,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "service is alive",
         Example::Health,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/ready",
         "Meta",

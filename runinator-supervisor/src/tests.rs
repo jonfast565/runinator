@@ -35,17 +35,17 @@ fn enqueue_then_drain_round_trips_in_order() {
         args_windows: None,
     };
 
-    enqueue(&dir, &ControlCommand::AddProcess { process }).unwrap();
+    enqueue(&dir, &ControlCommand::Add { process }).unwrap();
     enqueue(
         &dir,
-        &ControlCommand::StartProcess {
+        &ControlCommand::Start {
             name: "worker-1".to_string(),
         },
     )
     .unwrap();
     enqueue(
         &dir,
-        &ControlCommand::RemoveProcess {
+        &ControlCommand::Remove {
             name: "worker-1".to_string(),
         },
     )
@@ -53,9 +53,9 @@ fn enqueue_then_drain_round_trips_in_order() {
 
     let drained = drain(&dir);
     assert_eq!(drained.len(), 3);
-    assert!(matches!(drained[0], ControlCommand::AddProcess { .. }));
-    assert!(matches!(drained[1], ControlCommand::StartProcess { .. }));
-    assert!(matches!(drained[2], ControlCommand::RemoveProcess { .. }));
+    assert!(matches!(drained[0], ControlCommand::Add { .. }));
+    assert!(matches!(drained[1], ControlCommand::Start { .. }));
+    assert!(matches!(drained[2], ControlCommand::Remove { .. }));
 
     // draining a second time yields nothing because the queue was consumed.
     assert!(drain(&dir).is_empty());
@@ -69,7 +69,7 @@ fn drain_skips_malformed_files() {
     std::fs::write(dir.join("00000.json"), b"not json").unwrap();
     enqueue(
         &dir,
-        &ControlCommand::StopProcess {
+        &ControlCommand::Stop {
             name: "worker-2".to_string(),
         },
     )
@@ -77,7 +77,7 @@ fn drain_skips_malformed_files() {
 
     let drained = drain(&dir);
     assert_eq!(drained.len(), 1);
-    assert!(matches!(drained[0], ControlCommand::StopProcess { .. }));
+    assert!(matches!(drained[0], ControlCommand::Stop { .. }));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

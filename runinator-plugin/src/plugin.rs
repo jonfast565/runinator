@@ -104,7 +104,8 @@ impl Plugin {
             unsafe { lib.get(PLUGIN_SERVICE_CALL_FN_NAME.as_bytes())? };
 
         let name = unsafe { name_symbol() };
-        let name_str_buf = ffiutils::try_cstr_to_rust_string(name)?;
+        // SAFETY: `name` was returned by the plugin's validated ABI symbol.
+        let name_str_buf = unsafe { ffiutils::try_cstr_to_rust_string(name) }?;
 
         Ok(Plugin {
             name: name_str_buf,
@@ -177,7 +178,8 @@ impl Plugin {
         let metadata_symbol: Symbol<PluginMetadataFn> =
             unsafe { lib.get(PLUGIN_METADATA_FN_NAME.as_bytes())? };
         let metadata = unsafe { metadata_symbol() };
-        let metadata = ffiutils::try_cstr_to_rust_string(metadata)?;
+        // SAFETY: `metadata` was returned by the plugin's validated ABI symbol.
+        let metadata = unsafe { ffiutils::try_cstr_to_rust_string(metadata) }?;
         let mut metadata: ProviderMetadata = serde_json::from_str(&metadata)?;
         if metadata.name.trim().is_empty() {
             metadata.name = self.name.clone();

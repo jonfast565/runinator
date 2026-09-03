@@ -167,8 +167,6 @@ async fn would_remove_last_enabled_admin<T: AuthStore + RbacStore + RuntimeStore
     }
     Ok(enabled_admin_count(db).await? <= 1)
 }
-
-#[allow(clippy::result_large_err)] // serialization failures are already formatted HTTP replies.
 fn json_value<T: Serialize>(value: &T) -> Result<Value, Reply> {
     serde_json::to_value(value)
         .map(Value::from)
@@ -782,8 +780,6 @@ pub async fn me<T: AuthStore + RbacStore + RuntimeStore>(
         Err(err) => api_error(err.to_string()),
     }
 }
-
-#[allow(clippy::result_large_err)]
 fn current_user_ids(ctx: &AuthContext) -> Result<(Uuid, Uuid), Reply> {
     if ctx.kind != PrincipalKind::User {
         return Err(forbidden("profile management is available only to users"));
@@ -1976,7 +1972,7 @@ pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/auth/config",
         "Auth",
@@ -1989,7 +1985,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "auth configuration",
         Example::AuthConfig,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/auth/settings",
         "Auth",
@@ -2002,7 +1998,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "refresh policy",
         Example::AuthConfig,
     ),
-    endpoint(
+    endpoint!(
         "put",
         "/auth/settings",
         "Auth",
@@ -2015,7 +2011,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "saved refresh policy",
         Example::AuthConfig,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/server/settings",
         "Settings",
@@ -2028,7 +2024,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "server settings catalog",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "put",
         "/server/settings",
         "Settings",
@@ -2041,7 +2037,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "saved server settings catalog",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/auth/login",
         "Auth",
@@ -2054,7 +2050,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "token pair",
         Example::LoginResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/auth/refresh",
         "Auth",
@@ -2067,7 +2063,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "rotated token pair",
         Example::LoginResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/auth/logout",
         "Auth",
@@ -2080,7 +2076,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "refresh session revoked",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/auth/me",
         "Auth",
@@ -2093,7 +2089,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "current principal",
         Example::User,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/auth/me",
         "Auth",
@@ -2106,7 +2102,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated current user",
         Example::User,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/auth/me/password",
         "Auth",
@@ -2119,7 +2115,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "password changed",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/auth/sessions",
         "Auth",
@@ -2132,7 +2128,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "active sessions",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/auth/sessions/{id}",
         "Auth",
@@ -2145,7 +2141,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "session revoked",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/auth/sessions/revoke-others",
         "Auth",
@@ -2158,7 +2154,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "other sessions revoked",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/auth/me/api-keys",
         "Auth",
@@ -2171,7 +2167,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "personal API keys",
         Example::ApiKeyList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/auth/me/api-keys",
         "Auth",
@@ -2184,7 +2180,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "created personal API key",
         Example::ApiKey,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/auth/me/api-key-scopes",
         "Auth",
@@ -2197,7 +2193,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "personal API key scopes",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/users",
         "Auth",
@@ -2210,7 +2206,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "users",
         Example::UserList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/users",
         "Auth",
@@ -2223,7 +2219,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "created user",
         Example::User,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/users/{id}",
         "Auth",
@@ -2236,7 +2232,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated user",
         Example::User,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/users/{id}",
         "Auth",
@@ -2249,7 +2245,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "user deleted",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/users/{id}/teams",
         "Auth",
@@ -2262,7 +2258,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "user teams",
         Example::Team,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/api_keys",
         "Auth",
@@ -2275,7 +2271,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "api keys",
         Example::ApiKeyList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/api_keys",
         "Auth",
@@ -2288,7 +2284,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "created api key and secret",
         Example::ApiKey,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/api_keys/{id}",
         "Auth",
@@ -2301,7 +2297,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "api key revoked",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/api_keys/{id}",
         "Auth",
@@ -2314,7 +2310,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated api key",
         Example::ApiKeyList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/api_keys/{id}/rotate",
         "Auth",
@@ -2327,7 +2323,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "rotated api key and secret",
         Example::ApiKey,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/agents/enrollment_tokens",
         "Agents",
@@ -2340,7 +2336,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "agent enrollment tokens",
         Example::AgentEnrollmentTokenList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/agents/enrollment_tokens",
         "Agents",
@@ -2356,7 +2352,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "created enrollment token and one-time secret",
         Example::AgentEnrollmentCreate,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/agents/enrollment_tokens/{token_id}",
         "Agents",
@@ -2369,7 +2365,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "enrollment token revoked",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/agents/enroll",
         "Agents",
@@ -2385,7 +2381,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "issued agent credential",
         Example::AgentEnrollmentResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/teams",
         "Auth",
@@ -2398,7 +2394,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "teams",
         Example::Team,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/teams",
         "Auth",
@@ -2411,7 +2407,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "team created",
         Example::Team,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/teams/{id}",
         "Auth",
@@ -2424,7 +2420,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "team deleted",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/teams/{id}",
         "Auth",
@@ -2437,7 +2433,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "team updated",
         Example::Team,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/teams/{id}/members",
         "Auth",
@@ -2450,7 +2446,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "team members",
         Example::UserList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/teams/{id}/members",
         "Auth",
@@ -2463,7 +2459,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "member added",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/teams/{id}/members/{user_id}",
         "Auth",

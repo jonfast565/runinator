@@ -379,10 +379,6 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
     /// Put an administrator's emergency low-level run control through the durable inbox. The
     /// control itself remains deliberately out of band, but its immutable event is reduced in
     /// sequence with adapter and operator intents so the timeline cannot hide the bypass.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the durable audit event records every override identity and cannot use a lossy context object"
-    )]
     pub async fn record_out_of_band_override(
         &self,
         binding: &OrchestrationBinding,

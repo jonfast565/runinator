@@ -45,8 +45,6 @@ fn ok_value<T: Serialize>(value: &T) -> Reply {
         Err(err) => api_error(err.to_string()),
     }
 }
-
-#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 fn require_principal(ctx: &AuthContext) -> Result<Uuid, Reply> {
     ctx.principal_id.ok_or_else(|| {
         (

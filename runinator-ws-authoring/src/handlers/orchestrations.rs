@@ -773,7 +773,7 @@ const ORCHESTRATION_FILTERS: &[ParamDoc] = &[
 
 /// OpenAPI entries for durable correlated orchestration state and controls.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations",
         "Orchestrations",
@@ -786,7 +786,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "orchestration bindings",
         Example::OrchestrationBindingList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}",
         "Orchestrations",
@@ -799,7 +799,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "orchestration binding",
         Example::OrchestrationBinding,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/events",
         "Orchestrations",
@@ -812,7 +812,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "event reductions",
         Example::OrchestrationReductionList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/epochs",
         "Orchestrations",
@@ -825,7 +825,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "execution epochs",
         Example::OrchestrationEpochList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/evidence",
         "Orchestrations",
@@ -838,7 +838,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "orchestration evidence",
         Example::OrchestrationEvidenceList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/commands",
         "Orchestrations",
@@ -851,7 +851,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "orchestration commands",
         Example::OrchestrationCommandList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/operations",
         "Orchestrations",
@@ -864,7 +864,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "external operations",
         Example::ExternalOperationList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/workspaces",
         "Orchestrations",
@@ -877,7 +877,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workspace leases",
         Example::WorkspaceList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/{id}/aliases",
         "Orchestrations",
@@ -890,7 +890,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "correlation aliases",
         Example::OrchestrationCorrelationAliasList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/{id}/aliases",
         "Orchestrations",
@@ -906,7 +906,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "created correlation alias",
         Example::OrchestrationCorrelationAlias,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "delete",
         "/orchestrations/{id}/aliases/{alias_id}",
         "Orchestrations",
@@ -919,7 +919,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "correlation alias removed",
         Example::TaskResponse,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/{id}/operations/{operation_id}/resolve",
         "Orchestrations",
@@ -935,7 +935,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "resolved external operation",
         Example::ExternalOperation,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/{id}/intents",
         "Orchestrations",
@@ -951,7 +951,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "intent accepted into the durable inbox",
         Example::IngressTimeline,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/{id}/requeue",
         "Orchestrations",

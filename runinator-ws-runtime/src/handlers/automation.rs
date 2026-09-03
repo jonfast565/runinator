@@ -540,7 +540,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryS
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/external_items",
         "Automation",
@@ -553,7 +553,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "external items",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/external_items",
         "Automation",
@@ -566,7 +566,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "external item created",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/gates",
         "Automation",
@@ -579,7 +579,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "gates",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/gates",
         "Automation",
@@ -592,7 +592,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "gate created",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/gates/{id}",
         "Automation",
@@ -605,7 +605,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "gate",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/automation_events",
         "Automation",
@@ -618,7 +618,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "automation events",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/automation_events",
         "Automation",
@@ -631,7 +631,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "automation event created",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/approvals",
         "Automation",
@@ -644,7 +644,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "approval requests",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/approvals",
         "Automation",
@@ -657,7 +657,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "approval request created",
         Example::AutomationRecord,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/idempotency_keys",
         "Control Plane",
@@ -670,7 +670,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "idempotency result",
         Example::Idempotency,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/idempotency_keys",
         "Control Plane",

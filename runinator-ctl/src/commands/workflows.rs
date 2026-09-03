@@ -298,7 +298,6 @@ fn print_apply_summary(summary: &WorkflowApplySummary) {
 }
 
 // dry-run a compiled pack against .rexrapt suites entirely client-side; no server or broker involved.
-#[allow(clippy::too_many_arguments)]
 async fn workflow_dev(
     client: &Client,
     file: &Path,

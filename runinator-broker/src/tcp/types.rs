@@ -8,15 +8,11 @@ use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "TCP wire messages keep payloads direct to avoid an allocation for every broker publish"
-)]
 pub enum TcpRequest {
     Heartbeat,
     PublishControl { command: ControlCommand },
     PublishAgent { command: AgentCommand },
-    PublishEffect { message: EffectMessage },
+    PublishEffect { message: Box<EffectMessage> },
     PublishEffectResult { message: EffectResultMessage },
     PublishWake { message: WakeMessage },
     PublishIngress { message: IngressMessage },
@@ -89,15 +85,11 @@ impl TcpRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "TCP wire deliveries keep payloads direct to avoid an allocation on every receive"
-)]
 pub enum TcpResponse {
     Ok,
     ControlDelivery { delivery: ControlDelivery },
     AgentDelivery { delivery: AgentDelivery },
-    EffectDelivery { delivery: EffectDelivery },
+    EffectDelivery { delivery: Box<EffectDelivery> },
     EffectResultDelivery { delivery: EffectResultDelivery },
     WakeDelivery { delivery: WakeDelivery },
     IngressDelivery { delivery: IngressDelivery },

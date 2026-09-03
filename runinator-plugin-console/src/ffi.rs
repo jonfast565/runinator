@@ -37,18 +37,23 @@ pub extern "C" fn runinator_abi_version() -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn call_service(
+/// # Safety
+///
+/// Both paths must be valid, NUL-terminated C strings for the duration of the call.
+pub unsafe extern "C" fn call_service(
     request_json_path: *const c_char,
     response_json_path: *const c_char,
 ) -> c_int {
-    let request_path = match ffiutils::try_cstr_to_rust_string(request_json_path) {
+    // SAFETY: this ABI requires both arguments to be valid, NUL-terminated C strings.
+    let request_path = match unsafe { ffiutils::try_cstr_to_rust_string(request_json_path) } {
         Ok(path) => path,
         Err(err) => {
             error!("Invalid request path from host: {}", err);
             return -1;
         }
     };
-    let response_path = match ffiutils::try_cstr_to_rust_string(response_json_path) {
+    // SAFETY: this ABI requires both arguments to be valid, NUL-terminated C strings.
+    let response_path = match unsafe { ffiutils::try_cstr_to_rust_string(response_json_path) } {
         Ok(path) => path,
         Err(err) => {
             error!("Invalid response path from host: {}", err);

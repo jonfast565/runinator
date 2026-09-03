@@ -117,11 +117,6 @@ fn forbidden(message: &str) -> Reply {
         Json(ApiResponse::ApiError(ApiError::new(message))),
     )
 }
-
-#[allow(
-    clippy::result_large_err,
-    reason = "handlers return the shared Axum reply directly so errors remain ready to convert into HTTP responses"
-)]
 fn parse_scope(kind: &str, id: &str) -> Result<ScopeRef, Reply> {
     let Some(kind) = ScopeKind::from_str_lossy(kind) else {
         return Err(bad_request("unknown scope kind"));
@@ -139,11 +134,6 @@ fn parse_scope(kind: &str, id: &str) -> Result<ScopeRef, Reply> {
     };
     ScopeRef::new(kind, id).ok_or_else(|| bad_request("invalid scope"))
 }
-
-#[allow(
-    clippy::result_large_err,
-    reason = "handlers return the shared Axum reply directly so errors remain ready to convert into HTTP responses"
-)]
 fn parse_principal(kind: &str) -> Result<PrincipalKind, Reply> {
     match PrincipalKind::from_str_lossy(kind) {
         Some(PrincipalKind::User) => Ok(PrincipalKind::User),
@@ -808,7 +798,7 @@ pub fn routes<T: AuthorizationStore>(pool: Arc<T>) -> axum::Router {
 }
 
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/authz/catalog",
         "Authorization",
@@ -821,7 +811,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "authorization catalog",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/authz/scopes/{kind}/{id}/assignments",
         "Authorization",
@@ -834,7 +824,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "role assignments",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "put",
         "/authz/scopes/{kind}/{id}/assignments/{principal_kind}/{principal_id}",
         "Authorization",
@@ -847,7 +837,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "role assignment",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "delete",
         "/authz/scopes/{kind}/{id}/assignments/{principal_kind}/{principal_id}",
         "Authorization",
@@ -860,7 +850,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "assignment removed",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/authz/resources/{kind}/{resource_id}/grants",
         "Authorization",
@@ -873,7 +863,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "resource grants",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/authz/resources/{kind}/{resource_id}/owner",
         "Authorization",
@@ -886,7 +876,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "resource ownership",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/authz/resources/{kind}/{resource_id}/grants",
         "Authorization",
@@ -899,7 +889,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "resource grant",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "delete",
         "/authz/resources/{kind}/{resource_id}/grants/{grant_id}",
         "Authorization",
@@ -912,7 +902,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "grant removed",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/authz/resources/{kind}/{resource_id}/owner",
         "Authorization",
@@ -925,7 +915,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "resource ownership",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/service_accounts",
         "Authorization",
@@ -938,7 +928,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "service accounts",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/service_accounts",
         "Authorization",
@@ -951,7 +941,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "service account",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "patch",
         "/service_accounts/{id}",
         "Authorization",

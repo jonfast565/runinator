@@ -180,7 +180,7 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                 let now = Utc::now().timestamp();
                 let target = effect_target(&request)?;
                 let executor = if matches!(
-                    &request,
+                    request.as_ref(),
                     runinator_models::workflow_vm::WorkflowEffectRequest::Action { .. }
                 ) {
                     EffectExecutor::Provider
@@ -195,7 +195,7 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                     sequence,
                     attempt: 0,
                     node_id: None,
-                    request: request.clone(),
+                    request: request.as_ref().clone(),
                     status: WorkflowEffectStatus::Requested,
                     current_executor_replica_id: None,
                     last_executor_replica_id: None,
@@ -212,7 +212,7 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                     workflow_run_id: continuation.workflow_run_id,
                     continuation_id: continuation.id,
                     attempt: 0,
-                    request,
+                    request: *request,
                     executor,
                     target,
                     trace_id: Uuid::now_v7(),
@@ -301,7 +301,7 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                     source,
                 };
                 self.store
-                    .raise_workflow_interrupt(suspended, handler, journal)
+                    .raise_workflow_interrupt(suspended, *handler, journal)
                     .await?;
                 Ok(WorkflowVmDriveOutcome::Interrupted { workflow_run_id })
             }

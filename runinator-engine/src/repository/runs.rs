@@ -57,8 +57,6 @@ pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     )
     .await
 }
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_id: Uuid,

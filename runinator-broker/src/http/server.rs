@@ -144,22 +144,22 @@ fn forbidden(detail: &str) -> Response {
 /// authorize an effect or agent receive: a replica-scoped token (`rid`) may only receive for its own
 /// replica, closing cross-replica impersonation. an unscoped (plain user) token is allowed;
 /// auth-disabled requests carry no constraint.
-#[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
 pub(crate) fn authorize_receive(
     identity: &AuthIdentity,
     profile: Option<&ConsumerProfile>,
-) -> Result<(), Response> {
+) -> Result<(), Box<Response>> {
     let Some(claims) = &identity.0 else {
         return Ok(());
     };
     match profile.and_then(|profile| profile.replica_id) {
         Some(replica_id) if replica_id.to_string() == claims.rid => Ok(()),
-        _ => Err(forbidden("token is scoped to a different replica")),
+        _ => Err(Box::new(forbidden(
+            "token is scoped to a different replica",
+        ))),
     }
 }
 
 // a replica-scoped token must use the targeted /receive path, not the general-pool /poll drain.
-#[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
@@ -232,7 +232,7 @@ where
     B: Broker,
 {
     if let Err(response) = authorize_receive(&identity, request.profile.as_ref()) {
-        return response;
+        return *response;
     }
     let received = match &request.profile {
         Some(profile) => state.broker.receive_agent_for(profile).await,
@@ -295,7 +295,7 @@ where
     B: Broker,
 {
     if let Err(response) = authorize_receive(&identity, request.profile.as_ref()) {
-        return response;
+        return *response;
     }
     let received = match &request.profile {
         Some(profile) => state.broker.receive_effect_for(profile).await,

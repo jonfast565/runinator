@@ -62,8 +62,6 @@ impl Validator for RexRapValidator {
         }
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn console(
     client: &Client,
     requested_session: Option<&str>,

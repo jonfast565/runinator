@@ -44,11 +44,6 @@ async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCat
 {
     runinator_adapter_client::kinds().await
 }
-
-#[allow(
-    clippy::result_large_err,
-    reason = "handler helpers pass the shared Axum reply through without allocating an error wrapper"
-)]
 fn org_id(ctx: &AuthContext) -> Result<Uuid, (StatusCode, Json<ApiResponse>)> {
     ctx.org_id
         .ok_or_else(|| bad_request("an organization must be selected"))
@@ -65,11 +60,6 @@ fn forbidden() -> (StatusCode, Json<ApiResponse>) {
         })),
     )
 }
-
-#[allow(
-    clippy::result_large_err,
-    reason = "handler helpers pass the shared Axum reply through without allocating an error wrapper"
-)]
 fn require_scope(
     ctx: &AuthContext,
     action: Action,
@@ -82,10 +72,6 @@ fn require_scope(
 /// Platform administrators may inspect adapters without selecting an organization. In that
 /// platform-wide view `None` deliberately means every organization; ordinary callers remain
 /// restricted to their selected organization.
-#[allow(
-    clippy::result_large_err,
-    reason = "handler helpers pass the shared Axum reply through without allocating an error wrapper"
-)]
 fn adapter_list_scope(
     ctx: &AuthContext,
     action: Action,
@@ -1000,7 +986,7 @@ where
 
 /// OpenAPI entries for adapter catalog, configuration, diagnostics, and verified webhook ingress.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/adapters/kinds",
         "Orchestration Adapters",
@@ -1013,7 +999,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter kind catalog",
         Example::AdapterKindList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/adapters/health",
         "Orchestration Adapters",
@@ -1026,7 +1012,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter host health",
         Example::AdapterHealth,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/adapters/reload",
         "Orchestration Adapters",
@@ -1039,7 +1025,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter host reload result",
         Example::AdapterHealth,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/adapters",
         "Orchestration Adapters",
@@ -1052,7 +1038,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter definitions",
         Example::AdapterDefinitionList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/adapters",
         "Orchestration Adapters",
@@ -1068,7 +1054,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter definition created",
         Example::AdapterDefinition,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/adapters/{id}",
         "Orchestration Adapters",
@@ -1081,7 +1067,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter definition",
         Example::AdapterDefinition,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/adapters/{id}",
         "Orchestration Adapters",
@@ -1097,7 +1083,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated adapter definition",
         Example::AdapterDefinition,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "delete",
         "/orchestrations/adapters/{id}",
         "Orchestration Adapters",
@@ -1110,7 +1096,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter deleted",
         Example::TaskResponse,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/adapters/{id}/revisions",
         "Orchestration Adapters",
@@ -1123,7 +1109,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "adapter revisions",
         Example::AdapterRevisionList,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/orchestrations/adapters/{id}/poll-status",
         "Orchestration Adapters",
@@ -1136,7 +1122,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "polling adapter status",
         Example::AdapterPollStatus,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/adapters/{id}/enabled",
         "Orchestration Adapters",
@@ -1149,7 +1135,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated adapter definition",
         Example::AdapterDefinition,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/orchestrations/adapters/{id}/test",
         "Orchestration Adapters",
@@ -1165,7 +1151,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "verification, normalized events, and route preview",
         Example::AdapterTestResult,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "post",
         "/webhooks/orchestration/{adapter_id}",
         "Orchestration Adapters",

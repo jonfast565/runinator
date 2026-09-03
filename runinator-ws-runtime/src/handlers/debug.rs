@@ -114,7 +114,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
 }
 
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/debug/command",
         "Debug",
@@ -127,7 +127,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "debug command applied",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/debug/step",
         "Debug",
@@ -140,7 +140,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "debug step applied",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/debug/continue",
         "Debug",

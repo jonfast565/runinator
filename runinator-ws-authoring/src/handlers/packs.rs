@@ -193,7 +193,7 @@ pub fn routes<
 }
 
 /// the openapi entries for the routes above.
-pub const DOCS: &[EndpointDoc] = &[endpoint(
+pub const DOCS: &[EndpointDoc] = &[endpoint!(
     "post",
     "/packs/import",
     "Packs",

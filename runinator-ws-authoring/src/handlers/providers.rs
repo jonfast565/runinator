@@ -144,7 +144,7 @@ pub fn routes<T: DefinitionStore>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/providers",
         "Providers",
@@ -157,7 +157,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "providers",
         Example::ProviderList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/providers",
         "Providers",
@@ -170,7 +170,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "provider stored",
         Example::Provider,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/providers/import",
         "Providers",

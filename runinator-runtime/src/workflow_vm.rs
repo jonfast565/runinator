@@ -25,7 +25,7 @@ pub enum WorkflowVmStep {
         continuation: WorkflowContinuation,
         effect_id: uuid::Uuid,
         sequence: u64,
-        request: WorkflowEffectRequest,
+        request: Box<WorkflowEffectRequest>,
     },
     Fork {
         parent: WorkflowContinuation,
@@ -49,7 +49,7 @@ pub enum WorkflowVmStep {
     /// in one transaction: the frozen thread, and the handler continuation now running beside it.
     Interrupted {
         suspended: WorkflowContinuation,
-        handler: WorkflowContinuation,
+        handler: Box<WorkflowContinuation>,
         source: runinator_models::interrupt::InterruptSource,
     },
     /// A handler finished. The host retires it and applies `outcome` to the thread it suspended.
@@ -720,13 +720,15 @@ pub fn step_with_debug(
                         frame.pending.push(request.clone());
                     }
                 } else {
-                    continuation.frames.push(WorkflowFrame::Compensation(
-                        WorkflowCompensationFrame {
-                            pending: vec![request.clone()],
-                            active: None,
-                            resume: None,
-                        },
-                    ));
+                    continuation
+                        .frames
+                        .push(WorkflowFrame::Compensation(Box::new(
+                            WorkflowCompensationFrame {
+                                pending: vec![request.clone()],
+                                active: None,
+                                resume: None,
+                            },
+                        )));
                 }
                 continuation.instruction_pointer += 1;
             }
@@ -1024,7 +1026,7 @@ fn yield_effect(
         continuation,
         effect_id,
         sequence,
-        request,
+        request: Box::new(request),
     }
 }
 
@@ -1383,7 +1385,7 @@ fn raise_interrupt(
     continuation.status = WorkflowContinuationStatus::Suspended;
     WorkflowVmStep::Interrupted {
         suspended: continuation,
-        handler,
+        handler: Box::new(handler),
         source,
     }
 }
@@ -1835,7 +1837,7 @@ mod tests {
             interrupted_continuation_id,
             outcome,
             handler,
-        } = step(&module, handler)
+        } = step(&module, *handler)
         else {
             panic!("the handler must hand control back");
         };
@@ -1908,7 +1910,7 @@ mod tests {
                 panic!("expected a suspension");
             };
             let WorkflowVmStep::InterruptResolved { outcome, .. } =
-                resolve_interrupt(&module, handler, mode)
+                resolve_interrupt(&module, *handler, mode)
             else {
                 panic!("{mode:?} must resolve the interrupt");
             };
@@ -1985,7 +1987,7 @@ mod tests {
         let WorkflowVmStep::Interrupted { handler, .. } = step(&module, continuation) else {
             panic!("expected a suspension");
         };
-        let WorkflowVmStep::InterruptResolved { outcome, .. } = step(&module, handler) else {
+        let WorkflowVmStep::InterruptResolved { outcome, .. } = step(&module, *handler) else {
             panic!("a broken handler must still hand control back, not fail the run");
         };
         assert_eq!(
@@ -2091,7 +2093,7 @@ mod tests {
             input,
             idempotency_key,
             ..
-        } = request
+        } = *request
         else {
             panic!("expected action request");
         };
@@ -2277,7 +2279,7 @@ mod tests {
         let WorkflowVmStep::Yield { request, .. } = result else {
             panic!("action must yield, got {result:?}");
         };
-        let WorkflowEffectRequest::Action { input, .. } = request else {
+        let WorkflowEffectRequest::Action { input, .. } = *request else {
             panic!("expected action request");
         };
         assert_eq!(
@@ -2473,7 +2475,7 @@ mod tests {
             else {
                 panic!("parking request must yield");
             };
-            assert_eq!(yielded, request);
+            assert_eq!(*yielded, request);
 
             let restarted: WorkflowContinuation =
                 serde_json::from_str(&serde_json::to_string(&start).unwrap()).unwrap();
@@ -2488,7 +2490,7 @@ mod tests {
             };
             assert_eq!(
                 (replayed_id, replayed_sequence, replayed_request),
-                (effect_id, sequence, request)
+                (effect_id, sequence, Box::new(request))
             );
 
             let value = Value::String("settled".into());
@@ -2715,7 +2717,7 @@ mod tests {
         else {
             panic!("compensation should yield")
         };
-        assert_eq!(request, compensation);
+        assert_eq!(*request, compensation);
         let WorkflowVmStep::Failed {
             message,
             continuation,

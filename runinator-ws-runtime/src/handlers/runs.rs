@@ -92,9 +92,8 @@ pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
     {
         Ok(run) => (
             StatusCode::ACCEPTED,
-            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                run,
-                Vec::new(),
+            Json(ApiResponse::WorkflowRun(Box::new(
+                models::WorkflowRunResponse::new(run, Vec::new()),
             ))),
         ),
         Err(err) => api_error(err.to_string()),
@@ -136,9 +135,8 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
     {
         Ok(run) => (
             StatusCode::ACCEPTED,
-            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                run,
-                Vec::new(),
+            Json(ApiResponse::WorkflowRun(Box::new(
+                models::WorkflowRunResponse::new(run, Vec::new()),
             ))),
         ),
         Err(err) => api_error(err.to_string()),
@@ -183,8 +181,6 @@ pub async fn ingress_workflow_run<T: RunOperationsStore>(
     )
     .await
 }
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn process_workflow_ingress<T: RunOperationsStore>(
     db: Arc<T>,
     operations: Arc<RunOperations<T>>,
@@ -888,16 +884,13 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     match operations.replay(workflow_run_id, from_step_id).await {
         Ok(run) => (
             StatusCode::ACCEPTED,
-            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                run,
-                Vec::new(),
+            Json(ApiResponse::WorkflowRun(Box::new(
+                models::WorkflowRunResponse::new(run, Vec::new()),
             ))),
         ),
         Err(err) => bad_request(err.to_string()),
     }
 }
-
-#[allow(clippy::result_large_err)]
 async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
     operations: &RunOperations<T>,
     workflow_run_id: Uuid,
@@ -913,8 +906,6 @@ async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
         Err(error) => Err(api_error(error.to_string())),
     }
 }
-
-#[allow(clippy::result_large_err)]
 async fn authorize_workflow_run_control<T: RunOperationsStore>(
     db: Arc<T>,
     operations: &RunOperations<T>,
@@ -1218,9 +1209,8 @@ pub async fn get_workflow_run<T: RunOperationsStore>(
     match operations.fetch_workflow(workflow_run_id).await {
         Ok(Some(run)) => (
             StatusCode::OK,
-            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                run,
-                Vec::new(),
+            Json(ApiResponse::WorkflowRun(Box::new(
+                models::WorkflowRunResponse::new(run, Vec::new()),
             ))),
         ),
         Ok(None) => not_found(format!("Workflow run {workflow_run_id} not found")),
@@ -1352,7 +1342,7 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_triggers/{id}/runs",
         "Workflow Runs",
@@ -1365,7 +1355,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run accepted",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs",
         "Workflow Runs",
@@ -1378,7 +1368,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow runs",
         Example::WorkflowRunList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/scheduler/workflow_runs/claim",
         "Control Plane",
@@ -1394,7 +1384,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "claimed workflow runs",
         Example::WorkflowRunList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflows/{id}/runs",
         "Workflow Runs",
@@ -1407,7 +1397,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run accepted",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflows/{id}/ingress",
         "Ingress",
@@ -1420,7 +1410,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "event accepted",
         Example::IngressResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/pipelines/{id}/ingress",
         "Ingress",
@@ -1433,7 +1423,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "event accepted",
         Example::IngressResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/ingress/admission",
         "Ingress",
@@ -1446,7 +1436,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "ingress admission",
         Example::IngressAdmission,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/ingress/admission/events",
         "Ingress",
@@ -1459,7 +1449,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "ingress event timeline",
         Example::IngressTimeline,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflow_runs/{id}",
         "Workflow Runs",
@@ -1472,7 +1462,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/workflow_runs/{id}",
         "Control Plane",
@@ -1485,7 +1475,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run updated",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/scheduler/workflow_runs/{id}/claim/renew",
         "Control Plane",
@@ -1501,7 +1491,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow-run claim renewed",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/scheduler/workflow_runs/{id}/claim/release",
         "Control Plane",
@@ -1517,7 +1507,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow-run claim released",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/cancel",
         "Workflow Runs",
@@ -1530,7 +1520,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run cancel requested",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/pause",
         "Workflow Runs",
@@ -1543,7 +1533,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run pause requested",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/resume",
         "Workflow Runs",
@@ -1556,7 +1546,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run resume requested",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/signals",
         "Workflow Runs",
@@ -1569,7 +1559,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "signal delivered",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/interrupts",
         "Workflow Runs",
@@ -1586,7 +1576,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "interrupt requested",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/events/{node_id}",
         "Workflow Runs",
@@ -1599,7 +1589,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "event delivered",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/replay",
         "Workflow Runs",
@@ -1612,7 +1602,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run replay accepted",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflow_runs/{id}/rename",
         "Workflow Runs",

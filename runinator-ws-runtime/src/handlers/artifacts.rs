@@ -67,7 +67,7 @@ pub fn routes<T: Send + Sync + 'static>() -> axum::Router {
     )
 }
 
-pub const DOCS: &[EndpointDoc] = &[endpoint(
+pub const DOCS: &[EndpointDoc] = &[endpoint!(
     "post",
     "/artifacts/content",
     "Artifacts",

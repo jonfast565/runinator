@@ -16,16 +16,19 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// directory as one json file per command and drained in file-name (roughly chronological) order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
-#[allow(clippy::enum_variant_names)] // the suffix is part of the serialized control protocol.
 pub enum ControlCommand {
     /// register a new process (started immediately when its `autostart` is set).
-    AddProcess { process: ProcessConfig },
+    #[serde(rename = "add_process")]
+    Add { process: ProcessConfig },
     /// start a registered process that is currently stopped.
-    StartProcess { name: String },
+    #[serde(rename = "start_process")]
+    Start { name: String },
     /// terminate a running process without removing it.
-    StopProcess { name: String },
+    #[serde(rename = "stop_process")]
+    Stop { name: String },
     /// terminate and forget a process entirely.
-    RemoveProcess { name: String },
+    #[serde(rename = "remove_process")]
+    Remove { name: String },
 }
 
 /// write a control command into the queue atomically (temp file then rename).

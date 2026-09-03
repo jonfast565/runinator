@@ -200,13 +200,15 @@ async fn execute<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
             match execute_child_run(
                 db,
                 command,
-                *workflow_id,
-                workflow_name.as_deref(),
-                *workflow_revision,
-                workflow_revision_digest.as_deref(),
-                input.clone(),
-                *wait,
-                run_name.clone(),
+                ChildRunRequest {
+                    workflow_id: *workflow_id,
+                    workflow_name: workflow_name.as_deref(),
+                    workflow_revision: *workflow_revision,
+                    workflow_revision_digest: workflow_revision_digest.as_deref(),
+                    input: input.clone(),
+                    wait: *wait,
+                    run_name: run_name.clone(),
+                },
             )
             .await
             {
@@ -739,22 +741,30 @@ async fn execute_condition_gate<T: RuntimeStore + WorkflowVmStore>(
         tokio::time::sleep(Duration::from_secs(poll_interval_seconds.max(1) as u64)).await;
     }
 }
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the effect protocol supplies each child-run identity and execution option independently"
-)]
-async fn execute_child_run<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
-    db: &T,
-    command: &runinator_comm::EffectCommand,
+struct ChildRunRequest<'a> {
     workflow_id: Option<uuid::Uuid>,
-    workflow_name: Option<&str>,
+    workflow_name: Option<&'a str>,
     workflow_revision: Option<i64>,
-    workflow_revision_digest: Option<&str>,
+    workflow_revision_digest: Option<&'a str>,
     input: runinator_models::value::Value,
     wait: bool,
     run_name: Option<runinator_models::value::Value>,
+}
+
+async fn execute_child_run<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
+    db: &T,
+    command: &runinator_comm::EffectCommand,
+    request: ChildRunRequest<'_>,
 ) -> Result<runinator_models::value::Value, runinator_models::errors::SendableError> {
+    let ChildRunRequest {
+        workflow_id,
+        workflow_name,
+        workflow_revision,
+        workflow_revision_digest,
+        input,
+        wait,
+        run_name,
+    } = request;
     let workflow = if let (Some(id), Some(revision), Some(digest)) =
         (workflow_id, workflow_revision, workflow_revision_digest)
     {
@@ -1199,13 +1209,15 @@ mod tests {
         let output = execute_child_run(
             &db,
             &command(WorkflowEffectRequest::Timer { due_at: 0 }),
-            first.id,
-            None,
-            Some(first_revision.revision),
-            Some(&first_revision.digest),
-            runinator_models::value::Value::Null,
-            false,
-            None,
+            ChildRunRequest {
+                workflow_id: first.id,
+                workflow_name: None,
+                workflow_revision: Some(first_revision.revision),
+                workflow_revision_digest: Some(&first_revision.digest),
+                input: runinator_models::value::Value::Null,
+                wait: false,
+                run_name: None,
+            },
         )
         .await
         .unwrap();

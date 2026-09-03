@@ -330,7 +330,7 @@ fn compiled_linear_nodes_freeze_effect_data_and_preserve_settlements() {
             assert_eq!(continuation.stack.last(), Some(previous));
         }
         assert_linear_request(node_id, &request);
-        previous_request = Some(request);
+        previous_request = Some(*request);
         current = continuation;
     }
 
@@ -831,7 +831,7 @@ fn compiled_terminal_and_interrupt_nodes_return_control_to_the_main_flow() {
         handler,
         interrupted_continuation_id,
         outcome,
-    } = step_workflow_vm(&module, handler)
+    } = step_workflow_vm(&module, *handler)
     else {
         panic!("the interrupt handler must finish at its resume node");
     };
@@ -857,7 +857,7 @@ fn compiled_terminal_and_interrupt_nodes_return_control_to_the_main_flow() {
     else {
         panic!("the resumed main flow must issue its original wait");
     };
-    assert_eq!(request, WorkflowEffectRequest::TimerDelay { seconds: 1 });
+    assert_eq!(*request, WorkflowEffectRequest::TimerDelay { seconds: 1 });
     let WorkflowVmStep::Complete { value, .. } = resume_workflow_vm(
         &module,
         continuation,

@@ -52,12 +52,8 @@ impl Label {
 }
 
 /// An instruction before its graph targets have been laid out.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "this short-lived compiler representation is consumed before module serialization and direct variants keep lowering straightforward"
-)]
 enum PendingInstruction {
-    Instruction(WorkflowInstruction),
+    Instruction(Box<WorkflowInstruction>),
     Jump(Label),
     Branch(
         Vec<(runinator_models::workflows::WorkflowCondition, Label)>,
@@ -96,6 +92,12 @@ enum PendingInstruction {
         exhausted: Option<Label>,
         max_visits: u64,
     },
+}
+
+impl PendingInstruction {
+    fn instruction(instruction: WorkflowInstruction) -> Self {
+        Self::Instruction(Box::new(instruction))
+    }
 }
 
 /// A node-owned basic block.  The block boundary is also the unit recorded in the module's
@@ -152,10 +154,10 @@ pub fn compile_workflow_module(
     let mut blocks = Vec::with_capacity(ordered.len());
     for node in ordered {
         let mut instructions = vec![
-            PendingInstruction::Instruction(WorkflowInstruction::DebugBoundary {
+            PendingInstruction::instruction(WorkflowInstruction::DebugBoundary {
                 label: Some(node.id.clone()),
             }),
-            PendingInstruction::Instruction(WorkflowInstruction::EnterNode {
+            PendingInstruction::instruction(WorkflowInstruction::EnterNode {
                 node_id: node.id.clone(),
             }),
         ];
@@ -207,7 +209,7 @@ pub fn compile_workflow_module(
                 label,
                 node_id: node.id.clone(),
                 instructions: vec![
-                    PendingInstruction::Instruction(WorkflowInstruction::EndTry {
+                    PendingInstruction::instruction(WorkflowInstruction::EndTry {
                         try_key: guard_key(&node.id),
                     }),
                     PendingInstruction::Jump(target),
@@ -249,7 +251,7 @@ pub fn compile_workflow_module(
     let mut instructions = Vec::with_capacity(instruction_count);
     for instruction in blocks.into_iter().flat_map(|block| block.instructions) {
         instructions.push(match instruction {
-            PendingInstruction::Instruction(instruction) => instruction,
+            PendingInstruction::Instruction(instruction) => *instruction,
             PendingInstruction::Jump(target) => WorkflowInstruction::Jump {
                 target: resolve(&target)?,
             },
@@ -414,8 +416,9 @@ fn exit_offset(instructions: &[PendingInstruction]) -> Option<usize> {
     }
     if offset > 0
         && matches!(
-            instructions[offset - 1],
-            PendingInstruction::Instruction(WorkflowInstruction::EndTry { .. })
+            &instructions[offset - 1],
+            PendingInstruction::Instruction(instruction)
+                if matches!(instruction.as_ref(), WorkflowInstruction::EndTry { .. })
         )
     {
         offset -= 1;
@@ -450,10 +453,10 @@ fn lower_node(
     match node.kind {
         WorkflowNodeKind::Start | WorkflowNodeKind::Interrupt => jump_next(output),
         WorkflowNodeKind::End => {
-            output.push(PendingInstruction::Instruction(WorkflowInstruction::Return))
+            output.push(PendingInstruction::instruction(WorkflowInstruction::Return))
         }
         WorkflowNodeKind::Fail => {
-            output.push(PendingInstruction::Instruction(WorkflowInstruction::Fail {
+            output.push(PendingInstruction::instruction(WorkflowInstruction::Fail {
                 message: node
                     .parameters
                     .get("message")
@@ -465,7 +468,7 @@ fn lower_node(
         WorkflowNodeKind::Resume => {
             // terminates a handler region. it does not transition anywhere in this thread: the
             // handler continuation retires here and its mode is what moves the thread it froze.
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::ResumeInterrupt {
                     mode: node
                         .parameters
@@ -481,7 +484,7 @@ fn lower_node(
                 .action
                 .as_ref()
                 .ok_or_else(|| WorkflowValidationError::MissingAction(node.id.clone()))?;
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::Action {
                         provider: action.provider.clone(),
@@ -496,12 +499,12 @@ fn lower_node(
                         workspace_affinity: action.workspace_affinity.clone(),
                         execution_profile: action.execution_profile.clone(),
                         idempotency_key: action.idempotency_key.clone(),
-                        function_binding: action.function_binding.clone(),
+                        function_binding: action.function_binding.clone().map(Box::new),
                     },
                 },
             ));
             if let Some(compensation) = &node.compensation {
-                output.push(PendingInstruction::Instruction(
+                output.push(PendingInstruction::instruction(
                     WorkflowInstruction::RegisterCompensation {
                         compensation_key: node.id.clone(),
                         request: WorkflowEffectRequest::Action {
@@ -517,7 +520,7 @@ fn lower_node(
                             workspace_affinity: compensation.workspace_affinity.clone(),
                             execution_profile: compensation.execution_profile.clone(),
                             idempotency_key: compensation.idempotency_key.clone(),
-                            function_binding: compensation.function_binding.clone(),
+                            function_binding: compensation.function_binding.clone().map(Box::new),
                         },
                     },
                 ));
@@ -525,7 +528,7 @@ fn lower_node(
             jump_next(output);
         }
         WorkflowNodeKind::Wait => {
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::TimerDelay {
                         seconds: parse_wait_parameters(node).seconds,
@@ -536,7 +539,7 @@ fn lower_node(
         }
         WorkflowNodeKind::Approval => {
             let approval = parse_approval_parameters(node);
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::Approval {
                         // The approval type and metadata are intentionally embedded in the prompt
@@ -555,7 +558,7 @@ fn lower_node(
         }
         WorkflowNodeKind::Gate => {
             let gate = parse_gate_parameters(node);
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::Gate {
                         kind: gate.kind,
@@ -575,7 +578,7 @@ fn lower_node(
         }
         WorkflowNodeKind::Signal => {
             let signal = parse_signal_parameters(node);
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::Signal {
                         key: signal.name,
@@ -589,7 +592,7 @@ fn lower_node(
         }
         WorkflowNodeKind::Input => {
             let input = parse_input_parameters(node);
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::Input {
                         prompt: input.prompt,
@@ -605,7 +608,7 @@ fn lower_node(
                 .target
                 .as_ref()
                 .and_then(|reference| reference.revision_pin.as_ref());
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::ChildRun {
                         workflow_id: node.subflow.target_workflow_id().or(node.subflow_id),
@@ -633,7 +636,7 @@ fn lower_node(
                 &mut invocation.module,
                 invocation.timeout_seconds.or(node.timeout_seconds),
             );
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Evaluate {
                     module: invocation.module,
                 },
@@ -671,7 +674,7 @@ fn lower_node(
                 .and_then(Value::as_str)
                 .unwrap_or("all")
                 .to_string();
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::AwaitRun {
                         workflow,
@@ -703,7 +706,7 @@ fn lower_node(
                 .and_then(Value::as_i64)
                 .and_then(|value| u64::try_from(value).ok())
                 .filter(|value| *value > 0);
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Effect {
                     request: WorkflowEffectRequest::EventWait {
                         event_type,
@@ -722,12 +725,12 @@ fn lower_node(
             let data = serde_json::to_value(output_parameters.data)
                 .map(Value::from)
                 .unwrap_or(Value::Null);
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Evaluate {
                     module: expression_module(data)?,
                 },
             ));
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::SetOutput {
                     event_type: output_parameters.event_type,
                     artifacts: output_parameters
@@ -751,7 +754,7 @@ fn lower_node(
             // These nodes are pure computations. Compile their JSON expression trees now, while
             // definitions are validated, rather than leaving a generic node payload for the host
             // to interpret at run time.
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Evaluate {
                     module: expression_module(node.parameters.clone().into())?,
                 },
@@ -795,7 +798,7 @@ fn lower_node(
                     message: "loop.items is required".into(),
                 }
             })?;
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Evaluate {
                     module: expression_module(items)?,
                 },
@@ -842,7 +845,7 @@ fn lower_node(
             if let Some(target) = next() {
                 output.push(PendingInstruction::Jump(Label::node(&target)));
             } else {
-                output.push(PendingInstruction::Instruction(WorkflowInstruction::Return));
+                output.push(PendingInstruction::instruction(WorkflowInstruction::Return));
             }
         }
         WorkflowNodeKind::Toggle | WorkflowNodeKind::Percentage => {
@@ -882,7 +885,7 @@ fn lower_node(
         }
         WorkflowNodeKind::Join => {
             let join = parse_join_parameters(node)?;
-            output.push(PendingInstruction::Instruction(WorkflowInstruction::Join {
+            output.push(PendingInstruction::instruction(WorkflowInstruction::Join {
                 join_key: node.id.clone(),
                 expected: join.wait_for.len() as u64,
                 mode: branch_policy(join.mode),
@@ -911,7 +914,7 @@ fn lower_node(
                     message: "map.items is required".into(),
                 }
             })?;
-            output.push(PendingInstruction::Instruction(
+            output.push(PendingInstruction::instruction(
                 WorkflowInstruction::Evaluate {
                     module: expression_module(items)?,
                 },
@@ -941,7 +944,7 @@ fn guard_key(node_id: &str) -> String {
 fn transfers_control(instruction: &PendingInstruction) -> bool {
     match instruction {
         PendingInstruction::Instruction(instruction) => matches!(
-            instruction,
+            instruction.as_ref(),
             WorkflowInstruction::Jump { .. }
                 | WorkflowInstruction::Return
                 | WorkflowInstruction::Fail { .. }
@@ -1006,7 +1009,7 @@ fn apply_failure_edges(
     }
     body.insert(
         insert_at,
-        PendingInstruction::Instruction(WorkflowInstruction::EndTry {
+        PendingInstruction::instruction(WorkflowInstruction::EndTry {
             try_key: guard_key(&node.id),
         }),
     );
@@ -1092,7 +1095,7 @@ fn durable(
     output: &mut Vec<PendingInstruction>,
     next: Option<String>,
 ) {
-    output.push(PendingInstruction::Instruction(
+    output.push(PendingInstruction::instruction(
         WorkflowInstruction::Effect {
             request: WorkflowEffectRequest::Coordination {
                 kind: kind.to_string(),
@@ -1103,7 +1106,7 @@ fn durable(
     if let Some(next) = next {
         output.push(PendingInstruction::Jump(Label::node(&next)));
     } else if !matches!(node.kind, WorkflowNodeKind::End | WorkflowNodeKind::Fail) {
-        output.push(PendingInstruction::Instruction(WorkflowInstruction::Return));
+        output.push(PendingInstruction::instruction(WorkflowInstruction::Return));
     }
 }
 
@@ -1469,9 +1472,12 @@ mod tests {
         let mut instructions = Vec::new();
         lower_node(&mutex, &mut instructions).unwrap();
 
-        let Some(PendingInstruction::Instruction(WorkflowInstruction::Effect {
+        let Some(PendingInstruction::Instruction(instruction)) = instructions.first() else {
+            panic!("mutex must lower to a coordination effect");
+        };
+        let WorkflowInstruction::Effect {
             request: WorkflowEffectRequest::Coordination { kind, input },
-        })) = instructions.first()
+        } = instruction.as_ref()
         else {
             panic!("mutex must lower to a coordination effect");
         };
@@ -1596,7 +1602,7 @@ mod tests {
             request
                 .9
                 .as_ref()
-                .map(FunctionBinding::call_path)
+                .map(|binding| binding.call_path())
                 .as_deref(),
             Some("functions.billing.charge")
         );
@@ -1691,23 +1697,23 @@ mod tests {
             lower_node(node, &mut instructions).unwrap();
             assert!(matches!(
                 instructions.first(),
-                Some(PendingInstruction::Instruction(
-                    WorkflowInstruction::Evaluate { .. }
-                ))
+                Some(PendingInstruction::Instruction(instruction))
+                    if matches!(instruction.as_ref(), WorkflowInstruction::Evaluate { .. })
             ));
         }
 
         let mut instructions = Vec::new();
         lower_node(&invocation, &mut instructions).unwrap();
-        let PendingInstruction::Instruction(WorkflowInstruction::Evaluate { module }) =
-            &instructions[0]
-        else {
+        let PendingInstruction::Instruction(instruction) = &instructions[0] else {
+            panic!("invocation must lower to evaluate");
+        };
+        let WorkflowInstruction::Evaluate { module } = instruction.as_ref() else {
             panic!("invocation must lower to evaluate");
         };
         assert!(matches!(
             module.entry.instructions.first(),
             Some(InvocationInstruction::Call {
-                policy: Some(policy),
+                    policy: Some(policy),
                 ..
             }) if policy.timeout_seconds == Some(17)
         ));
@@ -1717,13 +1723,23 @@ mod tests {
         assert!(matches!(
             instructions.as_slice(),
             [
-                PendingInstruction::Instruction(WorkflowInstruction::Evaluate { .. }),
-                PendingInstruction::Instruction(WorkflowInstruction::SetOutput {
-                    event_type: Some(event_type),
-                    artifacts,
-                }),
-            ] if event_type == "published" && artifacts.len() == 1 && artifacts[0].name == "report"
+                PendingInstruction::Instruction(evaluate),
+                PendingInstruction::Instruction(output),
+            ] if matches!(evaluate.as_ref(), WorkflowInstruction::Evaluate { .. })
         ));
+        let PendingInstruction::Instruction(output) = &instructions[1] else {
+            unreachable!("the assertion above proved this is an instruction");
+        };
+        let WorkflowInstruction::SetOutput {
+            event_type: Some(event_type),
+            artifacts,
+        } = output.as_ref()
+        else {
+            panic!("output must lower to a set-output instruction");
+        };
+        assert_eq!(event_type, "published");
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].name, "report");
 
         // Exercise the public compiler as well: the Phase 4 node kinds must coexist in one
         // linear graph, keep their source-map ranges, and leave exactly one provider effect.
@@ -1866,9 +1882,10 @@ mod tests {
         for (node, kind) in nodes.into_iter().zip(expected) {
             let mut instructions = Vec::new();
             lower_node(node, &mut instructions).unwrap();
-            let Some(PendingInstruction::Instruction(WorkflowInstruction::Effect { request })) =
-                instructions.first()
-            else {
+            let Some(PendingInstruction::Instruction(instruction)) = instructions.first() else {
+                panic!("{kind:?} must start with one parking effect");
+            };
+            let WorkflowInstruction::Effect { request } = instruction.as_ref() else {
                 panic!("{kind:?} must start with one parking effect");
             };
             assert!(
@@ -1907,9 +1924,9 @@ mod tests {
         let mut instructions = Vec::new();
         lower_node(&loop_node, &mut instructions).unwrap();
         assert!(matches!(instructions.as_slice(), [
-            PendingInstruction::Instruction(WorkflowInstruction::Evaluate { .. }),
+            PendingInstruction::Instruction(instruction),
             PendingInstruction::BeginLoop { loop_key, max_iterations: Some(5), .. },
-        ] if loop_key == "loop"));
+        ] if matches!(instruction.as_ref(), WorkflowInstruction::Evaluate { .. }) && loop_key == "loop"));
 
         let mut try_node = node("guard", WorkflowNodeKind::Try, Some("done"));
         try_node.parameters = serde_json::from_value(serde_json::json!({
@@ -1960,11 +1977,11 @@ mod tests {
         });
         let mut instructions = Vec::new();
         lower_node(&action_node, &mut instructions).unwrap();
-        assert!(
-            matches!(instructions.get(1), Some(PendingInstruction::Instruction(
-            WorkflowInstruction::RegisterCompensation { compensation_key, .. }
-        )) if compensation_key == "charge")
-        );
+        assert!(matches!(
+            instructions.get(1),
+            Some(PendingInstruction::Instruction(instruction))
+                if matches!(instruction.as_ref(), WorkflowInstruction::RegisterCompensation { compensation_key, .. } if compensation_key == "charge")
+        ));
     }
 
     #[test]
@@ -2036,11 +2053,12 @@ mod tests {
         lower_node(&join, &mut instructions).unwrap();
         assert!(matches!(
             instructions.as_slice(),
-            [PendingInstruction::Instruction(WorkflowInstruction::Join {
-                expected: 2,
-                mode: WorkflowBranchPolicy::Any,
-                ..
-            })]
+            [PendingInstruction::Instruction(instruction)]
+                if matches!(instruction.as_ref(), WorkflowInstruction::Join {
+                    expected: 2,
+                    mode: WorkflowBranchPolicy::Any,
+                    ..
+                })
         ));
         instructions.clear();
         lower_node(&race, &mut instructions).unwrap();

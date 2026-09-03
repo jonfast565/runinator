@@ -702,7 +702,7 @@ pub fn routes<
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/functions",
         "Functions",
@@ -715,7 +715,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "function packages",
         Example::FunctionPackageList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/functions",
         "Functions",
@@ -729,7 +729,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "version published",
         Example::FunctionVersion,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/functions/catalog",
         "Functions",
@@ -743,7 +743,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "catalog entries",
         Example::FunctionCatalog,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/functions/{package}",
         "Functions",
@@ -756,7 +756,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "function package",
         Example::FunctionPackage,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/functions/{package}",
         "Functions",
@@ -770,7 +770,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "package deleted",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/functions/{package}/restore",
         "Functions",
@@ -784,7 +784,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "package restored",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/functions/{package}/aliases",
         "Functions",
@@ -797,7 +797,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "alias moved",
         Example::FunctionAlias,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/functions/{package}/aliases/{alias}",
         "Functions",
@@ -810,7 +810,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "alias deleted",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/function_exports/{export_id}",
         "Functions",
@@ -824,7 +824,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "invocation target",
         Example::FunctionInvocationTarget,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/function_artifacts/{digest}",
         "Functions",
@@ -837,7 +837,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "artifact record",
         Example::FunctionArtifact,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/function_artifacts/{digest}",
         "Functions",
@@ -855,7 +855,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "artifact stored",
         Example::FunctionArtifact,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/function_artifacts/{digest}/content",
         "Functions",

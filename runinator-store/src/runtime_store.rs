@@ -134,7 +134,6 @@ pub trait RuntimeStore: Send + Sync + 'static {
     ///
     /// One statement, so the cursor list and the position mirrored into `active_node_id` can never
     /// be observed disagreeing — a fan-out is either wholly applied or not at all.
-    #[allow(clippy::too_many_arguments)]
     fn update_workflow_run_status_cas(
         &self,
         workflow_run_id: Uuid,

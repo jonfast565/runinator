@@ -733,7 +733,7 @@ fn a_call_site_policy_travels_on_the_effect() {
             },
             argc: 0,
             names: Vec::new(),
-            policy: Some(policy),
+            policy: Some(Box::new(policy)),
         },
         InvocationInstruction::Return,
     ]));

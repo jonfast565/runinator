@@ -611,7 +611,7 @@ pub fn routes<
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/complete",
         "REXRAP",
@@ -627,7 +627,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "completion candidates",
         Example::RexRapCompletion,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/hover",
         "REXRAP",
@@ -643,7 +643,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "hover information",
         Example::RexRapHover,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/compile",
         "REXRAP",
@@ -659,7 +659,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "compiled workflow definition",
         Example::Workflow,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/analyze",
         "REXRAP",
@@ -675,7 +675,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "diagnostics",
         Example::RexRapDiagnostics,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/format",
         "REXRAP",
@@ -688,7 +688,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "formatted source",
         Example::RexRapSource,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/decompile",
         "REXRAP",
@@ -704,7 +704,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "REXRAP source",
         Example::RexRapSource,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/decompile/spans",
         "REXRAP",
@@ -720,7 +720,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "REXRAP source and node spans",
         Example::RexRapSource,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/evaluate",
         "REXRAP",
@@ -736,7 +736,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "evaluated value",
         Example::RexRapEvaluate,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/rexrap/import",
         "REXRAP",

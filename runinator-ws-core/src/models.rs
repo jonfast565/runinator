@@ -107,7 +107,6 @@ pub struct TaskResponseSchema {
 
 #[derive(Serialize)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)] // variants mirror the stable untagged HTTP response contract.
 pub enum ApiResponse {
     TaskResponse(TaskResponse),
     ApiError(ApiError),
@@ -156,7 +155,7 @@ pub enum ApiResponse {
     AdapterKindList(Vec<runinator_models::orchestration::AdapterKindCatalogEntry>),
     ExternalOperationList(Vec<runinator_models::orchestration::ExternalOperation>),
     ExternalOperation(runinator_models::orchestration::ExternalOperation),
-    WorkflowRun(WorkflowRunResponse),
+    WorkflowRun(Box<WorkflowRunResponse>),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
     WorkflowNodeRunChunks(Vec<WorkflowNodeRunChunk>),

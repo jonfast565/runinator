@@ -282,9 +282,8 @@ async fn settle_or_accept<
 fn accepted(run: WorkflowRun) -> (StatusCode, Json<ApiResponse>) {
     (
         StatusCode::ACCEPTED,
-        Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-            run,
-            Vec::new(),
+        Json(ApiResponse::WorkflowRun(Box::new(
+            models::WorkflowRunResponse::new(run, Vec::new()),
         ))),
     )
 }
@@ -313,9 +312,8 @@ async fn replay<
     };
     (
         status,
-        Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-            run,
-            Vec::new(),
+        Json(ApiResponse::WorkflowRun(Box::new(
+            models::WorkflowRunResponse::new(run, Vec::new()),
         ))),
     )
 }
@@ -403,7 +401,7 @@ pub fn routes<
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "post",
         "/functions/{package}/{export}/invocations",
         "Functions",
@@ -418,7 +416,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "invocation completed, or 202 while it is still running",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/function_invocations/{run_id}",
         "Functions",
@@ -431,7 +429,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "invocation",
         Example::WorkflowRun,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/function_invocations/{run_id}/cancel",
         "Functions",

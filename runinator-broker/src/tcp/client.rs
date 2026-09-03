@@ -218,7 +218,12 @@ impl Broker for TcpBroker {
     }
 
     async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
-        Self::expect_ok(self.request(TcpRequest::PublishEffect { message }).await?)
+        Self::expect_ok(
+            self.request(TcpRequest::PublishEffect {
+                message: Box::new(message),
+            })
+            .await?,
+        )
     }
 
     async fn receive_effect(&self, consumer: &str) -> Result<EffectDelivery, BrokerError> {
@@ -228,7 +233,7 @@ impl Broker for TcpBroker {
             })
             .await?
         {
-            TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+            TcpResponse::EffectDelivery { delivery } => Ok(*delivery),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
             _ => Err(BrokerError::Internal(
                 "unexpected effect delivery response".into(),
@@ -246,7 +251,7 @@ impl Broker for TcpBroker {
             })
             .await?
         {
-            TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+            TcpResponse::EffectDelivery { delivery } => Ok(*delivery),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
             _ => Err(BrokerError::Internal(
                 "unexpected effect delivery response".into(),
@@ -264,7 +269,7 @@ impl Broker for TcpBroker {
             })
             .await?
         {
-            TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+            TcpResponse::EffectDelivery { delivery } => Ok(*delivery),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
             _ => Err(BrokerError::Internal(
                 "unexpected infrastructure-effect delivery response".into(),

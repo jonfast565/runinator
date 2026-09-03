@@ -724,7 +724,7 @@ const PROFILE_PUBLISH_QUERY: &[ParamDoc] = &[
 
 /// OpenAPI entries for profile configuration and the private agent/worker data plane.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/execution_profiles",
         "Execution profiles",
@@ -737,7 +737,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "execution-profile list",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/execution_profiles/resolve",
         "Execution profiles",
@@ -750,7 +750,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "resolved execution profile",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/execution_profiles/{id}",
         "Execution profiles",
@@ -763,7 +763,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "execution profile",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "put",
         "/execution_profiles/{id}",
         "Execution profiles",
@@ -776,7 +776,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "configured execution profile",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/execution_profiles/{id}",
         "Execution profiles",
@@ -789,7 +789,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "profile revoked",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/execution_profiles/{id}/publish",
         "Execution profiles",
@@ -802,7 +802,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "published revision metadata",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/execution_profiles/{id}/rotate",
         "Execution profiles",
@@ -815,7 +815,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "rotation requested",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/execution_profiles/{id}/test",
         "Execution profiles",
@@ -828,7 +828,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "test requested",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "put",
         "/execution_profiles/{id}/status",
         "Execution profiles",
@@ -841,7 +841,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "status recorded",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/execution_profiles/{id}/revisions/{revision}/content",
         "Execution profiles",

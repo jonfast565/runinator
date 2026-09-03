@@ -37,21 +37,51 @@ use crate::{
 const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 const SECRET_RETRY_BACKOFF: Duration = Duration::from_secs(5);
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_provider_effect_loop(
+pub(crate) struct ProviderEffectRuntime {
+    pub broker: Arc<dyn Broker>,
+    pub profile: ConsumerProfile,
+    pub libraries: Arc<HashMap<String, Plugin>>,
+    pub api_client: AsyncApiClient<StaticLocator>,
+    pub providers: ProviderFactory,
+    pub max_concurrent_effects: usize,
+    pub shutdown_grace: Duration,
+    pub in_flight: Arc<Mutex<HashMap<Uuid, crate::worker::InFlightAction>>>,
+    pub result_outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
+    pub shutdown: Arc<Notify>,
+    pub events: Arc<dyn crate::events::WorkerEventSink>,
+    pub drained: Arc<AtomicBool>,
+}
+
+struct ProviderEffectContext {
     broker: Arc<dyn Broker>,
-    profile: ConsumerProfile,
+    consumer: String,
+    executor_replica_id: Option<Uuid>,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
     providers: ProviderFactory,
-    max_concurrent_effects: usize,
-    shutdown_grace: Duration,
+    cache: Arc<FunctionCache>,
     in_flight: Arc<Mutex<HashMap<Uuid, crate::worker::InFlightAction>>>,
     result_outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
-    shutdown: Arc<Notify>,
     events: Arc<dyn crate::events::WorkerEventSink>,
-    drained: Arc<AtomicBool>,
+}
+
+pub(crate) async fn run_provider_effect_loop(
+    runtime: ProviderEffectRuntime,
 ) -> Result<(), SendableError> {
+    let ProviderEffectRuntime {
+        broker,
+        profile,
+        libraries,
+        api_client,
+        providers,
+        max_concurrent_effects,
+        shutdown_grace,
+        in_flight,
+        result_outbox,
+        shutdown,
+        events,
+        drained,
+    } = runtime;
     let consumer = profile.id.clone();
     let executor_replica_id = profile.replica_id;
     let permits = Arc::new(tokio::sync::Semaphore::new(max_concurrent_effects.max(1)));
@@ -109,16 +139,18 @@ pub(crate) async fn run_provider_effect_loop(
         tasks.spawn(async move {
             let _permit = permit;
             if let Err(error) = process_provider_effect(
-                broker,
-                &consumer,
-                executor_replica_id,
-                libraries,
-                api_client,
-                providers,
-                cache,
-                in_flight,
-                result_outbox,
-                events,
+                ProviderEffectContext {
+                    broker,
+                    consumer,
+                    executor_replica_id,
+                    libraries,
+                    api_client,
+                    providers,
+                    cache,
+                    in_flight,
+                    result_outbox,
+                    events,
+                },
                 delivery,
             )
             .await
@@ -150,21 +182,22 @@ pub(crate) async fn run_provider_effect_loop(
     }
     Ok(())
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn process_provider_effect(
-    broker: Arc<dyn Broker>,
-    consumer: &str,
-    executor_replica_id: Option<Uuid>,
-    libraries: Arc<HashMap<String, Plugin>>,
-    api_client: AsyncApiClient<StaticLocator>,
-    providers: ProviderFactory,
-    cache: Arc<FunctionCache>,
-    in_flight: Arc<Mutex<HashMap<Uuid, crate::worker::InFlightAction>>>,
-    result_outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
-    events: Arc<dyn crate::events::WorkerEventSink>,
+    context: ProviderEffectContext,
     delivery: EffectDelivery,
 ) -> Result<(), SendableError> {
+    let ProviderEffectContext {
+        broker,
+        consumer,
+        executor_replica_id,
+        libraries,
+        api_client,
+        providers,
+        cache,
+        in_flight,
+        result_outbox,
+        events,
+    } = context;
     let expires_at = delivery.effective_expires_at();
     if delivery.is_expired_at(chrono::Utc::now()) {
         warn!(
@@ -173,7 +206,7 @@ async fn process_provider_effect(
             "discarding expired provider effect without executing it"
         );
         broker
-            .ack_effect(consumer, delivery.delivery_id)
+            .ack_effect(&consumer, delivery.delivery_id)
             .await
             .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
         return Ok(());
@@ -210,7 +243,7 @@ async fn process_provider_effect(
         )
         .await?;
         broker
-            .ack_effect(consumer, delivery.delivery_id)
+            .ack_effect(&consumer, delivery.delivery_id)
             .await
             .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
         return Ok(());
@@ -222,7 +255,7 @@ async fn process_provider_effect(
             warn!(effect_id = %command.effect_id, %error, "returning provider effect after transient secret resolution failure");
             tokio::time::sleep(SECRET_RETRY_BACKOFF).await;
             broker
-                .nack_effect(consumer, delivery.delivery_id)
+                .nack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("nack_effect", error))?;
             return Ok(());
@@ -239,7 +272,7 @@ async fn process_provider_effect(
             )
             .await?;
             broker
-                .ack_effect(consumer, delivery.delivery_id)
+                .ack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
             return Ok(());
@@ -294,7 +327,7 @@ async fn process_provider_effect(
                     )
                     .await?;
                     broker
-                        .ack_effect(consumer, delivery.delivery_id)
+                        .ack_effect(&consumer, delivery.delivery_id)
                         .await
                         .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
                     return Ok(());
@@ -317,7 +350,7 @@ async fn process_provider_effect(
     else {
         warn!(effect_id = %command.effect_id, ?expires_at, "provider effect expired during input preparation; skipping execution");
         broker
-            .ack_effect(consumer, delivery.delivery_id)
+            .ack_effect(&consumer, delivery.delivery_id)
             .await
             .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
         return Ok(());
@@ -333,7 +366,7 @@ async fn process_provider_effect(
         workspace_affinity,
         execution_profile,
         idempotency_key: idempotency_key.clone(),
-        function_binding,
+        function_binding: function_binding.map(|binding| *binding),
     };
     if let Some(lease) = profile_lease.as_ref() {
         let metadata =
@@ -355,7 +388,7 @@ async fn process_provider_effect(
             )
             .await?;
             broker
-                .ack_effect(consumer, delivery.delivery_id)
+                .ack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
             return Ok(());
@@ -380,7 +413,7 @@ async fn process_provider_effect(
             )
             .await?;
             broker
-                .ack_effect(consumer, delivery.delivery_id)
+                .ack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
             return Ok(());
@@ -418,7 +451,7 @@ async fn process_provider_effect(
             )
             .await?;
             broker
-                .ack_effect(consumer, delivery.delivery_id)
+                .ack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
             return Ok(());
@@ -426,7 +459,7 @@ async fn process_provider_effect(
         Ok(IdempotencyClaim::Held { owner_node_run_id }) => {
             warn!(effect_id = %command.effect_id, owner = %owner_node_run_id, "provider effect idempotency key is held elsewhere; returning delivery");
             broker
-                .nack_effect(consumer, delivery.delivery_id)
+                .nack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("nack_effect", error))?;
             return Ok(());
@@ -453,7 +486,7 @@ async fn process_provider_effect(
         }
         warn!(effect_id = %command.effect_id, ?expires_at, "provider effect expired before provider invocation; skipping execution");
         broker
-            .ack_effect(consumer, delivery.delivery_id)
+            .ack_effect(&consumer, delivery.delivery_id)
             .await
             .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
         return Ok(());
@@ -468,7 +501,7 @@ async fn process_provider_effect(
         let mut guard = in_flight.lock().await;
         if guard.contains_key(&command.effect_id) {
             broker
-                .ack_effect(consumer, delivery.delivery_id)
+                .ack_effect(&consumer, delivery.delivery_id)
                 .await
                 .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
             return Ok(());
@@ -513,14 +546,16 @@ async fn process_provider_effect(
     ));
     let outcome = executor::execute_task(
         &providers,
-        libraries,
-        action,
-        command.effect_id,
-        input,
-        provider_key,
-        profile_lease.as_ref().map(|lease| lease.context.clone()),
-        Some(output_sink.clone()),
-        token.clone(),
+        executor::TaskExecution {
+            libraries,
+            action,
+            execution_id: command.effect_id,
+            parameters: input,
+            idempotency_key: provider_key,
+            execution_profile: profile_lease.as_ref().map(|lease| lease.context.clone()),
+            sink: Some(output_sink.clone()),
+            token: token.clone(),
+        },
     )
     .await;
 
@@ -528,7 +563,7 @@ async fn process_provider_effect(
 
     if token.is_cancelled() && !canceled_by_control.load(Ordering::Acquire) {
         broker
-            .nack_effect(consumer, delivery.delivery_id)
+            .nack_effect(&consumer, delivery.delivery_id)
             .await
             .map_err(|error| crate::broker::broker_error("nack_effect", error))?;
         return Ok(());
@@ -635,7 +670,7 @@ async fn process_provider_effect(
         outcome.task_result.duration_ms() as f64,
     );
     broker
-        .ack_effect(consumer, delivery.delivery_id)
+        .ack_effect(&consumer, delivery.delivery_id)
         .await
         .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
     Ok(())

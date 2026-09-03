@@ -900,7 +900,7 @@ pub(crate) fn routes() -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub(crate) const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/openapi.json",
         "Meta",
@@ -913,7 +913,7 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
         "openapi document",
         Example::None,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/docs",
         "Meta",

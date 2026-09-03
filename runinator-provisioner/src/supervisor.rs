@@ -202,14 +202,14 @@ impl Provisioner for SupervisorProvisioner {
             for _ in 0..(desired - current_count) {
                 let node_id = format!("{prefix}{}", Uuid::new_v4());
                 let process = self.build_process(kind, &node_id, spec)?;
-                self.enqueue(&ControlCommand::AddProcess { process })?;
+                self.enqueue(&ControlCommand::Add { process })?;
             }
         } else if desired < current_count {
             // remove the newest (highest-sorted) provisioned nodes first.
             current.sort_by(|a, b| a.0.cmp(&b.0));
             let remove_count = (current_count - desired) as usize;
             for (name, _) in current.iter().rev().take(remove_count) {
-                self.enqueue(&ControlCommand::RemoveProcess { name: name.clone() })?;
+                self.enqueue(&ControlCommand::Remove { name: name.clone() })?;
             }
         }
 
@@ -218,7 +218,7 @@ impl Provisioner for SupervisorProvisioner {
     }
 
     async fn stop(&self, node_id: &str) -> Result<(), SendableError> {
-        self.enqueue(&ControlCommand::RemoveProcess {
+        self.enqueue(&ControlCommand::Remove {
             name: node_id.to_string(),
         })
     }

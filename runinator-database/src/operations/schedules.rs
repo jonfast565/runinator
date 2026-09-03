@@ -678,9 +678,11 @@ where
                         &mut tx,
                         &trigger,
                         workflow_snapshot,
-                        &scheduler_id,
-                        slot,
-                        now,
+                        TriggerRunContext {
+                            scheduler_id: &scheduler_id,
+                            slot,
+                            now,
+                        },
                         module,
                     )
                     .await?;
@@ -781,9 +783,11 @@ where
                     &mut tx,
                     &trigger,
                     workflow_snapshot,
-                    "backfill",
-                    *slot,
-                    now,
+                    TriggerRunContext {
+                        scheduler_id: "backfill",
+                        slot: *slot,
+                        now,
+                    },
                     &workflow_vm.module,
                 )
                 .await?;

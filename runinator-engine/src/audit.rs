@@ -55,7 +55,6 @@ impl AuditOutcome {
 
 /// append an audit-log entry. `actor_id`/`actor_kind` describe the principal; `resource_*` are
 /// optional and name the affected resource for authz decisions.
-#[allow(clippy::too_many_arguments)]
 pub async fn record_audit<T: RuntimeStore>(
     db: &T,
     actor_id: Option<Uuid>,

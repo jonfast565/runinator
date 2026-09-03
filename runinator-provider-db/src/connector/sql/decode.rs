@@ -84,9 +84,9 @@ pub(crate) fn decimal_to_json(value: &BigDecimal) -> Value {
 macro_rules! try_decode {
     ($row:expr, $idx:expr, $ty:ty, $map:expr) => {
         if let Ok(value) = $row.try_get::<Option<$ty>, _>($idx) {
-            #[allow(clippy::redundant_closure_call)]
+            let map = $map;
             return match value {
-                Some(inner) => ($map)(inner),
+                Some(inner) => map(inner),
                 None => Value::Null,
             };
         }

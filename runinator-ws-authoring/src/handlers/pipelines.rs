@@ -747,8 +747,6 @@ pub async fn retry_pipeline_member<
         ),
     }
 }
-
-#[allow(clippy::result_large_err)]
 async fn require_unmanaged_pipeline_run<
     T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
@@ -763,8 +761,6 @@ async fn require_unmanaged_pipeline_run<
         Err(error) => Err(api_error(error.to_string())),
     }
 }
-
-#[allow(clippy::result_large_err)]
 async fn authorize_pipeline_run_control<
     T: DefinitionStore
         + RuntimeStore

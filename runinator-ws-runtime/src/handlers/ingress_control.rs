@@ -115,8 +115,6 @@ async fn require_target<T: IngressControlStore>(
         IngressTargetKind::Pipeline => checker.require_pipeline(target.id, permission).await,
     }
 }
-
-#[allow(clippy::result_large_err)]
 fn require_broker_scope(
     ctx: &AuthContext,
     scope: ScopeRef,

@@ -692,7 +692,7 @@ pub fn routes<
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/workflows",
         "Workflows",
@@ -705,7 +705,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow definitions",
         Example::WorkflowList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflows",
         "Workflows",
@@ -721,7 +721,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "stored workflow definition",
         Example::Workflow,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflows/validate",
         "Workflows",
@@ -734,7 +734,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "validated workflow definition",
         Example::Workflow,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflows/export",
         "Packs",
@@ -747,7 +747,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow bundle",
         Example::WorkflowBundle,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflows/{id}",
         "Workflows",
@@ -760,7 +760,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow definition",
         Example::Workflow,
     ),
-    endpoint(
+    endpoint!(
         "patch",
         "/workflows/{id}",
         "Workflows",
@@ -773,7 +773,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "updated workflow definition",
         Example::Workflow,
     ),
-    endpoint(
+    endpoint!(
         "delete",
         "/workflows/{id}",
         "Workflows",
@@ -786,7 +786,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow deleted",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "get",
         "/workflows/{id}/export",
         "Packs",
@@ -799,7 +799,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow bundle",
         Example::WorkflowBundle,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/workflows/{id}/duplicate",
         "Workflows",

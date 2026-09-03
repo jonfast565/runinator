@@ -191,6 +191,12 @@ fn workflow_enabled_sql(dialect: SqlDialect) -> String {
 
 /// the per-slot steps of a cron firing, shared by the trigger loop and the manual backfill so both
 /// paths record firings, snapshot workflows, and start runs the same way.
+struct TriggerRunContext<'a> {
+    scheduler_id: &'a str,
+    slot: DateTime<Utc>,
+    now: DateTime<Utc>,
+}
+
 trait ScheduleSqlExt: SqlBackend {
     /// how many of a workflow's runs have not reached a terminal state.
     async fn active_run_count(
@@ -220,18 +226,12 @@ trait ScheduleSqlExt: SqlBackend {
     ) -> Result<bool, SendableError>;
 
     /// create the run for a claimed slot and point the firing row at it.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the scheduling transaction needs each independently typed trigger, snapshot, clock, and module input"
-    )]
     async fn insert_trigger_run(
         &self,
         conn: &mut <Self::Db as Database>::Connection,
         trigger: &WorkflowTrigger,
         snapshot: &WorkflowDefinition,
-        scheduler_id: &str,
-        slot: DateTime<Utc>,
-        now: DateTime<Utc>,
+        context: TriggerRunContext<'_>,
         module: &WorkflowModule,
     ) -> Result<WorkflowRun, SendableError>;
 }
@@ -339,9 +339,7 @@ where
         conn: &mut <Self::Db as Database>::Connection,
         trigger: &WorkflowTrigger,
         snapshot: &WorkflowDefinition,
-        scheduler_id: &str,
-        slot: DateTime<Utc>,
-        now: DateTime<Utc>,
+        context: TriggerRunContext<'_>,
         module: &WorkflowModule,
     ) -> Result<WorkflowRun, SendableError> {
         let Some(trigger_id) = trigger.id else {
@@ -355,7 +353,8 @@ where
         }
         let parameter_value = trigger.trigger_parameters();
         let parameters = parameter_value.to_string();
-        let state = WorkflowExecutionState::from_state(&trigger.trigger_state_for_slot(slot));
+        let state =
+            WorkflowExecutionState::from_state(&trigger.trigger_state_for_slot(context.slot));
         let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
         sqlx::query(&self.render(insert_sql))
             .bind(new_run_id)
@@ -363,10 +362,10 @@ where
             .bind(&snapshot_json)
             .bind(WorkflowStatus::Queued.as_str())
             .bind(&parameters)
-            .bind(now.timestamp())
+            .bind(context.now.timestamp())
             .bind("cron")
             .bind("replica")
-            .bind(scheduler_id)
+            .bind(context.scheduler_id)
             .bind(trigger.metadata.to_string())
             .execute(&mut *conn)
             .await?;
@@ -379,7 +378,7 @@ where
         .bind(new_run_id)
         .bind(i64::from(module.version))
         .bind(serde_json::to_string(module)?)
-        .bind(now.timestamp())
+        .bind(context.now.timestamp())
         .execute(&mut *conn)
         .await?;
         sqlx::query(&self.render(
@@ -391,9 +390,9 @@ where
         .bind(serde_json::to_string(&continuation)?)
         .bind("runnable")
         .bind(continuation.revision as i64)
-        .bind(now.timestamp())
-        .bind(now.timestamp())
-        .bind(now.timestamp())
+        .bind(context.now.timestamp())
+        .bind(context.now.timestamp())
+        .bind(context.now.timestamp())
         .execute(&mut *conn)
         .await?;
         let entry = WorkflowJournalEntry::Entered {
@@ -410,7 +409,7 @@ where
         .bind(Some(continuation.id))
         .bind(Option::<Uuid>::None)
         .bind(serde_json::to_string(&entry)?)
-        .bind(now.timestamp())
+        .bind(context.now.timestamp())
         .execute(&mut *conn)
         .await?;
         let run_row = sqlx::query(&self.render(&format!(
@@ -427,7 +426,7 @@ where
         ))
         .bind(run.id)
         .bind(trigger_id)
-        .bind(slot.timestamp().to_string())
+        .bind(context.slot.timestamp().to_string())
         .execute(conn)
         .await?;
 

@@ -858,7 +858,7 @@ pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub(crate) const DOCS: &[EndpointDoc] = &[
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/ws/broker",
         "WebSockets",
@@ -877,7 +877,7 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
         "websocket upgrade accepted",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/ws/events",
         "WebSockets",
@@ -890,7 +890,7 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
         "websocket upgrade accepted",
         Example::None,
     ),
-    endpoint_with_policy(
+    endpoint_with_policy!(
         "get",
         "/ws/workflow-runs/{id}",
         "WebSockets",

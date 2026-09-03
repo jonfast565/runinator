@@ -517,7 +517,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + NotificationStore>(
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint!(
         "get",
         "/notifications",
         "Notifications",
@@ -530,7 +530,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "notifications",
         Example::NotificationList,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/notifications",
         "Notifications",
@@ -543,7 +543,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "created notification",
         Example::Notification,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/notifications/{id}/mark_read",
         "Notifications",
@@ -556,7 +556,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "notification marked read",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint!(
         "post",
         "/notifications/mark_all_read",
         "Notifications",

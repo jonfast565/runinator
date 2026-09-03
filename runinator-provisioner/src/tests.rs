@@ -90,7 +90,7 @@ async fn scale_up_enqueues_add_for_each_missing_node() {
     let commands = drain(&dir.join("control"));
     let adds = commands
         .iter()
-        .filter(|c| matches!(c, ControlCommand::AddProcess { .. }))
+        .filter(|c| matches!(c, ControlCommand::Add { .. }))
         .count();
     assert_eq!(adds, 2, "should add the two missing workers");
     let _ = std::fs::remove_dir_all(&dir);
@@ -118,7 +118,7 @@ async fn scale_down_removes_extra_nodes() {
     let removes: Vec<&str> = commands
         .iter()
         .filter_map(|c| match c {
-            ControlCommand::RemoveProcess { name } => Some(name.as_str()),
+            ControlCommand::Remove { name } => Some(name.as_str()),
             _ => None,
         })
         .collect();
@@ -140,7 +140,7 @@ async fn add_process_carries_generated_worker_id_and_labels() {
     prov.scale(ReplicaKind::Worker, 1, &spec).await.unwrap();
 
     let commands = drain(&dir.join("control"));
-    let ControlCommand::AddProcess { process } = &commands[0] else {
+    let ControlCommand::Add { process } = &commands[0] else {
         panic!("expected an add-process command");
     };
     assert!(process.name.starts_with("prov-worker-"));
@@ -177,7 +177,7 @@ async fn org_group_scales_an_independent_labeled_pool() {
     let adds: Vec<&str> = commands
         .iter()
         .filter_map(|c| match c {
-            ControlCommand::AddProcess { process } => Some(process.name.as_str()),
+            ControlCommand::Add { process } => Some(process.name.as_str()),
             _ => None,
         })
         .collect();
@@ -247,7 +247,7 @@ async fn supervisor_backend_supports_webservice_when_template_is_configured() {
     assert_eq!(group.kind, ReplicaKind::Webservice);
 
     let commands = drain(&dir.join("control"));
-    let ControlCommand::AddProcess { process } = &commands[0] else {
+    let ControlCommand::Add { process } = &commands[0] else {
         panic!("expected an add-process command");
     };
     assert!(process.name.starts_with("prov-webservice-"));

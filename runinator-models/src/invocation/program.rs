@@ -36,10 +36,6 @@ impl InvocationProgram {
 /// a call, or a jump. keeping it small is what makes the vm auditable and the continuation cheap.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "the serialized instruction contract keeps call policies inline and avoids an allocation for every decoded call"
-)]
 pub enum InvocationInstruction {
     /// push a constant.
     Const { value: Value },
@@ -64,7 +60,7 @@ pub enum InvocationInstruction {
         names: Vec<String>,
         /// the call-site policy from a `with { … }` postfix, when the author wrote one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        policy: Option<CallPolicy>,
+        policy: Option<Box<CallPolicy>>,
     },
     /// Apply a closure across a collection. The VM keeps the iteration state in the continuation so
     /// a lambda may itself suspend on a durable call.

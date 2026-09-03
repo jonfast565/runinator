@@ -78,7 +78,7 @@ fn run_process_command(command: ProcessCommands, paths: &config::Paths) -> Resul
                     .ok_or_else(|| format!("Invalid --env '{entry}', expected KEY=VALUE"))?;
                 env_map.insert(key.to_string(), value.to_string());
             }
-            ControlCommand::AddProcess {
+            ControlCommand::Add {
                 process: ProcessConfig {
                     name,
                     command,
@@ -93,9 +93,9 @@ fn run_process_command(command: ProcessCommands, paths: &config::Paths) -> Resul
                 },
             }
         }
-        ProcessCommands::Start { name } => ControlCommand::StartProcess { name },
-        ProcessCommands::Stop { name } => ControlCommand::StopProcess { name },
-        ProcessCommands::Remove { name } => ControlCommand::RemoveProcess { name },
+        ProcessCommands::Start { name } => ControlCommand::Start { name },
+        ProcessCommands::Stop { name } => ControlCommand::Stop { name },
+        ProcessCommands::Remove { name } => ControlCommand::Remove { name },
     };
 
     enqueue(&paths.control_dir, &control_command)?;
