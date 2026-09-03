@@ -293,7 +293,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from "vue";
+import { computed, defineComponent, h, onMounted, reactive, ref, toRaw } from "vue";
 import type {
   ExecutionProfile,
   ExecutionProfileCommand,
@@ -353,10 +353,10 @@ const filtered = computed(() =>
 
 function buildInput() {
   return {
-    ...structuredClone(draft),
+    ...structuredClone(toRaw(draft)),
     name: draft.name.trim(),
     exposure: {
-      ...structuredClone(draft.exposure),
+      ...structuredClone(toRaw(draft.exposure)),
       environment: Object.fromEntries(
         environmentRows.value.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value]),
       ),
