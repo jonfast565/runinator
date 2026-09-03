@@ -9,6 +9,7 @@
 
 mod authz;
 mod bootstrap;
+mod execution_profiles;
 mod functions;
 mod models;
 mod orgs;

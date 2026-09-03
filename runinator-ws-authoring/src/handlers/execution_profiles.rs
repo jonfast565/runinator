@@ -670,7 +670,9 @@ pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
     }
 }
 
-pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>() -> axum::Router {
+pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>(
+    pool: Arc<T>,
+) -> axum::Router {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/execution_profiles", get(list::<T>))
@@ -692,6 +694,7 @@ pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>()
             "/execution_profiles/{id}/revisions/{revision}/content",
             get(content::<T>),
         )
+        .layer(Extension(pool))
 }
 
 const PROFILE_NAME_QUERY: &[ParamDoc] = &[ParamDoc {

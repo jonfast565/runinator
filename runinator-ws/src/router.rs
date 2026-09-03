@@ -194,7 +194,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(observability::routes(pool.clone()))
         .merge(ingress_control::routes(pool.clone()))
         .merge(credentials::routes(pool.clone()))
-        .merge(execution_profiles::routes::<T>())
+        .merge(execution_profiles::routes(pool.clone()))
         .merge(providers::routes(pool.clone()))
         .merge(functions::routes(pool.clone()))
         .merge(function_invocations::routes(pool.clone()))
