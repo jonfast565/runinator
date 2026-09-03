@@ -39,6 +39,11 @@ Commit every change and push it directly to `main`.
 
 Run compilations, Clippy, and tests only at the end of a development cycle, rather than after individual edits.
 
+On macOS, run `cargo clean` after the final compilation, Clippy, and test verification has completed
+and before finishing the task. This prevents Rust test binaries and other build artifacts from
+accumulating in `target/`; do not clean earlier when another verification command still needs the
+build outputs.
+
 ## Project Shape
 
 Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime using a resumable state-machine orchestrator.
