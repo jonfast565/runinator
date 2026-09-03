@@ -14,6 +14,7 @@ mod app_icon;
 mod cli;
 mod config;
 mod errors;
+mod execution_profiles;
 mod gui;
 mod headless;
 mod launcher;

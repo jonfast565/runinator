@@ -54,6 +54,7 @@ pub const API_IDEMPOTENCY_KEYS_COMPLETE: &str = "/idempotency_keys/complete";
 /// free an unfinished reservation after a non-success outcome.
 pub const API_IDEMPOTENCY_KEYS_RELEASE: &str = "/idempotency_keys/release";
 pub const API_CREDENTIALS: &str = "/credentials";
+pub const API_EXECUTION_PROFILES: &str = "/execution_profiles";
 pub const API_REPLICAS: &str = "/replicas";
 pub const API_ORCHESTRATIONS: &str = "/orchestrations";
 

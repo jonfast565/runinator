@@ -85,6 +85,14 @@ export const navSections: NavSection[] = [
         searchPlaceholder: "Search providers",
       },
       {
+        tab: "ExecutionProfiles",
+        label: "Execution Profiles",
+        icon: "key",
+        description: "Configure and monitor file-backed identities materialized for provider actions.",
+        requires: "credentials:manage",
+        searchPlaceholder: "Search execution profiles",
+      },
+      {
         tab: "ExternalItems",
         label: "External Items",
         icon: "tag",

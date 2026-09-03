@@ -89,6 +89,10 @@ pub struct ProviderExecutionRequest {
     /// configured workspace root. Providers never receive orchestration ownership details.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
+    /// Worker-local, effect-private credential layout. Server-side storage details never cross the
+    /// provider boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_profile: Option<crate::execution_profiles::MaterializedExecutionProfile>,
 }
 
 impl ProviderExecutionRequest {

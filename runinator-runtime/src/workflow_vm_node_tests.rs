@@ -65,6 +65,7 @@ fn action(id: &str, next: Option<&str>, input: Value) -> WorkflowNode {
         tags: vec!["vm-node-suite".into()],
         required_labels: BTreeMap::new(),
         workspace_affinity: None,
+        execution_profile: None,
         idempotency_key: Some(runinator_models::json!({
             "$ref": { "input": ["request_id"] }
         })),

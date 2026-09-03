@@ -867,6 +867,7 @@ impl WorkflowContinuationStatus {
 /// A request emitted by the VM. It is converted to an effect record by the durable host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // wire variants intentionally keep their stable, directly serialized shapes.
 pub enum WorkflowEffectRequest {
     Action {
         provider: String,
@@ -887,6 +888,9 @@ pub enum WorkflowEffectRequest {
         /// Resolved workspace token retained with the effect receipt and dispatch.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace_affinity: Option<Value>,
+        /// Stable execution-profile binding selected by the authored action.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        execution_profile: Option<crate::execution_profiles::ExecutionProfileBinding>,
         /// A still-unresolved key expression. The VM host evaluates and records it before the
         /// effect is delivered, so redelivery cannot observe a changed workflow definition.
         #[serde(default, skip_serializing_if = "Option::is_none")]

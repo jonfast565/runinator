@@ -9,6 +9,7 @@ pub mod config;
 mod effect_worker;
 pub mod errors;
 pub mod events;
+mod execution_profiles;
 pub mod executor;
 mod file_inputs;
 pub mod function_cache;

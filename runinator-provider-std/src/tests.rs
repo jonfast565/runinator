@@ -162,6 +162,7 @@ fn request_for(
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     }
 }
 

@@ -259,6 +259,7 @@ impl Provider for GitHubProvider {
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["github".into()],
                 contract: None,
+                execution_profile: Default::default(),
             },
         }
     }

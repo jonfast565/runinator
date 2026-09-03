@@ -81,6 +81,7 @@ fn cancel_signal_path_is_sibling_of_events() {
         events_jsonl_path: "/tmp/run/events.jsonl".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
     assert_eq!(
         request.cancel_signal_path(),
@@ -90,6 +91,7 @@ fn cancel_signal_path_is_sibling_of_events() {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
         ..request
     };
     assert_eq!(empty.cancel_signal_path(), None);

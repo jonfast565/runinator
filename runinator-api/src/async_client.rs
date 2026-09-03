@@ -20,13 +20,13 @@ use runinator_models::{
         api_workflow_run_journal, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_FREEZE_WINDOWS, API_FUNCTIONS,
-        API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS, API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS,
-        API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
-        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
-        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_SIMULATE,
-        API_WORKFLOWS_VALIDATE, API_WORKFLOW_EFFECTS, API_WORKFLOW_FILES, API_WORKFLOW_RUNS,
-        API_WORKFLOW_TRIGGERS_DUE,
+        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_EXECUTION_PROFILES,
+        API_FREEZE_WINDOWS, API_FUNCTIONS, API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS,
+        API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS, API_IDEMPOTENCY_KEYS_CLAIM,
+        API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE, API_PACKS_IMPORT,
+        API_PROVIDERS, API_REPLICAS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SUPERVISOR_STATUS,
+        API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
+        API_WORKFLOW_EFFECTS, API_WORKFLOW_FILES, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
     },
     auth::{
         AgentEnrollmentToken, AgentMachineEnrollment, CreateAgentEnrollmentTokenRequest,
@@ -35,6 +35,10 @@ use runinator_models::{
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail, NewConsoleCell},
+    execution_profiles::{
+        ExecutionProfile, ExecutionProfilePublishRequest, ExecutionProfileRevision,
+        ExecutionProfileStatusRequest,
+    },
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
         FunctionPackage, FunctionPackageDetail, FunctionVersion, NewFunctionVersion,
@@ -821,6 +825,10 @@ where
         self.traced(self.client.patch(url))
     }
 
+    fn http_put<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
+        self.traced(self.client.put(url))
+    }
+
     fn http_delete<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
         self.traced(self.client.delete(url))
     }
@@ -1417,6 +1425,84 @@ where
     pub async fn download_workflow_file(&self, file_id: Uuid) -> Result<Vec<u8>> {
         let url = self
             .build_url(&format!("{API_WORKFLOW_FILES}/{file_id}/content"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    /// Resolve the current metadata for a named execution profile in this worker's organization.
+    pub async fn resolve_execution_profile(&self, name: &str) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/resolve"))
+            .await?;
+        url.query_pairs_mut().append_pair("name", name);
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
+    /// Fetch a profile by its stable workflow binding identity.
+    pub async fn fetch_execution_profile(&self, id: Uuid) -> Result<ExecutionProfile> {
+        self.get_json_path(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await
+    }
+
+    /// List the execution-profile definitions assigned to this agent's organization.
+    pub async fn list_execution_profiles(&self) -> Result<Vec<ExecutionProfile>> {
+        self.get_json_path(API_EXECUTION_PROFILES).await
+    }
+
+    /// Atomically publish one deterministic profile archive. The service encrypts it before blob
+    /// storage and deduplicates it against the current plaintext digest.
+    pub async fn publish_execution_profile(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfilePublishRequest,
+        bytes: Vec<u8>,
+    ) -> Result<ExecutionProfileRevision> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/publish"))
+            .await?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("digest", &request.digest);
+            if let Some(expires_at) = request.expires_at {
+                query.append_pair("expires_at", &expires_at.to_rfc3339());
+            }
+        }
+        let response = self
+            .http_post(url.clone())
+            .header(
+                "content-type",
+                "application/vnd.runinator.execution-profile+zip",
+            )
+            .body(bytes)
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfileRevision>().await?)
+    }
+
+    pub async fn report_execution_profile_status(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileStatusRequest,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/status"))
+            .await?;
+        let response = self.http_put(url.clone()).json(request).send().await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    /// Download the decrypted bytes of the current revision assigned to an effect.
+    pub async fn download_execution_profile(&self, id: Uuid, revision: i64) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
+            ))
             .await?;
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;

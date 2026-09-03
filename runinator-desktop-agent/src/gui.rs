@@ -33,6 +33,7 @@ struct Snapshot {
     worker_activity: String,
     worker_activity_age: Duration,
     resources: Vec<agent::ResourceSample>,
+    execution_profiles: Vec<crate::execution_profiles::LocalProfileStatus>,
 }
 
 struct RuntimeDashboard<'a> {
@@ -286,7 +287,58 @@ impl DesktopAgentApp {
             worker_activity: guard.worker_activity.label.clone(),
             worker_activity_age: guard.worker_activity.since.elapsed(),
             resources: guard.resource_history.samples().cloned().collect(),
+            execution_profiles: guard.execution_profiles.clone(),
         }
+    }
+
+    fn execution_profile_approvals(
+        &mut self,
+        ui: &mut egui::Ui,
+        profiles: &[crate::execution_profiles::LocalProfileStatus],
+    ) {
+        if profiles.is_empty() {
+            return;
+        }
+        ui.add_space(10.0);
+        ui.group(|ui| {
+            ui.label(egui::RichText::new("Execution profile collection").strong());
+            ui.label(
+                egui::RichText::new(
+                    "Approve each centrally configured collection specification on this machine. Any path, command, glob, or mapping edit revokes that approval automatically.",
+                )
+                .small()
+                .weak(),
+            );
+            for profile in profiles {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(&profile.name);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} · config {}",
+                                profile.message,
+                                &profile.config_digest[..profile.config_digest.len().min(12)]
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if profile.approved {
+                            if ui.button("Revoke").clicked() {
+                                self.draft.approved_execution_profiles.remove(&profile.id);
+                                config::save(&self.draft);
+                            }
+                        } else if ui.button("Approve collection").clicked() {
+                            self.draft.approved_execution_profiles
+                                .insert(profile.id, profile.config_digest.clone());
+                            config::save(&self.draft);
+                        }
+                    });
+                });
+            }
+        });
     }
 
     // handle pending tray clicks/menu choices; called once per frame.
@@ -1398,6 +1450,7 @@ impl eframe::App for DesktopAgentApp {
             worker_activity,
             worker_activity_age,
             resources,
+            execution_profiles,
         } = self.snapshot();
 
         let reenrollment_reason = match &connection {
@@ -1514,6 +1567,7 @@ impl eframe::App for DesktopAgentApp {
                                 service_url: &self.draft.service_url,
                             },
                         );
+                        self.execution_profile_approvals(ui, &execution_profiles);
                     } else {
                         let starting = control == Control::Starting;
                         if starting {

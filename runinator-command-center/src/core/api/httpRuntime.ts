@@ -1086,6 +1086,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     }),
   },
   list_workflow_files: { method: "GET", path: () => "workflow_files" },
+  list_execution_profiles: { method: "GET", path: () => "execution_profiles" },
+  put_execution_profile: {
+    method: "PUT",
+    path: (args) => `execution_profiles/${escape(arg(args, "profileId"))}`,
+    body: (args) => arg(args, "profile"),
+  },
+  delete_execution_profile: {
+    method: "DELETE",
+    path: (args) => `execution_profiles/${escape(arg(args, "profileId"))}`,
+  },
+  rotate_execution_profile: {
+    method: "POST",
+    path: (args) => `execution_profiles/${escape(arg(args, "profileId"))}/rotate`,
+  },
+  test_execution_profile: {
+    method: "POST",
+    path: (args) => `execution_profiles/${escape(arg(args, "profileId"))}/test`,
+  },
   upload_workflow_file: {
     method: "POST",
     path: (args) => {

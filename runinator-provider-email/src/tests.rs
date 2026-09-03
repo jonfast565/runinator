@@ -42,6 +42,7 @@ fn notification_action_posts_notification_record() {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = runtime.block_on(send_notification(&request)).unwrap();

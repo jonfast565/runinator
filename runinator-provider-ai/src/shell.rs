@@ -28,6 +28,12 @@ pub(crate) fn run_shell_command(
     }
     let input = params.input.unwrap_or_else(|| json!({}));
     let mut command = runinator_platform::shell::shell_command(&params.command);
+    if let Some(profile) = &request.execution_profile {
+        if let Some(home) = &profile.home {
+            command.env("HOME", home);
+        }
+        command.envs(&profile.environment);
+    }
     if let Some(dir) =
         runinator_provider_support::resolve_working_dir(request.workspace_path.as_deref(), None)?
     {

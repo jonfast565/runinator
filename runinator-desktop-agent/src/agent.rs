@@ -83,6 +83,7 @@ pub struct Shared {
     pub resource_history: ResourceHistory,
     pub busy: bool,
     pub logs: VecDeque<String>,
+    pub execution_profiles: Vec<crate::execution_profiles::LocalProfileStatus>,
     // latch so one degraded episode fires exactly one "reconnecting" toast (and one "reconnected"
     // toast on recovery), rather than one per backoff retry.
     degraded_notified: bool,
@@ -581,9 +582,8 @@ pub(crate) fn configure_provider_environment(config: &AgentConfig) {
             std::env::remove_var(ALLOW_WRITE_ENV);
         }
         // base directory console commands run from, so a workflow can reference files by a relative
-        // path from a repo checkout (e.g. `packs/creds-sync`'s `bash scripts/sync-secrets.sh`)
-        // rather than an absolute path baked in at import. empty leaves the console provider on the
-        // agent's own cwd.
+        // path from a repo checkout rather than an absolute path baked in at import. empty leaves
+        // the console provider on the agent's own cwd.
         if config.console_working_dir.trim().is_empty() {
             std::env::remove_var(runinator_provider_console::WORKING_DIR_ENV);
         } else {
@@ -747,14 +747,20 @@ async fn start_inner(
         root: config.sandbox_root.clone(),
     });
 
-    let started = async {
+    let started: Result<AgentHandle, SendableError> = async {
         let mut runtime_config = runtime_config(&config)?;
         runtime_config.directive_handler = Arc::new(DesktopDirectiveHandler {
             shared: shared.clone(),
             root: PathBuf::from(&config.sandbox_root),
         });
         runinator_worker::prepare_agent_credentials(&mut runtime_config).await?;
-        AgentRuntime::start(runtime_config, observer)
+        let client = AsyncApiClient::with_credentials(
+            StaticLocator::new(runtime_config.service_url.clone()),
+            runtime_config.api_key.clone(),
+        )?;
+        let handle = AgentRuntime::start(runtime_config, observer)?;
+        crate::execution_profiles::spawn(&rt, client, shared.clone(), handle.watch());
+        Ok(handle)
     }
     .await;
 

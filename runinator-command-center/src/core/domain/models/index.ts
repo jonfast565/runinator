@@ -1,6 +1,12 @@
 // barrel re-export for all domain models. import from `types/models` or a specific file.
 
 export type { JsonArray, JsonObject, JsonRecord, JsonValue } from "../json";
+export type {
+  ExecutionProfile,
+  ExecutionProfileCommand,
+  ExecutionProfileInput,
+  ExecutionProfileSource,
+} from "./execution-profile";
 export {
   asJsonArray,
   asJsonObject,

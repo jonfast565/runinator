@@ -9,6 +9,7 @@ pub mod core;
 pub mod cursor;
 pub mod debug;
 pub mod errors;
+pub mod execution_profiles;
 pub mod files;
 pub mod foreign_languages;
 pub mod functions;

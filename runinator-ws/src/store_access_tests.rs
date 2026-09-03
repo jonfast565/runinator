@@ -67,6 +67,10 @@ const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
     ("runinator-ws-authoring/functions.rs", "FunctionPackages"),
     ("runinator-ws-authoring/catalog.rs", "CatalogOperations"),
     ("runinator-ws-authoring/console.rs", "ConsoleOperations"),
+    (
+        "runinator-ws-authoring/execution_profiles.rs",
+        "ExecutionProfileOperations",
+    ),
     ("runinator-ws-authoring/pipelines.rs", "PipelineOperations"),
     ("runinator-ws-authoring/packs.rs", "PackOperations"),
     ("runinator-ws-authoring/workflows.rs", "WorkflowAuthoring"),

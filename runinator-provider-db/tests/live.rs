@@ -33,6 +33,7 @@ fn call(function: &str, parameters: Value) -> Result<Value, String> {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     DbProvider

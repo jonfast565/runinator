@@ -13,7 +13,10 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, WorkflowVmStore},
+    roles::{
+        DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore, ScheduleStore,
+        WorkflowVmStore,
+    },
 };
 use serde::Deserialize;
 
@@ -33,7 +36,8 @@ pub async fn upsert_workflow<
         + FunctionStore
         + NotificationStore
         + ScheduleStore
-        + WorkflowVmStore,
+        + WorkflowVmStore
+        + ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
@@ -569,7 +573,8 @@ pub fn routes<
         + FunctionStore
         + NotificationStore
         + ScheduleStore
-        + WorkflowVmStore,
+        + WorkflowVmStore
+        + ExecutionProfileStore,
 >(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {

@@ -2162,6 +2162,7 @@ mod activity_status_tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         };
@@ -2214,6 +2215,7 @@ mod activity_status_tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         };

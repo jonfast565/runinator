@@ -16,7 +16,10 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, WorkflowVmStore},
+    roles::{
+        DefinitionStore, ExecutionProfileStore, FunctionStore, NotificationStore, ScheduleStore,
+        WorkflowVmStore,
+    },
 };
 use uuid::Uuid;
 
@@ -48,8 +51,19 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
         &self,
         workflow: &WorkflowDefinition,
         author: &RevisionAuthor,
-    ) -> Result<WorkflowDefinition, SendableError> {
-        let saved = repository::upsert_workflow(self.store.as_ref(), workflow, author).await?;
+    ) -> Result<WorkflowDefinition, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
+        let mut workflow = workflow.clone();
+        let org_id = workflow.org_id;
+        resolve_execution_profiles(
+            self.store.as_ref(),
+            std::slice::from_mut(&mut workflow),
+            org_id,
+        )
+        .await?;
+        let saved = repository::upsert_workflow(self.store.as_ref(), &workflow, author).await?;
         self.publish_changed(saved.org_id);
         Ok(saved)
     }
@@ -68,7 +82,13 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
         bundle: WorkflowBundle,
         overwrite: bool,
         fallback_org_id: Option<Uuid>,
-    ) -> Result<WorkflowBundle, SendableError> {
+    ) -> Result<WorkflowBundle, SendableError>
+    where
+        T: ExecutionProfileStore,
+    {
+        let mut bundle = bundle;
+        resolve_execution_profiles(self.store.as_ref(), &mut bundle.workflows, fallback_org_id)
+            .await?;
         let imported =
             repository::import_workflow_bundle_with(self.store.as_ref(), bundle, overwrite).await?;
         let org_id = imported
@@ -160,6 +180,66 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
     ) -> Result<Option<runinator_models::revisions::WorkflowRevision>, SendableError> {
         repository::fetch_workflow_revision(self.store.as_ref(), workflow_id, revision).await
     }
+}
+
+async fn resolve_execution_profiles<T: ExecutionProfileStore + DefinitionStore>(
+    store: &T,
+    workflows: &mut [WorkflowDefinition],
+    fallback_org_id: Option<Uuid>,
+) -> Result<(), SendableError> {
+    let providers = repository::provider_metadata_from_items(
+        repository::fetch_catalog_items(store, Some("provider_metadata".into())).await?,
+    )?;
+    for workflow in workflows {
+        let org_id = workflow.org_id.or(fallback_org_id);
+        for node in &mut workflow.definition.nodes {
+            for action in node.action.iter_mut().chain(node.compensation.iter_mut()) {
+                let Some(binding) = action.execution_profile.as_mut() else {
+                    continue;
+                };
+                let profile = store
+                    .fetch_execution_profile_by_name(org_id, &binding.name)
+                    .await?
+                    .ok_or_else(|| {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!("execution profile '{}' was not found", binding.name),
+                        )) as SendableError
+                    })?;
+                if !profile.enabled {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!("execution profile '{}' is disabled", binding.name),
+                    )));
+                }
+                if let Some(provider) = providers
+                    .iter()
+                    .find(|provider| provider.name == action.provider)
+                {
+                    let missing = provider
+                        .metadata
+                        .credential_scopes
+                        .iter()
+                        .filter(|scope| !profile.credential_scopes.contains(scope))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            format!(
+                                "execution profile '{}' does not declare the scopes required by provider '{}': {}",
+                                binding.name,
+                                action.provider,
+                                missing.join(", ")
+                            ),
+                        )));
+                    }
+                }
+                binding.id = profile.id;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl<

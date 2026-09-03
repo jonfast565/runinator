@@ -70,7 +70,6 @@ fn checked_in_packs_all_compile_and_settings_parse() {
     let packs_dir = repo_root().join("packs");
     let manifests = vec![
         packs_dir.join("hello-world"),
-        packs_dir.join("creds-sync"),
         packs_dir.join("autonomous-development"),
     ];
 

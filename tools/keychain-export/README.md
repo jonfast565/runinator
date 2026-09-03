@@ -12,10 +12,10 @@ it, but it can extract **any generic- or internet-password item to any path** in
 On macOS, Claude Code stores its subscription/SSO login in the **login Keychain**,
 not in a file. Linux containers read the token from a file
 (`~/.claude/.credentials.json`). This tool is the "get the key" piece: it pulls a
-secret out of the Keychain and emits it on stdout, so a generic sync engine like
-the companion [`runinator-secret-sync`](../runinator-secret-sync) can wire it into
-a job (`source: command [keychain-export …]`) and deliver it to a Kubernetes
-Secret or file. It is **macOS-only** and is never built into a container image.
+secret out of the Keychain and emits it on stdout. A centrally configured execution profile can
+use it as a command source and map those bytes into an effect-private home. The desktop agent asks
+for local approval of the complete collection specification before running it. It is **macOS-only**
+and is never built into a container image.
 
 ## Build
 

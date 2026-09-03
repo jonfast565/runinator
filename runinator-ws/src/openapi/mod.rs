@@ -48,6 +48,7 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::catalog::DOCS,
     handlers::automation::DOCS,
     handlers::credentials::DOCS,
+    handlers::execution_profiles::DOCS,
     handlers::providers::DOCS,
     handlers::functions::DOCS,
     handlers::function_invocations::DOCS,

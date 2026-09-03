@@ -247,6 +247,9 @@ pub struct WorkflowAction {
     /// freezes the stable worker instance into the durable effect target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_affinity: Option<Value>,
+    /// External file-backed identity selected with `@profile("name")`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_profile: Option<crate::execution_profiles::ExecutionProfileBinding>,
     /// unresolved expression naming this action's external effect, from `.idempotent(key: <expr>)`.
     /// the reducer resolves it against the run context at dispatch and stamps the result on the
     /// action command; the worker reserves that key before invoking the provider. `None` leaves the
@@ -289,6 +292,8 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             #[serde(default)]
             pub workspace_affinity: Option<Value>,
             #[serde(default)]
+            pub execution_profile: Option<crate::execution_profiles::ExecutionProfileBinding>,
+            #[serde(default)]
             pub idempotency_key: Option<Value>,
             #[serde(default)]
             pub function_binding: Option<FunctionBinding>,
@@ -313,6 +318,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             tags: raw.tags,
             required_labels: raw.required_labels,
             workspace_affinity: raw.workspace_affinity,
+            execution_profile: raw.execution_profile,
             idempotency_key: raw.idempotency_key,
             function_binding: raw.function_binding,
         })

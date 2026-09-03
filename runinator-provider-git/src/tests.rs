@@ -29,6 +29,7 @@ fn test_git_provider_unsupported_action() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider.execute_service(
@@ -72,6 +73,7 @@ fn push_requires_branch_before_execution() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider.execute_service(
@@ -151,6 +153,7 @@ fn guarded_promotion_is_atomic_and_reconcilable() {
         events_jsonl_path: "".into(),
         idempotency_key: Some("promote-ticket".into()),
         workspace_path: Some(repo.to_string_lossy().into_owned()),
+        execution_profile: None,
     };
     let provider = GitProvider;
     for _ in 0..2 {

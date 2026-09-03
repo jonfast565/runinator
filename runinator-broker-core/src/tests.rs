@@ -165,6 +165,7 @@ fn legacy_provider_actions_derive_an_expiry_from_their_enqueue_time() {
         tags: Default::default(),
         required_labels: Default::default(),
         workspace_affinity: None,
+        execution_profile: None,
         idempotency_key: None,
         function_binding: None,
     };

@@ -14,8 +14,9 @@ use runinator_blob::BlobStore;
 use runinator_broker::Broker;
 use runinator_engine::services::{
     AutomationOperations, CatalogOperations, ConsoleOperations, DebugOperations,
-    FunctionInvocations, FunctionPackages, NotificationOperations, PackOperations,
-    PipelineOperations, RunOperations, SchedulingOperations, WorkflowAuthoring, WorkflowFiles,
+    ExecutionProfileOperations, FunctionInvocations, FunctionPackages, NotificationOperations,
+    PackOperations, PipelineOperations, RunOperations, SchedulingOperations, WorkflowAuthoring,
+    WorkflowFiles,
 };
 use runinator_provisioner::ProvisionerRegistry;
 use runinator_store::DatabaseImpl;
@@ -26,9 +27,10 @@ use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     adapters, agents, artifacts, auth, authz, automation, billing, catalog, catalog_metadata,
-    console, credentials, debug, files, function_invocations, functions, health, ingress_control,
-    notifications, observability, orchestrations, orgs, packs, pipelines, providers, provisioning,
-    replicas, rexrap, runs, schedules, supervisor, triggers, workflow_vm, workflows,
+    console, credentials, debug, execution_profiles, files, function_invocations, functions,
+    health, ingress_control, notifications, observability, orchestrations, orgs, packs, pipelines,
+    providers, provisioning, replicas, rexrap, runs, schedules, supervisor, triggers, workflow_vm,
+    workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};
@@ -121,6 +123,7 @@ pub fn build_router<T: DatabaseImpl>(
         events.embedded_engine_signals(),
     ));
     let workflow_authoring = Arc::new(WorkflowAuthoring::new(pool.clone(), events.publisher()));
+    let execution_profile_operations = Arc::new(ExecutionProfileOperations::new(pool.clone()));
     let pipeline_operations = Arc::new(PipelineOperations::new(
         pool.clone(),
         broker.clone(),
@@ -191,6 +194,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(observability::routes(pool.clone()))
         .merge(ingress_control::routes(pool.clone()))
         .merge(credentials::routes(pool.clone()))
+        .merge(execution_profiles::routes::<T>())
         .merge(providers::routes(pool.clone()))
         .merge(functions::routes(pool.clone()))
         .merge(function_invocations::routes(pool.clone()))
@@ -214,6 +218,7 @@ pub fn build_router<T: DatabaseImpl>(
         .layer(Extension(pipeline_operations))
         .layer(Extension(run_operations))
         .layer(Extension(workflow_authoring))
+        .layer(Extension(execution_profile_operations))
         .layer(Extension(broker))
         .layer(Extension(blobs))
         .layer(Extension(provisioner))

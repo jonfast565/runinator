@@ -1443,6 +1443,12 @@ impl Lowerer {
         if let Some(affinity) = &action.modifiers.workspace_affinity {
             action_obj.insert("workspace_affinity".into(), self.lower_expr(affinity)?);
         }
+        if let Some(profile) = &action.modifiers.profile {
+            action_obj.insert(
+                "execution_profile".into(),
+                runinator_models::json!({ "id": uuid::Uuid::nil(), "name": profile }),
+            );
+        }
         if let Some(key) = &action.modifiers.idempotency_key {
             let lowered = self.lower_expr(key)?;
             action_obj.insert("idempotency_key".into(), lowered);
@@ -1513,6 +1519,12 @@ impl Lowerer {
         }
         if let Some(affinity) = &action.modifiers.workspace_affinity {
             obj.insert("workspace_affinity".into(), self.lower_expr(affinity)?);
+        }
+        if let Some(profile) = &action.modifiers.profile {
+            obj.insert(
+                "execution_profile".into(),
+                runinator_models::json!({ "id": uuid::Uuid::nil(), "name": profile }),
+            );
         }
         if let Some(key) = &action.modifiers.idempotency_key {
             let lowered = self.lower_expr(key)?;

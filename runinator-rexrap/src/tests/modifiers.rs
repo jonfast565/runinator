@@ -140,6 +140,41 @@ fn compensation_modifiers_survive_the_round_trip() {
     );
     assert_round_trips_unordered(source);
 }
+
+#[test]
+fn execution_profile_binding_survives_actions_and_compensations() {
+    let source = r#"
+        workflow "Profiled" v1 {
+            do {
+                @profile("aws-production")
+                let deploy = console.run(command: "deploy")
+                    compensate @profile("github-default") console.run(command: "rollback")
+            }
+        }
+    "#;
+    let definition = compile(source);
+    let node = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.id == "deploy")
+        .expect("profiled action");
+    assert_eq!(
+        node.action
+            .as_ref()
+            .and_then(|action| action.execution_profile.as_ref())
+            .map(|binding| binding.name.as_str()),
+        Some("aws-production")
+    );
+    assert_eq!(
+        node.compensation
+            .as_ref()
+            .and_then(|compensation| compensation.execution_profile.as_ref())
+            .map(|binding| binding.name.as_str()),
+        Some("github-default")
+    );
+    assert_round_trips_unordered(source);
+}
 #[test]
 fn watch_guard_lowers_to_metadata_and_round_trips() {
     let definition = compile(

@@ -17,6 +17,7 @@ fn missing_token_is_invalid() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider.execute_service(

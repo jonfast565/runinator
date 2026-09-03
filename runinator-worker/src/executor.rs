@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
+use runinator_models::execution_profiles::MaterializedExecutionProfile;
 use runinator_models::providers::ActionMetadata;
 use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
 use runinator_models::value::Value;
@@ -14,6 +15,16 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::provider_repository::{ProviderFactory, resolve_provider};
+
+pub(crate) fn execution_profile_metadata(
+    providers: &ProviderFactory,
+    libraries: &HashMap<String, Plugin>,
+    action: &WorkflowAction,
+) -> Result<runinator_models::providers::ProviderRuntimeMetadata, String> {
+    resolve_provider(providers, libraries, action)
+        .map(|provider| provider.metadata().metadata)
+        .map_err(|error| error.to_string())
+}
 
 pub struct ExecutionOutcome {
     pub task_result: ExecutionTaskResult,
@@ -42,12 +53,19 @@ pub async fn execute_task(
     execution_id: Uuid,
     parameters: Value,
     idempotency_key: Option<String>,
+    execution_profile: Option<MaterializedExecutionProfile>,
     sink: Option<Arc<dyn ProviderEventSink>>,
     token: CancellationToken,
 ) -> ExecutionOutcome {
     let started_at = Utc::now();
     let timeout = action.timeout_seconds.max(1) as u64;
-    let request = build_provider_request(&action, execution_id, parameters, idempotency_key);
+    let request = build_provider_request(
+        &action,
+        execution_id,
+        parameters,
+        idempotency_key,
+        execution_profile,
+    );
 
     if token.is_cancelled() {
         return canceled_outcome(started_at);
@@ -267,6 +285,7 @@ fn build_provider_request(
     execution_id: Uuid,
     parameters: Value,
     idempotency_key: Option<String>,
+    execution_profile: Option<MaterializedExecutionProfile>,
 ) -> ProviderExecutionRequest {
     let base_dir = run_work_dir(Some(execution_id));
     let artifact_dir = base_dir.join("artifacts");
@@ -288,6 +307,7 @@ fn build_provider_request(
         events_jsonl_path: base_dir.join("events.jsonl").to_string_lossy().into_owned(),
         idempotency_key,
         workspace_path: resolved_workspace_path(action.workspace_affinity.as_ref()),
+        execution_profile,
     }
 }
 

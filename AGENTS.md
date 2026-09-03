@@ -529,12 +529,11 @@ cargo run -p runinator-supervisor -- status
 cargo run -p runinator-supervisor -- stop
 ```
 
-`tools/keychain-export` (Swift, macOS Keychain only) and `tools/runinator-secret-sync`
-(Go, `client-go`) bridge one operator's local credentials (e.g. a Claude Code login)
-into Kubernetes Secrets. They are an optional, macOS-operator-machine bridge for that
-one credential source, not part of the portable runtime — the portable credential
-path is `CredentialStore` (`runinator-auth`), `SecretCipher` (`runinator-secrets`),
-and the settings store's `secret://` references, all of which are OS-agnostic.
+`tools/keychain-export` is a packaged, macOS-only generic execution-profile collector command.
+Profile collection is configured centrally and approved by complete configuration digest in the
+desktop agent; never couple this command to Kubernetes synchronization or provider-specific mounts.
+Ordinary scalar secrets continue through `CredentialStore` (`runinator-auth`), `SecretCipher`
+(`runinator-secrets`), and settings-store `secret://` references.
 
 ## Error Handling And Async
 

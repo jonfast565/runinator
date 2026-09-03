@@ -138,6 +138,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         shutdown.clone(),
     ));
 
+    crate::execution_profiles::cleanup_abandoned();
     metrics::capacity(max_concurrent_actions.max(1));
     let effect_result = crate::effect_worker::run_provider_effect_loop(
         broker,

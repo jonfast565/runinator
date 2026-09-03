@@ -134,6 +134,8 @@ pub struct Modifiers {
     pub reentry: Option<Reentry>,
     /// `.runner("<type>")`: require a worker carrying the `runner=<type>` label to execute this node.
     pub runner: Option<String>,
+    /// `@profile("name")`: select a centrally managed execution profile for this action.
+    pub profile: Option<String>,
     /// `@workspace(<expr>)`: route this call to the stable worker instance held in a
     /// `WorkspaceAffinity` value.
     pub workspace_affinity: Option<Expr>,

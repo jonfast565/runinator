@@ -11,14 +11,8 @@ resources:
 # http://localhost:16686 after `kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686`.
 # See components/observability/kustomization.yaml for metrics/logs viewing. Drop this line to disable.
 #
-# rotated-creds mounts the aws-sso-cache/claude-credentials Secrets that tools/runinator-secret-sync
-# (via scripts/sync-secrets.sh, see packs/creds-sync) pushes into the worker pod. It replaces this
-# overlay's former hostPath aws-creds/claude-creds patches, which only worked reliably on a true
-# single-node cluster — a multi-node local cluster (e.g. Docker Desktop's default node pool) schedules
-# worker replicas across nodes, so a node-local hostPath mount is only ever populated on one of them.
 components:
   - ../../components/observability
-  - ../../components/rotated-creds
 
 # Single-node / local cluster (k3d, minikube, kind). PVCs use the cluster's
 # default StorageClass (e.g. local-path on k3d). If your local cluster has no

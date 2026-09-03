@@ -186,7 +186,8 @@ pub async fn import_rexrap<
         + RuntimeStore
         + FunctionStore
         + NotificationStore
-        + ScheduleStore,
+        + ScheduleStore
+        + runinator_store::roles::ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
@@ -562,7 +563,8 @@ pub fn routes<
         + RuntimeStore
         + FunctionStore
         + NotificationStore
-        + ScheduleStore,
+        + ScheduleStore
+        + runinator_store::roles::ExecutionProfileStore,
 >(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {

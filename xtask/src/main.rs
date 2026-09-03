@@ -48,7 +48,7 @@ struct BuildArgs {
     /// cargo build profile (`dev` maps to the `target/debug` directory).
     #[arg(long, default_value = "dev")]
     profile: String,
-    /// skip compiling tools/keychain-export and tools/runinator-secret-sync.
+    /// skip compiling the packaged tools/keychain-export collector command.
     #[arg(long, default_value_t = false)]
     skip_credential_tools: bool,
     /// rustup target to ensure is installed when building on windows.

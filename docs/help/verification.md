@@ -10,7 +10,6 @@ Then run:
 
 ```bash
 runinatorctl rexrap check packs/hello-world/hello-world.rrx
-runinatorctl rexrap check packs/creds-sync/creds-sync.rrx
 runinatorctl rexrap check packs/autonomous-development/autonomous-development.rrx
 cargo test -p runinator-ctl
 ```

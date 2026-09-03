@@ -12,6 +12,7 @@ export type AppTab =
   | "Providers"
   | "Functions"
   | "Files"
+  | "ExecutionProfiles"
   | "Console"
   | "Replicas"
   | "Approvals"

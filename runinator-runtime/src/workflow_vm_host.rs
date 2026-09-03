@@ -435,6 +435,7 @@ mod locality_tests {
             tags: Vec::new(),
             required_labels: BTreeMap::from([("pool".into(), "local".into())]),
             workspace_affinity: Some(Value::from(serde_json::to_value(affinity).unwrap())),
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         };

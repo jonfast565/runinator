@@ -47,6 +47,7 @@ pub trait DatabaseImpl:
     + roles::FunctionStore
     + roles::IngressStore
     + roles::FileStore
+    + roles::ExecutionProfileStore
     + roles::AutomationStore
     + roles::NotificationStore
     + roles::ReplicaStore
@@ -78,9 +79,9 @@ pub mod prelude {
     pub use crate::pack_transaction::PackTransactionStore;
     pub use crate::roles::{
         ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DeliveryStore,
-        FileStore, FunctionStore, IngressStore, NewWorkflowVmRun, NotificationStore,
-        OrchestrationBindingUpdate, OrchestrationStore, OrgStore, QueueSnapshot, RbacStore,
-        ReplicaStore, RunStore, ScheduleStore, ScheduledWorkflowVm, SettingStore,
+        ExecutionProfileStore, FileStore, FunctionStore, IngressStore, NewWorkflowVmRun,
+        NotificationStore, OrchestrationBindingUpdate, OrchestrationStore, OrgStore, QueueSnapshot,
+        RbacStore, ReplicaStore, RunStore, ScheduleStore, ScheduledWorkflowVm, SettingStore,
         WorkflowTimerInterrupt, WorkflowVmStore, WorkspaceStore,
     };
     pub use crate::runtime_store::RuntimeStore;

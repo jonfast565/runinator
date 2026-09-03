@@ -2,6 +2,7 @@ pub mod adapters;
 pub mod catalog;
 pub mod console;
 pub mod credentials;
+pub mod execution_profiles;
 pub mod functions;
 pub mod orchestrations;
 pub mod packs;

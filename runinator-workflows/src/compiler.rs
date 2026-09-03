@@ -494,6 +494,7 @@ fn lower_node(
                         tags: action.tags.clone(),
                         required_labels: action.required_labels.clone(),
                         workspace_affinity: action.workspace_affinity.clone(),
+                        execution_profile: action.execution_profile.clone(),
                         idempotency_key: action.idempotency_key.clone(),
                         function_binding: action.function_binding.clone(),
                     },
@@ -514,6 +515,7 @@ fn lower_node(
                             tags: compensation.tags.clone(),
                             required_labels: compensation.required_labels.clone(),
                             workspace_affinity: compensation.workspace_affinity.clone(),
+                            execution_profile: compensation.execution_profile.clone(),
                             idempotency_key: compensation.idempotency_key.clone(),
                             function_binding: compensation.function_binding.clone(),
                         },
@@ -1213,6 +1215,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1274,6 +1277,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1387,6 +1391,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1489,6 +1494,7 @@ mod tests {
             tags: vec!["critical".into()],
             required_labels: BTreeMap::from([("runner".into(), "isolated".into())]),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: Some(Value::String("order-42".into())),
             function_binding: Some(FunctionBinding {
                 package_id: uuid::Uuid::nil(),
@@ -1557,6 +1563,7 @@ mod tests {
                             workspace_affinity,
                             idempotency_key,
                             function_binding,
+                            ..
                         },
                 } => Some((
                     provider,
@@ -1735,6 +1742,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1933,6 +1941,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         });
@@ -1945,6 +1954,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: BTreeMap::new(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         });

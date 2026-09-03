@@ -93,7 +93,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports `packs/hello-world` and `packs/creds-sync`, compiling their `.rrx` sources before sending each bundle to the API. The imported credential workflows require a usable `runner=desktop` worker session; the local desktop agent always advertises that label, but its headless supervisor instance cannot complete interactive login prompts (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want to re-apply the default hello-world pack, run:
+The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports `packs/hello-world`, compiling its `.rrx` source before sending it to the API. File/session authentication uses Command Center execution profiles and an explicitly approved desktop agent; it no longer requires a repository checkout or kubeconfig on that machine. The stack also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want to re-apply the default hello-world pack, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -389,5 +389,5 @@ cargo run -p xtask -- local up \
 `--database postgres` works the same way with a Postgres URL. SQLite continues
 to use `--database-path` (defaults to `~/.runinator/runinator.db`). `cargo run
 -p xtask -- build` on its own just builds the workspace plus the host-only
-credential tools (`tools/keychain-export`, `tools/runinator-secret-sync`)
+generic Keychain collector command (`tools/keychain-export`)
 without starting anything.

@@ -2,7 +2,10 @@
 //! need to be re-filled on every launch. best-effort only; a missing or corrupt file falls back to
 //! defaults rather than blocking startup.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 const CONFIG_FILE_NAME: &str = "desktop-agent.json";
 
@@ -148,7 +151,7 @@ pub struct AgentConfig {
     pub command_center_app_path: String,
     /// start the agent immediately when the process launches, without waiting for a manual click on
     /// "Start agent" — for running this as a login item/background service on a machine nobody is
-    /// actively watching (e.g. the box that does hourly `packs/creds-sync` runs).
+    /// actively watching.
     #[serde(default)]
     pub auto_start: bool,
     /// how many actions this replica runs at once; same knob as `runinator-worker`'s
@@ -177,6 +180,10 @@ pub struct AgentConfig {
     /// remembered response to the main-window close prompt. `None` leaves the prompt enabled.
     #[serde(default)]
     pub window_close_action: Option<WindowCloseAction>,
+    /// Complete collection-spec digests explicitly approved on this machine, keyed by stable
+    /// profile id. A central edit changes the digest and therefore revokes the approval.
+    #[serde(default)]
+    pub approved_execution_profiles: BTreeMap<Uuid, String>,
 }
 
 fn default_direct_broker_backend() -> String {
@@ -250,6 +257,7 @@ impl Default for AgentConfig {
             liveness_file: String::new(),
             log_level: LogLevel::default(),
             window_close_action: None,
+            approved_execution_profiles: BTreeMap::new(),
         }
     }
 }

@@ -151,6 +151,7 @@ impl Provider for JiraProvider {
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["jira".into()],
                 contract: None,
+                execution_profile: Default::default(),
             },
         }
     }

@@ -26,6 +26,9 @@ rfd = { version = "0.16", default-features = false, features = [
 ] }
 notify-rust = "4"
 png = "0.17"
+glob = "0.3"
+sha2 = "0.10"
+zip = { version = "7.2", default-features = false }
 
 runinator-api = { path = "../runinator-api" }
 runinator-comm = { path = "../runinator-comm" }

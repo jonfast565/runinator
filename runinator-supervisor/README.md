@@ -91,11 +91,10 @@ disables an individual limit. An active process's current log is always protecte
 
 The repository's local supervisor config runs `runinatorctl workflows apply`
 once per configured pack on startup. The checked-in config imports
-`packs/hello-world` and `packs/creds-sync`, compiling their unified `.rrx`
-sources during import. It also starts `runinator-adapter-host` for inbound
-orchestration adapters and a headless desktop agent for desktop-routed work.
-The `creds-sync` runs park then fail locally without a usable desktop session
-and its local credentials. The config passes `--advertise-host 127.0.0.1` to the web service,
+`packs/hello-world`, compiling its unified `.rrx` source during import. It also starts
+`runinator-adapter-host` for inbound orchestration adapters and a headless desktop agent for
+desktop-routed work. Execution profiles replace the former credential-sync workflows and require
+an explicitly approved desktop collection specification. The config passes `--advertise-host 127.0.0.1` to the web service,
 waker, and worker, plus stable local instance ids for the waker and worker, so
 the replicas view shows host/IP/version data instead of blank fields after a
 restart. The local web-service command runs `runinator-bootstrap` first, then

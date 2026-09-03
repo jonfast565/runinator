@@ -2161,6 +2161,32 @@ export async function fetchWorkflowFiles() {
   return command<WorkflowFile[]>("list_workflow_files", {});
 }
 
+export async function fetchExecutionProfiles() {
+  return command<import("../domain/models").ExecutionProfile[]>("list_execution_profiles", {});
+}
+
+export async function putExecutionProfile(
+  profileId: string,
+  profile: import("../domain/models").ExecutionProfileInput,
+) {
+  return command<import("../domain/models").ExecutionProfile>("put_execution_profile", {
+    profileId,
+    profile,
+  });
+}
+
+export async function deleteExecutionProfile(profileId: string) {
+  return command<{ success: boolean }>("delete_execution_profile", { profileId });
+}
+
+export async function rotateExecutionProfile(profileId: string) {
+  return command<{ success: boolean }>("rotate_execution_profile", { profileId });
+}
+
+export async function testExecutionProfile(profileId: string) {
+  return command<{ success: boolean }>("test_execution_profile", { profileId });
+}
+
 export async function uploadWorkflowFile(path: string, file: File, staged = false) {
   const bytes = await file.arrayBuffer();
 

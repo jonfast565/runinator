@@ -230,6 +230,8 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("console_functions", CascadeWithParent),
     table_policy!("console_sessions", ExplicitLifecycle),
     table_policy!("dead_letters", ColdArchive),
+    table_policy!("execution_profile_revisions", CascadeWithParent),
+    table_policy!("execution_profiles", ExplicitLifecycle),
     table_policy!("external_operations", ColdArchive),
     table_policy!("ingress_control_events", ServiceRetention),
     table_policy!("ingress_control_gates", BoundedState),

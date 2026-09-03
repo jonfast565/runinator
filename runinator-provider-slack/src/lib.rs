@@ -106,6 +106,7 @@ impl Provider for SlackProvider {
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["slack".into()],
                 contract: None,
+                execution_profile: Default::default(),
             },
         }
     }

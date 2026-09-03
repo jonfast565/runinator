@@ -495,6 +495,7 @@ fn an_unsupported_action_names_the_call_it_rejected() {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let error = crate::DbProvider

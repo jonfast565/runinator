@@ -16,6 +16,7 @@ fn test_github_provider_missing_token() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider.execute_service(
@@ -104,6 +105,7 @@ fn request_reviewers_requires_a_reviewer() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider.execute_service(

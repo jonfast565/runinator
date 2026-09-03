@@ -49,6 +49,7 @@ fn interactive_commands_receive_input_and_stream_terminal_bytes() {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
     let (sender, receiver) = std::sync::mpsc::channel();
     let sink = Arc::new(TerminalSink {
@@ -107,6 +108,7 @@ fn input_action_waits_for_a_line_and_emits_the_prompt_lifecycle() {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
     let (sender, receiver) = std::sync::mpsc::channel();
     sender
@@ -196,6 +198,7 @@ fn noninteractive_commands_stream_stdout_and_stderr() {
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
     let sink = Arc::new(RecordingSink::default());
 

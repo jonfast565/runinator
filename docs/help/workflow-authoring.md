@@ -8,9 +8,11 @@ Use this guide to compile, import, test, simulate, and edit REXRAP workflow pack
 path can be a `.rrx` source file or directory (each source is a unified REXRAP
 container with workflow, pipeline, settings, package-manifest, and test blocks),
 or one standalone workflow-definition JSON file. Compiled workflow bundles are
-not accepted. The checked-in local supervisor config applies `packs/hello-world`
-and `packs/creds-sync`. To load local credentials and config, import an `.rrx`
-source containing a `settings` block with `runinatorctl settings import <file>`. Each entry carries a `kind`
+not accepted. The checked-in local supervisor config applies `packs/hello-world`.
+File/session authentication is configured as an Execution Profile in Command Center and bound to
+provider calls with `@profile("name")`; collection requires approval in the desktop agent. To load
+ordinary scalar credentials and config, import an `.rrx` source containing a `settings` block with
+`runinatorctl settings import <file>`. Each entry carries a `kind`
 (`secret` — the default — or `config`) and a `value`; secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
 read by the web service. You can seed the app-data workflow pack from the

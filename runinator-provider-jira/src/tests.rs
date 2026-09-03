@@ -73,6 +73,7 @@ fn test_jira_provider_missing_base_url() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider.execute_service(
@@ -101,6 +102,7 @@ fn test_jira_search_placeholder_base_url_is_clear() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let err = provider
@@ -133,6 +135,7 @@ fn test_jira_search_empty_base_url_is_clear() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let err = provider

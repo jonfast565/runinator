@@ -9,6 +9,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "time"] }
 aws-config = "1.8"
+aws-credential-types = "1.2"
 # The SDK's legacy `rustls` feature pulls in the retired Hyper 0.14/TLS stack in parallel with its
 # current HTTPS client. Use only the current client; this removes the vulnerable h2 0.3 and
 # rustls-webpki 0.101 implementations without changing provider behavior.

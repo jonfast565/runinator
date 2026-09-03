@@ -1049,6 +1049,7 @@ fn resolve_effect_request(
             tags,
             required_labels,
             workspace_affinity,
+            execution_profile,
             idempotency_key,
             function_binding,
         } => {
@@ -1067,6 +1068,7 @@ fn resolve_effect_request(
                 tags,
                 required_labels,
                 workspace_affinity: workspace_affinity.map(resolve).transpose()?,
+                execution_profile,
                 idempotency_key: idempotency_key.map(resolve).transpose()?,
                 function_binding,
             }
@@ -2065,6 +2067,7 @@ mod tests {
                 tags: Vec::new(),
                 required_labels: Default::default(),
                 workspace_affinity: None,
+                execution_profile: None,
                 idempotency_key: Some(runinator_models::json!({
                     "$ref": { "input": ["request_id"] }
                 })),
@@ -2110,6 +2113,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: Default::default(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         };
@@ -2203,6 +2207,7 @@ mod tests {
             tags: Vec::new(),
             required_labels: Default::default(),
             workspace_affinity: None,
+            execution_profile: None,
             idempotency_key: None,
             function_binding: None,
         };
@@ -2258,6 +2263,7 @@ mod tests {
                 tags: Vec::new(),
                 required_labels: Default::default(),
                 workspace_affinity: None,
+                execution_profile: None,
                 idempotency_key: None,
                 function_binding: None,
             },

@@ -59,6 +59,7 @@ fn execution_request(package: &std::path::Path, parameters: Value) -> ProviderEx
         events_jsonl_path: String::new(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     }
 }
 

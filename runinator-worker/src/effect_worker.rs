@@ -194,6 +194,7 @@ async fn process_provider_effect(
         tags,
         required_labels,
         workspace_affinity,
+        execution_profile,
         idempotency_key,
         function_binding,
         ..
@@ -265,6 +266,32 @@ async fn process_provider_effect(
         input
     };
     let input = crate::file_inputs::materialize(&api_client, command.effect_id, input).await?;
+    let profile_lease = match execution_profile.as_ref() {
+        Some(binding) => {
+            match crate::execution_profiles::materialize(&api_client, command.effect_id, binding)
+                .await
+            {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    publish_terminal(
+                        broker.as_ref(),
+                        result_outbox.as_ref(),
+                        &command,
+                        WorkflowEffectStatus::Failed,
+                        None,
+                        Some(format!("execution profile unavailable: {error}")),
+                    )
+                    .await?;
+                    broker
+                        .ack_effect(consumer, delivery.delivery_id)
+                        .await
+                        .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+                    return Ok(());
+                }
+            }
+        }
+        None => None,
+    };
     let workspace_affinity = expose_workspace_path(workspace_affinity).await?;
     let configuration = WorkflowObject::from_value(input.clone()).map_err(|message| {
         Box::new(std::io::Error::new(
@@ -293,9 +320,61 @@ async fn process_provider_effect(
         tags,
         required_labels,
         workspace_affinity,
+        execution_profile,
         idempotency_key: idempotency_key.clone(),
         function_binding,
     };
+    if let Some(lease) = profile_lease.as_ref() {
+        let metadata =
+            crate::executor::execution_profile_metadata(&providers, libraries.as_ref(), &action)
+                .map_err(std::io::Error::other)?;
+        if metadata.execution_profile
+            == runinator_models::providers::ExecutionProfileSupport::Unsupported
+        {
+            publish_terminal(
+                broker.as_ref(),
+                result_outbox.as_ref(),
+                &command,
+                WorkflowEffectStatus::Failed,
+                None,
+                Some(format!(
+                    "provider '{}' does not support isolated execution profiles",
+                    action.provider
+                )),
+            )
+            .await?;
+            broker
+                .ack_effect(consumer, delivery.delivery_id)
+                .await
+                .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+            return Ok(());
+        }
+        let missing = metadata
+            .credential_scopes
+            .iter()
+            .filter(|scope| !lease.credential_scopes.contains(scope))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            publish_terminal(
+                broker.as_ref(),
+                result_outbox.as_ref(),
+                &command,
+                WorkflowEffectStatus::Failed,
+                None,
+                Some(format!(
+                    "execution profile does not satisfy provider credential scopes: {}",
+                    missing.join(", ")
+                )),
+            )
+            .await?;
+            broker
+                .ack_effect(consumer, delivery.delivery_id)
+                .await
+                .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+            return Ok(());
+        }
+    }
     let provider_name = action.provider.clone();
     let function_name = action.function.clone();
     runinator_observability::tui::activity(
@@ -423,6 +502,7 @@ async fn process_provider_effect(
         command.effect_id,
         input,
         provider_key,
+        profile_lease.as_ref().map(|lease| lease.context.clone()),
         Some(output_sink.clone()),
         token.clone(),
     )

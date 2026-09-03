@@ -6,6 +6,49 @@
 
 use super::*;
 
+#[tauri::command]
+pub async fn list_execution_profiles(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "execution_profiles").await
+}
+
+#[tauri::command]
+pub async fn put_execution_profile(
+    state: State<'_, CommandCenterState>,
+    profile_id: String,
+    profile: Value,
+) -> CommandResult<Value> {
+    put_json(
+        &state,
+        &format!("execution_profiles/{profile_id}"),
+        &profile,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_execution_profile(
+    state: State<'_, CommandCenterState>,
+    profile_id: String,
+) -> CommandResult<Value> {
+    crate::client::delete(&state, &format!("execution_profiles/{profile_id}")).await
+}
+
+#[tauri::command]
+pub async fn rotate_execution_profile(
+    state: State<'_, CommandCenterState>,
+    profile_id: String,
+) -> CommandResult<Value> {
+    post_empty(&state, &format!("execution_profiles/{profile_id}/rotate")).await
+}
+
+#[tauri::command]
+pub async fn test_execution_profile(
+    state: State<'_, CommandCenterState>,
+    profile_id: String,
+) -> CommandResult<Value> {
+    post_empty(&state, &format!("execution_profiles/{profile_id}/test")).await
+}
+
 // ---- packaged functions ----
 
 #[tauri::command]

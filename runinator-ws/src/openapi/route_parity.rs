@@ -69,6 +69,10 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../runinator-ws-authoring/src/handlers/credentials.rs"),
     ),
     (
+        "runinator-ws-authoring/handlers/execution_profiles",
+        include_str!("../../../runinator-ws-authoring/src/handlers/execution_profiles.rs"),
+    ),
+    (
         "runinator-ws-authoring/handlers/functions",
         include_str!("../../../runinator-ws-authoring/src/handlers/functions.rs"),
     ),

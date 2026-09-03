@@ -1,0 +1,325 @@
+//! Provider-agnostic, file-backed execution identities.
+//!
+//! Profiles describe how an enrolled desktop agent collects credential material and how a worker
+//! exposes one immutable publication to a provider effect. Blob locations and plaintext bytes are
+//! deliberately absent from every public shape in this module.
+
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::validation::{
+    LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, bounded_text, required_text,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileCommand {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub interactive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ExecutionProfileSource {
+    File {
+        path: String,
+        target: String,
+    },
+    Directory {
+        path: String,
+        #[serde(default = "default_glob")]
+        glob: String,
+        target: String,
+    },
+    Command {
+        command: ExecutionProfileCommand,
+        target: String,
+    },
+}
+
+fn default_glob() -> String {
+    "*".into()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileCollectionSpec {
+    #[serde(default = "default_spec_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub probe: Option<ExecutionProfileCommand>,
+    #[serde(default)]
+    pub refresh: Option<ExecutionProfileCommand>,
+    pub sources: Vec<ExecutionProfileSource>,
+}
+
+impl Default for ExecutionProfileCollectionSpec {
+    fn default() -> Self {
+        Self {
+            version: default_spec_version(),
+            probe: None,
+            refresh: None,
+            sources: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileExposureSpec {
+    #[serde(default = "default_spec_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub home_overlay: bool,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+}
+
+impl Default for ExecutionProfileExposureSpec {
+    fn default() -> Self {
+        Self {
+            version: default_spec_version(),
+            home_overlay: false,
+            environment: BTreeMap::new(),
+        }
+    }
+}
+
+const fn default_spec_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfile {
+    pub id: Uuid,
+    pub org_id: Option<Uuid>,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub credential_scopes: Vec<String>,
+    pub collection: ExecutionProfileCollectionSpec,
+    pub exposure: ExecutionProfileExposureSpec,
+    pub config_version: i64,
+    pub config_digest: String,
+    pub enabled: bool,
+    pub current_revision: Option<i64>,
+    pub current_digest: Option<String>,
+    pub current_publisher_id: Option<Uuid>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub refresh_requested_at: Option<DateTime<Utc>>,
+    pub health: ExecutionProfileHealth,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProfileHealth {
+    #[default]
+    Unpublished,
+    Ready,
+    Expiring,
+    Expired,
+    Error,
+    Disabled,
+}
+
+impl ExecutionProfileHealth {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unpublished => "unpublished",
+            Self::Ready => "ready",
+            Self::Expiring => "expiring",
+            Self::Expired => "expired",
+            Self::Error => "error",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "ready" => Self::Ready,
+            "expiring" => Self::Expiring,
+            "expired" => Self::Expired,
+            "error" => Self::Error,
+            "disabled" => Self::Disabled,
+            _ => Self::Unpublished,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileRevision {
+    pub profile_id: Uuid,
+    pub revision: i64,
+    pub digest: String,
+    pub size_bytes: i64,
+    pub publisher_id: Option<Uuid>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    /// Server-side encrypted blob URI. Never serialize it onto an HTTP response.
+    #[serde(skip_serializing, default)]
+    pub uri: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileBinding {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaterializedExecutionProfile {
+    pub profile_id: Uuid,
+    pub revision: i64,
+    pub root: String,
+    pub home: Option<String>,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfilePutRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub credential_scopes: Vec<String>,
+    pub collection: ExecutionProfileCollectionSpec,
+    #[serde(default)]
+    pub exposure: ExecutionProfileExposureSpec,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfilePublishRequest {
+    pub digest: String,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileStatusRequest {
+    pub health: ExecutionProfileHealth,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Validate for ExecutionProfilePutRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("name", &self.name, SHORT_TEXT_MAX)?;
+        bounded_text("description", &self.description, LONG_TEXT_MAX)?;
+        if self.credential_scopes.is_empty() {
+            return Err(ValidationError::new(
+                "credential_scopes",
+                "must declare at least one credential scope",
+            ));
+        }
+        for (index, scope) in self.credential_scopes.iter().enumerate() {
+            required_text(
+                &format!("credential_scopes[{index}]"),
+                scope,
+                SHORT_TEXT_MAX,
+            )?;
+        }
+        if self.collection.sources.is_empty() {
+            return Err(ValidationError::new(
+                "collection.sources",
+                "must contain at least one source",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ExecutionProfileStatusRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(error) = &self.error {
+            bounded_text("error", error, 512)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_bundle_path(path: &str) -> Result<(), String> {
+    crate::files::validate_relative_path(path)
+}
+
+pub fn validate_environment_template(value: &str) -> Result<(), String> {
+    if value.starts_with('/')
+        || value.as_bytes().get(1) == Some(&b':')
+        || value.contains("../")
+        || value.ends_with("/..")
+    {
+        return Err(
+            "environment paths must be rooted with ${PROFILE_ROOT} or ${PROFILE_HOME}".into(),
+        );
+    }
+    let remainder = value
+        .replace("${PROFILE_ROOT}", "")
+        .replace("${PROFILE_HOME}", "");
+    if remainder.contains("${") {
+        return Err(
+            "environment values may reference only ${PROFILE_ROOT} and ${PROFILE_HOME}".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_configuration_round_trips() {
+        let request = ExecutionProfilePutRequest {
+            name: "github-default".into(),
+            description: "GitHub CLI session".into(),
+            credential_scopes: vec!["github".into(), "copilot".into()],
+            collection: ExecutionProfileCollectionSpec {
+                version: 1,
+                probe: Some(ExecutionProfileCommand {
+                    argv: vec!["gh".into(), "auth".into(), "status".into()],
+                    interactive: false,
+                }),
+                refresh: None,
+                sources: vec![ExecutionProfileSource::Directory {
+                    path: "~/.config/gh".into(),
+                    glob: "*.yml".into(),
+                    target: ".config/gh".into(),
+                }],
+            },
+            exposure: ExecutionProfileExposureSpec {
+                version: 1,
+                home_overlay: true,
+                environment: BTreeMap::from([(
+                    "GH_CONFIG_DIR".into(),
+                    "${PROFILE_HOME}/.config/gh".into(),
+                )]),
+            },
+            enabled: true,
+        };
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ExecutionProfilePutRequest>(encoded).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn exposure_rejects_uncontrolled_substitutions() {
+        assert!(validate_environment_template("${PROFILE_HOME}/.aws").is_ok());
+        assert!(validate_environment_template("${HOME}/.aws").is_err());
+        assert!(validate_bundle_path("../credentials").is_err());
+        assert!(validate_bundle_path(".aws/config").is_ok());
+    }
+}

@@ -49,6 +49,12 @@ pub(crate) fn run_claude_code(
     for (key, value) in &params.env {
         command.env(key, value);
     }
+    if let Some(profile) = &request.execution_profile {
+        if let Some(home) = &profile.home {
+            command.env("HOME", home);
+        }
+        command.envs(&profile.environment);
+    }
 
     let mut child = command
         .spawn()
@@ -95,6 +101,14 @@ fn run_claude_interactive(
     }
     for (key, value) in &params.env {
         command.env(key, value);
+    }
+    if let Some(profile) = &request.execution_profile {
+        if let Some(home) = &profile.home {
+            command.env("HOME", home);
+        }
+        for (key, value) in &profile.environment {
+            command.env(key, value);
+        }
     }
     let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
     let status = match terminal::run(command, sink, token, timeout) {

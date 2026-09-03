@@ -327,7 +327,7 @@ compensate_clause = { "compensate" ~ annotation* ~ action_stmt }
 // every step attribute is written `@name` or `@name(args)`, prefixed to the statement. there is
 // exactly one attribute surface: the fluent `.timeout(...)`/`.retry(...)` postfix chain is gone.
 // `@id`, `@skip`, `@lock`, and `@deadline` describe the graph node; `@timeout`, `@retry`, `@tags`,
-// `@mcp`, `@runner`, `@idempotent`, and `@reentry` describe the step's execution.
+// `@mcp`, `@runner`, `@profile`, `@idempotent`, and `@reentry` describe the step's execution.
 annotation = { "@" ~ ann_name ~ ("(" ~ mod_arg_list? ~ ")")? }
 ann_name   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 

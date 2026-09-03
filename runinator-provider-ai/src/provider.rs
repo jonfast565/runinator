@@ -4,8 +4,8 @@ use runinator_models::json;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata, RuninatorType,
+        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -59,8 +59,9 @@ impl Provider for AiCommandProvider {
                 .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
             ],
             metadata: ProviderRuntimeMetadata {
-                credential_scopes: Vec::new(),
+                credential_scopes: vec!["claude".into()],
                 contract: Some("stdin/stdout JSON".into()),
+                execution_profile: ExecutionProfileSupport::Subprocess,
             },
         }
     }

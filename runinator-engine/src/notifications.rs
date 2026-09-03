@@ -443,6 +443,7 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
                 tags: Vec::new(),
                 required_labels: Default::default(),
                 workspace_affinity: None,
+                execution_profile: None,
                 idempotency_key: None,
                 function_binding: None,
             },

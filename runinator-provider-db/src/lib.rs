@@ -252,6 +252,7 @@ impl Provider for DbProvider {
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["db".into()],
                 contract: None,
+                execution_profile: Default::default(),
             },
         }
     }

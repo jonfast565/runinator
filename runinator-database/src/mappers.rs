@@ -13,6 +13,10 @@ use runinator_models::{
         ConsoleSession,
     },
     errors::SendableError,
+    execution_profiles::{
+        ExecutionProfile, ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
+        ExecutionProfileHealth, ExecutionProfileRevision,
+    },
     files::{FileDescriptor, FileScope, StoredFile},
     functions::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
@@ -110,8 +114,10 @@ mod core;
 pub use core::*;
 mod console;
 pub use console::*;
+mod execution_profiles;
 mod files;
 mod functions;
+pub use execution_profiles::*;
 pub use files::*;
 pub use functions::*;
 mod workflow_vm;

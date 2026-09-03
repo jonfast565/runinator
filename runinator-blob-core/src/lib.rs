@@ -40,6 +40,9 @@ pub const RUN_ARTIFACT_BUCKET: &str = "runinator-run-artifacts";
 /// the bucket holding user-uploaded workflow input files and reusable library revisions.
 pub const WORKFLOW_FILE_BUCKET: &str = "runinator-workflow-files";
 
+/// Encrypted, immutable execution-profile publications.
+pub const EXECUTION_PROFILE_BUCKET: &str = "runinator-execution-profiles";
+
 /// URI scheme stored for an artifact whose bytes are in a blob store.
 /// Older rows contain a local filesystem path instead.
 pub const BLOB_URI_SCHEME: &str = "blob";

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use aws_config::BehaviorVersion;
 use aws_config::meta::region::RegionProviderChain;
+use aws_credential_types::Credentials;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::Region;
 use aws_sdk_dynamodb::primitives::Blob;
@@ -13,7 +14,10 @@ use aws_sdk_dynamodb::types::AttributeValue;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use log::info;
-use runinator_models::{errors::SendableError, runs::NewRunArtifact};
+use runinator_models::{
+    errors::SendableError,
+    runs::{NewRunArtifact, ProviderExecutionRequest},
+};
 
 use crate::errors::{
     DYNAMO_TIMEOUT, INVALID_ATTRIBUTE_VALUE, MISSING_KEY_CONDITION, MISSING_PARTIQL_STATEMENT,
@@ -26,11 +30,28 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tokio::time;
 
 pub fn run_dynamo_dump(
-    parameters: JsonValue,
-    timeout_secs: i64,
+    execution: ProviderExecutionRequest,
 ) -> Result<DynamoDumpResult, SendableError> {
-    let request: DynamoDumpRequest = serde_json::from_value(parameters).map_err(to_sendable)?;
-    let timeout = normalize_timeout(timeout_secs);
+    let mut request: DynamoDumpRequest =
+        serde_json::from_value(execution.parameters.into()).map_err(to_sendable)?;
+    let timeout = normalize_timeout(execution.timeout_secs);
+    let credentials = execution
+        .execution_profile
+        .as_ref()
+        .map(export_profile_credentials)
+        .transpose()?;
+    if request.region.is_none() {
+        request.region = execution
+            .execution_profile
+            .as_ref()
+            .and_then(|profile| {
+                profile
+                    .environment
+                    .get("AWS_REGION")
+                    .or_else(|| profile.environment.get("AWS_DEFAULT_REGION"))
+            })
+            .cloned();
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -38,16 +59,52 @@ pub fn run_dynamo_dump(
         .build()
         .map_err(to_sendable)?;
 
-    runtime.block_on(async move { execute_dump(request, timeout).await })
+    runtime.block_on(async move { execute_dump(request, timeout, credentials).await })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ExportedCredentials {
+    access_key_id: String,
+    secret_access_key: String,
+    #[serde(default)]
+    session_token: Option<String>,
+}
+
+fn export_profile_credentials(
+    profile: &runinator_models::execution_profiles::MaterializedExecutionProfile,
+) -> Result<Credentials, SendableError> {
+    let mut command = std::process::Command::new("aws");
+    command.args(["configure", "export-credentials", "--format", "process"]);
+    if let Some(home) = &profile.home {
+        command.env("HOME", home);
+    }
+    command.envs(&profile.environment);
+    let output = command.output().map_err(to_sendable)?;
+    if !output.status.success() {
+        return Err(to_sendable(std::io::Error::other(format!(
+            "AWS credential export failed with {}",
+            output.status
+        ))));
+    }
+    let value: ExportedCredentials = serde_json::from_slice(&output.stdout).map_err(to_sendable)?;
+    Ok(Credentials::new(
+        value.access_key_id,
+        value.secret_access_key,
+        value.session_token,
+        None,
+        "runinator-execution-profile",
+    ))
 }
 
 async fn execute_dump(
     request: DynamoDumpRequest,
     timeout: Duration,
+    credentials: Option<Credentials>,
 ) -> Result<DynamoDumpResult, SendableError> {
     let timeout_secs = timeout.as_secs();
     let fut = async {
-        let client = build_client(&request).await?;
+        let client = build_client(&request, credentials).await?;
         let items = match request.query_type {
             DynamoQueryType::Query => query_items(&client, &request).await?,
             DynamoQueryType::Partiql => execute_partiql(&client, &request).await?,
@@ -71,7 +128,10 @@ async fn execute_dump(
     }
 }
 
-async fn build_client(request: &DynamoDumpRequest) -> Result<Client, SendableError> {
+async fn build_client(
+    request: &DynamoDumpRequest,
+    credentials: Option<Credentials>,
+) -> Result<Client, SendableError> {
     let explicit_region = request
         .region
         .as_ref()
@@ -81,10 +141,11 @@ async fn build_client(request: &DynamoDumpRequest) -> Result<Client, SendableErr
         .or_default_provider()
         .or_else("us-east-1");
 
-    let shared_config = aws_config::defaults(BehaviorVersion::v2026_01_12())
-        .region(region_provider)
-        .load()
-        .await;
+    let mut loader = aws_config::defaults(BehaviorVersion::v2026_01_12()).region(region_provider);
+    if let Some(credentials) = credentials {
+        loader = loader.credentials_provider(credentials);
+    }
+    let shared_config = loader.load().await;
 
     Ok(Client::new(&shared_config))
 }

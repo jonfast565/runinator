@@ -5,8 +5,8 @@ use log::info;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata, RuninatorType,
+        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -60,6 +60,7 @@ impl Provider for AwsProvider {
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["aws".into()],
                 contract: None,
+                execution_profile: ExecutionProfileSupport::InProcess,
             },
         }
     }
@@ -74,8 +75,7 @@ impl Provider for AwsProvider {
 
         match request.action_function.as_str() {
             "dynamo_dump" => {
-                let result =
-                    dynamo::run_dynamo_dump(request.parameters.into(), request.timeout_secs)?;
+                let result = dynamo::run_dynamo_dump(request)?;
                 Ok(TaskExecutionResult {
                     message: Some(format!(
                         "Exported {} DynamoDB row(s) to {}",

@@ -2550,6 +2550,12 @@ fn apply_step_attribute(
                 .ok_or_else(|| RexRapError::syntax(span, "runner requires a string argument"))?;
             modifiers.runner = Some(expect_string(value, "runner")?);
         }
+        "profile" => {
+            let value = positional
+                .first()
+                .ok_or_else(|| RexRapError::syntax(span, "profile requires a string argument"))?;
+            modifiers.profile = Some(expect_string(value, "profile")?);
+        }
         "workspace" => {
             let value = positional.first().ok_or_else(|| {
                 RexRapError::syntax(span, "workspace requires an affinity expression")

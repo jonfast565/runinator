@@ -28,17 +28,10 @@ kubectl -n runinator scale deploy/runinator-ws --replicas=3
 kubectl -n runinator scale deploy/runinator-worker --replicas=3
 ```
 
-AWS and Claude credentials reach the worker pod via the `components/rotated-creds`
-component (enabled by this overlay), not a hostPath mount — Docker Desktop's local
-cluster schedules replicas across several nodes, so a node-local hostPath is only
-ever populated on whichever one you touched. `rotated-creds` instead mounts the
-`aws-sso-cache` and `claude-credentials` Secrets, which `tools/runinator-secret-sync`
-(run on your workstation, see `scripts/sync-secrets.sh` and `packs/creds-sync`) pushes
-into the cluster from your local AWS SSO cache and Claude Code Keychain login. Run
-that sync at least once after a fresh deploy (both Secrets are optional, so pods start
-without them — the AWS/Claude actions just fail until the sync has run). Set your real
-IAM Identity Center values in `deploy/k8s/components/rotated-creds/aws-config-configmap.yaml`
-if you need working AWS SSO locally.
+AWS, Claude, and other file/session logins use centrally configured execution profiles. An enrolled
+desktop agent collects an approved specification into an encrypted archive; the assigned worker
+materializes only the current revision into an effect-private directory. The local overlay therefore
+has no credential Secrets, ConfigMap, sync RBAC, or worker credential mounts.
 
 The archiver pod mounts a node-local archive directory at `/var/runinator/archive`,
 exposed inside the container at `/var/lib/runinator/archive`, so the compressed

@@ -16,6 +16,7 @@ fn test_approval_provider_execution() {
         events_jsonl_path: "".into(),
         idempotency_key: None,
         workspace_path: None,
+        execution_profile: None,
     };
 
     let result = provider

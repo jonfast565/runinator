@@ -15,6 +15,7 @@
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
     <ProvidersView v-if="app.activeTab === 'Providers'" />
+    <ExecutionProfilesView v-if="app.activeTab === 'ExecutionProfiles'" />
     <ReplicasView v-if="app.activeTab === 'Replicas'" />
     <ApprovalsView v-if="app.activeTab === 'Approvals'" />
     <NotificationsView v-if="app.activeTab === 'Notifications'" />
@@ -67,6 +68,9 @@ const ProfileSecurityView = defineAsyncComponent(
   () => import("./ui/views/ProfileSecurityView.vue"),
 );
 const ProvidersView = defineAsyncComponent(() => import("./ui/views/ProvidersView.vue"));
+const ExecutionProfilesView = defineAsyncComponent(
+  () => import("./ui/views/ExecutionProfilesView.vue"),
+);
 const ReplicasView = defineAsyncComponent(() => import("./ui/views/ReplicasView.vue"));
 const DevView = defineAsyncComponent(() => import("./ui/views/DevView.vue"));
 const WorkflowsView = defineAsyncComponent(() => import("./ui/views/WorkflowsView.vue"));

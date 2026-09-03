@@ -20,6 +20,18 @@ pub struct ProviderRuntimeMetadata {
     pub credential_scopes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<String>,
+    /// How this provider safely consumes an effect-private execution profile.
+    #[serde(default)]
+    pub execution_profile: ExecutionProfileSupport,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProfileSupport {
+    #[default]
+    Unsupported,
+    Subprocess,
+    InProcess,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

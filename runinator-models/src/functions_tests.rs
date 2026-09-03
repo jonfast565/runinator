@@ -100,6 +100,7 @@ fn a_workflow_action_round_trips_its_binding() {
         tags: Vec::new(),
         required_labels: Default::default(),
         workspace_affinity: None,
+        execution_profile: None,
         idempotency_key: None,
         function_binding: Some(entry().binding()),
     };
