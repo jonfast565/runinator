@@ -44,6 +44,7 @@ pub struct WebserverRuntime<T> {
     pub auth: crate::auth::AuthOptions,
     pub cors: crate::router::CorsConfig,
     pub rate_limit: crate::rate_limit::RateLimitConfig,
+    pub circuit_breaker: crate::circuit_breaker::CircuitBreakerConfig,
     pub overload: crate::overload::OverloadConfig,
     pub run_engine: bool,
     pub max_concurrent_ingress: usize,
@@ -62,6 +63,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         auth,
         cors,
         rate_limit,
+        circuit_breaker,
         overload,
         run_engine,
         max_concurrent_ingress,
@@ -216,6 +218,15 @@ pub async fn run_webserver<T: DatabaseImpl>(
             "HTTP API rate limiting is ENABLED"
         );
     }
+    if circuit_breaker.enabled {
+        info!(
+            failure_rate_threshold = circuit_breaker.failure_rate_threshold,
+            minimum_number_of_calls = circuit_breaker.minimum_number_of_calls,
+            sliding_window_size = circuit_breaker.sliding_window_size,
+            cooldown_seconds = circuit_breaker.cooldown.as_secs(),
+            "HTTP API circuit breakers are ENABLED"
+        );
+    }
     if overload.enabled {
         info!(
             max_concurrent_requests = overload.max_concurrent_requests,
@@ -238,6 +249,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         auth: auth_config,
         cors,
         rate_limit,
+        circuit_breaker,
         overload,
     });
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);

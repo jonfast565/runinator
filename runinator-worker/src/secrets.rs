@@ -10,7 +10,9 @@ use uuid::Uuid;
 /// configuration) that should fail the action.
 pub(crate) fn is_transient_secret_error(err: &SendableError) -> bool {
     match err.downcast_ref::<ApiError>() {
-        Some(ApiError::Request(_)) | Some(ApiError::Discovery(_)) => true,
+        Some(ApiError::Request(_))
+        | Some(ApiError::Discovery(_))
+        | Some(ApiError::CircuitOpen { .. }) => true,
         Some(ApiError::Http { status, .. }) => status.is_server_error(),
         _ => false,
     }

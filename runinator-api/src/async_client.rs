@@ -73,6 +73,8 @@ use runinator_models::{
     workspaces::WorkspaceLease,
 };
 use serde::de::DeserializeOwned;
+use tower::{service_fn, ServiceExt};
+use tower_resilience_circuitbreaker::{CircuitBreakerError, CircuitBreakerLayer, FnClassifier};
 use uuid::Uuid;
 
 use crate::{
@@ -89,6 +91,104 @@ const DEFAULT_REQUEST_TIMEOUT_SECONDS: u64 = 60;
 /// Default cap on establishing the TCP/TLS connection, separate from the overall request timeout so a
 /// dead host is detected quickly. Override with `RUNINATOR_API_CONNECT_TIMEOUT_SECONDS`.
 const DEFAULT_CONNECT_TIMEOUT_SECONDS: u64 = 10;
+const DEFAULT_CIRCUIT_FAILURE_THRESHOLD: usize = 5;
+const DEFAULT_CIRCUIT_COOLDOWN_SECONDS: u64 = 30;
+
+type HttpResult = std::result::Result<Response, reqwest::Error>;
+type HttpClassifier = fn(&HttpResult) -> bool;
+type HttpCircuitLayer = CircuitBreakerLayer<FnClassifier<HttpClassifier>>;
+
+/// The HTTP client's circuit state is shared by every clone of one API client. It intentionally
+/// remains process-local: service discovery or a process restart must not turn a transient remote
+/// problem into cluster-wide persisted unavailability.
+#[derive(Clone)]
+struct ApiCircuit {
+    enabled: bool,
+    cooldown: Duration,
+    layer: HttpCircuitLayer,
+}
+
+impl ApiCircuit {
+    fn from_env() -> Self {
+        let enabled = env_bool("RUNINATOR_API_CIRCUIT_BREAKER_ENABLED", true);
+        let failures = env_usize(
+            "RUNINATOR_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD",
+            DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
+        );
+        let cooldown = Duration::from_secs(env_u64(
+            "RUNINATOR_API_CIRCUIT_BREAKER_COOLDOWN_SECONDS",
+            DEFAULT_CIRCUIT_COOLDOWN_SECONDS,
+        ));
+        Self::new(enabled, failures, cooldown)
+    }
+
+    fn new(enabled: bool, failures: usize, cooldown: Duration) -> Self {
+        let (layer, _) = CircuitBreakerLayer::builder()
+            .name("runinator_api")
+            .consecutive_failures(failures)
+            .wait_duration_in_open(cooldown)
+            .permitted_calls_in_half_open(1)
+            .failure_classifier(outbound_failure as HttpClassifier)
+            .on_state_transition(|from, to| {
+                log::warn!("Runinator API circuit transitioned from {from:?} to {to:?}");
+                metrics::counter!(
+                    "runinator_api_circuit_breaker_transitions_total",
+                    "target" => "runinator_api",
+                    "from" => format!("{from:?}"),
+                    "to" => format!("{to:?}"),
+                )
+                .increment(1);
+            })
+            .on_call_rejected(|| {
+                log::warn!("Runinator API request rejected because the local circuit is open");
+                metrics::counter!(
+                    "runinator_api_circuit_breaker_rejections_total",
+                    "target" => "runinator_api",
+                )
+                .increment(1);
+            })
+            .build_with_handle();
+        Self {
+            enabled,
+            cooldown,
+            layer,
+        }
+    }
+}
+
+fn outbound_failure(result: &HttpResult) -> bool {
+    match result {
+        Ok(response) => {
+            response.status() == reqwest::StatusCode::REQUEST_TIMEOUT
+                || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || response.status().is_server_error()
+        }
+        Err(_) => true,
+    }
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
 
 fn env_duration(key: &str, default_seconds: u64) -> Duration {
     let seconds = std::env::var(key)
@@ -116,6 +216,7 @@ fn timed_client_builder() -> reqwest::ClientBuilder {
 #[derive(Clone)]
 pub struct AsyncApiClient<L> {
     client: Client,
+    circuit: ApiCircuit,
     locator: L,
 }
 
@@ -125,7 +226,7 @@ where
 {
     async fn get_json_path<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = self.build_url(path).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
@@ -133,7 +234,7 @@ where
     /// List console sessions visible to the authenticated principal.
     pub async fn console_sessions(&self) -> Result<Vec<ConsoleSession>> {
         let url = self.build_url("/console/sessions").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ConsoleSession>>().await?)
     }
@@ -142,9 +243,7 @@ where
     pub async fn create_console_session(&self, name: &str) -> Result<ConsoleSession> {
         let url = self.build_url("/console/sessions").await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "name": name }))
-            .send()
+            .send(self.http_post(url.clone()).json(&json!({ "name": name })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleSession>().await?)
@@ -155,7 +254,7 @@ where
         let url = self
             .build_url(&format!("/console/sessions/{session_id}"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleSessionDetail>().await?)
     }
@@ -169,7 +268,7 @@ where
         let url = self
             .build_url(&format!("/console/sessions/{session_id}/cells"))
             .await?;
-        let response = self.http_post(url.clone()).json(cell).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(cell)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleCell>().await?)
     }
@@ -179,7 +278,7 @@ where
         let url = self
             .build_url(&format!("/console/cells/{cell_id}/run"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleCell>().await?)
     }
@@ -187,7 +286,7 @@ where
     /// Read and, when terminal, settle a console cell.
     pub async fn console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
         let url = self.build_url(&format!("/console/cells/{cell_id}")).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleCell>().await?)
     }
@@ -197,7 +296,7 @@ where
         let url = self
             .build_url(&format!("/console/cells/{cell_id}/cancel"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
@@ -206,7 +305,7 @@ where
         let url = self
             .build_url(&format!("/console/cells/{cell_id}/replay"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ConsoleCell>().await?)
     }
@@ -227,14 +326,14 @@ where
             path.push_str(&format!("?version={version}"));
         }
         let url = self.build_url(&path).await?;
-        let response = self.http_post(url.clone()).json(input).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(input)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
 
     pub async fn fetch_pipelines(&self) -> Result<Vec<Pipeline>> {
         let url = self.build_url("/pipelines").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<Pipeline>>().await?)
     }
@@ -269,13 +368,11 @@ where
             .build_url(&format!("/pipelines/{pipeline_id}/runs"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "parameters": parameters,
                 "revision": revision,
                 "start_member": start_member,
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRun>().await?)
@@ -323,7 +420,7 @@ where
                 query.append_pair("limit", &limit.to_string());
             }
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
@@ -385,13 +482,11 @@ where
             .build_url(&format!("/orchestrations/{id}/aliases"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "source": source,
                 "scope": scope,
                 "correlation_key": correlation_key,
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
@@ -405,7 +500,7 @@ where
         let url = self
             .build_url(&format!("/orchestrations/{id}/aliases/{alias_id}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
@@ -422,14 +517,12 @@ where
             .build_url(&format!("/orchestrations/{id}/intents"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "intent": intent,
                 "payload": payload,
                 "reason": reason,
                 "idempotency_key": idempotency_key,
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
@@ -445,9 +538,10 @@ where
             .build_url(&format!("/orchestrations/{id}/requeue"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "reason": reason, "idempotency_key": idempotency_key }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "reason": reason, "idempotency_key": idempotency_key })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
@@ -491,7 +585,9 @@ where
             .map(|id| format!("/orchestrations/adapters/{id}"))
             .unwrap_or_else(|| "/orchestrations/adapters".into());
         let url = self.build_url(&path).await?;
-        let response = self.http_post(url.clone()).json(definition).send().await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(definition))
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
@@ -500,7 +596,7 @@ where
         let url = self
             .build_url(&format!("/orchestrations/adapters/{id}/test"))
             .await?;
-        let response = self.http_post(url.clone()).json(sample).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(sample)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
@@ -509,35 +605,37 @@ where
         let url = self
             .build_url(&format!("/orchestrations/adapters/{id}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
 
     pub async fn reload_orchestration_adapters(&self) -> Result<Value> {
         let url = self.build_url("/orchestrations/adapters/reload").await?;
-        let response = self.http_post(url.clone()).json(&json!({})).send().await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({})))
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
     }
 
     pub async fn fetch_pipeline_run(&self, run_id: Uuid) -> Result<PipelineRunDetail> {
         let url = self.build_url(&format!("/pipeline_runs/{run_id}")).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRunDetail>().await?)
     }
 
     pub async fn delete_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
         let url = self.build_url(&format!("/pipeline_runs/{run_id}")).await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn fetch_pipeline(&self, pipeline_id: Uuid) -> Result<Pipeline> {
         let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Pipeline>().await?)
     }
@@ -548,8 +646,14 @@ where
             None => self.build_url("/pipelines").await?,
         };
         let response = match pipeline.id {
-            Some(_) => self.http_patch(url.clone()).json(pipeline).send().await?,
-            None => self.http_post(url.clone()).json(pipeline).send().await?,
+            Some(_) => {
+                self.send(self.http_patch(url.clone()).json(pipeline))
+                    .await?
+            }
+            None => {
+                self.send(self.http_post(url.clone()).json(pipeline))
+                    .await?
+            }
         };
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Pipeline>().await?)
@@ -567,7 +671,7 @@ where
             url.query_pairs_mut()
                 .append_pair("limit", &limit.to_string());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<PipelineRevision>>().await?)
     }
@@ -580,14 +684,14 @@ where
         let url = self
             .build_url(&format!("/pipelines/{pipeline_id}/revisions/{revision}"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRevision>().await?)
     }
 
     pub async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<()> {
         let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         Self::handle_response(url, response).await?;
         Ok(())
     }
@@ -598,7 +702,7 @@ where
             None => "/pipeline_runs".to_string(),
         };
         let url = self.build_url(&path).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<PipelineRun>>().await?)
     }
@@ -607,7 +711,7 @@ where
         let url = self
             .build_url(&format!("/pipeline_runs/{run_id}/cancel"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
@@ -617,7 +721,7 @@ where
             .build_url(&format!("/pipeline_runs/{run_id}/pause"))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_post(url).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_post(url)).await?).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
@@ -626,7 +730,7 @@ where
             .build_url(&format!("/pipeline_runs/{run_id}/resume"))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_post(url).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_post(url)).await?).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
@@ -642,13 +746,11 @@ where
             .build_url(&format!("/pipeline_runs/{run_id}/resolve"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "decision": decision,
                 "resolved_by": resolved_by,
                 "message": message,
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRun>().await?)
@@ -670,9 +772,10 @@ where
             .push(member_key)
             .push("retry");
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "parameters": parameters }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "parameters": parameters })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json().await?)
@@ -682,7 +785,7 @@ where
     /// configured API credential, if any, is irrelevant to the proof inside `request`.
     pub async fn enroll_agent(&self, request: &EnrollAgentRequest) -> Result<EnrollAgentResponse> {
         let url = self.build_url("/agents/enroll").await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<EnrollAgentResponse>().await?)
     }
@@ -692,7 +795,7 @@ where
         request: &CreateAgentEnrollmentTokenRequest,
     ) -> Result<CreateAgentEnrollmentTokenResponse> {
         let url = self.build_url("/agents/enrollment_tokens").await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response
             .json::<CreateAgentEnrollmentTokenResponse>()
@@ -701,7 +804,7 @@ where
 
     pub async fn list_agent_enrollment_tokens(&self) -> Result<Vec<AgentEnrollmentToken>> {
         let url = self.build_url("/agents/enrollment_tokens").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<AgentEnrollmentToken>>().await?)
     }
@@ -710,14 +813,14 @@ where
         let url = self
             .build_url(&format!("/agents/enrollment_tokens/{token_id}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn list_agent_machines(&self) -> Result<Vec<AgentMachineEnrollment>> {
         let url = self.build_url("/agents/machines").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<AgentMachineEnrollment>>().await?)
     }
@@ -726,7 +829,7 @@ where
         let url = self
             .build_url(&format!("/agents/machines/{machine_id}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
@@ -735,7 +838,7 @@ where
         let url = self
             .build_url(&format!("/replicas/{replica_id}/kick"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaRecord>().await?)
     }
@@ -750,9 +853,10 @@ where
             .build_url(&format!("/replicas/{replica_id}/directives"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "kind": kind, "expires_in_seconds": expires_in_seconds }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "kind": kind, "expires_in_seconds": expires_in_seconds })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<AgentDirectiveRecord>().await?)
@@ -770,7 +874,7 @@ where
             url.query_pairs_mut()
                 .append_pair("limit", &limit.to_string());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<AgentDirectiveRecord>>().await?)
     }
@@ -778,7 +882,11 @@ where
     /// Construct a client with default request/connect timeouts applied.
     pub fn new(locator: L) -> reqwest::Result<Self> {
         let client = timed_client_builder().build()?;
-        Ok(Self { client, locator })
+        Ok(Self {
+            client,
+            circuit: ApiCircuit::from_env(),
+            locator,
+        })
     }
 
     /// Construct a client that presents `token` as `Authorization: Bearer …` on every request. A
@@ -795,13 +903,41 @@ where
         }
         Ok(Self {
             client: builder.build()?,
+            circuit: ApiCircuit::from_env(),
             locator,
         })
     }
 
     /// Construct a client using a preconfigured HTTP client instance.
     pub fn with_client(locator: L, client: Client) -> Self {
-        Self { client, locator }
+        Self {
+            client,
+            circuit: ApiCircuit::from_env(),
+            locator,
+        }
+    }
+
+    /// Send one request through the shared client-side circuit. A circuit-open result is explicit
+    /// rather than a synthetic remote response: callers can distinguish a request never sent from
+    /// an actual web-service `503` and defer work for the advertised cooldown.
+    async fn send(&self, builder: reqwest::RequestBuilder) -> Result<Response> {
+        let request = builder.build()?;
+        if !self.circuit.enabled {
+            return Ok(self.client.execute(request).await?);
+        }
+        let client = self.client.clone();
+        let service = service_fn(move |request| {
+            let client = client.clone();
+            async move { client.execute(request).await }
+        });
+        match self.circuit.layer.layer_fn(service).oneshot(request).await {
+            Ok(response) => Ok(response),
+            Err(CircuitBreakerError::OpenCircuit) => Err(ApiError::CircuitOpen {
+                target: "runinator_api".into(),
+                retry_after_seconds: self.circuit.cooldown.as_secs().max(1),
+            }),
+            Err(CircuitBreakerError::Inner(error)) => Err(ApiError::Request(error)),
+        }
     }
 
     // inject the active w3c trace context (e.g. `traceparent`) into an outbound request so the web
@@ -836,7 +972,7 @@ where
     /// Fetch provider/action metadata for task authoring.
     pub async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
         let url = self.build_url(API_PROVIDERS).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ProviderMetadata>>().await?)
     }
@@ -844,7 +980,9 @@ where
     /// Register provider/action metadata with the web service.
     pub async fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
         let url = self.build_url(API_PROVIDERS).await?;
-        let response = self.http_post(url.clone()).json(provider).send().await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(provider))
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ProviderMetadata>().await?)
     }
@@ -854,7 +992,7 @@ where
         request: &ReplicaRegistrationRequest,
     ) -> Result<ReplicaRecord> {
         let url = self.build_url(&format!("{API_REPLICAS}/register")).await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaRecord>().await?)
     }
@@ -865,7 +1003,7 @@ where
         request: &ReplicaHeartbeatRequest,
     ) -> Result<ReplicaRecord> {
         let url = self.build_url(&api_replica_heartbeat(replica_id)).await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaRecord>().await?)
     }
@@ -876,7 +1014,7 @@ where
         request: &ReplicaOfflineRequest,
     ) -> Result<ReplicaRecord> {
         let url = self.build_url(&api_replica_offline(replica_id)).await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaRecord>().await?)
     }
@@ -887,7 +1025,7 @@ where
         request: &ReplicaProviderRegistrationRequest,
     ) -> Result<ReplicaProviderRegistration> {
         let url = self.build_url(&api_replica_providers(replica_id)).await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaProviderRegistration>().await?)
     }
@@ -897,7 +1035,7 @@ where
         replica_id: Uuid,
     ) -> Result<Vec<ReplicaProviderRegistration>> {
         let url = self.build_url(&api_replica_providers(replica_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ReplicaProviderRegistration>>().await?)
     }
@@ -915,7 +1053,7 @@ where
         if let Some(status) = status {
             url.query_pairs_mut().append_pair("status", status.as_str());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaListResponse>().await?)
     }
@@ -933,7 +1071,7 @@ where
             url.query_pairs_mut()
                 .append_pair("since_seconds", &since_seconds.to_string());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaSampleSeries>().await?)
     }
@@ -941,7 +1079,7 @@ where
     /// list configured node-provisioning backends and the kinds they support.
     pub async fn fetch_node_backends(&self) -> Result<NodeBackendsResponse> {
         let url = self.build_url("/nodes/backends").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<NodeBackendsResponse>().await?)
     }
@@ -949,7 +1087,7 @@ where
     /// list current node groups (desired/available counts) across every backend.
     pub async fn fetch_nodes(&self) -> Result<Vec<ProvisionedGroup>> {
         let url = self.build_url("/nodes").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ProvisionedGroup>>().await?)
     }
@@ -957,7 +1095,7 @@ where
     /// set the desired node count for a kind on a backend.
     pub async fn scale_nodes(&self, request: &ScaleNodesRequest) -> Result<ProvisionedGroup> {
         let url = self.build_url("/nodes/scale").await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ProvisionedGroup>().await?)
     }
@@ -965,7 +1103,7 @@ where
     /// stop/remove a single provisioned node instance.
     pub async fn stop_node(&self, request: &StopNodeRequest) -> Result<Value> {
         let url = self.build_url("/nodes/stop").await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -974,9 +1112,7 @@ where
     pub async fn create_org(&self, name: &str) -> Result<Value> {
         let url = self.build_url("/orgs").await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "name": name }))
-            .send()
+            .send(self.http_post(url.clone()).json(&json!({ "name": name })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
@@ -985,7 +1121,7 @@ where
     /// list the caller's org memberships (org + role).
     pub async fn list_my_orgs(&self) -> Result<Value> {
         let url = self.build_url("/orgs/me").await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -994,9 +1130,10 @@ where
     pub async fn fetch_org_nodes(&self, org_id: Uuid) -> Result<Value> {
         let url = self.build_url(&format!("/orgs/{org_id}/nodes")).await?;
         let response = self
-            .http_get(url.clone())
-            .header("x-org-id", org_id.to_string())
-            .send()
+            .send(
+                self.http_get(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
@@ -1012,10 +1149,11 @@ where
             .build_url(&format!("/orgs/{org_id}/nodes/scale"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .header("x-org-id", org_id.to_string())
-            .json(request)
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .header("x-org-id", org_id.to_string())
+                    .json(request),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
@@ -1025,9 +1163,10 @@ where
     pub async fn fetch_org_usage(&self, org_id: Uuid) -> Result<Value> {
         let url = self.build_url(&format!("/orgs/{org_id}/usage")).await?;
         let response = self
-            .http_get(url.clone())
-            .header("x-org-id", org_id.to_string())
-            .send()
+            .send(
+                self.http_get(url.clone())
+                    .header("x-org-id", org_id.to_string()),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
@@ -1035,14 +1174,14 @@ where
 
     pub async fn fetch_workflow(&self, workflow_id: Uuid) -> Result<WorkflowDefinition> {
         let url = self.build_url(&api_workflow(workflow_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
 
     pub async fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>> {
         let url = self.build_url(API_WORKFLOWS).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowDefinition>>().await?)
     }
@@ -1050,7 +1189,7 @@ where
     pub async fn fetch_workflow_by_name(&self, name: &str) -> Result<WorkflowDefinition> {
         let mut url = self.build_url(API_WORKFLOWS).await?;
         url.query_pairs_mut().append_pair("name", name);
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
@@ -1064,8 +1203,14 @@ where
             None => self.build_url(API_WORKFLOWS).await?,
         };
         let response = match workflow.id {
-            Some(_) => self.http_patch(url.clone()).json(workflow).send().await?,
-            None => self.http_post(url.clone()).json(workflow).send().await?,
+            Some(_) => {
+                self.send(self.http_patch(url.clone()).json(workflow))
+                    .await?
+            }
+            None => {
+                self.send(self.http_post(url.clone()).json(workflow))
+                    .await?
+            }
         };
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
@@ -1082,7 +1227,7 @@ where
             url.query_pairs_mut()
                 .append_pair("limit", &limit.to_string());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRevision>>().await?)
     }
@@ -1096,7 +1241,7 @@ where
         let url = self
             .build_url(&api_workflow_revision(workflow_id, revision))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowRevision>().await?)
     }
@@ -1111,7 +1256,7 @@ where
         let url = self
             .build_url(&api_workflow_revision_restore(workflow_id, revision))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
@@ -1124,7 +1269,7 @@ where
     ) -> Result<WorkflowDefinition> {
         let mut url = self.build_url(&api_workflow_duplicate(workflow_id)).await?;
         url.query_pairs_mut().append_pair("bump", bump.as_str());
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
@@ -1134,7 +1279,9 @@ where
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition> {
         let url = self.build_url(API_WORKFLOWS_VALIDATE).await?;
-        let response = self.http_post(url.clone()).json(workflow).send().await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(workflow))
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
@@ -1147,7 +1294,7 @@ where
         request: &WorkflowSimulateRequest,
     ) -> Result<serde_json::Value> {
         let url = self.build_url(API_WORKFLOWS_SIMULATE).await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<serde_json::Value>().await?)
     }
@@ -1155,7 +1302,7 @@ where
     /// POST a typed bundle to its associated import endpoint.
     pub async fn import_bundle<B: Bundle>(&self, bundle: &B) -> Result<B> {
         let url = self.build_url(B::RESOURCE).await?;
-        let response = self.http_post(url.clone()).json(bundle).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(bundle)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<B>().await?)
     }
@@ -1223,10 +1370,11 @@ where
             url.set_query(Some("overwrite=true"));
         }
         let response = self
-            .http_post(url.clone())
-            .header(reqwest::header::CONTENT_TYPE, "application/zip")
-            .body(body)
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, "application/zip")
+                    .body(body),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PackImportResult>().await?)
@@ -1251,10 +1399,11 @@ where
             query.append_pair("mime_type", mime_type);
         }
         let response = self
-            .http_post(url.clone())
-            .header(reqwest::header::CONTENT_TYPE, mime_type)
-            .body(bytes)
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, mime_type)
+                    .body(bytes),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ArtifactContentResponse>().await?)
@@ -1265,7 +1414,7 @@ where
     /// List published function packages.
     pub async fn fetch_function_packages(&self) -> Result<Vec<FunctionPackage>> {
         let url = self.build_url(API_FUNCTIONS).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<FunctionPackage>>().await?)
     }
@@ -1275,7 +1424,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTIONS}/{package}"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionPackageDetail>().await?)
     }
@@ -1290,9 +1439,10 @@ where
             .build_url(&format!("/function_packages/{package_id}"))
             .await?;
         let response = self
-            .http_patch(url.clone())
-            .json(&json!({ "namespace": namespace, "name": name }))
-            .send()
+            .send(
+                self.http_patch(url.clone())
+                    .json(&json!({ "namespace": namespace, "name": name })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionPackage>().await?)
@@ -1301,7 +1451,7 @@ where
     /// The flattened catalog of every published export.
     pub async fn fetch_function_catalog(&self) -> Result<Vec<FunctionCatalogEntry>> {
         let url = self.build_url(API_FUNCTIONS_CATALOG).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<FunctionCatalogEntry>>().await?)
     }
@@ -1312,7 +1462,7 @@ where
         request: &NewFunctionVersion,
     ) -> Result<FunctionVersion> {
         let url = self.build_url(API_FUNCTIONS).await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionVersion>().await?)
     }
@@ -1322,7 +1472,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTIONS}/{package}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -1331,7 +1481,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTIONS}/{package}/restore"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -1348,7 +1498,7 @@ where
             .build_url(&format!("{API_FUNCTIONS}/{package}/aliases"))
             .await?;
         let body = json!({ "alias": alias, "version": version, "from_alias": from_alias });
-        let response = self.http_post(url.clone()).json(&body).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(&body)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionAlias>().await?)
     }
@@ -1358,7 +1508,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTIONS}/{package}/aliases/{alias}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -1371,7 +1521,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTION_EXPORTS}/{export_id}"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionInvocationTarget>().await?)
     }
@@ -1384,7 +1534,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -1402,10 +1552,11 @@ where
             .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .header(reqwest::header::CONTENT_TYPE, ARTIFACT_MEDIA_TYPE)
-            .body(bytes)
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .header(reqwest::header::CONTENT_TYPE, ARTIFACT_MEDIA_TYPE)
+                    .body(bytes),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FunctionArtifact>().await?)
@@ -1416,7 +1567,7 @@ where
         let url = self
             .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}/content"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())
     }
@@ -1426,7 +1577,7 @@ where
         let url = self
             .build_url(&format!("{API_WORKFLOW_FILES}/{file_id}/content"))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())
     }
@@ -1441,7 +1592,7 @@ where
             .await?;
         url.query_pairs_mut()
             .append_pair("consumer_run_id", &run_id.to_string());
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())
     }
@@ -1452,7 +1603,7 @@ where
             .build_url(&format!("{API_EXECUTION_PROFILES}/resolve"))
             .await?;
         url.query_pairs_mut().append_pair("name", name);
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ExecutionProfile>().await?)
     }
@@ -1468,7 +1619,7 @@ where
         url.query_pairs_mut()
             .append_pair("name", name)
             .append_pair("consumer_run_id", &run_id.to_string());
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ExecutionProfile>().await?)
     }
@@ -1489,7 +1640,7 @@ where
             .await?;
         url.query_pairs_mut()
             .append_pair("consumer_run_id", &run_id.to_string());
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ExecutionProfile>().await?)
     }
@@ -1507,7 +1658,7 @@ where
         let url = self
             .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
             .await?;
-        let response = self.http_put(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_put(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ExecutionProfile>().await?)
     }
@@ -1516,7 +1667,7 @@ where
         let url = self
             .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -1525,7 +1676,7 @@ where
         let url = self
             .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/rotate"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -1534,7 +1685,7 @@ where
         let url = self
             .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/test"))
             .await?;
-        let response = self.http_post(url.clone()).send().await?;
+        let response = self.send(self.http_post(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -1558,13 +1709,14 @@ where
             }
         }
         let response = self
-            .http_post(url.clone())
-            .header(
-                "content-type",
-                "application/vnd.runinator.execution-profile+zip",
+            .send(
+                self.http_post(url.clone())
+                    .header(
+                        "content-type",
+                        "application/vnd.runinator.execution-profile+zip",
+                    )
+                    .body(bytes),
             )
-            .body(bytes)
-            .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ExecutionProfileRevision>().await?)
@@ -1578,7 +1730,7 @@ where
         let url = self
             .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/status"))
             .await?;
-        let response = self.http_put(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_put(url.clone()).json(request)).await?;
         Self::handle_response(url, response).await?;
         Ok(())
     }
@@ -1590,7 +1742,7 @@ where
                 "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
             ))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())
     }
@@ -1608,7 +1760,7 @@ where
             .await?;
         url.query_pairs_mut()
             .append_pair("consumer_run_id", &run_id.to_string());
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())
     }
@@ -1625,7 +1777,7 @@ where
             .map(|id| format!("{}/export", api_workflow(id)))
             .unwrap_or_else(|| API_WORKFLOWS_EXPORT.into());
         let url = self.build_url(&path).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowBundle>().await?)
     }
@@ -1651,14 +1803,14 @@ where
 
     pub async fn fetch_workflow_triggers(&self, workflow_id: Uuid) -> Result<Vec<WorkflowTrigger>> {
         let url = self.build_url(&api_workflow_triggers(workflow_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowTrigger>>().await?)
     }
 
     pub async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>> {
         let url = self.build_url(API_WORKFLOW_TRIGGERS_DUE).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowTrigger>>().await?)
     }
@@ -1673,7 +1825,7 @@ where
         let url = self
             .build_url(&api_workflow_trigger_backfill(trigger_id))
             .await?;
-        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<BackfillResponse>().await?)
     }
@@ -1684,28 +1836,28 @@ where
             false => API_FREEZE_WINDOWS.to_string(),
         };
         let url = self.build_url(&path).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<FreezeWindow>>().await?)
     }
 
     pub async fn create_freeze_window(&self, window: &NewFreezeWindow) -> Result<FreezeWindow> {
         let url = self.build_url(API_FREEZE_WINDOWS).await?;
-        let response = self.http_post(url.clone()).json(window).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(window)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<FreezeWindow>().await?)
     }
 
     pub async fn delete_freeze_window(&self, window_id: Uuid) -> Result<TaskResponse> {
         let url = self.build_url(&api_freeze_window(window_id)).await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn fetch_workflow_trigger(&self, trigger_id: Uuid) -> Result<WorkflowTrigger> {
         let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowTrigger>().await?)
     }
@@ -1722,8 +1874,11 @@ where
             }
         };
         let response = match trigger.id {
-            Some(_) => self.http_patch(url.clone()).json(trigger).send().await?,
-            None => self.http_post(url.clone()).json(trigger).send().await?,
+            Some(_) => {
+                self.send(self.http_patch(url.clone()).json(trigger))
+                    .await?
+            }
+            None => self.send(self.http_post(url.clone()).json(trigger)).await?,
         };
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowTrigger>().await?)
@@ -1731,7 +1886,7 @@ where
 
     pub async fn delete_workflow_trigger(&self, trigger_id: Uuid) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
@@ -1746,9 +1901,10 @@ where
             .build_url(&api_workflow_trigger_runs(trigger_id))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "parameters": parameters, "debug": debug }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "parameters": parameters, "debug": debug })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
@@ -1780,9 +1936,10 @@ where
     ) -> Result<WorkflowRun> {
         let url = self.build_url(&api_workflow_runs(workflow_id)).await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "parameters": parameters, "debug": debug, "name": name }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "parameters": parameters, "debug": debug, "name": name })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
@@ -1802,7 +1959,7 @@ where
         let url = self
             .build_url(&format!("{API_WORKFLOW_RUNS}?status={}", status.as_str()))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRun>>().await?)
     }
@@ -1816,14 +1973,12 @@ where
     ) -> Result<Vec<WorkflowRun>> {
         let url = self.build_url(API_SCHEDULER_WORKFLOW_RUNS_CLAIM).await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "scheduler_id": scheduler_id,
                 "statuses": statuses,
                 "lease_until": lease_until,
                 "limit": limit
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRun>>().await?)
@@ -1839,9 +1994,10 @@ where
             .build_url(&api_scheduler_workflow_run_claim_renew(workflow_run_id))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "scheduler_id": scheduler_id, "lease_until": lease_until }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "scheduler_id": scheduler_id, "lease_until": lease_until })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -1856,9 +2012,10 @@ where
             .build_url(&api_scheduler_workflow_run_claim_release(workflow_run_id))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "scheduler_id": scheduler_id }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "scheduler_id": scheduler_id })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -1877,7 +2034,7 @@ where
             url.query_pairs_mut()
                 .append_pair("workflow_id", &workflow_id.to_string());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRun>>().await?)
     }
@@ -1891,7 +2048,7 @@ where
         url.query_pairs_mut()
             .append_pair("name", name)
             .append_pair("open", if open_only { "true" } else { "false" });
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRun>>().await?)
     }
@@ -1906,14 +2063,12 @@ where
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
         let response = self
-            .http_patch(url.clone())
-            .json(&json!({
+            .send(self.http_patch(url.clone()).json(&json!({
                 "status": status,
                 "active_node_id": active_node_id,
                 "state": state,
                 "message": message
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -1928,9 +2083,7 @@ where
             .build_url(&api_workflow_run_rename(workflow_run_id))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "name": name }))
-            .send()
+            .send(self.http_post(url.clone()).json(&json!({ "name": name })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -1960,9 +2113,10 @@ where
             .build_url(&api_workflow_run_replay(workflow_run_id))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "from_step_id": from_step_id }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "from_step_id": from_step_id })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
@@ -1983,14 +2137,16 @@ where
         let url = self
             .build_url(&api_workflow_run_command(workflow_run_id, command))
             .await?;
-        let response = self.http_post(url.clone()).json(&json!({})).send().await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({})))
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn fetch_workflow_run(&self, workflow_run_id: Uuid) -> Result<WorkflowRun> {
         let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
         serde_json::from_value(
@@ -2006,7 +2162,7 @@ where
         let url = self
             .build_url(&format!("/workflow_runs/{workflow_run_id}"))
             .await?;
-        let response = self.http_delete(url.clone()).send().await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
@@ -2021,7 +2177,8 @@ where
             .build_url(&api_workflow_run_continuations(workflow_run_id))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<Vec<WorkflowContinuation>>().await?)
     }
 
@@ -2033,7 +2190,8 @@ where
             .build_url(&api_workflow_continuation(continuation_id))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<WorkflowContinuation>().await?)
     }
 
@@ -2045,14 +2203,16 @@ where
             .build_url(&api_workflow_run_effects(workflow_run_id))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<Vec<WorkflowEffect>>().await?)
     }
 
     pub async fn fetch_workflow_effect(&self, effect_id: Uuid) -> Result<WorkflowEffect> {
         let url = self.build_url(&api_workflow_effect(effect_id)).await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<WorkflowEffect>().await?)
     }
 
@@ -2064,7 +2224,8 @@ where
             .build_url(&api_workflow_effect_output(effect_id))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<Vec<WorkflowEffectOutputEvent>>().await?)
     }
 
@@ -2079,9 +2240,10 @@ where
             .build_url(&format!("{}/settle", api_workflow_effect(effect_id)))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({ "status": status, "output": output, "message": message }))
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "status": status, "output": output, "message": message })),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -2095,7 +2257,8 @@ where
             .build_url(&api_workflow_run_journal(workflow_run_id))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<Vec<WorkflowJournalRecord>>().await?)
     }
 
@@ -2108,7 +2271,8 @@ where
             .build_url(&api_workflow_run_cursors(workflow_run_id))
             .await?;
         let response =
-            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+            Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
+                .await?;
         Ok(response.json::<Vec<WorkflowVmCursor>>().await?)
     }
 
@@ -2119,7 +2283,7 @@ where
         let url = self
             .build_url(&api_workflow_run_transitions(workflow_run_id))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response
             .json::<Vec<runinator_models::orchestration::NodeTransition>>()
@@ -2128,7 +2292,7 @@ where
 
     pub async fn fetch_supervisor_status(&self) -> Result<Value> {
         let url = self.build_url(API_SUPERVISOR_STATUS).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -2139,7 +2303,7 @@ where
             url.query_pairs_mut()
                 .append_pair("workflow_run_id", &workflow_run_id.to_string());
         }
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<Value>>().await?)
     }
@@ -2155,13 +2319,11 @@ where
             .build_url(&format!("{API_WORKFLOW_EFFECTS}/{effect_id}/settle"))
             .await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "status": if approved { "succeeded" } else { "failed" },
                 "message": message,
                 "output": output_json
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
@@ -2169,7 +2331,7 @@ where
 
     pub async fn create_automation_record(&self, path: &str, record: Value) -> Result<Value> {
         let url = self.build_url(path).await?;
-        let response = self.http_post(url.clone()).json(&record).send().await?;
+        let response = self.send(self.http_post(url.clone()).json(&record)).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -2185,7 +2347,7 @@ where
                 "{API_IDEMPOTENCY_KEYS}?scope={scope}&key={key}&consumer_run_id={consumer_run_id}"
             ))
             .await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -2204,15 +2366,13 @@ where
     ) -> Result<IdempotencyClaim> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS_CLAIM).await?;
         let response = self
-            .http_post(url.clone())
-            .json(&IdempotencyClaimRequest {
+            .send(self.http_post(url.clone()).json(&IdempotencyClaimRequest {
                 consumer_run_id,
                 scope: ACTION_IDEMPOTENCY_SCOPE.into(),
                 key: key.to_string(),
                 owner_node_run_id,
                 lease_seconds,
-            })
-            .send()
+            }))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<IdempotencyClaim>().await?)
@@ -2229,15 +2389,16 @@ where
     ) -> Result<bool> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS_COMPLETE).await?;
         let response = self
-            .http_post(url.clone())
-            .json(&IdempotencyCompleteRequest {
-                consumer_run_id,
-                scope: ACTION_IDEMPOTENCY_SCOPE.into(),
-                key: key.to_string(),
-                owner_node_run_id,
-                result,
-            })
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&IdempotencyCompleteRequest {
+                        consumer_run_id,
+                        scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                        key: key.to_string(),
+                        owner_node_run_id,
+                        result,
+                    }),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?.success)
@@ -2252,14 +2413,15 @@ where
     ) -> Result<bool> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS_RELEASE).await?;
         let response = self
-            .http_post(url.clone())
-            .json(&IdempotencyReleaseRequest {
-                consumer_run_id,
-                scope: ACTION_IDEMPOTENCY_SCOPE.into(),
-                key: key.to_string(),
-                owner_node_run_id,
-            })
-            .send()
+            .send(
+                self.http_post(url.clone())
+                    .json(&IdempotencyReleaseRequest {
+                        consumer_run_id,
+                        scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                        key: key.to_string(),
+                        owner_node_run_id,
+                    }),
+            )
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?.success)
@@ -2274,14 +2436,12 @@ where
     ) -> Result<Value> {
         let url = self.build_url(API_IDEMPOTENCY_KEYS).await?;
         let response = self
-            .http_post(url.clone())
-            .json(&json!({
+            .send(self.http_post(url.clone()).json(&json!({
                 "consumer_run_id": consumer_run_id,
                 "scope": scope,
                 "key": key,
                 "result": result
-            }))
-            .send()
+            })))
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
@@ -2292,7 +2452,7 @@ where
         url.query_pairs_mut()
             .append_pair("scope", scope)
             .append_pair("name", name);
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
         body.get("value")
@@ -2305,7 +2465,7 @@ where
     /// this path so moving the human-readable scope/name alias cannot break a queued action.
     pub async fn fetch_credential_by_id(&self, id: Uuid) -> Result<String> {
         let url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
         body.get("value")
@@ -2318,7 +2478,7 @@ where
         let mut url = self.build_url(&format!("/runtime/secrets/{id}")).await?;
         url.query_pairs_mut()
             .append_pair("consumer_run_id", &run_id.to_string());
-        let response = self.http_get(url.clone()).send().await?;
+        let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
         body.get("value")
@@ -2362,5 +2522,117 @@ where
                 message,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod resilience_tests {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        thread,
+    };
+
+    use super::*;
+
+    fn status_server(statuses: Vec<u16>) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let server_calls = calls.clone();
+        let task = thread::spawn(move || {
+            for status in statuses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request);
+                server_calls.fetch_add(1, Ordering::SeqCst);
+                let reason = if status == 200 { "OK" } else { "Test Failure" };
+                let body = if status == 200 { "{}" } else { "failure" };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        (format!("http://{address}"), calls, task)
+    }
+
+    #[test]
+    fn transient_upstream_failures_open_without_an_extra_network_call_and_a_probe_recovers() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (base_url, calls, server) = status_server(vec![500, 500, 200]);
+            let client = AsyncApiClient {
+                client: Client::new(),
+                circuit: ApiCircuit::new(true, 2, Duration::from_millis(1)),
+                locator: crate::locator::StaticLocator::new(base_url.clone()),
+            };
+
+            for _ in 0..2 {
+                let response = client
+                    .send(client.client.get(format!("{base_url}/failing")))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    reqwest::StatusCode::INTERNAL_SERVER_ERROR
+                );
+            }
+            let error = client
+                .send(client.client.get(format!("{base_url}/skipped")))
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                ApiError::CircuitOpen {
+                    retry_after_seconds: 1,
+                    ..
+                }
+            ));
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let response = client
+                .send(client.client.get(format!("{base_url}/probe")))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            assert_eq!(calls.load(Ordering::SeqCst), 3);
+            server.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn ordinary_upstream_4xx_responses_do_not_open_the_api_circuit() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (base_url, calls, server) = status_server(vec![400, 400, 400]);
+            let client = AsyncApiClient {
+                client: Client::new(),
+                circuit: ApiCircuit::new(true, 2, Duration::from_secs(1)),
+                locator: crate::locator::StaticLocator::new(base_url.clone()),
+            };
+            for _ in 0..3 {
+                let response = client
+                    .send(client.client.get(format!("{base_url}/client-error")))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 3);
+            server.join().unwrap();
+        });
     }
 }

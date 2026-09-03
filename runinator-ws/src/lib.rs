@@ -48,11 +48,13 @@ pub(crate) mod handlers {
 #[cfg(test)]
 pub(crate) use runinator_ws_core::responses;
 pub(crate) use runinator_ws_core::{events, models};
-pub(crate) use runinator_ws_middleware::{auth, overload, rate_limit};
+pub(crate) use runinator_ws_middleware::{auth, circuit_breaker, overload, rate_limit};
 
 pub use router::{CorsConfig, DEFAULT_CORS_ALLOWED_ORIGINS, RouterDependencies, build_router};
 pub use runinator_ws_core::{AppEvent, AppEventKind, EventSender};
-pub use runinator_ws_middleware::{AuthOptions, OverloadConfig, RateLimitConfig};
+pub use runinator_ws_middleware::{
+    AuthOptions, CircuitBreakerConfig, OverloadConfig, RateLimitConfig,
+};
 pub use server::{ReplicaAdvertisement, WebserverRuntime, run_webserver};
 
 #[cfg(test)]

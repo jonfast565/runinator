@@ -2337,6 +2337,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3242,6 +3256,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
 
 [[package]]
+name = "futures-timer"
+version = "3.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af43fadb8a98512d547e37b4e92e0ced13e205c061b87b4623eff01d918d6968"
+
+[[package]]
 name = "futures-util"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3613,6 +3633,29 @@ dependencies = [
  "glib-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "governor"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9efcab3c1958580ff1f25a2a41be1668f7603d849bb63af523b208a3cc1223b8"
+dependencies = [
+ "cfg-if",
+ "dashmap 6.2.1",
+ "futures-sink",
+ "futures-timer",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hashbrown 0.16.1",
+ "nonzero_ext",
+ "parking_lot",
+ "portable-atomic",
+ "quanta",
+ "rand 0.9.4",
+ "smallvec",
+ "spinning_top",
+ "web-time",
 ]
 
 [[package]]
@@ -5397,6 +5440,12 @@ checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "nonzero_ext"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
 name = "notify-rust"
@@ -7470,18 +7519,24 @@ dependencies = [
 
 [[package]]
 name = "runinator-adapter-client"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
+ "log",
+ "metrics",
  "reqwest",
  "runinator-adapter-contract",
  "runinator-models",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tower 0.5.3",
+ "tower-resilience-circuitbreaker",
 ]
 
 [[package]]
 name = "runinator-adapter-contract"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "constant_time_eq",
  "hmac 0.12.1",
@@ -7493,7 +7548,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-adapter-host"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -7514,7 +7569,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-adapter-sdk"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-adapter-contract",
  "runinator-models",
@@ -7523,11 +7578,12 @@ dependencies = [
 
 [[package]]
 name = "runinator-api"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "chrono",
  "log",
+ "metrics",
  "reqwest",
  "runinator-comm",
  "runinator-models",
@@ -7537,13 +7593,15 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tower 0.5.3",
+ "tower-resilience-circuitbreaker",
  "url",
  "uuid",
 ]
 
 [[package]]
 name = "runinator-archiver"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
@@ -7565,7 +7623,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-auth"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -7580,7 +7638,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-blob"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -7600,7 +7658,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-blob-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7618,7 +7676,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-bootstrap"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "clap",
  "runinator-database",
@@ -7631,7 +7689,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-broker"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -7658,7 +7716,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-broker-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7676,7 +7734,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-comm"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "log",
@@ -7689,7 +7747,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-command-center"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "mime_guess",
@@ -7716,7 +7774,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-compute"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -7730,7 +7788,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-console"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "runinator-rexrap",
@@ -7739,7 +7797,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ctl"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
@@ -7764,7 +7822,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ctl-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
@@ -7776,7 +7834,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ctl-wasm"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-ctl-core",
  "serde",
@@ -7787,7 +7845,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-data-export"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "csv",
  "runinator-models",
@@ -7796,7 +7854,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-database"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "croner",
@@ -7818,7 +7876,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-db-cli"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "clap",
  "runinator-database",
@@ -7827,7 +7885,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-desktop-agent"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -7862,7 +7920,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-e2e"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "reqwest",
  "runinator-api",
@@ -7875,7 +7933,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-engine"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7909,7 +7967,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-engine-worker"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
@@ -7931,7 +7989,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-lsp"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-api",
  "runinator-models",
@@ -7946,7 +8004,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-models"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "serde",
@@ -7958,7 +8016,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-observability"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "http 1.4.0",
@@ -7983,7 +8041,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-pack"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "runinator-models",
@@ -8000,7 +8058,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-pack-wire"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "serde",
@@ -8010,7 +8068,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-platform"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "log",
  "log-panics",
@@ -8021,7 +8079,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-plugin"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "libloading 0.9.0",
  "log",
@@ -8032,7 +8090,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-plugin-console"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "libc",
  "log",
@@ -8045,7 +8103,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-ai"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "runinator-platform",
@@ -8058,7 +8116,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-approval"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
@@ -8070,7 +8128,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-aws"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -8087,7 +8145,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-catalog"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
@@ -8107,7 +8165,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-console"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "log",
  "runinator-models",
@@ -8120,7 +8178,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-db"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -8137,7 +8195,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-email"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "lettre",
  "reqwest",
@@ -8151,7 +8209,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-functions"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
@@ -8163,7 +8221,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-git"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
@@ -8175,7 +8233,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-github"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "reqwest",
  "runinator-models",
@@ -8188,7 +8246,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-jira"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "reqwest",
  "runinator-models",
@@ -8201,7 +8259,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-local-files"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "mime_guess",
  "runinator-models",
@@ -8212,7 +8270,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-slack"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "reqwest",
  "runinator-models",
@@ -8225,7 +8283,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-std"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "reqwest",
@@ -8239,7 +8297,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provider-support"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.22.1",
  "portable-pty",
@@ -8251,7 +8309,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-provisioner"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "k8s-openapi",
@@ -8267,7 +8325,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-rexrap"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "runinator-models",
@@ -8283,7 +8341,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-rexrap-codegen"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-compute",
  "runinator-models",
@@ -8296,7 +8354,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-rexrap-ide"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-compute",
  "runinator-models",
@@ -8307,7 +8365,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-rexrap-sema"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-compute",
  "runinator-models",
@@ -8316,7 +8374,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-rexrap-syntax"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "pest",
  "pest_derive",
@@ -8327,7 +8385,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-runtime"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "runinator-comm",
@@ -8345,7 +8403,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-sandbox"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-models",
  "uuid",
@@ -8353,7 +8411,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-scheduling"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -8365,7 +8423,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-secrets"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chacha20poly1305",
  "chrono",
@@ -8378,7 +8436,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-service-bootstrap"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-blob",
  "runinator-broker",
@@ -8389,7 +8447,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-store"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "runinator-comm",
@@ -8399,7 +8457,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-supervisor"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
@@ -8411,7 +8469,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-waker"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
@@ -8427,7 +8485,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-worker"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -8460,7 +8518,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-workflows"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "runinator-compute",
  "runinator-models",
@@ -8471,7 +8529,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ws"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -8520,7 +8578,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ws-authoring"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -8553,7 +8611,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ws-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "chrono",
@@ -8572,7 +8630,7 @@ dependencies = [
 
 [[package]]
 name = "runinator-ws-identity"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -8595,11 +8653,13 @@ dependencies = [
 
 [[package]]
 name = "runinator-ws-middleware"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "chrono",
+ "governor",
  "log",
+ "metrics",
  "runinator-auth",
  "runinator-models",
  "runinator-store",
@@ -8607,12 +8667,13 @@ dependencies = [
  "tokio",
  "tower 0.5.3",
  "tower-http",
+ "tower-resilience-circuitbreaker",
  "uuid",
 ]
 
 [[package]]
 name = "runinator-ws-runtime"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "chrono",
@@ -9515,6 +9576,15 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
+name = "spinning_top"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
 dependencies = [
  "lock_api",
 ]
@@ -10833,7 +10903,7 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "bytes",
- "dashmap",
+ "dashmap 5.5.3",
  "futures",
  "httparse",
  "lsp-types",
@@ -10856,6 +10926,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tower-resilience-circuitbreaker"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f9c4698d8649f594ec1622c242e82f49ca431dfee5ec5579034f42d1ecb7acb"
+dependencies = [
+ "futures",
+ "thiserror 2.0.20",
+ "tokio",
+ "tower 0.5.3",
+ "tower-resilience-core",
+]
+
+[[package]]
+name = "tower-resilience-core"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d107b6131357c372c2ffe3a4b85931df6c51741effcad931b914b9e986f38dc2"
+dependencies = [
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -12993,7 +13086,7 @@ checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
 
 [[package]]
 name = "xtask"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "chrono",

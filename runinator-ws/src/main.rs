@@ -11,8 +11,8 @@ use runinator_service_bootstrap::{
 use uuid::Uuid;
 
 use runinator_ws::{
-    AuthOptions, CorsConfig, OverloadConfig, RateLimitConfig, ReplicaAdvertisement,
-    WebserverRuntime, run_webserver,
+    AuthOptions, CircuitBreakerConfig, CorsConfig, OverloadConfig, RateLimitConfig,
+    ReplicaAdvertisement, WebserverRuntime, run_webserver,
 };
 
 use crate::config::CliArgs;
@@ -73,6 +73,11 @@ async fn run_process() -> Result<(), SendableError> {
         rate_limit_enabled,
         rate_limit_rps,
         rate_limit_burst,
+        circuit_breaker_enabled,
+        circuit_breaker_failure_rate_threshold,
+        circuit_breaker_minimum_calls,
+        circuit_breaker_window_size,
+        circuit_breaker_cooldown_seconds,
         overload_protection_enabled,
         max_concurrent_requests,
         request_timeout_seconds,
@@ -99,6 +104,20 @@ async fn run_process() -> Result<(), SendableError> {
         requests_per_second: rate_limit_rps,
         burst: rate_limit_burst,
     };
+    rate_limit_options
+        .validate()
+        .map_err(|error| -> SendableError { error.into() })?;
+    let circuit_breaker_options = CircuitBreakerConfig {
+        enabled: circuit_breaker_enabled,
+        failure_rate_threshold: circuit_breaker_failure_rate_threshold,
+        minimum_number_of_calls: circuit_breaker_minimum_calls,
+        sliding_window_size: circuit_breaker_window_size,
+        cooldown: std::time::Duration::from_secs(circuit_breaker_cooldown_seconds),
+        permitted_calls_in_half_open: 1,
+    };
+    circuit_breaker_options
+        .validate()
+        .map_err(|error| -> SendableError { error.into() })?;
     let overload_options = OverloadConfig {
         enabled: overload_protection_enabled,
         max_concurrent_requests,
@@ -254,6 +273,7 @@ async fn run_process() -> Result<(), SendableError> {
             auth: auth_options.clone(),
             cors: cors_options.clone(),
             rate_limit: rate_limit_options,
+            circuit_breaker: circuit_breaker_options,
             overload: overload_options,
             run_engine,
             max_concurrent_ingress,

@@ -45,6 +45,22 @@ impl From<String> for PollFailure {
     }
 }
 
+impl From<runinator_adapter_client::AdapterClientError> for PollFailure {
+    fn from(error: runinator_adapter_client::AdapterClientError) -> Self {
+        match error {
+            runinator_adapter_client::AdapterClientError::CircuitOpen {
+                retry_after_seconds,
+            } => Self {
+                message: "adapter-host circuit is open".into(),
+                retry_after_seconds: i64::try_from(retry_after_seconds)
+                    .unwrap_or(MAX_INTERVAL_SECONDS)
+                    .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS),
+            },
+            error => Self::from(error.to_string()),
+        }
+    }
+}
+
 fn interval_seconds(configuration: &runinator_models::value::Value) -> i64 {
     configuration
         .get("poll_interval_seconds")

@@ -6,9 +6,12 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
+governor = "0.10.4"
 log = "0.4"
-tower = { version = "0.5", features = ["limit", "load-shed"] }
+metrics = "0.24"
+tower = { version = "0.5", features = ["limit", "load-shed", "util"] }
 tower-http = { version = "0.6.2", features = ["cors", "catch-panic", "timeout"] }
+tower-resilience-circuitbreaker = "0.12.0"
 uuid = { version = "1.18", features = ["v4"] }
 
 runinator-auth = { path = "../runinator-auth" }

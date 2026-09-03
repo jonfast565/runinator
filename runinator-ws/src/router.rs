@@ -24,6 +24,7 @@ use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
+use crate::circuit_breaker::{CircuitBreakerConfig, CircuitBreakers, circuit_breaker_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     adapters, agents, artifacts, auth, authz, automation, billing, catalog, catalog_metadata,
@@ -110,6 +111,7 @@ pub struct RouterDependencies<T> {
     pub auth: AuthConfig,
     pub cors: CorsConfig,
     pub rate_limit: RateLimitConfig,
+    pub circuit_breaker: CircuitBreakerConfig,
     pub overload: OverloadConfig,
 }
 
@@ -123,10 +125,12 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         auth,
         cors,
         rate_limit,
+        circuit_breaker,
         overload,
     } = dependencies;
     let auth_config_arc = Arc::new(auth);
     let rate_limiter = Arc::new(RateLimiter::new(rate_limit));
+    let circuit_breakers = Arc::new(CircuitBreakers::new(circuit_breaker));
     let run_operations = Arc::new(RunOperations::new(
         pool.clone(),
         broker.clone(),
@@ -234,6 +238,12 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         .layer(Extension(blobs))
         .layer(Extension(provisioner))
         .layer(Extension(auth_config_arc.clone()))
+        // Runs after authentication and rate limiting, before handler work. The selector owns no
+        // state machine; each route family delegates to a shared library circuit breaker.
+        .layer(from_fn_with_state(
+            circuit_breakers,
+            circuit_breaker_middleware,
+        ))
         // the rate limiter is layered inside the auth middleware so it can key by the resolved
         // principal; auth inserts the `AuthContext` before this layer runs.
         .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
@@ -338,7 +348,7 @@ async fn trace_propagation_middleware(
         crate::metrics::request_completed(
             metric_method,
             &metric_route,
-            response.status(),
+            &response,
             started.elapsed(),
         );
         let duration_ms = started.elapsed().as_millis() as u64;

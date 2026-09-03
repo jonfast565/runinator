@@ -51,6 +51,15 @@ pub enum ApiError {
     /// Building the compiled pack zip before upload failed.
     #[error("API007 - failed to build pack archive: {0}")]
     Pack(String),
+
+    /// The local client did not send a request because its upstream circuit is open.
+    #[error(
+        "API008 - Runinator API circuit for {target} is open; retry after {retry_after_seconds}s"
+    )]
+    CircuitOpen {
+        target: String,
+        retry_after_seconds: u64,
+    },
 }
 
 // numbered error dictionary for the API client crate.
@@ -74,6 +83,11 @@ pub const UNEXPECTED_RESPONSE: ErrorDescriptor = ErrorDescriptor::new(
 );
 pub const PACK: ErrorDescriptor =
     ErrorDescriptor::new("API007", "api.pack", "Failed to build pack archive");
+pub const CIRCUIT_OPEN: ErrorDescriptor = ErrorDescriptor::new(
+    "API008",
+    "api.circuit_open",
+    "Runinator API circuit is open",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     DISCOVERY,
@@ -83,6 +97,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     HTTP,
     UNEXPECTED_RESPONSE,
     PACK,
+    CIRCUIT_OPEN,
 ];
 
 impl EngineErrors for ApiError {

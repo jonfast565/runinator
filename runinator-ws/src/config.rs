@@ -196,6 +196,48 @@ pub(crate) struct CliArgs {
     #[arg(long, env = "RUNINATOR_RATE_LIMIT_BURST", default_value_t = 100.0)]
     pub rate_limit_burst: f64,
 
+    /// Enable per-route-family circuit breakers for the HTTP API. Each web-service replica keeps
+    /// its own in-memory state so an unhealthy family fails fast without suppressing unrelated API
+    /// traffic on that replica.
+    #[arg(
+        long,
+        env = "RUNINATOR_CIRCUIT_BREAKER_ENABLED",
+        default_value_t = true
+    )]
+    pub circuit_breaker_enabled: bool,
+
+    /// Failure-rate fraction (0 through 1) that opens an inbound route-family circuit.
+    #[arg(
+        long,
+        env = "RUNINATOR_CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD",
+        default_value_t = 0.5
+    )]
+    pub circuit_breaker_failure_rate_threshold: f64,
+
+    /// Minimum handler calls before the inbound circuit evaluates its failure rate.
+    #[arg(
+        long,
+        env = "RUNINATOR_CIRCUIT_BREAKER_MINIMUM_CALLS",
+        default_value_t = 20
+    )]
+    pub circuit_breaker_minimum_calls: usize,
+
+    /// Number of calls retained by an inbound circuit's rolling sample.
+    #[arg(
+        long,
+        env = "RUNINATOR_CIRCUIT_BREAKER_WINDOW_SIZE",
+        default_value_t = 100
+    )]
+    pub circuit_breaker_window_size: usize,
+
+    /// Seconds an inbound circuit remains open before one recovery probe is permitted.
+    #[arg(
+        long,
+        env = "RUNINATOR_CIRCUIT_BREAKER_COOLDOWN_SECONDS",
+        default_value_t = 30
+    )]
+    pub circuit_breaker_cooldown_seconds: u64,
+
     /// Enable global overload protection (a concurrency cap + per-request timeout) on the HTTP API.
     /// On by default; set to false to disable both the concurrency limit and the request timeout.
     #[arg(

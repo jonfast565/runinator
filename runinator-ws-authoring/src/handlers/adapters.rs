@@ -44,7 +44,9 @@ use super::pipelines::process_pipeline_ingress;
 
 async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String>
 {
-    runinator_adapter_client::kinds().await
+    runinator_adapter_client::kinds()
+        .await
+        .map_err(|error| error.to_string())
 }
 fn org_id(ctx: &AuthContext) -> Result<Uuid, GuardError> {
     ctx.org_id
@@ -320,7 +322,7 @@ pub async fn kinds<T: RbacStore>(
     }
     match catalog().await {
         Ok(entries) => (StatusCode::OK, Json(ApiResponse::AdapterKindList(entries))),
-        Err(error) => api_error(error),
+        Err(error) => api_error(error.to_string()),
     }
 }
 
@@ -419,7 +421,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
     };
     let kinds = match catalog().await {
         Ok(values) => values,
-        Err(error) => return api_error(error),
+        Err(error) => return api_error(error.to_string()),
     };
     let Some(kind) = kinds
         .into_iter()
@@ -498,7 +500,7 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore>(
     }
     let kinds = match catalog().await {
         Ok(values) => values,
-        Err(error) => return api_error(error),
+        Err(error) => return api_error(error.to_string()),
     };
     let Some(kind) = kinds
         .into_iter()
@@ -684,13 +686,13 @@ pub async fn test<
         .await
         {
             Ok(value) => value,
-            Err(error) => return api_error(error),
+            Err(error) => return api_error(error.to_string()),
         };
         let mut previews = Vec::new();
         for event in &response.events {
             match operations.preview_event(&adapter, event).await {
                 Ok(preview) => previews.push(preview),
-                Err(error) => return api_error(error),
+                Err(error) => return api_error(error.to_string()),
             }
         }
         return (StatusCode::OK, Json(ApiResponse::JsonValue(serde_json::json!({
@@ -721,7 +723,7 @@ pub async fn test<
                 for event in &normalized.events {
                     match operations.preview_event(&adapter, event).await {
                         Ok(preview) => previews.push(preview),
-                        Err(error) => return api_error(error),
+                        Err(error) => return api_error(error.to_string()),
                     }
                 }
             }
@@ -738,7 +740,7 @@ pub async fn test<
                 )),
             )
         }
-        Err(error) => api_error(error),
+        Err(error) => api_error(error.to_string()),
     }
 }
 
@@ -765,7 +767,7 @@ pub async fn health<T: RbacStore>(
                 .into(),
             )),
         ),
-        Err(error) => api_error(error),
+        Err(error) => api_error(error.to_string()),
     }
 }
 
@@ -778,7 +780,7 @@ pub async fn reload<T: RbacStore>(
     }
     match runinator_adapter_client::reload().await {
         Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value.into()))),
-        Err(error) => api_error(error),
+        Err(error) => api_error(error.to_string()),
     }
 }
 
@@ -846,7 +848,7 @@ pub async fn webhook<
         .await
     {
         Ok(value) => value,
-        Err(error) => return api_error(error),
+        Err(error) => return api_error(error.to_string()),
     };
     use base64::Engine;
     let request = AdapterRequest {
@@ -859,7 +861,7 @@ pub async fn webhook<
     let normalized = match runinator_adapter_client::verify_normalize(&adapter.kind, request).await
     {
         Ok(value) => value,
-        Err(error) => return api_error(error),
+        Err(error) => return api_error(error.to_string()),
     };
     if !normalized.verified {
         return (

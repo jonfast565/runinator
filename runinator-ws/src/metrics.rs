@@ -62,8 +62,15 @@ fn status_class(status: axum::http::StatusCode) -> &'static str {
     }
 }
 
-fn rejection_reason(status: axum::http::StatusCode) -> Option<&'static str> {
-    match status {
+fn rejection_reason(response: &axum::response::Response) -> Option<&'static str> {
+    if response
+        .extensions()
+        .get::<crate::circuit_breaker::CircuitBreakerRejection>()
+        .is_some()
+    {
+        return Some("circuit_open");
+    }
+    match response.status() {
         axum::http::StatusCode::UNAUTHORIZED => Some("unauthorized"),
         axum::http::StatusCode::FORBIDDEN => Some("forbidden"),
         axum::http::StatusCode::TOO_MANY_REQUESTS => Some("rate_limited"),
@@ -95,9 +102,10 @@ impl Drop for RequestGuard {
 pub(crate) fn request_completed(
     method: &'static str,
     route: &str,
-    status: axum::http::StatusCode,
+    response: &axum::response::Response,
     elapsed: std::time::Duration,
 ) {
+    let status = response.status();
     let class = status_class(status);
     let duration_ms = elapsed.as_secs_f64() * 1000.0;
     runinator_observability::tui::counter("web service", "HTTP requests", 1);
@@ -116,7 +124,7 @@ pub(crate) fn request_completed(
         .record(duration_ms);
     handles().requests.add(1, &attrs);
     handles().duration_ms.record(duration_ms, &attrs[..2]);
-    if let Some(reason) = rejection_reason(status) {
+    if let Some(reason) = rejection_reason(response) {
         runinator_observability::tui::counter("web service", "HTTP rejections", 1);
         metrics::counter!(HTTP_REJECTIONS, "reason" => reason).increment(1);
         handles()
@@ -182,10 +190,15 @@ mod tests {
 
     #[test]
     fn rejection_reasons_are_closed() {
-        assert_eq!(
-            rejection_reason(axum::http::StatusCode::TOO_MANY_REQUESTS),
-            Some("rate_limited")
-        );
-        assert_eq!(rejection_reason(axum::http::StatusCode::NOT_FOUND), None);
+        let response = axum::response::Response::builder()
+            .status(axum::http::StatusCode::TOO_MANY_REQUESTS)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(rejection_reason(&response), Some("rate_limited"));
+        let response = axum::response::Response::builder()
+            .status(axum::http::StatusCode::NOT_FOUND)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(rejection_reason(&response), None);
     }
 }
