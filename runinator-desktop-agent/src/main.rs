@@ -97,8 +97,8 @@ fn run_gui(draft: AgentConfig) -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1120.0, 760.0])
-            .with_min_inner_size([820.0, 580.0])
+            .with_inner_size([960.0, 650.0])
+            .with_min_inner_size([720.0, 520.0])
             .with_icon(app_icon::window_icon())
             .with_visible(true)
             .with_title(APP_NAME),

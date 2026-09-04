@@ -236,8 +236,6 @@ pub struct DesktopAgentApp {
     execution_profiles_dialog: bool,
     // retain the just-saved action text until the collection status catches up.
     execution_profile_feedback: Option<ProfileApprovalFeedback>,
-    // logs are useful for diagnosis but should not crowd the primary session dashboard.
-    logs_dialog: bool,
     // `None` when the platform tray failed to initialize; the window is then the only way in, so it
     // remains visible rather than stranding the user with no way to reach it.
     tray: Option<AgentTray>,
@@ -311,7 +309,6 @@ impl DesktopAgentApp {
             settings_dialog: false,
             execution_profiles_dialog: false,
             execution_profile_feedback: None,
-            logs_dialog: false,
             tray,
             last_tray_signature: None,
             log_filter: String::new(),
@@ -834,7 +831,7 @@ impl DesktopAgentApp {
     // a compact throughput readout for the running agent: in-flight vs. outcome totals, the latest
     // resource sample, and what this machine last executed.
     fn activity_panel(ui: &mut egui::Ui, metrics: &AgentMetrics) {
-        ui.add_space(6.0);
+        ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new(format!("In flight: {}", metrics.in_flight)).strong());
             ui.separator();
@@ -845,18 +842,6 @@ impl DesktopAgentApp {
                 outcome_total(ui, ActionOutcome::Canceled, metrics.canceled);
             }
         });
-
-        if metrics.cpu_percent.is_some() || metrics.mem_percent.is_some() {
-            let resources = [
-                metrics.cpu_percent.map(|c| format!("CPU {c:.0}%")),
-                metrics.mem_percent.map(|m| format!("RAM {m:.0}%")),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join("   ");
-            ui.label(egui::RichText::new(resources).small().weak());
-        }
 
         if let Some(last) = &metrics.last_completed {
             let (label, color) = outcome_presentation(last.outcome);
@@ -875,83 +860,76 @@ impl DesktopAgentApp {
     }
 
     fn runtime_lifecycle(ui: &mut egui::Ui, dashboard: &RuntimeDashboard<'_>) {
-        ui.heading("Runtime");
-        ui.label(
-            egui::RichText::new(format!(
-                "Running for {}",
-                display_duration(dashboard.uptime)
-            ))
-            .small()
-            .weak(),
-        );
-        ui.add_space(4.0);
-        ui.group(|ui| {
-            ui.strong("Desktop agent");
-            ui.label(format!(
-                "Now: {} · for {}",
-                dashboard.agent_activity,
-                display_duration(dashboard.agent_activity_age)
-            ));
-            egui::Grid::new("runtime-agent-details")
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    detail_row(ui, "Service", dashboard.service_url);
-                    detail_row(
-                        ui,
-                        "Broker",
-                        dashboard
-                            .status
-                            .broker_connection
-                            .as_deref()
-                            .unwrap_or("not connected"),
-                    );
-                    let replica = dashboard
-                        .status
-                        .replica_id
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "not registered".to_string());
-                    detail_row(ui, "Replica", &replica);
-                    detail_row(
-                        ui,
-                        "Sandbox",
-                        dashboard.status.root.as_deref().unwrap_or("not configured"),
-                    );
-                });
+        ui.horizontal(|ui| {
+            ui.strong("Runtime");
+            ui.label(
+                egui::RichText::new(format!("up {}", display_duration(dashboard.uptime)))
+                    .small()
+                    .weak(),
+            );
         });
-        ui.add_space(4.0);
         ui.group(|ui| {
-            ui.strong("Worker");
-            ui.label(format!(
-                "Now: {} · for {}",
-                dashboard.worker_activity,
-                display_duration(dashboard.worker_activity_age)
-            ));
-            egui::Grid::new("runtime-worker-details")
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    detail_row(ui, "Pool", "desktop (exclusive)");
-                    detail_row(ui, "Action capacity", &dashboard.capacity.to_string());
-                    detail_row(
-                        ui,
-                        "Available slots",
-                        &dashboard
-                            .capacity
-                            .saturating_sub(dashboard.metrics.in_flight as usize)
-                            .to_string(),
-                    );
-                });
+            ui.horizontal_wrapped(|ui| {
+                ui.strong("Agent");
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · {}",
+                        dashboard.agent_activity,
+                        display_duration(dashboard.agent_activity_age)
+                    ))
+                    .small(),
+                );
+                ui.separator();
+                ui.strong("Worker");
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · {}",
+                        dashboard.worker_activity,
+                        display_duration(dashboard.worker_activity_age)
+                    ))
+                    .small(),
+                );
+            });
+            let replica = dashboard
+                .status
+                .replica_id
+                .as_ref()
+                .map(agent::short_id)
+                .unwrap_or_else(|| "not registered".to_string());
+            let available = dashboard
+                .capacity
+                .saturating_sub(dashboard.metrics.in_flight as usize);
+            ui.horizontal_wrapped(|ui| {
+                compact_detail(ui, "Service", dashboard.service_url);
+                compact_detail(
+                    ui,
+                    "Broker",
+                    dashboard
+                        .status
+                        .broker_connection
+                        .as_deref()
+                        .unwrap_or("not connected"),
+                );
+                compact_detail(ui, "Replica", &replica);
+                compact_detail(
+                    ui,
+                    "Sandbox",
+                    dashboard.status.root.as_deref().unwrap_or("not configured"),
+                );
+                compact_detail(
+                    ui,
+                    "Capacity",
+                    &format!("{} ({available} free)", dashboard.capacity),
+                );
+            });
             Self::activity_panel(ui, dashboard.metrics);
         });
     }
 
-    /// Two columns on an ordinary desktop window; one when the window is narrowed, before either
-    /// card can compete for width. Resource cards are deliberately a single column because their
-    /// values are the least compressible text in the dashboard.
+    /// Two columns keep the main dashboard compact at the default desktop window size.
     fn runtime_dashboard(ui: &mut egui::Ui, dashboard: RuntimeDashboard<'_>) {
-        ui.add_space(8.0);
-        if ui.available_width() >= 1_000.0 {
+        ui.add_space(4.0);
+        if ui.available_width() >= 860.0 {
             ui.columns(2, |columns| {
                 Self::runtime_lifecycle(&mut columns[0], &dashboard);
                 let telemetry = &mut columns[1];
@@ -961,8 +939,8 @@ impl DesktopAgentApp {
             });
         } else {
             Self::runtime_lifecycle(ui, &dashboard);
-            ui.add_space(8.0);
-            ui.heading("Resources");
+            ui.add_space(4.0);
+            ui.strong("Resources");
             ui.label(egui::RichText::new("Last minute").small().weak());
             Self::resource_charts(ui, dashboard.resources);
         }
@@ -1263,132 +1241,137 @@ impl DesktopAgentApp {
     /// Small native sparklines give the window the same short-horizon operational visibility as
     /// `--tui`, without adding a plotting dependency to the desktop agent.
     fn resource_charts(ui: &mut egui::Ui, samples: &[agent::ResourceSample]) {
-        let latest = samples.last();
-        let host_cpu = samples
-            .iter()
-            .map(|sample| sample.host_cpu_percent as f64)
-            .collect::<Vec<_>>();
-        let host_memory = samples
-            .iter()
-            .map(|sample| sample.host_mem_percent as f64)
-            .collect::<Vec<_>>();
-        let process_cpu = samples
-            .iter()
-            .map(|sample| sample.process_cpu_percent as f64)
-            .collect::<Vec<_>>();
-        let process_memory = samples
-            .iter()
-            .map(|sample| sample.process_mem_used_bytes as f64)
-            .collect::<Vec<_>>();
-        let network_rx = samples
-            .iter()
-            .map(|sample| sample.network_rx_bytes_per_sec)
-            .collect::<Vec<_>>();
-        let network_tx = samples
-            .iter()
-            .map(|sample| sample.network_tx_bytes_per_sec)
-            .collect::<Vec<_>>();
-        let disk_io = samples
-            .iter()
-            .map(|sample| sample.disk_io_bytes_per_sec)
-            .collect::<Vec<_>>();
-
-        resource_chart(
-            ui,
-            "Host CPU",
-            latest
-                .map(|sample| format!("{:.0}%", sample.host_cpu_percent))
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &host_cpu,
-            Some(100.0),
-            DOT_BLUE,
-        );
-        resource_chart(
-            ui,
-            "Host RAM",
-            latest
-                .map(|sample| {
-                    format!(
-                        "{:.0}% · {}/{}",
-                        sample.host_mem_percent,
-                        format_bytes(sample.host_mem_used_bytes as f64),
-                        format_bytes(sample.host_mem_total_bytes as f64)
-                    )
-                })
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &host_memory,
-            Some(100.0),
-            DOT_GREEN,
-        );
-        resource_chart(
-            ui,
-            "Process CPU",
-            latest
-                .map(|sample| format!("{:.0}%", sample.process_cpu_percent))
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &process_cpu,
-            None,
-            DOT_AMBER,
-        );
-        resource_chart(
-            ui,
-            "Process RAM",
-            latest
-                .map(|sample| format_bytes(sample.process_mem_used_bytes as f64))
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &process_memory,
-            None,
-            DOT_GREEN,
-        );
-        resource_chart(
-            ui,
-            "Network RX",
-            latest
-                .map(|sample| format!("{}/s", format_bytes(sample.network_rx_bytes_per_sec)))
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &network_rx,
-            None,
-            DOT_BLUE,
-        );
-        resource_chart(
-            ui,
-            "Network TX",
-            latest
-                .map(|sample| format!("{}/s", format_bytes(sample.network_tx_bytes_per_sec)))
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &network_tx,
-            None,
-            DOT_BLUE,
-        );
-        resource_chart(
-            ui,
-            "Disk I/O",
-            latest
-                .map(|sample| format!("{}/s", format_bytes(sample.disk_io_bytes_per_sec)))
-                .unwrap_or_else(|| "collecting…".to_string()),
-            &disk_io,
-            None,
-            DOT_AMBER,
-        );
-    }
-
-    fn show_logs_dialog(&mut self, ctx: &egui::Context) {
-        if !self.logs_dialog {
-            return;
+        struct ResourceChart {
+            title: &'static str,
+            value: String,
+            values: Vec<f64>,
+            fixed_max: Option<f64>,
+            color: egui::Color32,
         }
 
-        let mut open = self.logs_dialog;
-        egui::Window::new("Desktop agent logs")
-            .collapsible(false)
-            .resizable(true)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .default_width(880.0)
-            .default_height(560.0)
-            .min_width(620.0)
-            .min_height(360.0)
-            .open(&mut open)
-            .show(ctx, |ui| self.log_panel(ui));
-        self.logs_dialog = open;
+        let latest = samples.last();
+        let charts = [
+            ResourceChart {
+                title: "Host CPU",
+                value: latest
+                    .map(|sample| format!("{:.0}%", sample.host_cpu_percent))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.host_cpu_percent as f64)
+                    .collect(),
+                fixed_max: Some(100.0),
+                color: DOT_BLUE,
+            },
+            ResourceChart {
+                title: "Host RAM",
+                value: latest
+                    .map(|sample| {
+                        format!(
+                            "{:.0}% · {}/{}",
+                            sample.host_mem_percent,
+                            format_bytes(sample.host_mem_used_bytes as f64),
+                            format_bytes(sample.host_mem_total_bytes as f64)
+                        )
+                    })
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.host_mem_percent as f64)
+                    .collect(),
+                fixed_max: Some(100.0),
+                color: DOT_GREEN,
+            },
+            ResourceChart {
+                title: "Process CPU",
+                value: latest
+                    .map(|sample| format!("{:.0}%", sample.process_cpu_percent))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.process_cpu_percent as f64)
+                    .collect(),
+                fixed_max: None,
+                color: DOT_AMBER,
+            },
+            ResourceChart {
+                title: "Process RAM",
+                value: latest
+                    .map(|sample| format_bytes(sample.process_mem_used_bytes as f64))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.process_mem_used_bytes as f64)
+                    .collect(),
+                fixed_max: None,
+                color: DOT_GREEN,
+            },
+            ResourceChart {
+                title: "Network RX",
+                value: latest
+                    .map(|sample| format!("{}/s", format_bytes(sample.network_rx_bytes_per_sec)))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.network_rx_bytes_per_sec)
+                    .collect(),
+                fixed_max: None,
+                color: DOT_BLUE,
+            },
+            ResourceChart {
+                title: "Network TX",
+                value: latest
+                    .map(|sample| format!("{}/s", format_bytes(sample.network_tx_bytes_per_sec)))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.network_tx_bytes_per_sec)
+                    .collect(),
+                fixed_max: None,
+                color: DOT_BLUE,
+            },
+            ResourceChart {
+                title: "Disk I/O",
+                value: latest
+                    .map(|sample| format!("{}/s", format_bytes(sample.disk_io_bytes_per_sec)))
+                    .unwrap_or_else(|| "collecting…".to_string()),
+                values: samples
+                    .iter()
+                    .map(|sample| sample.disk_io_bytes_per_sec)
+                    .collect(),
+                fixed_max: None,
+                color: DOT_AMBER,
+            },
+        ];
+
+        if ui.available_width() >= 400.0 {
+            ui.columns(2, |columns| {
+                for (index, chart) in charts.iter().enumerate() {
+                    let column = &mut columns[index % 2];
+                    resource_chart(
+                        column,
+                        chart.title,
+                        &chart.value,
+                        &chart.values,
+                        chart.fixed_max,
+                        chart.color,
+                    );
+                    column.add_space(2.0);
+                }
+            });
+        } else {
+            for chart in &charts {
+                resource_chart(
+                    ui,
+                    chart.title,
+                    &chart.value,
+                    &chart.values,
+                    chart.fixed_max,
+                    chart.color,
+                );
+                ui.add_space(2.0);
+            }
+        }
     }
 
     // carries the level/filter controls, copy/save/clear actions, and the filtered line view.
@@ -1498,10 +1481,12 @@ impl DesktopAgentApp {
     }
 }
 
-fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(egui::RichText::new(label).strong());
-    ui.label(value);
-    ui.end_row();
+fn compact_detail(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.label(
+        egui::RichText::new(format!("{label}: {value}"))
+            .small()
+            .weak(),
+    );
 }
 
 fn outcome_presentation(outcome: ActionOutcome) -> (&'static str, egui::Color32) {
@@ -1589,7 +1574,7 @@ fn outcome_mark(ui: &mut egui::Ui, outcome: ActionOutcome) -> egui::Response {
 fn resource_chart(
     ui: &mut egui::Ui,
     title: &str,
-    value: String,
+    value: &str,
     values: &[f64],
     fixed_max: Option<f64>,
     color: egui::Color32,
@@ -1600,7 +1585,7 @@ fn resource_chart(
         ui.label(egui::RichText::new(title).small().strong());
         ui.label(egui::RichText::new(value).small().weak());
         let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
         let values = values
             .iter()
             .copied()
@@ -1708,10 +1693,15 @@ impl eframe::App for DesktopAgentApp {
         self.show_reenrollment_dialog(ctx, reenrollment_reason.as_deref());
         self.show_settings_dialog(ctx, status.running, control, busy);
         self.show_execution_profile_approval_dialog(ctx, &execution_profiles);
-        self.show_logs_dialog(ctx);
 
         let presentation = present_status(&connection, busy);
         self.sync_tray(&presentation);
+
+        egui::TopBottomPanel::bottom("log-panel")
+            .resizable(true)
+            .default_height(190.0)
+            .min_height(130.0)
+            .show(ctx, |ui| self.log_panel(ui));
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
@@ -1731,9 +1721,6 @@ impl eframe::App for DesktopAgentApp {
                             }
                             if ui.button("Settings…").clicked() {
                                 self.settings_dialog = true;
-                            }
-                            if ui.button("Logs…").clicked() {
-                                self.logs_dialog = true;
                             }
                             if !status.running
                                 && ui
