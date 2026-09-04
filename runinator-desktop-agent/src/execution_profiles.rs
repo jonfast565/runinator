@@ -47,7 +47,11 @@ pub fn spawn(
 ) {
     runtime.spawn(async move {
         loop {
-            if agent.borrow().connection == ConnectionState::Stopped {
+            // collection may invoke an interactive desktop command (for example, a Keychain
+            // access prompt). do not start it while the worker is still registering or connecting:
+            // an approval must never make the agent appear to be stuck before its action loop is
+            // actually available.
+            if !wait_until_running(&mut agent).await {
                 return;
             }
             match synchronize(&client, |message| log_line(&shared, message)).await {
@@ -75,6 +79,32 @@ pub fn spawn(
             }
         }
     });
+}
+
+/// wait until the worker has registered and begun serving work before touching profile sources.
+/// a stopped lifecycle or a dropped status stream cannot become usable without a new start.
+pub(crate) async fn wait_until_running(
+    agent: &mut tokio::sync::watch::Receiver<runinator_worker::AgentStatus>,
+) -> bool {
+    loop {
+        let can_continue = {
+            let status = agent.borrow();
+            if collection_can_run(&status) {
+                return true;
+            }
+            status.connection != ConnectionState::Stopped
+        };
+        if !can_continue {
+            return false;
+        }
+        if agent.changed().await.is_err() {
+            return false;
+        }
+    }
+}
+
+fn collection_can_run(status: &runinator_worker::AgentStatus) -> bool {
+    status.running && status.connection.is_connected()
 }
 
 pub async fn synchronize(
@@ -553,7 +583,7 @@ fn run_command(
     if command.interactive && !permit_interactive {
         return Err("interactive commands are allowed only for refresh".into());
     }
-    let mut child = Command::new(program);
+    let mut child = Command::new(resolve_command_program(program));
     child.args(args).stdin(Stdio::null());
     if command.interactive {
         child.stdout(Stdio::inherit()).stderr(Stdio::inherit());
@@ -566,6 +596,43 @@ fn run_command(
     } else {
         Ok(child.output()?)
     }
+}
+
+/// locate the bundled macOS Keychain collector when a profile uses its portable command name.
+/// other command sources retain normal `PATH` lookup (or their explicitly configured path).
+fn resolve_command_program(program: &str) -> PathBuf {
+    if program != "keychain-export" {
+        return PathBuf::from(program);
+    }
+    keychain_export_path().unwrap_or_else(|| PathBuf::from(program))
+}
+
+fn keychain_export_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    bundled_keychain_export(&executable).or_else(|| development_keychain_export(&executable))
+}
+
+fn bundled_keychain_export(executable: &Path) -> Option<PathBuf> {
+    let path = executable
+        .parent()?
+        .parent()?
+        .join("Resources")
+        .join("keychain-export");
+    path.is_file().then_some(path)
+}
+
+fn development_keychain_export(executable: &Path) -> Option<PathBuf> {
+    executable
+        .ancestors()
+        .map(|directory| {
+            directory
+                .join("tools")
+                .join("keychain-export")
+                .join(".build")
+                .join("release")
+                .join("keychain-export")
+        })
+        .find(|path| path.is_file())
 }
 
 fn expand_path(raw: &str) -> PathBuf {
@@ -765,5 +832,37 @@ mod tests {
 
         assert_eq!(detail.chars().count(), MAX_STATUS_ERROR_CHARS);
         assert!(detail.ends_with('…'));
+    }
+
+    #[test]
+    fn collection_waits_for_a_running_connected_agent() {
+        let mut status = runinator_worker::AgentStatus::default();
+        status.connection = ConnectionState::Connected;
+        assert!(!collection_can_run(&status));
+
+        status.running = true;
+        assert!(collection_can_run(&status));
+
+        status.connection = ConnectionState::Connecting;
+        assert!(!collection_can_run(&status));
+    }
+
+    #[test]
+    fn bundled_keychain_export_uses_the_app_resources_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "runinator-keychain-export-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let executable =
+            root.join("Runinator Desktop Agent.app/Contents/MacOS/runinator-desktop-agent");
+        let helper = root.join("Runinator Desktop Agent.app/Contents/Resources/keychain-export");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(&executable, []).unwrap();
+        fs::write(&helper, []).unwrap();
+
+        assert_eq!(bundled_keychain_export(&executable), Some(helper));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

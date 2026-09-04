@@ -36,4 +36,6 @@ worker, desktop agent, the control CLI (`runinatorctl`), and supervisor under
 The macOS release archive places **Runinator Desktop Agent.app** at its top
 level. Launch that bundle rather than its executable under `Contents/MacOS`:
 macOS reads the bundle's `Info.plist` at launch to show **Runinator Desktop
-Agent** in the Dock.
+Agent** in the Dock. The bundle also contains `keychain-export` in
+`Contents/Resources`; approved execution profiles can use that command name
+without relying on the launch environment's `PATH`.

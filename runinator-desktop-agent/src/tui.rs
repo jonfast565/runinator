@@ -173,7 +173,7 @@ fn spawn_execution_profile_sync(
         let mut refresh = true;
 
         loop {
-            if agent.borrow().connection == AgentConnection::Stopped {
+            if !crate::execution_profiles::wait_until_running(&mut agent).await {
                 return;
             }
             if refresh {

@@ -108,6 +108,22 @@ if [[ "$skip_build" -eq 0 ]]; then
     -p runinator-supervisor
 fi
 
+# command sources in an approved execution profile run inside the desktop agent's launch
+# environment, which does not inherit a developer shell's PATH. Build the host-only Keychain
+# collector here so the desktop .app can carry its own deterministic copy.
+keychain_export="$workspace_dir/tools/keychain-export/.build/release/keychain-export"
+if [[ ! -x "$keychain_export" ]]; then
+  if ! command -v swift >/dev/null 2>&1; then
+    echo "missing keychain-export and no Swift toolchain is available to build it" >&2
+    exit 1
+  fi
+  swift build -c release --package-path "$workspace_dir/tools/keychain-export"
+fi
+if [[ ! -x "$keychain_export" ]]; then
+  echo "keychain-export build did not produce $keychain_export" >&2
+  exit 1
+fi
+
 mkdir -p "$out_dir"
 config_dir="$(mktemp -d "${TMPDIR:-/tmp}/runinator-packager.XXXXXX")"
 trap 'rm -rf "$config_dir"' EXIT
@@ -139,7 +155,7 @@ for app in "${apps[@]}"; do
   cat > "$config_path" <<EOF
 name = "$binary"
 product-name = "$product_name"
-version = "${RUNINATOR_VERSION:-0.14.637}"
+version = "${RUNINATOR_VERSION:-0.14.638}"
 identifier = "$identifier"
 description = "$description"
 formats = ["app"]
@@ -156,5 +172,15 @@ EOF
     cargo packager -vv --config "$config_path"
   else
     cargo packager --config "$config_path"
+  fi
+
+  if [[ "$binary" == "runinator-desktop-agent" ]]; then
+    app_path="$(find "$app_out_dir" -type d -name "$product_name.app" -print -quit)"
+    if [[ -z "$app_path" ]]; then
+      echo "desktop agent app bundle was not created under $app_out_dir" >&2
+      exit 1
+    fi
+    mkdir -p "$app_path/Contents/Resources"
+    install -m 755 "$keychain_export" "$app_path/Contents/Resources/keychain-export"
   fi
 done
