@@ -21,8 +21,9 @@ pub struct CliArgs {
     #[arg(long, env = "RUNINATOR_AGENT_HEADLESS")]
     pub headless: bool,
 
-    /// Show a local full-screen runtime dashboard instead of the tray/window UI. `q`, Escape, or
-    /// Ctrl-C gracefully stops the desktop agent.
+    /// Show a local full-screen runtime dashboard instead of the tray/window UI. Use `[` and `]`
+    /// to select an execution profile, `a` to approve it, `r` to revoke it, or `q`, Escape, or
+    /// Ctrl-C to gracefully stop the desktop agent.
     #[arg(long, env = "RUNINATOR_TUI")]
     pub tui: bool,
 

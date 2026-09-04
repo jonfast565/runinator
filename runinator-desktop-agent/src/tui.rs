@@ -12,10 +12,11 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
 use runinator_observability::tui;
 use runinator_worker::agent::{AgentConnection, AgentObserver, AgentRuntime, AgentStatus};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{error, info};
 
 use crate::cli::CliArgs;
@@ -59,6 +60,8 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
     );
     tui::activity("desktop agent", "preparing credentials", None);
     tui::register("enrollment", initial_enrollment_details(&runtime_config));
+    tui::register("execution profiles", execution_profile_details(&[], 0));
+    tui::activity("execution profiles", "waiting for agent credentials", None);
     tui::register(
         "worker",
         [
@@ -78,15 +81,27 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
 
     let stopping = Arc::new(AtomicBool::new(false));
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let (profile_command_sender, profile_command_receiver) = mpsc::unbounded_channel();
     let dashboard_stopping = stopping.clone();
     let dashboard_request_stopping = stopping.clone();
     let dashboard_request_sender = shutdown_sender.clone();
-    let dashboard_thread = tui::spawn(
+    let dashboard_profile_commands = profile_command_sender.clone();
+    let dashboard_thread = tui::spawn_with_key_handler(
         dashboard,
         move || dashboard_stopping.load(Ordering::Acquire),
         move || {
             dashboard_request_stopping.store(true, Ordering::Release);
             let _ = dashboard_request_sender.send(true);
+        },
+        move |key| {
+            let command = match key {
+                '[' => Some(ProfileCommand::SelectPrevious),
+                ']' => Some(ProfileCommand::SelectNext),
+                'a' => Some(ProfileCommand::Approve),
+                'r' => Some(ProfileCommand::Revoke),
+                _ => None,
+            };
+            command.is_some_and(|command| dashboard_profile_commands.send(command).is_ok())
         },
     );
 
@@ -94,6 +109,20 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
         finish_dashboard(&stopping, &shutdown_sender, dashboard_thread);
         return Err(err);
     }
+    let profile_client = match AsyncApiClient::with_credentials(
+        StaticLocator::new(runtime_config.service_url.clone()),
+        runtime_config.api_key.clone(),
+    ) {
+        Ok(client) => Some(client),
+        Err(error) => {
+            tui::register(
+                "execution profiles",
+                [format!("Unable to load execution profiles: {error}")],
+            );
+            tui::activity("execution profiles", "profile controls unavailable", None);
+            None
+        }
+    };
     let mut agent = match AgentRuntime::start(runtime_config, Arc::new(DashboardObserver)) {
         Ok(agent) => agent,
         Err(err) => {
@@ -101,6 +130,9 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
             return Err(err);
         }
     };
+    let _profile_task = profile_client.map(|client| {
+        spawn_execution_profile_sync(client, agent.watch(), profile_command_receiver)
+    });
 
     let result = tokio::select! {
         _ = wait_for_dashboard_shutdown(shutdown_receiver) => {
@@ -120,6 +152,202 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
     };
     finish_dashboard(&stopping, &shutdown_sender, dashboard_thread);
     report_exit(result)
+}
+
+#[derive(Clone, Copy)]
+enum ProfileCommand {
+    SelectPrevious,
+    SelectNext,
+    Approve,
+    Revoke,
+}
+
+fn spawn_execution_profile_sync(
+    client: AsyncApiClient<StaticLocator>,
+    mut agent: watch::Receiver<AgentStatus>,
+    mut commands: mpsc::UnboundedReceiver<ProfileCommand>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut profiles = Vec::new();
+        let mut selected = 0;
+        let mut refresh = true;
+
+        loop {
+            if agent.borrow().connection == AgentConnection::Stopped {
+                return;
+            }
+            if refresh {
+                tui::activity("execution profiles", "checking local approvals", None);
+                match crate::execution_profiles::synchronize(&client, tui::log_line).await {
+                    Ok(next) => {
+                        profiles = next;
+                        selected = selected.min(profiles.len().saturating_sub(1));
+                        register_execution_profiles(&profiles, selected);
+                    }
+                    Err(error) => {
+                        tui::register(
+                            "execution profiles",
+                            [format!("Synchronization failed: {error}")],
+                        );
+                        tui::activity("execution profiles", "synchronization failed", None);
+                        tui::log_line(format!("Execution profile synchronization failed: {error}"));
+                    }
+                }
+            }
+
+            refresh = tokio::select! {
+                Some(command) = commands.recv() => {
+                    let refresh = handle_profile_command(&mut profiles, &mut selected, command);
+                    if !refresh {
+                        register_execution_profiles(&profiles, selected);
+                    }
+                    refresh
+                }
+                changed = agent.changed() => {
+                    if changed.is_err() || agent.borrow().connection == AgentConnection::Stopped {
+                        return;
+                    }
+                    true
+                }
+                _ = tokio::time::sleep(crate::execution_profiles::PROFILE_SYNC_INTERVAL) => {
+                    true
+                }
+            };
+        }
+    })
+}
+
+fn handle_profile_command(
+    profiles: &mut [crate::execution_profiles::LocalProfileStatus],
+    selected: &mut usize,
+    command: ProfileCommand,
+) -> bool {
+    if profiles.is_empty() {
+        tui::log_line("No execution profiles are available yet.");
+        return false;
+    }
+
+    match command {
+        ProfileCommand::SelectPrevious => {
+            *selected = selected.checked_sub(1).unwrap_or(profiles.len() - 1);
+            false
+        }
+        ProfileCommand::SelectNext => {
+            *selected = (*selected + 1) % profiles.len();
+            false
+        }
+        ProfileCommand::Approve => {
+            let profile = &profiles[*selected];
+            if !profile.enabled {
+                tui::log_line(format!(
+                    "Execution profile '{}' is disabled centrally and cannot be approved.",
+                    profile.name
+                ));
+                return false;
+            }
+            let mut config = crate::config::load();
+            if config.approved_execution_profiles.get(&profile.id) == Some(&profile.config_digest) {
+                tui::log_line(format!(
+                    "Execution profile '{}' is already approved for this configuration.",
+                    profile.name
+                ));
+                return false;
+            }
+            config
+                .approved_execution_profiles
+                .insert(profile.id, profile.config_digest.clone());
+            if crate::config::save(&config) {
+                tui::log_line(format!(
+                    "Approved execution profile '{}' locally; synchronizing collection.",
+                    profile.name
+                ));
+                true
+            } else {
+                tui::log_line(format!(
+                    "Could not save local approval for execution profile '{}'.",
+                    profile.name
+                ));
+                false
+            }
+        }
+        ProfileCommand::Revoke => {
+            let profile = &profiles[*selected];
+            let mut config = crate::config::load();
+            if config
+                .approved_execution_profiles
+                .remove(&profile.id)
+                .is_none()
+            {
+                tui::log_line(format!(
+                    "Execution profile '{}' has no saved local approval.",
+                    profile.name
+                ));
+                return false;
+            }
+            if crate::config::save(&config) {
+                tui::log_line(format!(
+                    "Revoked local approval for execution profile '{}'.",
+                    profile.name
+                ));
+                true
+            } else {
+                tui::log_line(format!(
+                    "Could not save local revocation for execution profile '{}'.",
+                    profile.name
+                ));
+                false
+            }
+        }
+    }
+}
+
+fn register_execution_profiles(
+    profiles: &[crate::execution_profiles::LocalProfileStatus],
+    selected: usize,
+) {
+    tui::register(
+        "execution profiles",
+        execution_profile_details(profiles, selected),
+    );
+    let activity = profiles
+        .get(selected)
+        .map(|profile| profile.message.clone())
+        .unwrap_or_else(|| "waiting for centrally configured profiles".to_string());
+    tui::activity("execution profiles", activity, None);
+    tui::gauge(
+        "execution profiles",
+        "configured profiles",
+        profiles.len() as i64,
+    );
+}
+
+fn execution_profile_details(
+    profiles: &[crate::execution_profiles::LocalProfileStatus],
+    selected: usize,
+) -> Vec<String> {
+    let Some(profile) = profiles.get(selected) else {
+        return vec![
+            "No centrally configured execution profiles are available yet.".to_string(),
+            "[/] select · a approve selected profile · r revoke selected profile".to_string(),
+        ];
+    };
+    let approval = if !profile.enabled {
+        "disabled centrally"
+    } else if profile.approved {
+        "approved on this computer"
+    } else {
+        "not approved on this computer"
+    };
+    vec![
+        format!("{}/{}: {}", selected + 1, profiles.len(), profile.name),
+        approval.to_string(),
+        format!(
+            "config {} · collection {}",
+            &profile.config_digest[..profile.config_digest.len().min(12)],
+            profile.message
+        ),
+        "[/] select · a approve selected profile · r revoke selected profile".to_string(),
+    ]
 }
 
 /// Host observer that supplements the worker-loop metrics with the lifecycle phase. Lifecycle log
@@ -251,3 +479,7 @@ fn report_exit(result: Result<(), SendableError>) -> Result<(), SendableError> {
     );
     Err(err)
 }
+
+#[cfg(test)]
+#[path = "tui_tests.rs"]
+mod tests;

@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 
 use crate::agent::{ConnectionState, SharedHandle, log_line};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(30);
+pub const PROFILE_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 const MANIFEST_PATH: &str = ".runinator-profile.json";
 const MAX_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: usize = 32 * 1024 * 1024;
@@ -47,11 +47,19 @@ pub fn spawn(
             if agent.borrow().connection == ConnectionState::Stopped {
                 return;
             }
-            if let Err(error) = synchronize(&client, &shared).await {
-                log_line(
-                    &shared,
-                    format!("Execution profile synchronization failed: {error}"),
-                );
+            match synchronize(&client, |message| log_line(&shared, message)).await {
+                Ok(statuses) => {
+                    shared
+                        .lock()
+                        .expect("desktop agent state lock poisoned")
+                        .execution_profiles = statuses;
+                }
+                Err(error) => {
+                    log_line(
+                        &shared,
+                        format!("Execution profile synchronization failed: {error}"),
+                    );
+                }
             }
             tokio::select! {
                 changed = agent.changed() => {
@@ -60,16 +68,16 @@ pub fn spawn(
                     }
                     // A reconnect triggers an immediate definition/source refresh.
                 }
-                _ = tokio::time::sleep(POLL_INTERVAL) => {}
+                _ = tokio::time::sleep(PROFILE_SYNC_INTERVAL) => {}
             }
         }
     });
 }
 
-async fn synchronize(
+pub async fn synchronize(
     client: &AsyncApiClient<StaticLocator>,
-    shared: &SharedHandle,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log: impl Fn(String),
+) -> Result<Vec<LocalProfileStatus>, Box<dyn std::error::Error + Send + Sync>> {
     let profiles = client.list_execution_profiles().await?;
     let approvals = crate::config::load().approved_execution_profiles;
     let mut statuses = profiles
@@ -136,13 +144,10 @@ async fn synchronize(
                         statuses[index].message =
                             format!("published revision {}", revision.revision);
                         if previous_revision != Some(revision.revision) {
-                            log_line(
-                                shared,
-                                format!(
-                                    "Execution profile '{}' is available at revision {}.",
-                                    statuses[index].name, revision.revision
-                                ),
-                            );
+                            log(format!(
+                                "Execution profile '{}' is available at revision {}.",
+                                statuses[index].name, revision.revision
+                            ));
                         }
                     }
                     Err(error) => {
@@ -169,13 +174,10 @@ async fn synchronize(
                     "collection"
                 };
                 statuses[index].message = format!("{action} failed: {error}");
-                log_line(
-                    shared,
-                    format!(
-                        "Execution profile '{}' {action} failed: {error}",
-                        statuses[index].name
-                    ),
-                );
+                log(format!(
+                    "Execution profile '{}' {action} failed: {error}",
+                    statuses[index].name
+                ));
                 let _ = client
                     .report_execution_profile_status(
                         statuses[index].id,
@@ -194,11 +196,7 @@ async fn synchronize(
             }
         }
     }
-    shared
-        .lock()
-        .expect("desktop agent state lock poisoned")
-        .execution_profiles = statuses;
-    Ok(())
+    Ok(statuses)
 }
 
 fn collect(

@@ -180,8 +180,24 @@ pub fn spawn(
     is_shutdown: impl Fn() -> bool + Send + Sync + 'static,
     request_shutdown: impl Fn() + Send + Sync + 'static,
 ) -> thread::JoinHandle<()> {
+    spawn_with_key_handler(dashboard, is_shutdown, request_shutdown, |_| false)
+}
+
+/// start the shared dashboard with a host-defined handler for unmodified character keys. Returning
+/// `true` consumes the key; the built-in paging and shutdown bindings continue to work otherwise.
+pub fn spawn_with_key_handler(
+    dashboard: Arc<Dashboard>,
+    is_shutdown: impl Fn() -> bool + Send + Sync + 'static,
+    request_shutdown: impl Fn() + Send + Sync + 'static,
+    handle_key: impl Fn(char) -> bool + Send + Sync + 'static,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let _ = run(dashboard, Arc::new(is_shutdown), Arc::new(request_shutdown));
+        let _ = run(
+            dashboard,
+            Arc::new(is_shutdown),
+            Arc::new(request_shutdown),
+            Arc::new(handle_key),
+        );
     })
 }
 
@@ -399,6 +415,7 @@ fn run(
     dashboard: Arc<Dashboard>,
     is_shutdown: Arc<dyn Fn() -> bool + Send + Sync>,
     request_shutdown: Arc<dyn Fn() + Send + Sync>,
+    handle_key: Arc<dyn Fn(char) -> bool + Send + Sync>,
 ) -> io::Result<()> {
     // `setup_logger` moves tracing into the dashboard while TUI mode is active, but that cannot
     // constrain a dependency that writes directly to stdout or stderr. Take both streams into the
@@ -439,6 +456,12 @@ fn run(
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
+                if let KeyCode::Char(character) = key.code
+                    && !key.modifiers.contains(event::KeyModifiers::CONTROL)
+                    && handle_key(character)
+                {
+                    continue;
+                }
                 match key.code {
                     // Keep page navigation on unmodified arrows: this dashboard has no text
                     // editor or row selection competing for those keys.
