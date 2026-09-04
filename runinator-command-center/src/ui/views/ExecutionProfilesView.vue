@@ -53,6 +53,9 @@
                   ><span class="entity-banner-meta">{{
                     profile.description || "No description"
                   }}</span>
+                  <span v-if="isInheritedProfile(profile)" class="entity-banner-meta"
+                    >Platform profile · switch to Platform scope to manage</span
+                  >
                   <div class="chips">
                     <span v-for="scope in profile.credential_scopes" :key="scope" class="chip">{{
                       scope
@@ -80,18 +83,30 @@
               <td class="entity-banner-actions whitespace-nowrap">
                 <button
                   class="btn btn-sm"
-                  :disabled="!profile.enabled || !canMutate"
+                  :disabled="!profile.enabled || !canManageProfile(profile)"
+                  :title="profileActionHint(profile)"
                   @click="testProfile(profile)"
                 >
                   <Icon name="check" :size="13" /> Dry run</button
-                ><button class="btn btn-sm" :disabled="!profile.enabled || !canMutate" @click="rotate(profile)">
+                ><button
+                  class="btn btn-sm"
+                  :disabled="!profile.enabled || !canManageProfile(profile)"
+                  :title="profileActionHint(profile)"
+                  @click="rotate(profile)"
+                >
                   <Icon name="refresh" :size="13" /> Rotate</button
-                ><button class="btn btn-sm" :disabled="!canMutate" @click="beginEdit(profile)">
+                ><button
+                  class="btn btn-sm"
+                  :disabled="!canManageProfile(profile)"
+                  :title="profileActionHint(profile)"
+                  @click="beginEdit(profile)"
+                >
                   <Icon name="edit" :size="13" /> Edit</button
                 ><button
                   class="btn btn-sm btn-danger"
-                  :disabled="!canMutate"
+                  :disabled="!canManageProfile(profile)"
                   :aria-label="`Delete ${profile.name}`"
+                  :title="profileActionHint(profile)"
                   @click="remove(profile)"
                 >
                   <Icon name="trash" :size="13" />
@@ -305,6 +320,7 @@ import { validateExecutionProfile } from "../../core/domain/models/execution-pro
 import { formatDate } from "../../core/utils/format";
 import { useAppStore } from "../adapters/pinia/app";
 import { useExecutionProfilesStore } from "../adapters/pinia/executionProfiles";
+import { useOrgsStore } from "../adapters/pinia/orgs";
 import { storeToRefs } from "pinia";
 import CommandArgvEditor from "../components/execution-profiles/CommandArgvEditor.vue";
 import DataTable from "../components/shared/DataTable.vue";
@@ -322,6 +338,7 @@ interface EnvRow {
 }
 const app = useAppStore(),
   profileStore = useExecutionProfilesStore(),
+  orgs = useOrgsStore(),
   loading = ref(false),
   saving = ref(false),
   editing = ref(false),
@@ -332,6 +349,7 @@ const app = useAppStore(),
   activeTab = ref<Tab>("identity"),
   environmentRows = ref<EnvRow[]>([]);
 const { profiles, filteredProfiles: filtered } = storeToRefs(profileStore);
+const { activeOrgId } = storeToRefs(orgs);
 const canMutate = computed(() => app.can("credentials:manage"));
 const draft = reactive<ExecutionProfileInput>(emptyProfile());
 const tabs: { id: Tab; label: string }[] = [
@@ -424,6 +442,24 @@ function beginEdit(p: ExecutionProfile) {
   editingId.value = p.id;
   reset(p);
   editing.value = true;
+}
+
+function isInheritedProfile(profile: ExecutionProfile) {
+  return activeOrgId.value !== null && profile.org_id === null;
+}
+
+function canManageProfile(profile: ExecutionProfile) {
+  return canMutate.value && profile.org_id === activeOrgId.value;
+}
+
+function profileActionHint(profile: ExecutionProfile) {
+  if (!canMutate.value) {
+    return "You do not have permission to manage execution profiles.";
+  }
+
+  return isInheritedProfile(profile)
+    ? "Switch to Platform scope to manage this profile."
+    : undefined;
 }
 
 function closeEditor() {
