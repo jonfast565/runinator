@@ -37,6 +37,19 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         repository::list(self.store.as_ref(), org_id).await
     }
 
+    /// lists platform profiles together with profiles owned by the selected organization.
+    pub async fn list_visible_in_scope(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<ExecutionProfile>, SendableError> {
+        let mut profiles = repository::list(self.store.as_ref(), None).await?;
+        if let Some(org_id) = org_id {
+            profiles.extend(repository::list(self.store.as_ref(), Some(org_id)).await?);
+        }
+        profiles.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+        Ok(profiles)
+    }
+
     pub async fn fetch(&self, id: Uuid) -> Result<Option<ExecutionProfile>, SendableError> {
         repository::fetch(self.store.as_ref(), id).await
     }
@@ -494,6 +507,41 @@ mod tests {
         assert_eq!(changed.health, ExecutionProfileHealth::Unpublished);
         assert_eq!(changed.current_revision, None);
         assert_eq!(changed.current_digest, None);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn scoped_listing_includes_platform_profiles() {
+        let path = std::env::temp_dir().join(format!("runinator-profile-{}.db", Uuid::now_v7()));
+        let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+        let service = ExecutionProfileOperations::new(db);
+        let org_id = Uuid::now_v7();
+
+        let mut platform = request();
+        platform.name = "platform-profile".into();
+        service
+            .configure(Uuid::now_v7(), None, platform, Some(Utc::now()), true)
+            .await
+            .unwrap();
+        let mut organization = request();
+        organization.name = "organization-profile".into();
+        service
+            .configure(
+                Uuid::now_v7(),
+                Some(org_id),
+                organization,
+                Some(Utc::now()),
+                true,
+            )
+            .await
+            .unwrap();
+
+        let profiles = service.list_visible_in_scope(Some(org_id)).await.unwrap();
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0].name, "organization-profile");
+        assert_eq!(profiles[1].name, "platform-profile");
 
         let _ = std::fs::remove_file(path);
     }

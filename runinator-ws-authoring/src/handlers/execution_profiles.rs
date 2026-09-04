@@ -114,7 +114,12 @@ pub async fn list<T: AuthorizationStore + ExecutionProfileStore>(
     {
         return reply.into_reply();
     }
-    match service.list(ctx.org_id).await {
+    let profiles = if ctx.system_role == Some(SystemRole::Agent) {
+        service.list(ctx.org_id).await
+    } else {
+        service.list_visible_in_scope(ctx.org_id).await
+    };
+    match profiles {
         Ok(mut values) => {
             if ctx.system_role != Some(SystemRole::Agent) {
                 let visible = match AuthzChecker::new(db.as_ref(), &ctx)
