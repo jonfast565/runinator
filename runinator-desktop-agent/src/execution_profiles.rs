@@ -25,6 +25,7 @@ const MANIFEST_PATH: &str = ".runinator-profile.json";
 const MAX_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FILES: usize = 1_000;
+const MAX_STATUS_ERROR_CHARS: usize = 512;
 
 #[derive(Debug, Clone)]
 pub struct LocalProfileStatus {
@@ -157,10 +158,7 @@ pub async fn synchronize(
                                 statuses[index].id,
                                 &ExecutionProfileStatusRequest {
                                     health: ExecutionProfileHealth::Error,
-                                    error: Some(
-                                        "desktop publication failed; inspect the desktop agent log"
-                                            .into(),
-                                    ),
+                                    error: Some(status_error("desktop publication failed", &error)),
                                 },
                             )
                             .await;
@@ -187,9 +185,7 @@ pub async fn synchronize(
                             } else {
                                 ExecutionProfileHealth::Error
                             },
-                            error: Some(format!(
-                                "desktop {action} failed; inspect the desktop agent log"
-                            )),
+                            error: Some(status_error(&format!("desktop {action} failed"), &error)),
                         },
                     )
                     .await;
@@ -210,29 +206,25 @@ fn collect(
             .refresh
             .as_ref()
             .ok_or("a refresh was requested but no refresh command is configured")?;
-        if !run_command(refresh, true)?.status.success() {
-            return Err("profile refresh command failed".into());
-        }
+        run_checked_command(refresh, "profile refresh", true)?;
     }
     if let Some(probe) = &profile.collection.probe
-        && !run_command(probe, false)?.status.success()
+        && let Err(error) = run_checked_command(probe, "profile probe", false)
     {
         if dry_run {
-            return Err("profile probe failed during dry run".into());
+            return Err(format!("{error} during dry run").into());
         }
         if force_refresh {
-            return Err("profile probe still fails after requested refresh".into());
+            return Err(format!("{error} after requested refresh").into());
         }
         let refresh = profile
             .collection
             .refresh
             .as_ref()
             .ok_or("profile probe failed and no refresh command is configured")?;
-        if !run_command(refresh, true)?.status.success() {
-            return Err("profile refresh command failed".into());
-        }
-        if !run_command(probe, false)?.status.success() {
-            return Err("profile probe still fails after refresh".into());
+        run_checked_command(refresh, "profile refresh", true)?;
+        if let Err(error) = run_checked_command(probe, "profile probe", false) {
+            return Err(format!("{error} after refresh").into());
         }
     }
 
@@ -240,10 +232,27 @@ fn collect(
     for source in &profile.collection.sources {
         match source {
             ExecutionProfileSource::File { path, target } => {
-                insert(&mut files, target, fs::read(expand_path(path))?)?;
+                let expanded = expand_path(path);
+                let bytes = fs::read(&expanded).map_err(|error| {
+                    format!(
+                        "cannot read profile file source '{}' for target '{}': {error}",
+                        expanded.display(),
+                        target
+                    )
+                })?;
+                insert(&mut files, target, bytes)?;
             }
             ExecutionProfileSource::Directory { path, glob, target } => {
-                collect_directory(&mut files, &expand_path(path), target, &Pattern::new(glob)?)?;
+                let expanded = expand_path(path);
+                let pattern = Pattern::new(glob).map_err(|error| {
+                    format!(
+                        "invalid glob '{}' for profile directory source '{}' targeting '{}': {error}",
+                        glob,
+                        expanded.display(),
+                        target
+                    )
+                })?;
+                collect_directory(&mut files, &expanded, target, &pattern)?;
             }
             ExecutionProfileSource::Command { command, target } => {
                 if command.interactive {
@@ -252,10 +261,11 @@ fn collect(
                             .into(),
                     );
                 }
-                let output = run_command(command, false)?;
-                if !output.status.success() {
-                    return Err(format!("command source exited with {}", output.status).into());
-                }
+                let output = run_checked_command(
+                    command,
+                    &format!("profile command source for target '{target}'"),
+                    false,
+                )?;
                 insert(&mut files, target, output.stdout)?;
             }
         }
@@ -319,25 +329,65 @@ fn collect_directory(
         target: &str,
         pattern: &Pattern,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut entries = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
+        let mut entries = fs::read_dir(current)
+            .map_err(|error| {
+                format!(
+                    "cannot read profile directory source '{}' for target '{}': {error}",
+                    current.display(),
+                    target
+                )
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                format!(
+                    "cannot enumerate profile directory source '{}' for target '{}': {error}",
+                    current.display(),
+                    target
+                )
+            })?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
-            let metadata = entry.file_type()?;
+            let entry_path = entry.path();
+            let metadata = entry.file_type().map_err(|error| {
+                format!(
+                    "cannot inspect profile directory entry '{}' for target '{}': {error}",
+                    entry_path.display(),
+                    target
+                )
+            })?;
             if metadata.is_symlink() {
-                return Err(
-                    format!("profile source contains link: {}", entry.path().display()).into(),
-                );
+                return Err(format!(
+                    "profile directory source contains link: {}",
+                    entry_path.display()
+                )
+                .into());
             }
             if metadata.is_dir() {
-                walk(files, root, &entry.path(), target, pattern)?;
+                walk(files, root, &entry_path, target, pattern)?;
             } else if metadata.is_file() {
-                let relative = entry.path().strip_prefix(root)?.to_path_buf();
+                let relative = entry_path
+                    .strip_prefix(root)
+                    .map_err(|error| {
+                        format!(
+                            "cannot map profile directory entry '{}' below source '{}': {error}",
+                            entry_path.display(),
+                            root.display()
+                        )
+                    })?
+                    .to_path_buf();
                 let relative_text = relative.to_string_lossy().replace('\\', "/");
                 if pattern.matches(&relative_text) || pattern.matches_path(&relative) {
                     let mapped = format!("{}/{}", target.trim_end_matches('/'), relative_text)
                         .trim_start_matches('/')
                         .to_string();
-                    insert(files, &mapped, fs::read(entry.path())?)?;
+                    let bytes = fs::read(&entry_path).map_err(|error| {
+                        format!(
+                            "cannot read profile directory entry '{}' for target '{}': {error}",
+                            entry_path.display(),
+                            mapped
+                        )
+                    })?;
+                    insert(files, &mapped, bytes)?;
                 }
             }
         }
@@ -345,6 +395,50 @@ fn collect_directory(
     }
     validate_bundle_path(target).map_err(|error| format!("invalid directory target: {error}"))?;
     walk(files, root, root, target, pattern)
+}
+
+fn run_checked_command(
+    command: &ExecutionProfileCommand,
+    label: &str,
+    permit_interactive: bool,
+) -> Result<std::process::Output, Box<dyn std::error::Error + Send + Sync>> {
+    let output = run_command(command, permit_interactive).map_err(|error| {
+        format!(
+            "{label} command '{}' could not start: {error}",
+            command_program(command)
+        )
+    })?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(format!(
+            "{label} command '{}' exited with {}",
+            command_program(command),
+            output.status
+        )
+        .into())
+    }
+}
+
+fn command_program(command: &ExecutionProfileCommand) -> &str {
+    command
+        .argv
+        .first()
+        .map(String::as_str)
+        .unwrap_or("<empty>")
+}
+
+fn status_error(prefix: &str, error: &dyn std::fmt::Display) -> String {
+    let detail = format!("{prefix}: {error}");
+    if detail.chars().count() <= MAX_STATUS_ERROR_CHARS {
+        return detail;
+    }
+    let mut shortened = detail
+        .chars()
+        .take(MAX_STATUS_ERROR_CHARS.saturating_sub(1))
+        .collect::<String>();
+    shortened.push('…');
+    shortened
 }
 
 fn run_command(
@@ -494,6 +588,78 @@ mod tests {
         };
 
         let error = collect(&profile, false, true).unwrap_err();
+        assert!(error.to_string().contains("profile probe command 'false'"));
         assert!(error.to_string().contains("during dry run"));
+    }
+
+    #[test]
+    fn missing_file_source_names_the_source_and_target() {
+        let missing = std::env::temp_dir().join(format!(
+            "runinator-profile-missing-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let profile = ExecutionProfile {
+            id: uuid::Uuid::new_v4(),
+            org_id: None,
+            name: "missing-file".into(),
+            description: String::new(),
+            credential_scopes: vec!["fixture".into()],
+            collection: ExecutionProfileCollectionSpec {
+                version: 1,
+                probe: None,
+                refresh: None,
+                sources: vec![ExecutionProfileSource::File {
+                    path: missing.to_string_lossy().into_owned(),
+                    target: ".tool/config".into(),
+                }],
+            },
+            exposure: ExecutionProfileExposureSpec::default(),
+            config_version: 1,
+            config_digest: "config-digest".into(),
+            enabled: true,
+            current_revision: None,
+            current_digest: None,
+            current_publisher_id: None,
+            published_at: None,
+            expires_at: None,
+            refresh_requested_at: None,
+            health: ExecutionProfileHealth::Testing,
+            last_error: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let error = collect(&profile, false, true).unwrap_err().to_string();
+        assert!(error.contains("profile file source"));
+        assert!(error.contains(missing.to_string_lossy().as_ref()));
+        assert!(error.contains("target '.tool/config'"));
+    }
+
+    #[test]
+    fn missing_directory_source_names_the_source_and_target() {
+        let missing = std::env::temp_dir().join(format!(
+            "runinator-profile-directory-missing-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let error = collect_directory(
+            &mut BTreeMap::new(),
+            &missing,
+            ".tool/cache",
+            &Pattern::new("*.json").unwrap(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("profile directory source"));
+        assert!(error.contains(missing.to_string_lossy().as_ref()));
+        assert!(error.contains("target '.tool/cache'"));
+    }
+
+    #[test]
+    fn status_error_is_bounded_for_the_profile_status_api() {
+        let detail = status_error("desktop collection dry run failed", &"x".repeat(600));
+
+        assert_eq!(detail.chars().count(), MAX_STATUS_ERROR_CHARS);
+        assert!(detail.ends_with('…'));
     }
 }
