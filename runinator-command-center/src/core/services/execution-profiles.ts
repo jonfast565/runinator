@@ -1,32 +1,47 @@
 import {
   deleteExecutionProfile,
+  fetchExecutionProfileCollectionStatuses,
   fetchExecutionProfiles,
   putExecutionProfile,
   rotateExecutionProfile,
   testExecutionProfile,
 } from "../api/commandCenterApi";
-import type { ExecutionProfile, ExecutionProfileInput } from "../domain/models";
+import type {
+  ExecutionProfile,
+  ExecutionProfileCollectionStatus,
+  ExecutionProfileInput,
+} from "../domain/models";
 import type { AppService } from "./app";
 import { createStore } from "./event-bus";
 
 export interface ExecutionProfilesState {
   profiles: ExecutionProfile[];
+  collectionStatuses: Record<string, ExecutionProfileCollectionStatus>;
 }
 
 export function createExecutionProfilesService(app: AppService) {
-  const store = createStore<ExecutionProfilesState>({ profiles: [] });
+  const store = createStore<ExecutionProfilesState>({ profiles: [], collectionStatuses: {} });
+  const indexStatuses = (statuses: ExecutionProfileCollectionStatus[]) =>
+    Object.fromEntries(statuses.map((status) => [status.profile_id, status]));
   const service = {
     ...store,
     async refresh() {
-      const profiles = await app.runOperation(
+      const [profiles, statuses] = await app.runOperation(
         "Refreshing execution profiles",
-        () => fetchExecutionProfiles(),
+        () => Promise.all([fetchExecutionProfiles(), fetchExecutionProfileCollectionStatuses()]),
         { retryable: true },
       );
-      store.setState(() => ({ profiles }));
+      store.setState(() => ({ profiles, collectionStatuses: indexStatuses(statuses) }));
+    },
+    async refreshCollectionStatus() {
+      const statuses = await fetchExecutionProfileCollectionStatuses();
+      store.setState((state) => ({
+        ...state,
+        collectionStatuses: indexStatuses(statuses),
+      }));
     },
     clear() {
-      store.setState(() => ({ profiles: [] }));
+      store.setState(() => ({ profiles: [], collectionStatuses: {} }));
     },
     async save(id: string, profile: ExecutionProfileInput) {
       await app.runOperation("Saving execution profile", () => putExecutionProfile(id, profile));
@@ -41,7 +56,9 @@ export function createExecutionProfilesService(app: AppService) {
       await service.refresh();
     },
     async test(id: string) {
-      await app.runOperation("Dry-running execution profile collection", () => testExecutionProfile(id));
+      await app.runOperation("Dry-running execution profile collection", () =>
+        testExecutionProfile(id),
+      );
       await service.refresh();
     },
   };

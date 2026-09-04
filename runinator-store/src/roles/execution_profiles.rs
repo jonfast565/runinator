@@ -4,7 +4,10 @@ use std::future::Future;
 
 use runinator_models::{
     errors::SendableError,
-    execution_profiles::{ExecutionProfile, ExecutionProfileRevision},
+    execution_profiles::{
+        ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileOperation,
+        ExecutionProfileOperationState, ExecutionProfileRevision,
+    },
 };
 use uuid::Uuid;
 
@@ -53,5 +56,51 @@ pub trait ExecutionProfileStore: Send + Sync + 'static {
         id: Uuid,
         health: runinator_models::execution_profiles::ExecutionProfileHealth,
         error: Option<String>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn upsert_execution_profile_agent_status(
+        &self,
+        status: &ExecutionProfileAgentStatus,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn list_execution_profile_agent_statuses(
+        &self,
+        profile_id: Uuid,
+        config_digest: &str,
+    ) -> impl Future<Output = Result<Vec<ExecutionProfileAgentStatus>, SendableError>> + Send;
+
+    fn insert_execution_profile_operation(
+        &self,
+        operation: &ExecutionProfileOperation,
+    ) -> impl Future<Output = Result<ExecutionProfileOperation, SendableError>> + Send;
+
+    fn fetch_latest_execution_profile_operation(
+        &self,
+        profile_id: Uuid,
+        config_digest: &str,
+    ) -> impl Future<Output = Result<Option<ExecutionProfileOperation>, SendableError>> + Send;
+
+    fn list_pending_execution_profile_operations(
+        &self,
+        org_id: Option<Uuid>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> impl Future<Output = Result<Vec<ExecutionProfileOperation>, SendableError>> + Send;
+
+    fn claim_execution_profile_operation(
+        &self,
+        operation_id: Uuid,
+        agent_id: Uuid,
+        config_digest: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+        lease_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> impl Future<Output = Result<Option<ExecutionProfileOperation>, SendableError>> + Send;
+
+    fn complete_execution_profile_operation(
+        &self,
+        operation_id: Uuid,
+        agent_id: Uuid,
+        state: ExecutionProfileOperationState,
+        error: Option<String>,
+        completed_at: chrono::DateTime<chrono::Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 }

@@ -131,6 +131,158 @@ pub enum ExecutionProfileHealth {
     Disabled,
 }
 
+/// A desktop agent's local approval for one exact execution-profile configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProfileApprovalState {
+    Approved,
+    ApprovalRequired,
+}
+
+impl ExecutionProfileApprovalState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::ApprovalRequired => "approval_required",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "approved" => Self::Approved,
+            _ => Self::ApprovalRequired,
+        }
+    }
+}
+
+/// The operator intent a desktop agent may perform for an execution profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProfileOperationKind {
+    DryRun,
+    Refresh,
+}
+
+impl ExecutionProfileOperationKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DryRun => "dry_run",
+            Self::Refresh => "refresh",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "refresh" => Self::Refresh,
+            _ => Self::DryRun,
+        }
+    }
+}
+
+/// The lifecycle of one requested desktop collection operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProfileOperationState {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+impl ExecutionProfileOperationState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Queued | Self::Running)
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "running" => Self::Running,
+            "succeeded" => Self::Succeeded,
+            "failed" => Self::Failed,
+            _ => Self::Queued,
+        }
+    }
+}
+
+/// One durable dry-run or refresh request, claimed and completed by one desktop agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileOperation {
+    pub id: Uuid,
+    pub profile_id: Uuid,
+    pub config_digest: String,
+    pub kind: ExecutionProfileOperationKind,
+    pub state: ExecutionProfileOperationState,
+    pub requested_at: DateTime<Utc>,
+    pub requested_by: Option<Uuid>,
+    pub claimed_by: Option<Uuid>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub lease_expires_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+/// The latest locally reported collection state from one desktop agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileAgentStatus {
+    pub profile_id: Uuid,
+    pub agent_id: Uuid,
+    pub config_digest: String,
+    pub approval: ExecutionProfileApprovalState,
+    pub last_seen_at: DateTime<Utc>,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+}
+
+/// The collection status presented to profile authors alongside immutable publication metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileCollectionStatus {
+    pub profile_id: Uuid,
+    pub config_digest: String,
+    pub publication_health: ExecutionProfileHealth,
+    pub current_revision: Option<i64>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub latest_operation: Option<ExecutionProfileOperation>,
+    pub agents: Vec<ExecutionProfileAgentStatus>,
+}
+
+/// A desktop agent's observation after it has inspected the local approval and collection state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileAgentStatusRequest {
+    pub config_digest: String,
+    pub approval: ExecutionProfileApprovalState,
+    #[serde(default)]
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_success_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+/// Binds an operation claim to the configuration the desktop agent approved locally.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileOperationClaimRequest {
+    pub config_digest: String,
+}
+
+/// Completes a claimed desktop operation without altering the profile's publication availability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionProfileOperationCompleteRequest {
+    pub state: ExecutionProfileOperationState,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 impl ExecutionProfileHealth {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -406,6 +558,43 @@ impl Validate for ExecutionProfileStatusRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         if let Some(error) = &self.error {
             bounded_text("error", error, 512)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ExecutionProfileAgentStatusRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("config_digest", &self.config_digest, SHORT_TEXT_MAX)?;
+        if let Some(error) = &self.last_error {
+            bounded_text("last_error", error, 512)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ExecutionProfileOperationClaimRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("config_digest", &self.config_digest, SHORT_TEXT_MAX)
+    }
+}
+
+impl Validate for ExecutionProfileOperationCompleteRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.state.is_active() {
+            return Err(ValidationError::new(
+                "state",
+                "must be a terminal operation state",
+            ));
+        }
+        if let Some(error) = &self.error {
+            bounded_text("error", error, 512)?;
+        }
+        if self.state == ExecutionProfileOperationState::Failed && self.error.is_none() {
+            return Err(ValidationError::new(
+                "error",
+                "is required when state is failed",
+            ));
         }
         Ok(())
     }

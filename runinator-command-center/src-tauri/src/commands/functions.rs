@@ -44,6 +44,19 @@ pub async fn list_execution_profiles(state: State<'_, CommandCenterState>) -> Co
 }
 
 #[tauri::command]
+pub async fn list_execution_profile_collection_statuses(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Value> {
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .list_execution_profile_collection_statuses()
+            .await
+            .map_err(api_error)?,
+    )
+}
+
+#[tauri::command]
 pub async fn put_execution_profile(
     state: State<'_, CommandCenterState>,
     profile_id: String,

@@ -4,7 +4,10 @@ use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail},
-    execution_profiles::{ExecutionProfile, ExecutionProfileRevision},
+    execution_profiles::{
+        ExecutionProfile, ExecutionProfileCollectionStatus, ExecutionProfileOperation,
+        ExecutionProfileRevision,
+    },
     files::StoredFile,
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
@@ -172,6 +175,9 @@ pub enum ApiResponse {
     WorkflowFileList(Vec<StoredFile>),
     ExecutionProfile(ExecutionProfile),
     ExecutionProfileList(Vec<ExecutionProfile>),
+    ExecutionProfileCollectionStatusList(Vec<ExecutionProfileCollectionStatus>),
+    ExecutionProfileOperationList(Vec<ExecutionProfileOperation>),
+    ExecutionProfileOperation(ExecutionProfileOperation),
     ExecutionProfileRevision(ExecutionProfileRevision),
     NodeTransitions(Vec<runinator_models::orchestration::NodeTransition>),
     NodeTransitionStats(Vec<runinator_models::orchestration::NodeTransitionStat>),

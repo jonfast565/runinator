@@ -37,3 +37,41 @@ row_mapper!(row_to_execution_profile_revision(row) -> ExecutionProfileRevision {
         uri: row.get("uri"),
     }
 });
+
+row_mapper!(row_to_execution_profile_agent_status(row) -> ExecutionProfileAgentStatus {
+    ExecutionProfileAgentStatus {
+        profile_id: row.get("profile_id"),
+        agent_id: row.get("agent_id"),
+        config_digest: row.get("config_digest"),
+        approval: ExecutionProfileApprovalState::parse(&row.get::<String, _>("approval")),
+        last_seen_at: DateTime::<Utc>::from_timestamp(row.get("last_seen_at"), 0)
+            .unwrap_or_else(Utc::now),
+        last_attempt_at: row.get::<Option<i64>, _>("last_attempt_at")
+            .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        last_success_at: row.get::<Option<i64>, _>("last_success_at")
+            .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        last_error: row.get("last_error"),
+    }
+});
+
+row_mapper!(row_to_execution_profile_operation(row) -> ExecutionProfileOperation {
+    ExecutionProfileOperation {
+        id: row.get("id"),
+        profile_id: row.get("profile_id"),
+        config_digest: row.get("config_digest"),
+        kind: ExecutionProfileOperationKind::parse(&row.get::<String, _>("kind")),
+        state: ExecutionProfileOperationState::parse(&row.get::<String, _>("state")),
+        requested_at: DateTime::<Utc>::from_timestamp(row.get("requested_at"), 0)
+            .unwrap_or_else(Utc::now),
+        requested_by: row.get("requested_by"),
+        claimed_by: row.get("claimed_by"),
+        started_at: row.get::<Option<i64>, _>("started_at")
+            .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        lease_expires_at: row
+            .get::<Option<i64>, _>("lease_expires_at")
+            .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        completed_at: row.get::<Option<i64>, _>("completed_at")
+            .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        error: row.get("error"),
+    }
+});

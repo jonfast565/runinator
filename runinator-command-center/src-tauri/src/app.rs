@@ -22,6 +22,7 @@ pub fn run() {
             crate::commands::upload_function_artifact,
             crate::commands::list_workflow_files,
             crate::commands::list_execution_profiles,
+            crate::commands::list_execution_profile_collection_statuses,
             crate::commands::put_execution_profile,
             crate::commands::delete_execution_profile,
             crate::commands::rotate_execution_profile,

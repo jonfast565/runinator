@@ -1097,6 +1097,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   list_workflow_files: { method: "GET", path: () => "workflow_files" },
   list_execution_profiles: { method: "GET", path: () => "execution_profiles" },
+  list_execution_profile_collection_statuses: {
+    method: "GET",
+    path: () => "execution_profiles/collection-statuses",
+  },
   put_execution_profile: {
     method: "PUT",
     path: (args) => `execution_profiles/${escape(arg(args, "profileId"))}`,

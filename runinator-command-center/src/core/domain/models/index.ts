@@ -3,8 +3,13 @@
 export type { JsonArray, JsonObject, JsonRecord, JsonValue } from "../json";
 export type {
   ExecutionProfile,
+  ExecutionProfileAgentStatus,
+  ExecutionProfileCollectionStatus,
   ExecutionProfileCommand,
   ExecutionProfileInput,
+  ExecutionProfileOperation,
+  ExecutionProfileOperationKind,
+  ExecutionProfileOperationState,
   ExecutionProfileSource,
 } from "./execution-profile";
 export {

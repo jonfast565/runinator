@@ -14,8 +14,10 @@ use runinator_models::{
     },
     errors::SendableError,
     execution_profiles::{
-        ExecutionProfile, ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
-        ExecutionProfileHealth, ExecutionProfileRevision,
+        ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileApprovalState,
+        ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec, ExecutionProfileHealth,
+        ExecutionProfileOperation, ExecutionProfileOperationKind, ExecutionProfileOperationState,
+        ExecutionProfileRevision,
     },
     files::{FileDescriptor, FileScope, StoredFile},
     functions::{

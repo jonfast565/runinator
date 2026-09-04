@@ -16,12 +16,9 @@
       <p v-if="error" class="mb-2 text-sm text-danger" role="alert">{{ error }}</p>
       <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
         <MetricCard label="Profiles" :value="filtered.length" /><MetricCard
-          label="Ready"
-          :value="profiles.filter((p) => p.health === 'ready').length"
-        /><MetricCard
-          label="Need attention"
-          :value="profiles.filter((p) => !['ready', 'disabled'].includes(p.health)).length"
-        />
+          label="Published"
+          :value="profiles.filter((p) => publicationHealth(p) === 'ready').length"
+        /><MetricCard label="Need attention" :value="profiles.filter(needsAttention).length" />
       </div>
       <LoadingPanel
         v-if="loading && !profiles.length"
@@ -64,21 +61,65 @@
                 </div>
               </td>
               <td>
-                <span class="badge">{{ profile.health }}</span>
-                <p v-if="profile.last_error" class="mt-1 text-xs text-danger">
-                  {{ profile.last_error }}
+                <div class="profile-collection-health">
+                  <span
+                    class="profile-health-dot"
+                    :class="`is-${collectionHealth(profile).tone}`"
+                    :title="collectionHealth(profile).label"
+                  />
+                  <div class="min-w-0">
+                    <strong>{{ collectionHealth(profile).label }}</strong>
+                    <p class="m-0 text-xs text-fg-muted">
+                      {{ collectionHealth(profile).detail }}
+                    </p>
+                  </div>
+                </div>
+                <p v-if="collectionError(profile)" class="mt-1 text-xs text-danger">
+                  {{ collectionError(profile) }}
                 </p>
                 <span class="entity-banner-meta">Config v{{ profile.config_version }}</span>
+                <details v-if="collectionStatus(profile)" class="collection-status-details">
+                  <summary>Desktop details</summary>
+                  <div class="collection-status-grid">
+                    <div>
+                      <span>Approved desktops</span>
+                      <strong
+                        >{{ approvedAgentCount(profile) }} /
+                        {{ collectionStatus(profile)?.agents.length }}</strong
+                      >
+                    </div>
+                    <div>
+                      <span>Last success</span>
+                      <strong>{{ formatDate(lastSuccessAt(profile)) }}</strong>
+                    </div>
+                    <div>
+                      <span>Latest operation</span>
+                      <strong>{{ operationSummary(profile) }}</strong>
+                    </div>
+                  </div>
+                  <div v-if="collectionStatus(profile)?.agents.length" class="collection-agents">
+                    <div v-for="agent in collectionStatus(profile)?.agents" :key="agent.agent_id">
+                      <strong>Desktop {{ shortAgentId(agent.agent_id) }}</strong>
+                      <span>{{
+                        agent.approval === "approved" ? "Approved" : "Approval required"
+                      }}</span>
+                      <span>Seen {{ formatDate(agent.last_seen_at) }}</span>
+                    </div>
+                  </div>
+                </details>
               </td>
               <td>
-                <div v-if="profile.current_revision">
+                <span class="badge" :class="`publication-${publicationHealth(profile)}`">
+                  {{ publicationLabel(profile) }}
+                </span>
+                <div v-if="publicationStatus(profile).current_revision" class="mt-1">
                   <span
-                    >Revision {{ profile.current_revision }} ·
-                    {{ formatDate(profile.published_at) }}</span
+                    >Revision {{ publicationStatus(profile).current_revision }} ·
+                    {{ formatDate(publicationStatus(profile).published_at) }}</span
                   >
                   <div class="entity-banner-meta">{{ profile.current_digest?.slice(0, 12) }}</div>
                 </div>
-                <span v-else class="text-fg-muted">Waiting for desktop publication</span>
+                <span v-else class="text-fg-muted">No active desktop publication</span>
               </td>
               <td class="entity-banner-actions whitespace-nowrap">
                 <button
@@ -313,9 +354,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref, toRaw, watch } from "vue";
+import {
+  computed,
+  defineComponent,
+  h,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  toRaw,
+  watch,
+} from "vue";
 import type {
   ExecutionProfile,
+  ExecutionProfileCollectionStatus,
   ExecutionProfileCommand,
   ExecutionProfileInput,
   ExecutionProfileSource,
@@ -354,7 +406,7 @@ const app = useAppStore(),
   scopeEntry = ref(""),
   activeTab = ref<Tab>("identity"),
   environmentRows = ref<EnvRow[]>([]);
-const { profiles, filteredProfiles: filtered } = storeToRefs(profileStore);
+const { profiles, filteredProfiles: filtered, collectionStatuses } = storeToRefs(profileStore);
 const { activeOrgId } = storeToRefs(orgs);
 const canMutate = computed(() => app.can("credentials:manage"));
 const canSwitchToPlatform = computed(
@@ -479,6 +531,178 @@ function profileActionHint(profile: ExecutionProfile) {
   return isInheritedProfile(profile)
     ? "Switch to Platform scope to manage this profile."
     : undefined;
+}
+
+type CollectionTone = "healthy" | "warning" | "error" | "muted";
+
+function collectionStatus(profile: ExecutionProfile): ExecutionProfileCollectionStatus | undefined {
+  return collectionStatuses.value[profile.id];
+}
+
+function publicationStatus(profile: ExecutionProfile) {
+  const status = collectionStatus(profile);
+  return {
+    health: status?.publication_health ?? profile.health,
+    current_revision: status?.current_revision ?? profile.current_revision,
+    published_at: status?.published_at ?? profile.published_at,
+    expires_at: status?.expires_at ?? profile.expires_at,
+  };
+}
+
+function publicationHealth(profile: ExecutionProfile) {
+  return publicationStatus(profile).health;
+}
+
+function publicationLabel(profile: ExecutionProfile) {
+  return (
+    {
+      unpublished: "Unpublished",
+      ready: "Published",
+      expiring: "Expiring",
+      expired: "Expired",
+      disabled: "Disabled",
+      testing: "Publishing",
+      error: "Unavailable",
+    } as const
+  )[publicationHealth(profile)];
+}
+
+function collectionHealth(profile: ExecutionProfile): {
+  tone: CollectionTone;
+  label: string;
+  detail: string;
+} {
+  if (!profile.enabled) {
+    return {
+      tone: "muted",
+      label: "Desktop collection disabled",
+      detail: "Enable the profile to collect.",
+    };
+  }
+
+  const status = collectionStatus(profile);
+
+  if (!status) {
+    return {
+      tone: "muted",
+      label: "Loading desktop status",
+      detail: "Checking approved desktop agents.",
+    };
+  }
+
+  const operation = status.latest_operation;
+
+  if (operation?.state === "failed") {
+    return {
+      tone: "error",
+      label: `${operation.kind === "dry_run" ? "Dry run" : "Refresh"} failed`,
+      detail: "The active publication was left unchanged.",
+    };
+  }
+
+  if (operation?.state === "queued") {
+    return {
+      tone: "warning",
+      label: `${operation.kind === "dry_run" ? "Dry run" : "Refresh"} queued`,
+      detail: "Waiting for a desktop with local approval.",
+    };
+  }
+
+  if (operation?.state === "running") {
+    return {
+      tone: "warning",
+      label: `${operation.kind === "dry_run" ? "Dry run" : "Refresh"} running`,
+      detail: "An approved desktop agent claimed the operation.",
+    };
+  }
+
+  if (!status.agents.length) {
+    return {
+      tone: "muted",
+      label: "Awaiting desktop agent",
+      detail: "No desktop has reported this configuration.",
+    };
+  }
+
+  const approved = approvedAgentCount(profile);
+
+  if (!approved) {
+    return {
+      tone: "warning",
+      label: "Local approval required",
+      detail: "Approve this configuration on a desktop agent to collect it.",
+    };
+  }
+
+  if (collectionError(profile)) {
+    return {
+      tone: "error",
+      label: "Desktop collection needs attention",
+      detail: "See the latest sanitized desktop error below.",
+    };
+  }
+
+  if (lastSuccessAt(profile)) {
+    return {
+      tone: "healthy",
+      label: "Desktop collection healthy",
+      detail: `${String(approved)} approved desktop${approved === 1 ? "" : "s"}.`,
+    };
+  }
+
+  return {
+    tone: "warning",
+    label: "Awaiting first collection",
+    detail: `${String(approved)} approved desktop${approved === 1 ? "" : "s"} can collect it.`,
+  };
+}
+
+function approvedAgentCount(profile: ExecutionProfile) {
+  return (
+    collectionStatus(profile)?.agents.filter((agent) => agent.approval === "approved").length ?? 0
+  );
+}
+
+function lastSuccessAt(profile: ExecutionProfile) {
+  return (
+    collectionStatus(profile)?.agents.reduce<string | null>((latest, agent) => {
+      if (!agent.last_success_at || (latest && latest >= agent.last_success_at)) {
+        return latest;
+      }
+
+      return agent.last_success_at;
+    }, null) ?? null
+  );
+}
+
+function collectionError(profile: ExecutionProfile) {
+  return (
+    collectionStatus(profile)?.latest_operation?.error ??
+    collectionStatus(profile)?.agents.find((agent) => agent.last_error)?.last_error ??
+    profile.last_error
+  );
+}
+
+function operationSummary(profile: ExecutionProfile) {
+  const operation = collectionStatus(profile)?.latest_operation;
+
+  if (!operation) {
+    return "No requested operation";
+  }
+
+  const label = operation.kind === "dry_run" ? "Dry run" : "Refresh";
+  return `${label} · ${operation.state}`;
+}
+
+function shortAgentId(agentId: string) {
+  return agentId.slice(0, 8);
+}
+
+function needsAttention(profile: ExecutionProfile) {
+  return (
+    !["ready", "disabled"].includes(publicationHealth(profile)) ||
+    ["warning", "error"].includes(collectionHealth(profile).tone)
+  );
 }
 
 async function ensureProfileScope(profile: ExecutionProfile): Promise<boolean> {
@@ -705,7 +929,19 @@ async function runProfileAction(profile: ExecutionProfile, action: () => Promise
   }
 }
 
-onMounted(refresh);
+let collectionStatusTimer: ReturnType<typeof window.setInterval> | undefined;
+
+onMounted(() => {
+  void refresh();
+  collectionStatusTimer = window.setInterval(() => {
+    void profileStore.refreshCollectionStatus().catch(() => undefined);
+  }, 10_000);
+});
+onBeforeUnmount(() => {
+  if (collectionStatusTimer) {
+    window.clearInterval(collectionStatusTimer);
+  }
+});
 watch(activeOrgId, () => void refresh());
 </script>
 <style scoped>
@@ -722,6 +958,86 @@ watch(activeOrgId, () => void refresh());
   border-radius: 999px;
   padding: 0.12rem 0.45rem;
   font-size: 0.72rem;
+}
+.profile-collection-health {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+.profile-health-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  margin-top: 0.3rem;
+  border-radius: 50%;
+}
+.profile-health-dot.is-healthy {
+  background: var(--color-success-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success-fg) 14%, transparent);
+}
+.profile-health-dot.is-warning {
+  background: var(--color-warning-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning-fg) 14%, transparent);
+}
+.profile-health-dot.is-error {
+  background: var(--color-danger-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger-fg) 14%, transparent);
+}
+.profile-health-dot.is-muted {
+  background: var(--color-fg-muted);
+}
+.collection-status-details {
+  margin-top: 0.45rem;
+  color: var(--color-fg-muted);
+  font-size: 0.72rem;
+}
+.collection-status-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.collection-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(7rem, 1fr));
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+.collection-status-grid > div,
+.collection-agents > div {
+  display: grid;
+  gap: 0.1rem;
+}
+.collection-status-grid span,
+.collection-agents span {
+  color: var(--color-fg-muted);
+}
+.collection-status-grid strong,
+.collection-agents strong {
+  color: var(--color-fg);
+  font-weight: 600;
+}
+.collection-agents {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 0.5rem;
+}
+.publication-ready {
+  color: var(--color-success-fg);
+}
+.publication-expiring,
+.publication-unpublished,
+.publication-testing {
+  color: var(--color-warning-fg);
+}
+.publication-expired,
+.publication-error {
+  color: var(--color-danger-fg);
+}
+@media (max-width: 48rem) {
+  .collection-status-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .templates,
 .source-head {

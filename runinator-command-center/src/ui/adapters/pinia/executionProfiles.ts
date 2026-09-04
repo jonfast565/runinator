@@ -8,6 +8,7 @@ export const useExecutionProfilesStore = defineStore("execution-profiles", () =>
   const state = mirrorServiceState(executionProfilesService);
   return {
     profiles: computed(() => state.value.profiles),
+    collectionStatuses: computed(() => state.value.collectionStatuses),
     filteredProfiles: computed(() => {
       const query = appService.normalizedSearch;
       return query
@@ -19,6 +20,7 @@ export const useExecutionProfilesStore = defineStore("execution-profiles", () =>
         : state.value.profiles;
     }),
     refresh: () => executionProfilesService.refresh(),
+    refreshCollectionStatus: () => executionProfilesService.refreshCollectionStatus(),
     clear: () => {
       executionProfilesService.clear();
     },

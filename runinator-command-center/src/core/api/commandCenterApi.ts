@@ -2199,6 +2199,13 @@ export async function fetchExecutionProfiles() {
   return command<import("../domain/models").ExecutionProfile[]>("list_execution_profiles", {});
 }
 
+export async function fetchExecutionProfileCollectionStatuses() {
+  return command<import("../domain/models").ExecutionProfileCollectionStatus[]>(
+    "list_execution_profile_collection_statuses",
+    {},
+  );
+}
+
 export async function putExecutionProfile(
   profileId: string,
   profile: import("../domain/models").ExecutionProfileInput,

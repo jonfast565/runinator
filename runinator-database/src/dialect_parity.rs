@@ -18,6 +18,11 @@ use runinator_comm::{
 };
 use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
+    execution_profiles::{
+        ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileApprovalState,
+        ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec, ExecutionProfileHealth,
+        ExecutionProfileOperation, ExecutionProfileOperationKind, ExecutionProfileOperationState,
+    },
     json,
     orchestration::{
         AdapterTransport, ControlEffect, DeliverySemantics, ExternalOperation,
@@ -101,6 +106,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_correlated_orchestration_lifecycle(db, id).await;
     assert_notifications(db).await;
     assert_settings(db).await;
+    assert_execution_profile_collection_lifecycle(db).await;
     assert_catalog_upsert(db).await;
     assert_automation_records(db, Uuid::now_v7()).await;
     assert_normalized_execution_state_lifecycle(db, &after).await;
@@ -113,6 +119,133 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_workflow_vm_mutex_lifecycle(db, &after).await;
     assert_workflow_effect_retry_lifecycle(db, &after).await;
     assert_unreferenced_artifacts(db).await;
+}
+
+/// verifies that local desktop observations retain their configuration boundary and a collection
+/// operation is claimed exactly once. These operations use portable update-then-insert paths,
+/// which need real coverage on every SQL engine.
+async fn assert_execution_profile_collection_lifecycle<T: DatabaseImpl + WorkflowVmStore>(db: &T) {
+    let now = Utc::now();
+    let profile_id = Uuid::now_v7();
+    let agent_id = Uuid::now_v7();
+    db.upsert_execution_profile(&ExecutionProfile {
+        id: profile_id,
+        org_id: None,
+        name: format!("profile-parity-{profile_id}"),
+        description: "cross-dialect collection status fixture".into(),
+        credential_scopes: vec!["github".into()],
+        collection: ExecutionProfileCollectionSpec::default(),
+        exposure: ExecutionProfileExposureSpec::default(),
+        config_version: 1,
+        config_digest: "profile-config-a".into(),
+        enabled: true,
+        current_revision: None,
+        current_digest: None,
+        current_publisher_id: None,
+        published_at: None,
+        expires_at: None,
+        refresh_requested_at: None,
+        health: ExecutionProfileHealth::Unpublished,
+        last_error: None,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    db.upsert_execution_profile_agent_status(&ExecutionProfileAgentStatus {
+        profile_id,
+        agent_id,
+        config_digest: "profile-config-a".into(),
+        approval: ExecutionProfileApprovalState::Approved,
+        last_seen_at: now,
+        last_attempt_at: Some(now),
+        last_success_at: None,
+        last_error: Some("missing fixture".into()),
+    })
+    .await
+    .unwrap();
+    db.upsert_execution_profile_agent_status(&ExecutionProfileAgentStatus {
+        profile_id,
+        agent_id,
+        config_digest: "profile-config-a".into(),
+        approval: ExecutionProfileApprovalState::Approved,
+        last_seen_at: now + Duration::seconds(1),
+        last_attempt_at: Some(now + Duration::seconds(1)),
+        last_success_at: Some(now + Duration::seconds(1)),
+        last_error: None,
+    })
+    .await
+    .unwrap();
+    let statuses = db
+        .list_execution_profile_agent_statuses(profile_id, "profile-config-a")
+        .await
+        .unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert!(statuses[0].last_success_at.is_some());
+    assert_eq!(statuses[0].last_error, None);
+
+    let operation = ExecutionProfileOperation {
+        id: Uuid::now_v7(),
+        profile_id,
+        config_digest: "profile-config-a".into(),
+        kind: ExecutionProfileOperationKind::DryRun,
+        state: ExecutionProfileOperationState::Queued,
+        requested_at: now,
+        requested_by: None,
+        claimed_by: None,
+        started_at: None,
+        lease_expires_at: None,
+        completed_at: None,
+        error: None,
+    };
+    db.insert_execution_profile_operation(&operation)
+        .await
+        .unwrap();
+    assert!(
+        db.insert_execution_profile_operation(&ExecutionProfileOperation {
+            id: Uuid::now_v7(),
+            ..operation.clone()
+        })
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        db.claim_execution_profile_operation(
+            operation.id,
+            agent_id,
+            "profile-config-a",
+            now,
+            now + Duration::minutes(30),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .state,
+        ExecutionProfileOperationState::Running
+    );
+    assert!(
+        db.claim_execution_profile_operation(
+            operation.id,
+            Uuid::now_v7(),
+            "profile-config-a",
+            now,
+            now + Duration::minutes(30),
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        db.complete_execution_profile_operation(
+            operation.id,
+            agent_id,
+            ExecutionProfileOperationState::Succeeded,
+            None,
+            now,
+        )
+        .await
+        .unwrap()
+    );
 }
 
 /// Exercise the orchestration-specific migration and every atomic primitive that differs by SQL

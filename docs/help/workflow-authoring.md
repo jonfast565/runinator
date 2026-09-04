@@ -15,7 +15,16 @@ ordinary scalar credentials and config, import an `.rrx` source containing a `se
 `runinatorctl settings import <file>`. Each entry carries a `kind`
 (`secret` — the default — or `config`) and a `value`; secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
-read by the web service. You can seed the app-data workflow pack from the
+read by the web service.
+
+The Execution Profiles table reports desktop collection health separately from publication
+availability. **Dry run** and **Rotate** queue a durable desktop operation for an agent that has
+locally approved the current configuration; a failed operation leaves the active credential
+revision usable. Expand **Desktop details** to see approval coverage, the latest operation, last
+success, and the sanitized error reported by the desktop that attempted collection. A claim expires
+after 30 minutes so a disconnected desktop cannot leave an operation stuck indefinitely.
+
+You can seed the app-data workflow pack from the
 repository sample if needed:
 
 ```bash

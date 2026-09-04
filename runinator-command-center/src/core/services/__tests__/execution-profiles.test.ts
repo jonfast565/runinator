@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExecutionProfile, ExecutionProfileInput } from "../../domain/models";
+import type {
+  ExecutionProfile,
+  ExecutionProfileCollectionStatus,
+  ExecutionProfileInput,
+} from "../../domain/models";
 import type { AppService } from "../app";
 import { createExecutionProfilesService } from "../execution-profiles";
 
 vi.mock("../../api/commandCenterApi", () => ({
   fetchExecutionProfiles: vi.fn(),
+  fetchExecutionProfileCollectionStatuses: vi.fn(),
   putExecutionProfile: vi.fn(),
   deleteExecutionProfile: vi.fn(),
   rotateExecutionProfile: vi.fn(),
@@ -14,6 +19,7 @@ vi.mock("../../api/commandCenterApi", () => ({
 import {
   deleteExecutionProfile,
   fetchExecutionProfiles,
+  fetchExecutionProfileCollectionStatuses,
   putExecutionProfile,
 } from "../../api/commandCenterApi";
 
@@ -51,16 +57,29 @@ const app = {
   runOperation: <T>(_label: string, run: () => Promise<T>) => run(),
 } as AppService;
 
+const collectionStatus: ExecutionProfileCollectionStatus = {
+  profile_id: profile.id,
+  config_digest: profile.config_digest,
+  publication_health: profile.health,
+  current_revision: null,
+  published_at: null,
+  expires_at: null,
+  latest_operation: null,
+  agents: [],
+};
+
 describe("execution-profile service", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(fetchExecutionProfiles).mockResolvedValue([profile]);
+    vi.mocked(fetchExecutionProfileCollectionStatuses).mockResolvedValue([collectionStatus]);
   });
 
   it("refreshes and clears backend state", async () => {
     const service = createExecutionProfilesService(app);
     await service.refresh();
     expect(service.getState().profiles).toEqual([profile]);
+    expect(service.getState().collectionStatuses).toEqual({ [profile.id]: collectionStatus });
     service.clear();
     expect(service.getState().profiles).toEqual([]);
   });

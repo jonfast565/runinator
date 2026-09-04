@@ -12,8 +12,10 @@ use std::{
 use glob::Pattern;
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::execution_profiles::{
-    ExecutionProfile, ExecutionProfileCommand, ExecutionProfileHealth,
-    ExecutionProfilePublishRequest, ExecutionProfileSource, ExecutionProfileStatusRequest,
+    ExecutionProfile, ExecutionProfileAgentStatusRequest, ExecutionProfileApprovalState,
+    ExecutionProfileCommand, ExecutionProfileOperation, ExecutionProfileOperationClaimRequest,
+    ExecutionProfileOperationCompleteRequest, ExecutionProfileOperationKind,
+    ExecutionProfileOperationState, ExecutionProfilePublishRequest, ExecutionProfileSource,
     validate_bundle_path,
 };
 use sha2::{Digest, Sha256};
@@ -80,6 +82,12 @@ pub async fn synchronize(
     log: impl Fn(String),
 ) -> Result<Vec<LocalProfileStatus>, Box<dyn std::error::Error + Send + Sync>> {
     let profiles = client.list_execution_profiles().await?;
+    let mut pending_operations = client
+        .list_pending_execution_profile_operations()
+        .await?
+        .into_iter()
+        .map(|operation| (operation.profile_id, operation))
+        .collect::<BTreeMap<_, _>>();
     let approvals = crate::config::load().approved_execution_profiles;
     let mut statuses = profiles
         .iter()
@@ -91,8 +99,6 @@ pub async fn synchronize(
             approved: approvals.get(&profile.id) == Some(&profile.config_digest),
             message: if !profile.enabled {
                 "disabled centrally".into()
-            } else if profile.health == ExecutionProfileHealth::Testing {
-                "dry run requested".into()
             } else if approvals.get(&profile.id) == Some(&profile.config_digest) {
                 "approved; checking sources".into()
             } else {
@@ -102,38 +108,69 @@ pub async fn synchronize(
         .collect::<Vec<_>>();
 
     for (index, profile) in profiles.into_iter().enumerate() {
-        if !profile.enabled || !statuses[index].approved {
+        let approved = statuses[index].approved;
+        report_agent_status(client, &profile, approved, None, None, None).await;
+        let pending_operation = pending_operations.remove(&profile.id);
+        if !profile.enabled || !approved {
+            if let Some(operation) = pending_operation {
+                statuses[index].message = format!(
+                    "{} awaiting local approval",
+                    operation_label(operation.kind)
+                );
+            }
             continue;
         }
         let previous_revision = profile.current_revision;
-        let force_refresh = profile.refresh_requested_at.is_some_and(|requested| {
-            profile
-                .published_at
-                .is_none_or(|published| requested > published)
-        });
-        let dry_run = profile.health == ExecutionProfileHealth::Testing;
-        let health_after_dry_run = if profile.current_revision.is_some() {
-            ExecutionProfileHealth::Ready
-        } else {
-            ExecutionProfileHealth::Unpublished
+        let operation = match pending_operation {
+            Some(operation) => match client
+                .claim_execution_profile_operation(
+                    operation.id,
+                    &ExecutionProfileOperationClaimRequest {
+                        config_digest: profile.config_digest.clone(),
+                    },
+                )
+                .await
+            {
+                Ok(operation) => Some(operation),
+                Err(_) => {
+                    statuses[index].message =
+                        "collection operation claimed by another desktop".into();
+                    continue;
+                }
+            },
+            None => None,
         };
+        let dry_run = operation
+            .as_ref()
+            .is_some_and(|operation| operation.kind == ExecutionProfileOperationKind::DryRun);
+        let force_refresh = operation
+            .as_ref()
+            .is_some_and(|operation| operation.kind == ExecutionProfileOperationKind::Refresh)
+            || profile.refresh_requested_at.is_some_and(|requested| {
+                profile
+                    .published_at
+                    .is_none_or(|published| requested > published)
+            });
+        let collection_profile = profile.clone();
         let result = tokio::task::spawn_blocking(move || {
-            collect(&profile, force_refresh && !dry_run, dry_run)
+            collect(&collection_profile, force_refresh && !dry_run, dry_run)
         })
         .await?;
         match result {
             Ok((id, bytes, digest)) => {
                 if dry_run {
                     statuses[index].message = "dry run passed; no revision published".into();
-                    let _ = client
-                        .report_execution_profile_status(
-                            id,
-                            &ExecutionProfileStatusRequest {
-                                health: health_after_dry_run,
-                                error: None,
-                            },
-                        )
-                        .await;
+                    let completed_at = chrono::Utc::now();
+                    report_agent_status(
+                        client,
+                        &profile,
+                        true,
+                        Some(completed_at),
+                        Some(completed_at),
+                        None,
+                    )
+                    .await;
+                    complete_operation(client, operation.as_ref(), None).await;
                     continue;
                 }
                 let request = ExecutionProfilePublishRequest {
@@ -150,18 +187,31 @@ pub async fn synchronize(
                                 statuses[index].name, revision.revision
                             ));
                         }
+                        let completed_at = chrono::Utc::now();
+                        report_agent_status(
+                            client,
+                            &profile,
+                            true,
+                            Some(completed_at),
+                            Some(completed_at),
+                            None,
+                        )
+                        .await;
+                        complete_operation(client, operation.as_ref(), None).await;
                     }
                     Err(error) => {
                         statuses[index].message = format!("publication failed: {error}");
-                        let _ = client
-                            .report_execution_profile_status(
-                                statuses[index].id,
-                                &ExecutionProfileStatusRequest {
-                                    health: ExecutionProfileHealth::Error,
-                                    error: Some(status_error("desktop publication failed", &error)),
-                                },
-                            )
-                            .await;
+                        let detail = status_error("desktop publication failed", &error);
+                        report_agent_status(
+                            client,
+                            &profile,
+                            true,
+                            Some(chrono::Utc::now()),
+                            None,
+                            Some(detail.clone()),
+                        )
+                        .await;
+                        complete_operation(client, operation.as_ref(), Some(detail)).await;
                     }
                 }
             }
@@ -176,23 +226,77 @@ pub async fn synchronize(
                     "Execution profile '{}' {action} failed: {error}",
                     statuses[index].name
                 ));
-                let _ = client
-                    .report_execution_profile_status(
-                        statuses[index].id,
-                        &ExecutionProfileStatusRequest {
-                            health: if dry_run {
-                                health_after_dry_run
-                            } else {
-                                ExecutionProfileHealth::Error
-                            },
-                            error: Some(status_error(&format!("desktop {action} failed"), &error)),
-                        },
-                    )
-                    .await;
+                let detail = status_error(&format!("desktop {action} failed"), &error);
+                report_agent_status(
+                    client,
+                    &profile,
+                    true,
+                    Some(chrono::Utc::now()),
+                    None,
+                    Some(detail.clone()),
+                )
+                .await;
+                complete_operation(client, operation.as_ref(), Some(detail)).await;
             }
         }
     }
     Ok(statuses)
+}
+
+async fn report_agent_status(
+    client: &AsyncApiClient<StaticLocator>,
+    profile: &ExecutionProfile,
+    approved: bool,
+    last_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_success_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_error: Option<String>,
+) {
+    let _ = client
+        .report_execution_profile_agent_status(
+            profile.id,
+            &ExecutionProfileAgentStatusRequest {
+                config_digest: profile.config_digest.clone(),
+                approval: if approved {
+                    ExecutionProfileApprovalState::Approved
+                } else {
+                    ExecutionProfileApprovalState::ApprovalRequired
+                },
+                last_attempt_at,
+                last_success_at,
+                last_error,
+            },
+        )
+        .await;
+}
+
+async fn complete_operation(
+    client: &AsyncApiClient<StaticLocator>,
+    operation: Option<&ExecutionProfileOperation>,
+    error: Option<String>,
+) {
+    let Some(operation) = operation else {
+        return;
+    };
+    let _ = client
+        .complete_execution_profile_operation(
+            operation.id,
+            &ExecutionProfileOperationCompleteRequest {
+                state: if error.is_some() {
+                    ExecutionProfileOperationState::Failed
+                } else {
+                    ExecutionProfileOperationState::Succeeded
+                },
+                error,
+            },
+        )
+        .await;
+}
+
+fn operation_label(kind: ExecutionProfileOperationKind) -> &'static str {
+    match kind {
+        ExecutionProfileOperationKind::DryRun => "dry run",
+        ExecutionProfileOperationKind::Refresh => "refresh and publication",
+    }
 }
 
 fn collect(

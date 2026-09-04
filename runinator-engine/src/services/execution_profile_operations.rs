@@ -6,9 +6,10 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     errors::SendableError,
     execution_profiles::{
-        ExecutionProfile, ExecutionProfileHealth, ExecutionProfilePutRequest,
-        ExecutionProfileRevision, ExecutionProfileSource, is_portable_environment_name,
-        validate_bundle_path, validate_environment_template,
+        ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileCollectionStatus,
+        ExecutionProfileHealth, ExecutionProfileOperation, ExecutionProfileOperationState,
+        ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileSource,
+        is_portable_environment_name, validate_bundle_path, validate_environment_template,
     },
     validation::Validate,
 };
@@ -219,6 +220,97 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         error: Option<String>,
     ) -> Result<bool, SendableError> {
         repository::update_health(self.store.as_ref(), id, health, error).await
+    }
+
+    /// Build the author-facing collection status without allowing desktop reports to mutate the
+    /// immutable publication state.
+    pub async fn collection_status(
+        &self,
+        profile: &ExecutionProfile,
+    ) -> Result<ExecutionProfileCollectionStatus, SendableError> {
+        Ok(ExecutionProfileCollectionStatus {
+            profile_id: profile.id,
+            config_digest: profile.config_digest.clone(),
+            publication_health: profile.health,
+            current_revision: profile.current_revision,
+            published_at: profile.published_at,
+            expires_at: profile.expires_at,
+            latest_operation: self
+                .store
+                .fetch_latest_execution_profile_operation(profile.id, &profile.config_digest)
+                .await?,
+            agents: self
+                .store
+                .list_execution_profile_agent_statuses(profile.id, &profile.config_digest)
+                .await?,
+        })
+    }
+
+    pub async fn record_agent_status(
+        &self,
+        status: &ExecutionProfileAgentStatus,
+    ) -> Result<(), SendableError> {
+        self.store
+            .upsert_execution_profile_agent_status(status)
+            .await
+    }
+
+    pub async fn request_operation(
+        &self,
+        operation: &ExecutionProfileOperation,
+    ) -> Result<ExecutionProfileOperation, SendableError> {
+        self.store
+            .insert_execution_profile_operation(operation)
+            .await
+    }
+
+    pub async fn latest_operation(
+        &self,
+        profile_id: Uuid,
+        config_digest: &str,
+    ) -> Result<Option<ExecutionProfileOperation>, SendableError> {
+        self.store
+            .fetch_latest_execution_profile_operation(profile_id, config_digest)
+            .await
+    }
+
+    pub async fn pending_operations(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<ExecutionProfileOperation>, SendableError> {
+        self.store
+            .list_pending_execution_profile_operations(org_id, Utc::now())
+            .await
+    }
+
+    pub async fn claim_operation(
+        &self,
+        operation_id: Uuid,
+        agent_id: Uuid,
+        config_digest: &str,
+    ) -> Result<Option<ExecutionProfileOperation>, SendableError> {
+        let started_at = Utc::now();
+        self.store
+            .claim_execution_profile_operation(
+                operation_id,
+                agent_id,
+                config_digest,
+                started_at,
+                started_at + chrono::Duration::minutes(30),
+            )
+            .await
+    }
+
+    pub async fn complete_operation(
+        &self,
+        operation_id: Uuid,
+        agent_id: Uuid,
+        state: ExecutionProfileOperationState,
+        error: Option<String>,
+    ) -> Result<bool, SendableError> {
+        self.store
+            .complete_execution_profile_operation(operation_id, agent_id, state, error, Utc::now())
+            .await
     }
 }
 

@@ -36,8 +36,10 @@ use runinator_models::{
     bundles::{Bundle, PackImportResult, ProviderBundle, SettingsBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail, NewConsoleCell},
     execution_profiles::{
-        ExecutionProfile, ExecutionProfilePublishRequest, ExecutionProfilePutRequest,
-        ExecutionProfileRevision, ExecutionProfileStatusRequest,
+        ExecutionProfile, ExecutionProfileAgentStatusRequest, ExecutionProfileCollectionStatus,
+        ExecutionProfileOperation, ExecutionProfileOperationClaimRequest,
+        ExecutionProfileOperationCompleteRequest, ExecutionProfilePublishRequest,
+        ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileStatusRequest,
     },
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
@@ -1696,6 +1698,24 @@ where
         self.get_json_path(API_EXECUTION_PROFILES).await
     }
 
+    /// List author-facing desktop collection status without downloading profile contents.
+    pub async fn list_execution_profile_collection_statuses(
+        &self,
+    ) -> Result<Vec<ExecutionProfileCollectionStatus>> {
+        self.get_json_path(&format!("{API_EXECUTION_PROFILES}/collection-statuses"))
+            .await
+    }
+
+    /// List operations an enrolled desktop agent may claim after checking local approval.
+    pub async fn list_pending_execution_profile_operations(
+        &self,
+    ) -> Result<Vec<ExecutionProfileOperation>> {
+        self.get_json_path(&format!(
+            "{API_EXECUTION_PROFILES}/collection-operations/pending"
+        ))
+        .await
+    }
+
     pub async fn configure_execution_profile(
         &self,
         id: Uuid,
@@ -1777,6 +1797,52 @@ where
             .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/status"))
             .await?;
         let response = self.send(self.http_put(url.clone()).json(request)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    /// Report a desktop's local approval and most recent sanitized collection result.
+    pub async fn report_execution_profile_agent_status(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileAgentStatusRequest,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}/agent-status"))
+            .await?;
+        let response = self.send(self.http_put(url.clone()).json(request)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    /// Atomically claim a pending profile operation for this approved desktop agent.
+    pub async fn claim_execution_profile_operation(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileOperationClaimRequest,
+    ) -> Result<ExecutionProfileOperation> {
+        let url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/collection-operations/{id}/claim"
+            ))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfileOperation>().await?)
+    }
+
+    /// Record a terminal profile operation outcome after this desktop agent claimed it.
+    pub async fn complete_execution_profile_operation(
+        &self,
+        id: Uuid,
+        request: &ExecutionProfileOperationCompleteRequest,
+    ) -> Result<()> {
+        let url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/collection-operations/{id}/complete"
+            ))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
         Self::handle_response(url, response).await?;
         Ok(())
     }

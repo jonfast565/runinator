@@ -18,8 +18,12 @@ use runinator_engine::services::ExecutionProfileOperations;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     execution_profiles::{
-        ExecutionProfile, ExecutionProfileHealth, ExecutionProfilePublishRequest,
-        ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileStatusRequest,
+        ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileAgentStatusRequest,
+        ExecutionProfileApprovalState, ExecutionProfileHealth, ExecutionProfileOperation,
+        ExecutionProfileOperationClaimRequest, ExecutionProfileOperationCompleteRequest,
+        ExecutionProfileOperationKind, ExecutionProfileOperationState,
+        ExecutionProfilePublishRequest, ExecutionProfilePutRequest, ExecutionProfileRevision,
+        ExecutionProfileStatusRequest,
     },
     rbac::{Action, SystemRole},
 };
@@ -140,6 +144,177 @@ pub async fn list<T: AuthorizationStore + ExecutionProfileStore>(
                 )),
             )
         }
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+/// List the asynchronous desktop-collection state separately from profile publication metadata.
+pub async fn list_collection_statuses<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, ctx.selected_scope()) {
+        return reply.into_reply();
+    }
+    let mut profiles = match service.list_visible_in_scope(ctx.org_id).await {
+        Ok(profiles) => profiles,
+        Err(error) => return api_error(error.to_string()),
+    };
+    let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_resource_ids(ResourceType::ExecutionProfile)
+        .await
+    {
+        Ok(ids) => ids,
+        Err(reply) => return reply.into_reply(),
+    };
+    if let Some(visible) = visible {
+        profiles.retain(|profile| visible.contains(&profile.id));
+    }
+    let mut statuses = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        match service.collection_status(&effective_health(profile)).await {
+            Ok(status) => statuses.push(status),
+            Err(error) => return api_error(error.to_string()),
+        }
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::ExecutionProfileCollectionStatusList(statuses)),
+    )
+}
+
+pub async fn list_pending_operations<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if ctx.system_role != Some(SystemRole::Agent) {
+        return not_found("execution profile operation not found");
+    }
+    match service.pending_operations(ctx.org_id).await {
+        Ok(operations) => (
+            StatusCode::OK,
+            Json(ApiResponse::ExecutionProfileOperationList(operations)),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn report_agent_status<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    ValidatedJson(request): ValidatedJson<ExecutionProfileAgentStatusRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if ctx.system_role != Some(SystemRole::Agent) {
+        return not_found("execution profile not found");
+    }
+    let Some(agent_id) = ctx.principal_id else {
+        return not_found("execution profile not found");
+    };
+    let profile = match service.fetch(id).await {
+        Ok(Some(profile))
+            if profile.org_id == ctx.org_id && profile.config_digest == request.config_digest =>
+        {
+            profile
+        }
+        Ok(_) => return not_found("execution profile not found"),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let status = ExecutionProfileAgentStatus {
+        profile_id: profile.id,
+        agent_id,
+        config_digest: request.config_digest,
+        approval: request.approval,
+        last_seen_at: Utc::now(),
+        last_attempt_at: request.last_attempt_at,
+        last_success_at: request.last_success_at,
+        last_error: request.last_error,
+    };
+    match service.record_agent_status(&status).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                runinator_models::json!({"success": true}),
+            )),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn claim_operation<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    ValidatedJson(request): ValidatedJson<ExecutionProfileOperationClaimRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if ctx.system_role != Some(SystemRole::Agent) {
+        return not_found("execution profile operation not found");
+    }
+    let Some(agent_id) = ctx.principal_id else {
+        return not_found("execution profile operation not found");
+    };
+    let operation = match service.pending_operations(ctx.org_id).await {
+        Ok(operations) => operations.into_iter().find(|operation| operation.id == id),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let Some(operation) = operation else {
+        return not_found("execution profile operation not found");
+    };
+    if operation.config_digest != request.config_digest {
+        return not_found("execution profile operation not found");
+    }
+    let profile = match service.fetch(operation.profile_id).await {
+        Ok(Some(profile)) if profile.org_id == ctx.org_id => effective_health(profile),
+        Ok(_) => return not_found("execution profile operation not found"),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let approved = match service.collection_status(&profile).await {
+        Ok(status) => status.agents.iter().any(|status| {
+            status.agent_id == agent_id
+                && status.approval == ExecutionProfileApprovalState::Approved
+        }),
+        Err(error) => return api_error(error.to_string()),
+    };
+    if !approved {
+        return not_found("execution profile operation not found");
+    }
+    match service
+        .claim_operation(id, agent_id, &request.config_digest)
+        .await
+    {
+        Ok(Some(operation)) => (
+            StatusCode::OK,
+            Json(ApiResponse::ExecutionProfileOperation(operation)),
+        ),
+        Ok(None) => not_found("execution profile operation not found"),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn complete_operation<T: AuthorizationStore + ExecutionProfileStore>(
+    Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    ValidatedJson(request): ValidatedJson<ExecutionProfileOperationCompleteRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if ctx.system_role != Some(SystemRole::Agent) {
+        return not_found("execution profile operation not found");
+    }
+    let Some(agent_id) = ctx.principal_id else {
+        return not_found("execution profile operation not found");
+    };
+    match service
+        .complete_operation(id, agent_id, request.state, request.error)
+        .await
+    {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                runinator_models::json!({"success": true}),
+            )),
+        ),
+        Ok(false) => not_found("execution profile operation not found"),
         Err(error) => api_error(error.to_string()),
     }
 }
@@ -361,6 +536,23 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
     };
     match service.publish_revision(&revision).await {
         Ok(value) => {
+            if ctx.system_role == Some(SystemRole::Agent)
+                && let Some(agent_id) = ctx.principal_id
+            {
+                let collected_at = Utc::now();
+                let _ = service
+                    .record_agent_status(&ExecutionProfileAgentStatus {
+                        profile_id: profile.id,
+                        agent_id,
+                        config_digest: profile.config_digest.clone(),
+                        approval: ExecutionProfileApprovalState::Approved,
+                        last_seen_at: collected_at,
+                        last_attempt_at: Some(collected_at),
+                        last_success_at: Some(collected_at),
+                        last_error: None,
+                    })
+                    .await;
+            }
             audit(
                 db.as_ref(),
                 &ctx,
@@ -567,25 +759,36 @@ pub async fn rotate<T: AuthorizationStore + ExecutionProfileStore>(
     {
         return reply.into_reply();
     }
-    match service.request_refresh(id, ctx.org_id, Utc::now()).await {
-        Ok(true) => {
+    let profile = match service.fetch(id).await {
+        Ok(Some(profile)) if profile.org_id == ctx.org_id && profile.enabled => profile,
+        Ok(_) => return not_found("enabled execution profile not found"),
+        Err(error) => return api_error(error.to_string()),
+    };
+    match request_collection_operation(
+        service.as_ref(),
+        &profile,
+        ExecutionProfileOperationKind::Refresh,
+        ctx.principal_id,
+    )
+    .await
+    {
+        Ok(operation) => {
             audit(
                 db.as_ref(),
                 &ctx,
                 "execution_profile.rotate_requested",
                 id,
-                "desktop refresh requested".into(),
+                format!("desktop refresh requested operation_id={}", operation.id),
             )
             .await;
             (
                 StatusCode::OK,
                 Json(ApiResponse::JsonValue(
-                    runinator_models::json!({"success": true}),
+                    runinator_models::json!({"success": true, "operation_id": operation.id}),
                 )),
             )
         }
-        Ok(false) => not_found("enabled execution profile not found"),
-        Err(error) => api_error(error.to_string()),
+        Err(message) => bad_request(message),
     }
 }
 
@@ -609,29 +812,82 @@ pub async fn test_collection<T: AuthorizationStore + ExecutionProfileStore>(
         Ok(_) => return not_found("enabled execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
-    match service
-        .update_health(profile.id, ExecutionProfileHealth::Testing, None)
-        .await
+    match request_collection_operation(
+        service.as_ref(),
+        &profile,
+        ExecutionProfileOperationKind::DryRun,
+        ctx.principal_id,
+    )
+    .await
     {
-        Ok(true) => {
+        Ok(operation) => {
             audit(
                 db.as_ref(),
                 &ctx,
                 "execution_profile.test_requested",
                 id,
-                "desktop collection dry run requested".into(),
+                format!(
+                    "desktop collection dry run requested operation_id={}",
+                    operation.id
+                ),
             )
             .await;
             (
                 StatusCode::OK,
                 Json(ApiResponse::JsonValue(
-                    runinator_models::json!({"success": true}),
+                    runinator_models::json!({"success": true, "operation_id": operation.id}),
                 )),
             )
         }
-        Ok(false) => not_found("execution profile not found"),
-        Err(error) => api_error(error.to_string()),
+        Err(message) => bad_request(message),
     }
+}
+
+async fn request_collection_operation<T: ExecutionProfileStore>(
+    service: &ExecutionProfileOperations<T>,
+    profile: &ExecutionProfile,
+    kind: ExecutionProfileOperationKind,
+    requested_by: Option<Uuid>,
+) -> Result<ExecutionProfileOperation, String> {
+    if let Some(existing) = service
+        .latest_operation(profile.id, &profile.config_digest)
+        .await
+        .map_err(|error| error.to_string())?
+        && existing.state.is_active()
+    {
+        return Err(format!(
+            "{} is already {} for this profile",
+            match existing.kind {
+                ExecutionProfileOperationKind::DryRun => "a dry run",
+                ExecutionProfileOperationKind::Refresh => "a refresh",
+            },
+            existing.state.as_str()
+        ));
+    }
+    service
+        .request_operation(&ExecutionProfileOperation {
+            id: Uuid::new_v4(),
+            profile_id: profile.id,
+            config_digest: profile.config_digest.clone(),
+            kind,
+            state: ExecutionProfileOperationState::Queued,
+            requested_at: Utc::now(),
+            requested_by,
+            claimed_by: None,
+            started_at: None,
+            lease_expires_at: None,
+            completed_at: None,
+            error: None,
+        })
+        .await
+        .map_err(|error| {
+            let message = error.to_string();
+            if message.to_lowercase().contains("unique") {
+                "a desktop collection operation is already active for this profile".into()
+            } else {
+                message
+            }
+        })
 }
 
 pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
@@ -649,13 +905,24 @@ pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
         Ok(_) => return not_found("execution profile not found"),
         Err(error) => return api_error(error.to_string()),
     };
+    let Some(agent_id) = ctx.principal_id else {
+        return not_found("execution profile not found");
+    };
     let error = request.error.map(|value| value.chars().take(512).collect());
-    match service
-        .update_health(profile.id, request.health, error.clone())
-        .await
-    {
-        Ok(true) => {
-            if request.health == ExecutionProfileHealth::Error {
+    let observed_at = Utc::now();
+    let status = ExecutionProfileAgentStatus {
+        profile_id: profile.id,
+        agent_id,
+        config_digest: profile.config_digest,
+        approval: ExecutionProfileApprovalState::Approved,
+        last_seen_at: observed_at,
+        last_attempt_at: Some(observed_at),
+        last_success_at: error.is_none().then_some(observed_at),
+        last_error: error.clone(),
+    };
+    match service.record_agent_status(&status).await {
+        Ok(()) => {
+            if error.is_some() {
                 audit(
                     db.as_ref(),
                     &ctx,
@@ -672,7 +939,6 @@ pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
                 )),
             )
         }
-        Ok(false) => not_found("execution profile not found"),
         Err(error) => api_error(error.to_string()),
     }
 }
@@ -683,6 +949,22 @@ pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>(
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/execution_profiles", get(list::<T>))
+        .route(
+            "/execution_profiles/collection-statuses",
+            get(list_collection_statuses::<T>),
+        )
+        .route(
+            "/execution_profiles/collection-operations/pending",
+            get(list_pending_operations::<T>),
+        )
+        .route(
+            "/execution_profiles/collection-operations/{id}/claim",
+            post(claim_operation::<T>),
+        )
+        .route(
+            "/execution_profiles/collection-operations/{id}/complete",
+            post(complete_operation::<T>),
+        )
         .route("/execution_profiles/resolve", get(resolve::<T>))
         .route(
             "/execution_profiles/{id}",
@@ -693,6 +975,10 @@ pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>(
         .route("/execution_profiles/{id}/publish", post(publish::<T>))
         .route("/execution_profiles/{id}/rotate", post(rotate::<T>))
         .route("/execution_profiles/{id}/test", post(test_collection::<T>))
+        .route(
+            "/execution_profiles/{id}/agent-status",
+            axum::routing::put(report_agent_status::<T>),
+        )
         .route(
             "/execution_profiles/{id}/status",
             axum::routing::put(report_status::<T>),
@@ -743,6 +1029,61 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "execution-profile list",
         Example::None,
+    ),
+    endpoint!(
+        "get",
+        "/execution_profiles/collection-statuses",
+        "Execution profiles",
+        "List desktop collection status",
+        "Lists publication availability, desktop approvals, and the latest dry-run or refresh operation.",
+        false,
+        None,
+        &[],
+        200,
+        "execution-profile collection status",
+        Example::None,
+    ),
+    endpoint!(
+        "get",
+        "/execution_profiles/collection-operations/pending",
+        "Execution profiles",
+        "List pending desktop collection operations",
+        "Allows an enrolled desktop agent to discover dry-run and refresh operations awaiting an approved local collector.",
+        false,
+        None,
+        &[],
+        200,
+        "pending collection operations",
+        Example::None,
+    ),
+    endpoint!(
+        "post",
+        "/execution_profiles/collection-operations/{id}/claim",
+        "Execution profiles",
+        "Claim a desktop collection operation",
+        "Atomically assigns a pending collection operation to one desktop agent with current local approval.",
+        false,
+        json_body("The approved configuration digest.", Example::None),
+        &[],
+        200,
+        "claimed collection operation",
+        Example::None,
+    ),
+    endpoint!(
+        "post",
+        "/execution_profiles/collection-operations/{id}/complete",
+        "Execution profiles",
+        "Complete a desktop collection operation",
+        "Records the terminal outcome of a collection operation without changing the active publication revision.",
+        false,
+        json_body(
+            "The terminal operation outcome and optional sanitized error.",
+            Example::None
+        ),
+        &[],
+        200,
+        "completed collection operation",
+        Example::TaskResponse,
     ),
     endpoint!(
         "get",
@@ -846,6 +1187,22 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "status recorded",
+        Example::TaskResponse,
+    ),
+    endpoint!(
+        "put",
+        "/execution_profiles/{id}/agent-status",
+        "Execution profiles",
+        "Report desktop approval and collection observation",
+        "Allows an enrolled desktop agent to report its local approval and latest sanitized collection result for the current configuration.",
+        false,
+        json_body(
+            "A desktop approval and collection observation.",
+            Example::None
+        ),
+        &[],
+        200,
+        "agent observation recorded",
         Example::TaskResponse,
     ),
     endpoint!(
