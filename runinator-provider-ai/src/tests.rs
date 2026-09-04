@@ -1,6 +1,11 @@
 use super::*;
 
 #[test]
+fn claude_code_defaults_to_opus_five() {
+    assert_eq!(crate::params::default_model(), "claude-opus-5");
+}
+
+#[test]
 fn test_ai_command_provider_execution() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
@@ -66,7 +71,7 @@ fn test_claude_code_stub_binary_passes_argv() {
         action_function: "claude_code".into(),
         parameters: json!({
             "binary": "/bin/echo",
-            "model": "claude-sonnet-4-6",
+            "model": "claude-opus-5",
             "output_format": "text",
             "allowed_tools": "Bash Edit Read",
             "permission_mode": "acceptEdits",
@@ -98,7 +103,7 @@ fn test_claude_code_stub_binary_passes_argv() {
         "argv must contain --model: {text}"
     );
     assert!(
-        text.contains("claude-sonnet-4-6"),
+        text.contains("claude-opus-5"),
         "argv must contain model name: {text}"
     );
     assert!(
@@ -201,7 +206,7 @@ fn test_claude_code_json_output_parsed() {
         action_function: "claude_code".into(),
         parameters: json!({
             "binary": "/bin/echo",
-            "model": "claude-sonnet-4-6",
+            "model": "claude-opus-5",
             "output_format": "text",
             "prompt": "{\"ok\":true}"
         }),

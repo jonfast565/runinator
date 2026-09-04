@@ -41,7 +41,7 @@ export function createExecutionProfilesService(app: AppService) {
       await service.refresh();
     },
     async test(id: string) {
-      await app.runOperation("Testing execution profile", () => testExecutionProfile(id));
+      await app.runOperation("Dry-running execution profile collection", () => testExecutionProfile(id));
       await service.refresh();
     },
   };

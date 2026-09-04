@@ -37,7 +37,7 @@ export interface ExecutionProfile extends ExecutionProfileInput {
   published_at: string | null;
   expires_at: string | null;
   refresh_requested_at: string | null;
-  health: "unpublished" | "ready" | "expiring" | "expired" | "error" | "disabled";
+  health: "unpublished" | "testing" | "ready" | "expiring" | "expired" | "error" | "disabled";
   last_error: string | null;
   created_at: string;
   updated_at: string;

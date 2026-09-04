@@ -580,7 +580,7 @@ pub enum ExecutionProfileCommands {
     Delete { id: Uuid },
     /// Request recollection and publication of a profile.
     Rotate { id: Uuid },
-    /// Request a collection probe.
+    /// Dry run collection without publishing a credential revision.
     Test { id: Uuid },
 }
 

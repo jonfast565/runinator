@@ -83,7 +83,7 @@
                   :disabled="!profile.enabled || !canMutate"
                   @click="testProfile(profile)"
                 >
-                  <Icon name="check" :size="13" /> Test</button
+                  <Icon name="check" :size="13" /> Dry run</button
                 ><button class="btn btn-sm" :disabled="!profile.enabled || !canMutate" @click="rotate(profile)">
                   <Icon name="refresh" :size="13" /> Rotate</button
                 ><button class="btn btn-sm" :disabled="!canMutate" @click="beginEdit(profile)">
@@ -463,6 +463,11 @@ function applyTemplate(kind: "aws" | "claude" | "github") {
       collection: {
         version: 1,
         sources: [
+          {
+            type: "file",
+            path: "~/.claude/CLAUDE.md",
+            target: ".claude/CLAUDE.md",
+          },
           {
             type: "command",
             command: {

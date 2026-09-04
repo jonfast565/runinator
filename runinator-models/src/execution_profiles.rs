@@ -123,6 +123,7 @@ pub struct ExecutionProfile {
 pub enum ExecutionProfileHealth {
     #[default]
     Unpublished,
+    Testing,
     Ready,
     Expiring,
     Expired,
@@ -134,6 +135,7 @@ impl ExecutionProfileHealth {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Unpublished => "unpublished",
+            Self::Testing => "testing",
             Self::Ready => "ready",
             Self::Expiring => "expiring",
             Self::Expired => "expired",
@@ -144,6 +146,7 @@ impl ExecutionProfileHealth {
 
     pub fn parse(value: &str) -> Self {
         match value {
+            "testing" => Self::Testing,
             "ready" => Self::Ready,
             "expiring" => Self::Expiring,
             "expired" => Self::Expired,

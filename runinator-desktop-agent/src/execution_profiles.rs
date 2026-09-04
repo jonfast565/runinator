@@ -80,6 +80,8 @@ async fn synchronize(
             approved: approvals.get(&profile.id) == Some(&profile.config_digest),
             message: if !profile.enabled {
                 "disabled centrally".into()
+            } else if profile.health == ExecutionProfileHealth::Testing {
+                "dry run requested".into()
             } else if approvals.get(&profile.id) == Some(&profile.config_digest) {
                 "approved; checking sources".into()
             } else {
@@ -98,9 +100,31 @@ async fn synchronize(
                 .published_at
                 .is_none_or(|published| requested > published)
         });
-        let result = tokio::task::spawn_blocking(move || collect(&profile, force_refresh)).await?;
+        let dry_run = profile.health == ExecutionProfileHealth::Testing;
+        let health_after_dry_run = if profile.current_revision.is_some() {
+            ExecutionProfileHealth::Ready
+        } else {
+            ExecutionProfileHealth::Unpublished
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            collect(&profile, force_refresh && !dry_run, dry_run)
+        })
+        .await?;
         match result {
             Ok((id, bytes, digest)) => {
+                if dry_run {
+                    statuses[index].message = "dry run passed; no revision published".into();
+                    let _ = client
+                        .report_execution_profile_status(
+                            id,
+                            &ExecutionProfileStatusRequest {
+                                health: health_after_dry_run,
+                                error: None,
+                            },
+                        )
+                        .await;
+                    continue;
+                }
                 let request = ExecutionProfilePublishRequest {
                     digest,
                     expires_at: None,
@@ -137,11 +161,16 @@ async fn synchronize(
                 }
             }
             Err(error) => {
-                statuses[index].message = format!("collection failed: {error}");
+                let action = if dry_run {
+                    "collection dry run"
+                } else {
+                    "collection"
+                };
+                statuses[index].message = format!("{action} failed: {error}");
                 log_line(
                     shared,
                     format!(
-                        "Execution profile '{}' collection failed: {error}",
+                        "Execution profile '{}' {action} failed: {error}",
                         statuses[index].name
                     ),
                 );
@@ -149,10 +178,14 @@ async fn synchronize(
                     .report_execution_profile_status(
                         statuses[index].id,
                         &ExecutionProfileStatusRequest {
-                            health: ExecutionProfileHealth::Error,
-                            error: Some(
-                                "desktop collection failed; inspect the desktop agent log".into(),
-                            ),
+                            health: if dry_run {
+                                health_after_dry_run
+                            } else {
+                                ExecutionProfileHealth::Error
+                            },
+                            error: Some(format!(
+                                "desktop {action} failed; inspect the desktop agent log"
+                            )),
                         },
                     )
                     .await;
@@ -169,6 +202,7 @@ async fn synchronize(
 fn collect(
     profile: &ExecutionProfile,
     force_refresh: bool,
+    dry_run: bool,
 ) -> Result<(uuid::Uuid, Vec<u8>, String), Box<dyn std::error::Error + Send + Sync>> {
     if force_refresh {
         let refresh = profile
@@ -183,6 +217,9 @@ fn collect(
     if let Some(probe) = &profile.collection.probe
         && !run_command(probe, false)?.status.success()
     {
+        if dry_run {
+            return Err("profile probe failed during dry run".into());
+        }
         if force_refresh {
             return Err("profile probe still fails after requested refresh".into());
         }
@@ -400,8 +437,8 @@ mod tests {
             updated_at: chrono::Utc::now(),
         };
 
-        let (_, first, first_digest) = collect(&profile, false).unwrap();
-        let (_, second, second_digest) = collect(&profile, false).unwrap();
+        let (_, first, first_digest) = collect(&profile, false, false).unwrap();
+        let (_, second, second_digest) = collect(&profile, false, false).unwrap();
         assert_eq!(first, second);
         assert_eq!(first_digest, second_digest);
         let archive = zip::ZipArchive::new(Cursor::new(first)).unwrap();
@@ -415,5 +452,48 @@ mod tests {
             ]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dry_run_does_not_refresh_after_a_failed_probe() {
+        let profile = ExecutionProfile {
+            id: uuid::Uuid::new_v4(),
+            org_id: None,
+            name: "dry-run".into(),
+            description: String::new(),
+            credential_scopes: vec!["fixture".into()],
+            collection: ExecutionProfileCollectionSpec {
+                version: 1,
+                probe: Some(ExecutionProfileCommand {
+                    argv: vec!["false".into()],
+                    interactive: false,
+                }),
+                refresh: Some(ExecutionProfileCommand {
+                    argv: vec!["true".into()],
+                    interactive: false,
+                }),
+                sources: vec![ExecutionProfileSource::File {
+                    path: "/dev/null".into(),
+                    target: ".tool/config".into(),
+                }],
+            },
+            exposure: ExecutionProfileExposureSpec::default(),
+            config_version: 1,
+            config_digest: "config-digest".into(),
+            enabled: true,
+            current_revision: None,
+            current_digest: None,
+            current_publisher_id: None,
+            published_at: None,
+            expires_at: None,
+            refresh_requested_at: None,
+            health: ExecutionProfileHealth::Testing,
+            last_error: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let error = collect(&profile, false, true).unwrap_err();
+        assert!(error.to_string().contains("during dry run"));
     }
 }

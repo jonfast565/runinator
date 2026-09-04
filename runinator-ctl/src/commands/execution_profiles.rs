@@ -56,7 +56,7 @@ pub(super) async fn execution_profiles(
             if json_output {
                 return output::json(&result);
             }
-            println!("requested collection test for execution profile {id}");
+            println!("requested collection dry run for execution profile {id}");
         }
     }
     Ok(())

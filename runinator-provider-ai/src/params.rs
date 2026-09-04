@@ -37,7 +37,7 @@ pub(crate) fn default_binary() -> String {
 }
 
 pub(crate) fn default_model() -> String {
-    "claude-sonnet-4-6".into()
+    "claude-opus-5".into()
 }
 
 pub(crate) fn default_output_format() -> String {

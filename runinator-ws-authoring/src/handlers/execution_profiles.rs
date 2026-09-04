@@ -605,7 +605,7 @@ pub async fn test_collection<T: AuthorizationStore + ExecutionProfileStore>(
         Err(error) => return api_error(error.to_string()),
     };
     match service
-        .update_health(profile.id, ExecutionProfileHealth::Unpublished, None)
+        .update_health(profile.id, ExecutionProfileHealth::Testing, None)
         .await
     {
         Ok(true) => {
@@ -614,7 +614,7 @@ pub async fn test_collection<T: AuthorizationStore + ExecutionProfileStore>(
                 &ctx,
                 "execution_profile.test_requested",
                 id,
-                "desktop probe requested".into(),
+                "desktop collection dry run requested".into(),
             )
             .await;
             (
@@ -821,8 +821,8 @@ pub const DOCS: &[EndpointDoc] = &[
         "post",
         "/execution_profiles/{id}/test",
         "Execution profiles",
-        "Test profile collection",
-        "Requests that an approved desktop agent probe and recollect the profile.",
+        "Dry run profile collection",
+        "Runs collection on an approved desktop agent without publishing a credential revision.",
         false,
         None,
         &[],

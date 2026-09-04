@@ -61,6 +61,7 @@ pub async fn materialize(
     if matches!(
         profile.health,
         ExecutionProfileHealth::Unpublished
+            | ExecutionProfileHealth::Testing
             | ExecutionProfileHealth::Error
             | ExecutionProfileHealth::Expired
             | ExecutionProfileHealth::Disabled
