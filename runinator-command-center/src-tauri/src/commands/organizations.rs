@@ -19,6 +19,20 @@ pub async fn create_org(
 }
 
 #[tauri::command]
+pub async fn update_org(
+    state: State<'_, CommandCenterState>,
+    org_id: Uuid,
+    name: String,
+) -> CommandResult<Value> {
+    patch_json(
+        &state,
+        &format!("orgs/{org_id}"),
+        &serde_json::json!({ "name": name }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn switch_org(
     state: State<'_, CommandCenterState>,
     org_id: Uuid,

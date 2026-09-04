@@ -68,6 +68,16 @@
               <Icon :name="showCreateOrg ? 'x' : 'plus'" />
               <span>{{ showCreateOrg ? "Cancel" : "New organization" }}</span>
             </button>
+            <button
+              v-if="orgs.activeOrg && canRenameOrg"
+              class="btn"
+              type="button"
+              :aria-expanded="showRenameOrg"
+              @click="toggleRenameOrg"
+            >
+              <Icon :name="showRenameOrg ? 'x' : 'edit'" />
+              <span>{{ showRenameOrg ? "Cancel" : "Rename" }}</span>
+            </button>
           </div>
         </header>
 
@@ -98,6 +108,36 @@
             <LoadingSpinner v-if="creatingOrg" size="sm" label="Creating organization" />
             <Icon v-else name="plus" />
             <span>{{ creatingOrg ? "Creating…" : "Create organization" }}</span>
+          </button>
+        </form>
+
+        <form
+          v-if="showRenameOrg && orgs.activeOrg"
+          class="ui-fade-up grid gap-2 rounded-md border border-accent/25 bg-accent-soft p-3 sm:grid-cols-[minmax(220px,1fr)_auto] sm:items-end"
+          @submit.prevent="renameOrg"
+        >
+          <label class="grid gap-1 text-xs text-fg-muted">
+            <span class="font-semibold text-fg">Organization name</span>
+            <input
+              v-model.trim="renameOrgName"
+              required
+              minlength="2"
+              maxlength="100"
+              autocomplete="organization"
+            />
+            <span
+              >Your stable slug, <code>{{ orgs.activeOrg.slug }}</code
+              >, will not change.</span
+            >
+          </label>
+          <button
+            class="btn btn-primary sm:mb-[22px]"
+            type="submit"
+            :disabled="!renameOrgName.trim() || renamingOrg"
+          >
+            <LoadingSpinner v-if="renamingOrg" size="sm" label="Renaming organization" />
+            <Icon v-else name="edit" />
+            <span>{{ renamingOrg ? "Renaming…" : "Save name" }}</span>
           </button>
         </form>
 
@@ -606,6 +646,7 @@ const { isLoading: loadingOrgData, loadingMessage: loadingOrgDataMessage } = use
 const { isLoading: loadingTeamMembers, loadingMessage: loadingTeamMembersMessage } =
   useOperationLoading("Loading team members");
 const { isLoading: creatingOrg } = useOperationLoading("Creating organization");
+const { isLoading: renamingOrg } = useOperationLoading("Renaming organization");
 
 const members = ref<OrgMembership[]>([]);
 const users = ref<User[]>([]);
@@ -615,9 +656,11 @@ const selectedTeamId = ref<string | null>(null);
 const activeSection = ref<OrganizationSection>("members");
 const memberSearch = ref("");
 const showCreateOrg = ref(false);
+const showRenameOrg = ref(false);
 const showAddMember = ref(false);
 const showCreateTeam = ref(false);
 const newOrgName = ref("");
+const renameOrgName = ref("");
 const newMemberId = ref("");
 const newMemberRole = ref<OrgRole>("member");
 const newTeamName = ref("");
@@ -628,6 +671,7 @@ const UUID_PATTERN =
 
 const canManageMembers = computed(() => can("members:manage"));
 const canManageTeams = computed(() => can("members:manage"));
+const canRenameOrg = computed(() => can("resource:own"));
 const validMemberId = computed(() =>
   new RegExp(`^${UUID_PATTERN}$`).test(newMemberId.value.trim()),
 );
@@ -846,6 +890,8 @@ async function refreshActiveOrgDetail() {
   memberSearch.value = "";
   showAddMember.value = false;
   showCreateTeam.value = false;
+  showRenameOrg.value = false;
+  renameOrgName.value = "";
 
   if (!orgs.activeOrgId) {
     return;
@@ -872,6 +918,28 @@ async function createOrg() {
   if (await orgs.create(name)) {
     newOrgName.value = "";
     showCreateOrg.value = false;
+  }
+}
+
+function toggleRenameOrg() {
+  if (showRenameOrg.value) {
+    showRenameOrg.value = false;
+    return;
+  }
+
+  renameOrgName.value = orgs.activeOrg?.name ?? "";
+  showRenameOrg.value = true;
+}
+
+async function renameOrg() {
+  const name = renameOrgName.value.trim();
+
+  if (!name) {
+    return;
+  }
+
+  if (await orgs.rename(name)) {
+    showRenameOrg.value = false;
   }
 }
 

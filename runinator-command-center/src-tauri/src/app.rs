@@ -151,6 +151,7 @@ pub fn run() {
             crate::commands::list_my_orgs,
             crate::commands::list_orgs,
             crate::commands::create_org,
+            crate::commands::update_org,
             crate::commands::switch_org,
             crate::commands::switch_platform,
             crate::commands::list_org_members,

@@ -458,6 +458,8 @@ pub enum OrgCommands {
     Platform,
     /// Create an organization; you become its owner.
     Create { name: String },
+    /// Rename an organization. Its slug and identifier remain unchanged.
+    Rename { org: uuid::Uuid, name: String },
     /// Show an org's dedicated node allocation and projected monthly cost.
     Nodes { org: uuid::Uuid },
     /// Set an org's dedicated node count for a kind on a backend (quota-enforced).

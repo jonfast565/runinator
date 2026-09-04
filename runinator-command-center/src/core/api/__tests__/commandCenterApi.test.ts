@@ -26,6 +26,7 @@ import {
   saveWorkflowBundle,
   updateApiKey,
   updateCurrentUser,
+  updateOrg,
   updateTeam,
 } from "../commandCenterApi";
 import { invoke } from "@tauri-apps/api/core";
@@ -828,6 +829,21 @@ describe("command center permissions API in web mode", () => {
       3,
       "/api/teams/00000000-0000-0000-0000-000000000001/members",
       expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("maps organization rename to its scoped PATCH endpoint", async () => {
+    const orgId = "00000000-0000-0000-0000-000000000001";
+
+    await updateOrg(orgId, "Runinator Labs");
+
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/orgs/${orgId}`,
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ name: "Runinator Labs" }),
+        headers: expect.objectContaining({ "x-org-id": orgId }),
+      }),
     );
   });
 

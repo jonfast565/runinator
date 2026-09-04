@@ -87,6 +87,14 @@ fn parses_organization_scope_commands_in_the_repl() {
             command: OrgCommands::Platform
         }
     ));
+
+    let parsed = parse(&tokens(&format!("orgs rename {org_id} 'Acme Labs'"))).expect("parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Orgs {
+            command: OrgCommands::Rename { org: parsed_org_id, ref name }
+        } if parsed_org_id.to_string() == org_id && name == "Acme Labs"
+    ));
 }
 
 #[test]

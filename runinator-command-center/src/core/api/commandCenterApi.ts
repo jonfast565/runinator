@@ -2004,6 +2004,10 @@ export async function createOrg(name: string) {
   return command<Organization>("create_org", { name });
 }
 
+export async function updateOrg(orgId: string, name: string) {
+  return command<Organization>("update_org", { orgId, name });
+}
+
 export async function switchOrg(orgId: string) {
   return command<OrgContextResponse>("switch_org", { orgId });
 }

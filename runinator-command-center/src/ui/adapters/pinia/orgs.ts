@@ -21,6 +21,7 @@ export const useOrgsStore = defineStore("orgs", () => {
     setActive: (orgId: string) => orgsService.setActive(orgId),
     setActivePlatform: () => orgsService.setActivePlatform(),
     create: (name: string) => orgsService.create(name),
+    rename: (name: string) => orgsService.rename(name),
     clear: () => {
       orgsService.clear();
     },

@@ -47,6 +47,13 @@ pub(super) async fn orgs(
             }
             output::json(&value)
         }
+        OrgCommands::Rename { org, name } => {
+            let value = client.rename_org(*org, name).await?;
+            if !json_output {
+                println!("renamed organization '{org}' to '{name}'");
+            }
+            output::json(&value)
+        }
         OrgCommands::Nodes { org } => {
             let value = client.fetch_org_nodes(*org).await?;
             output::json(&value)

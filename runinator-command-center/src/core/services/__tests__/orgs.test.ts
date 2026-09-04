@@ -9,9 +9,10 @@ vi.mock("../../api/commandCenterApi", () => ({
   listMyOrgs: vi.fn(),
   switchOrg: vi.fn(),
   switchPlatform: vi.fn(),
+  updateOrg: vi.fn(),
 }));
 
-import { listMyOrgs, switchOrg, switchPlatform } from "../../api/commandCenterApi";
+import { listMyOrgs, switchOrg, switchPlatform, updateOrg } from "../../api/commandCenterApi";
 
 function membership(id: string, name: string): OrgMembershipView {
   return {
@@ -27,10 +28,12 @@ function membership(id: string, name: string): OrgMembershipView {
   };
 }
 
+const setError = vi.fn();
+const setStatus = vi.fn();
 const app = {
   runOperation: <T>(_label: string, run: () => Promise<T>) => run(),
-  setError: vi.fn(),
-  setStatus: vi.fn(),
+  setError,
+  setStatus,
 } as unknown as AppService;
 
 const applyAccessToken = vi.fn();
@@ -87,6 +90,21 @@ describe("organizations service", () => {
     expect(switchPlatform).toHaveBeenCalledOnce();
     expect(applyAccessToken).toHaveBeenCalledWith("platform-token");
     expect(service.getState().activeOrgId).toBeNull();
-    expect(app.setStatus).toHaveBeenCalledWith("Active scope: Platform");
+    expect(setStatus).toHaveBeenCalledWith("Active scope: Platform");
+  });
+
+  it("renames the active organization in local memberships", async () => {
+    const service = createOrgsService(app, auth);
+    await service.refresh({ selectDefault: true });
+    vi.mocked(updateOrg).mockResolvedValue({
+      ...membership("platform", "Runinator").org,
+      slug: "platform",
+    });
+
+    await expect(service.rename("Runinator")).resolves.toBe(true);
+
+    expect(updateOrg).toHaveBeenCalledWith("platform", "Runinator");
+    expect(service.activeOrg()?.name).toBe("Runinator");
+    expect(service.activeOrg()?.slug).toBe("platform");
   });
 });

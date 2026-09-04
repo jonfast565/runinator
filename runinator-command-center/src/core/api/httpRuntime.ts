@@ -1198,6 +1198,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "orgs",
     body: (args) => ({ name: arg(args, "name") }),
   },
+  update_org: {
+    method: "PATCH",
+    path: (args) => `orgs/${escape(arg(args, "orgId"))}`,
+    headers: (args) => ({ "x-org-id": String(arg(args, "orgId")) }),
+    body: (args) => ({ name: arg(args, "name") }),
+  },
   switch_org: {
     method: "POST",
     path: () => "auth/switch-org",

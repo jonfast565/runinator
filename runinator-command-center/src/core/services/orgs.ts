@@ -3,6 +3,7 @@ import {
   listMyOrgs,
   switchOrg,
   switchPlatform,
+  updateOrg as apiUpdateOrg,
   type OrgMembershipView,
   type OrgRole,
 } from "../api/commandCenterApi";
@@ -154,6 +155,30 @@ export function createOrgsService(app: AppService, auth: AuthService) {
 
       await service.refresh();
       await service.setActive(org.id);
+      return true;
+    },
+    async rename(name: string): Promise<boolean> {
+      const orgId = store.getState().activeOrgId;
+
+      if (!orgId) {
+        return false;
+      }
+
+      const org = await app
+        .runOperation("Renaming organization", () => apiUpdateOrg(orgId, name))
+        .catch(() => null);
+
+      if (!org) {
+        return false;
+      }
+
+      store.setState((state) => ({
+        ...state,
+        memberships: state.memberships.map((membership) =>
+          membership.org.id === orgId ? { ...membership, org } : membership,
+        ),
+      }));
+      app.setStatus(`Organization renamed to: ${org.name}`);
       return true;
     },
     clear() {

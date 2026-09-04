@@ -1150,6 +1150,20 @@ where
         Ok(response.json::<Value>().await?)
     }
 
+    /// Rename an organization without changing its stable slug or identifier.
+    pub async fn rename_org(&self, org_id: Uuid, name: &str) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}")).await?;
+        let response = self
+            .send(
+                self.http_patch(url.clone())
+                    .header("x-org-id", org_id.to_string())
+                    .json(&json!({ "name": name })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
     /// list the caller's org memberships (org + role).
     pub async fn list_my_orgs(&self) -> Result<Value> {
         let url = self.build_url("/orgs/me").await?;
