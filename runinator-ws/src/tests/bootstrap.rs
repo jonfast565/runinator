@@ -39,19 +39,14 @@ async fn seed_bootstrap_admin_creates_local_admin_credentials() {
         &credential.password_hash
     ));
 
-    let platform_org = db
-        .fetch_org_by_slug("platform".into())
-        .await
-        .unwrap()
-        .expect("bootstrap platform org");
-    let membership = db
-        .fetch_org_membership(platform_org.id.expect("platform org id"), user.id.unwrap())
-        .await
-        .unwrap()
-        .expect("bootstrap admin membership");
-    assert_eq!(membership.role, OrgRole::Owner);
+    assert!(
+        db.list_user_orgs(user.id.unwrap())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
-    // Re-running bootstrap keeps one durable platform org and preserves the owner membership.
+    // repeating bootstrap never materializes the implicit platform.
     seed_bootstrap_admin(&db, "admin:secret-pass", false)
         .await
         .unwrap();
@@ -62,7 +57,7 @@ async fn seed_bootstrap_admin_creates_local_admin_credentials() {
             .into_iter()
             .filter(|organization| organization.slug == "platform")
             .count(),
-        1
+        0
     );
 
     let _ = std::fs::remove_file(path);

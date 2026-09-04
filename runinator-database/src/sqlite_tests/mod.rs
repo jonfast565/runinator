@@ -9,6 +9,7 @@ mod audit;
 mod auth;
 mod definitions;
 mod execution_profiles;
+mod implicit_platform;
 mod ingress_control;
 mod notifications;
 mod orchestrations;

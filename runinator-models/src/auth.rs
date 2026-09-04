@@ -182,6 +182,14 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
+/// user identity and current platform authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserView {
+    #[serde(flatten)]
+    pub user: User,
+    pub platform_role: Option<PlatformRole>,
+}
+
 /// a verified local credential lookup: the user plus the stored argon2 hash to check against.
 #[derive(Debug, Clone)]
 pub struct LocalCredential {
@@ -382,8 +390,8 @@ pub struct CreateUserRequest {
     pub password: String,
     #[serde(default)]
     pub email: Option<String>,
-    #[serde(default = "default_platform_role")]
-    pub platform_role: PlatformRole,
+    #[serde(default)]
+    pub platform_role: Option<PlatformRole>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -392,8 +400,8 @@ pub struct UpdateUserRequest {
     pub email: Option<Option<String>>,
     #[serde(default)]
     pub password: Option<String>,
-    #[serde(default)]
-    pub platform_role: Option<PlatformRole>,
+    #[serde(default, deserialize_with = "deserialize_platform_role_patch")]
+    pub platform_role: Option<Option<PlatformRole>>,
     #[serde(default)]
     pub disabled: Option<bool>,
 }
@@ -435,8 +443,10 @@ pub struct CreateApiKeyRequest {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-fn default_platform_role() -> PlatformRole {
-    PlatformRole::Member
+fn deserialize_platform_role_patch<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<PlatformRole>>, D::Error> {
+    Option::<PlatformRole>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -594,6 +604,7 @@ impl Validate for RefreshRequest {
 
 impl Validate for CreateUserRequest {
     fn validate(&self) -> Result<(), ValidationError> {
+        validate_human_platform_role(self.platform_role)?;
         identifier("username", &self.username)?;
         required_text("password", &self.password, LONG_TEXT_MAX)?;
         optional_email("email", self.email.as_deref())
@@ -602,12 +613,23 @@ impl Validate for CreateUserRequest {
 
 impl Validate for UpdateUserRequest {
     fn validate(&self) -> Result<(), ValidationError> {
+        validate_human_platform_role(self.platform_role.flatten())?;
         optional_email(
             "email",
             self.email.as_ref().and_then(|value| value.as_deref()),
         )?;
         optional_text("password", self.password.as_deref(), LONG_TEXT_MAX)
     }
+}
+
+fn validate_human_platform_role(role: Option<PlatformRole>) -> Result<(), ValidationError> {
+    if role.is_some_and(|role| role != PlatformRole::Admin) {
+        return Err(ValidationError::new(
+            "platform_role",
+            "human platform access must be admin or null",
+        ));
+    }
+    Ok(())
 }
 
 impl Validate for UpdateCurrentUserRequest {

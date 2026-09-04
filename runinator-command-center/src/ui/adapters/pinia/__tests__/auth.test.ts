@@ -78,7 +78,7 @@ describe("auth store", () => {
     expect(setAccessToken).toHaveBeenNthCalledWith(2, "fresh-access");
     expect(auth.required).toBe(true);
     expect(auth.authenticated).toBe(true);
-    expect(auth.user).toEqual({ id: "u-1", username: "admin" });
+    expect(auth.user).toEqual({ id: "u-1", username: "admin", platform_role: null });
     expect(auth.ready).toBe(true);
   });
 });

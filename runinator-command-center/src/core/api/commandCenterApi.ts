@@ -423,13 +423,13 @@ export interface CreateUserInput {
   username: string;
   password: string;
   email?: string | null;
-  platform_role: "admin" | "operator" | "auditor" | "member";
+  platform_role?: "admin" | null;
 }
 
 export interface UpdateUserInput {
   email?: string | null;
   password?: string | null;
-  platform_role?: "admin" | "operator" | "auditor" | "member" | null;
+  platform_role?: "admin" | null;
   disabled?: boolean | null;
 }
 

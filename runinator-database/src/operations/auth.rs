@@ -85,9 +85,12 @@ where
         username: String,
         email: Option<String>,
         password_hash: Option<String>,
-        role: PlatformRole,
+        role: Option<PlatformRole>,
         created_by: Option<Uuid>,
     ) -> Result<User, SendableError> {
+        if role.is_some_and(|role| role != PlatformRole::Admin) {
+            return Err(crate::errors::HUMAN_PLATFORM_ROLE.bare());
+        }
         let id = Uuid::now_v7();
         let now = Utc::now().timestamp();
         let mut tx = self.pool().begin().await?;
@@ -114,7 +117,8 @@ where
             .execute(&mut *tx)
             .await?;
         }
-        sqlx::query(&self.render(
+        if let Some(role) = role {
+            sqlx::query(&self.render(
             "INSERT INTO role_assignments (principal_kind, principal_id, scope_key, role, created_by, created_at, updated_at) \
              VALUES ('user', ?, 'platform', ?, ?, ?, ?)",
         ))
@@ -125,6 +129,7 @@ where
         .bind(now)
         .execute(&mut *tx)
         .await?;
+        }
         tx.commit().await?;
         let at = DateTime::<Utc>::from_timestamp(now, 0).unwrap_or_else(Utc::now);
         Ok(User {
@@ -229,7 +234,7 @@ where
                 "SELECT COUNT(*) FROM role_assignments target WHERE target.principal_kind = 'user' AND target.principal_id = ? \
                  AND ((target.scope_key = 'platform' AND target.role = 'admin') OR (target.scope_key <> 'platform' AND target.role = 'owner')) \
                  AND NOT EXISTS (SELECT 1 FROM role_assignments other WHERE other.scope_key = target.scope_key \
-                   AND other.role = target.role \
+                   AND other.role = target.role AND (target.scope_key <> 'platform' OR other.principal_kind = 'user') \
                    AND (other.principal_kind <> target.principal_kind OR other.principal_id <> target.principal_id) AND (\
                      (other.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = other.principal_id AND u.disabled = ?)) OR \
                      (other.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = other.principal_id AND s.disabled = ?))))",
@@ -326,7 +331,7 @@ where
                 "SELECT COUNT(*) FROM role_assignments target WHERE target.principal_kind = 'user' AND target.principal_id = ? \
                  AND ((target.scope_key = 'platform' AND target.role = 'admin') OR (target.scope_key <> 'platform' AND target.role = 'owner')) \
                  AND NOT EXISTS (SELECT 1 FROM role_assignments other WHERE other.scope_key = target.scope_key \
-                   AND other.role = target.role \
+                   AND other.role = target.role AND (target.scope_key <> 'platform' OR other.principal_kind = 'user') \
                    AND (other.principal_kind <> target.principal_kind OR other.principal_id <> target.principal_id) AND (\
                      (other.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = other.principal_id AND u.disabled = ?)) OR \
                      (other.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = other.principal_id AND s.disabled = ?))))",

@@ -32,6 +32,88 @@ async fn register_workflow_ownership(db: &SqliteDb, workflow_id: Uuid, org_id: O
 }
 
 #[tokio::test]
+async fn platform_admin_can_transfer_an_organization_workflow_to_platform() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let org = db
+        .create_org("Transfer".into(), "transfer".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let mut definition = workflow(None, "platform-transfer");
+    definition.org_id = Some(org);
+    let id = save_workflow(db.as_ref(), &definition)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    register_workflow_ownership(db.as_ref(), id, Some(org)).await;
+    let (status, _) = crate::handlers::authz::transfer_resource::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(auth_ctx(true, None)),
+        Path(("workflow".into(), id)),
+        ValidatedJson(crate::handlers::authz::TransferOwnerRequest {
+            owner: ScopeRef::PLATFORM,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(db.fetch_workflow(id).await.unwrap().unwrap().org_id, None);
+    let ownership = db
+        .fetch_resource_ownership(ResourceType::Workflow, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ownership.tenant, ScopeRef::PLATFORM);
+    assert_eq!(ownership.owner, ScopeRef::PLATFORM);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn human_platform_roles_and_platform_organization_are_reserved() {
+    use runinator_models::rbac::{PlatformRole, Role};
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let ctx = auth_ctx(true, None);
+    for role in [
+        PlatformRole::Member,
+        PlatformRole::Auditor,
+        PlatformRole::Operator,
+    ] {
+        let (status, _) = crate::handlers::authz::set_assignment::<SqliteDb>(
+            Extension(db.clone()),
+            Extension(ctx.clone()),
+            Path((
+                "platform".into(),
+                "platform".into(),
+                "user".into(),
+                Uuid::new_v4(),
+            )),
+            ValidatedJson(crate::handlers::authz::SetRoleRequest {
+                role: Role::Platform(role),
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    for slug in [None, Some("  PLATFORM  ".into())] {
+        let (status, _) = crate::handlers::orgs::create_org::<SqliteDb>(
+            Extension(db.clone()),
+            Extension(ctx.clone()),
+            ValidatedJson(runinator_models::orgs::CreateOrgRequest {
+                name: "Platform".into(),
+                slug,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    assert!(db.list_orgs().await.unwrap().is_empty());
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn visible_workflow_ids_include_direct_and_team_grants() {
     let (db, path) = test_db().await;
     let direct = save_workflow(&db, &workflow(None, "direct")).await.unwrap();

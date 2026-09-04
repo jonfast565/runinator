@@ -104,6 +104,12 @@ export function createOrgsService(app: AppService, auth: AuthService) {
 
       store.setState((state) => ({ ...state, memberships }));
 
+      const isPlatformAdmin = auth.getState().user?.platform_role === "admin";
+
+      if (isPlatformAdmin && !activeOrgId) {
+        return;
+      }
+
       if (selectDefault && memberships.length > 0) {
         await service.setActive(memberships[0].org.id);
       } else if (!activeOrgId && memberships.length > 0) {

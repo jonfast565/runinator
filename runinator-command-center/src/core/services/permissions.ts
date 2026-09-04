@@ -47,17 +47,27 @@ import type { AppService } from "./app";
 
 export const permissionLevels: PermissionLevel[] = ["view", "run", "edit", "own"];
 
-export type AccessResourceType = "workflow" | "pipeline" | "function_package" | "console_session"
-  | "setting" | "execution_profile" | "orchestration_adapter" | "library_file"
+export type AccessResourceType =
+  | "workflow"
+  | "pipeline"
+  | "function_package"
+  | "console_session"
+  | "setting"
+  | "execution_profile"
+  | "orchestration_adapter"
+  | "library_file"
   | "notification_policy";
 
-export interface AccessResource { id: string; label: string }
+export interface AccessResource {
+  id: string;
+  label: string;
+}
 
 export interface UserDraft {
   username: string;
   email: string;
   password: string;
-  platform_role: "admin" | "operator" | "auditor" | "member";
+  platform_role: "admin" | null;
   disabled: boolean;
 }
 
@@ -97,7 +107,7 @@ export function blankUserDraft(): UserDraft {
     username: "",
     email: "",
     password: "",
-    platform_role: "member",
+    platform_role: null,
     disabled: false,
   };
 }
@@ -197,7 +207,9 @@ export function createPermissionsService(app: AppService) {
   function visibleApiKeys(query: string): ApiKey[] {
     const { apiKeys, selectedUserId } = store.getState();
     const visible = selectedUserId
-      ? apiKeys.filter((key) => key.principal_kind === "service" || key.principal_id === selectedUserId)
+      ? apiKeys.filter(
+          (key) => key.principal_kind === "service" || key.principal_id === selectedUserId,
+        )
       : apiKeys;
 
     if (!query) {
@@ -208,7 +220,8 @@ export function createPermissionsService(app: AppService) {
   }
 
   function enabledAdminCount(): number {
-    return store.getState().users.filter((user) => user.platform_role === "admin" && !user.disabled).length;
+    return store.getState().users.filter((user) => user.platform_role === "admin" && !user.disabled)
+      .length;
   }
 
   const service = {
@@ -323,29 +336,32 @@ export function createPermissionsService(app: AppService) {
 
       const editing = Boolean(currentUser);
 
-      const saved = await app.runOperation(editing ? "Updating user" : "Creating user", async () => {
-        if (currentUser?.id) {
-          const request: UpdateUserInput = {
-            email: email || null,
-            platform_role: userDraft.platform_role,
-            disabled: userDraft.disabled,
-          };
+      const saved = await app.runOperation(
+        editing ? "Updating user" : "Creating user",
+        async () => {
+          if (currentUser?.id) {
+            const request: UpdateUserInput = {
+              email: email || null,
+              platform_role: userDraft.platform_role,
+              disabled: userDraft.disabled,
+            };
 
-          if (userDraft.password) {
-            request.password = userDraft.password;
+            if (userDraft.password) {
+              request.password = userDraft.password;
+            }
+
+            return updateUser(currentUser.id, request);
           }
 
-          return updateUser(currentUser.id, request);
-        }
-
-        const request: CreateUserInput = {
-          username,
-          password: userDraft.password,
-          email: email || null,
-          platform_role: userDraft.platform_role,
-        };
-        return createUser(request);
-      });
+          const request: CreateUserInput = {
+            username,
+            password: userDraft.password,
+            email: email || null,
+            platform_role: userDraft.platform_role,
+          };
+          return createUser(request);
+        },
+      );
       await service.refreshAll();
       service.selectUser(store.getState().users.find((user) => user.id === saved.id) ?? saved);
       app.setStatus(editing ? "User saved." : "User created.");
@@ -607,30 +623,68 @@ export function createPermissionsService(app: AppService) {
       ]);
       app.setStatus("Member removed.");
     },
-    async refreshAccessResources(resourceType: AccessResourceType = store.getState().selectedResourceType) {
+    async refreshAccessResources(
+      resourceType: AccessResourceType = store.getState().selectedResourceType,
+    ) {
       const accessResources = await app.runOperation("Loading resource access", async () => {
         switch (resourceType) {
-          case "workflow": return (await fetchWorkflows()).flatMap((item) => item.id ? [{ id: item.id, label: item.name }] : []);
-          case "pipeline": return (await fetchPipelines()).flatMap((item) => item.id ? [{ id: item.id, label: item.name }] : []);
-          case "function_package": return (await fetchFunctionPackages()).map((item) => ({ id: item.id, label: [item.namespace, item.name].filter(Boolean).join(".") }));
-          case "console_session": return (await fetchConsoleSessions()).map((item) => ({ id: item.id, label: item.name }));
-          case "setting": return (await fetchCredentials()).flatMap((item) => item.id ? [{ id: item.id, label: `${item.kind ?? "secret"}:${item.scope}/${item.name}` }] : []);
-          case "execution_profile": return (await fetchExecutionProfiles()).map((item) => ({ id: item.id, label: item.name }));
-          case "orchestration_adapter": return (await fetchAdapters()).map((item) => ({ id: item.id, label: item.name }));
-          case "library_file": return (await fetchWorkflowFiles()).filter((item) => item.scope === "library").map((item) => ({ id: item.descriptor.id, label: item.descriptor.path }));
-          case "notification_policy": return (await fetchNotificationPolicies()).filter((item) => !item.workflow_id).map((item) => ({ id: item.id, label: item.name }));
+          case "workflow":
+            return (await fetchWorkflows()).flatMap((item) =>
+              item.id ? [{ id: item.id, label: item.name }] : [],
+            );
+          case "pipeline":
+            return (await fetchPipelines()).flatMap((item) =>
+              item.id ? [{ id: item.id, label: item.name }] : [],
+            );
+          case "function_package":
+            return (await fetchFunctionPackages()).map((item) => ({
+              id: item.id,
+              label: [item.namespace, item.name].filter(Boolean).join("."),
+            }));
+          case "console_session":
+            return (await fetchConsoleSessions()).map((item) => ({
+              id: item.id,
+              label: item.name,
+            }));
+          case "setting":
+            return (await fetchCredentials()).flatMap((item) =>
+              item.id
+                ? [{ id: item.id, label: `${item.kind ?? "secret"}:${item.scope}/${item.name}` }]
+                : [],
+            );
+          case "execution_profile":
+            return (await fetchExecutionProfiles()).map((item) => ({
+              id: item.id,
+              label: item.name,
+            }));
+          case "orchestration_adapter":
+            return (await fetchAdapters()).map((item) => ({ id: item.id, label: item.name }));
+          case "library_file":
+            return (await fetchWorkflowFiles())
+              .filter((item) => item.scope === "library")
+              .map((item) => ({ id: item.descriptor.id, label: item.descriptor.path }));
+          case "notification_policy":
+            return (await fetchNotificationPolicies())
+              .filter((item) => !item.workflow_id)
+              .map((item) => ({ id: item.id, label: item.name }));
         }
       });
       store.setState((state) => ({
         ...state,
         selectedResourceType: resourceType,
-        selectedResourceId: accessResources.some((item) => item.id === state.selectedResourceId) ? state.selectedResourceId : null,
+        selectedResourceId: accessResources.some((item) => item.id === state.selectedResourceId)
+          ? state.selectedResourceId
+          : null,
         accessResources,
         resourceGrants: [],
       }));
     },
     async selectResource(resourceId: string | null) {
-      store.setState((state) => ({ ...state, selectedResourceId: resourceId, resourceGrants: resourceId ? state.resourceGrants : [] }));
+      store.setState((state) => ({
+        ...state,
+        selectedResourceId: resourceId,
+        resourceGrants: resourceId ? state.resourceGrants : [],
+      }));
 
       if (resourceId) {
         await service.refreshResourceGrants();
@@ -647,7 +701,8 @@ export function createPermissionsService(app: AppService) {
       }
 
       const resourceGrants = (await app.runOperation("Loading resource access", () =>
-        listResourceGrants(selectedResourceType, selectedResourceId))) as unknown as Grant[];
+        listResourceGrants(selectedResourceType, selectedResourceId),
+      )) as unknown as Grant[];
       store.setState((state) => ({ ...state, resourceGrants }));
     },
     async saveResourceGrant(grantDraft: GrantDraft) {
@@ -657,10 +712,15 @@ export function createPermissionsService(app: AppService) {
         return grantDraft;
       }
 
-      await app.runOperation("Saving access", () => grantResourceAccess(
-        selectedResourceType, selectedResourceId, grantDraft.principal_type,
-        grantDraft.principal_id, grantDraft.permission,
-      ));
+      await app.runOperation("Saving access", () =>
+        grantResourceAccess(
+          selectedResourceType,
+          selectedResourceId,
+          grantDraft.principal_type,
+          grantDraft.principal_id,
+          grantDraft.permission,
+        ),
+      );
       await service.refreshResourceGrants();
       app.setStatus("Access saved.");
       return blankGrantDraft();
@@ -672,7 +732,9 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Revoking access", () => revokeResourceGrant(selectedResourceType, selectedResourceId, grantId));
+      await app.runOperation("Revoking access", () =>
+        revokeResourceGrant(selectedResourceType, selectedResourceId, grantId),
+      );
       await service.refreshResourceGrants();
       app.setStatus("Access revoked.");
     },
@@ -701,9 +763,10 @@ function teamSearchText(team: Team): string {
 }
 
 function apiKeySearchText(apiKey: ApiKey, users: User[]): string {
-  const owner = apiKey.principal_kind === "user"
-    ? users.find((user) => user.id === apiKey.principal_id)?.username
-    : "service";
+  const owner =
+    apiKey.principal_kind === "user"
+      ? users.find((user) => user.id === apiKey.principal_id)?.username
+      : "service";
   return [
     apiKey.id,
     apiKey.name,

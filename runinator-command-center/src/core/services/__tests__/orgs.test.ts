@@ -76,6 +76,18 @@ describe("organizations service", () => {
     expect(service.activeOrg()?.name).toBe("Platform");
   });
 
+  it.each([{ memberships: [] }, { memberships: [membership("acme", "Acme")] }])(
+    "keeps platform admins in the implicit scope with memberships %j",
+    async ({ memberships }) => {
+      getState.mockReturnValue({ required: true, user: { platform_role: "admin" } });
+      vi.mocked(listMyOrgs).mockResolvedValue(memberships);
+      const service = createOrgsService(app, auth);
+      await service.refresh({ selectDefault: true });
+      expect(switchOrg).not.toHaveBeenCalled();
+      expect(service.getState().activeOrgId).toBeNull();
+    },
+  );
+
   it("returns a platform-capable user to the org-less platform scope", async () => {
     const service = createOrgsService(app, auth);
     service.setActiveLocal("acme");

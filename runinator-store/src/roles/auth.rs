@@ -30,13 +30,13 @@ pub trait AuthStore: Send + Sync + 'static {
         password_hash: Option<String>,
     ) -> impl Future<Output = Result<User, SendableError>> + Send;
 
-    /// Atomically create a user, optional local identity, and mandatory initial platform role.
+    /// Atomically create a user, optional local identity, and optional platform admin assignment.
     fn create_user_with_platform_role(
         &self,
         username: String,
         email: Option<String>,
         password_hash: Option<String>,
-        role: PlatformRole,
+        role: Option<PlatformRole>,
         created_by: Option<Uuid>,
     ) -> impl Future<Output = Result<User, SendableError>> + Send;
 

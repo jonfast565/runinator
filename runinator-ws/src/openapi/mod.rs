@@ -393,6 +393,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     ),
     (
         "post",
+        "/auth/switch-platform",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
         "/freeze_windows",
         docs::EndpointPolicy::Authenticated,
     ),

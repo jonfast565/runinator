@@ -49,7 +49,7 @@ use runinator_ws_middleware::authz::{AuthContextExt, GuardError, IntoReply};
 type Reply = (StatusCode, Json<ApiResponse>);
 
 const ORGANIZATION_MEMBERSHIP_REQUIRED: &str =
-    "user must belong to an enabled organization before signing in";
+    "user must be a platform administrator or belong to an enabled organization before signing in";
 
 #[derive(Clone)]
 struct SessionMetadata {
@@ -129,7 +129,9 @@ async fn enabled_admin_count<T: AuthStore + RbacStore + RuntimeStore>(
         .map_err(|err| api_error(err.to_string()))?;
     let mut count = 0;
     for assignment in assignments {
-        if assignment.role == Role::Platform(PlatformRole::Admin) {
+        if assignment.role == Role::Platform(PlatformRole::Admin)
+            && assignment.principal_kind == PrincipalKind::User
+        {
             let enabled = match assignment.principal_kind {
                 PrincipalKind::User => db
                     .fetch_user(assignment.principal_id)
@@ -184,7 +186,6 @@ async fn user_with_platform_role<T: AuthStore + RbacStore + RuntimeStore>(
     db: &T,
     user: &User,
 ) -> Result<Value, Reply> {
-    let mut value = serde_json::to_value(user).map_err(|err| api_error(err.to_string()))?;
     let id = user.id.ok_or_else(|| api_error("stored user has no id"))?;
     let role = db
         .list_principal_role_assignments(PrincipalKind::User, id)
@@ -195,20 +196,30 @@ async fn user_with_platform_role<T: AuthStore + RbacStore + RuntimeStore>(
             Role::Platform(role) => Some(role),
             _ => None,
         })
-        .max()
-        .ok_or_else(|| api_error("user has no platform role assignment"))?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert(
-            "platform_role".to_string(),
-            serde_json::to_value(role).unwrap(),
-        );
-    }
-    Ok(Value::from(value))
+        .max();
+    serde_json::to_value(runinator_models::auth::UserView {
+        user: user.clone(),
+        platform_role: role,
+    })
+    .map(Value::from)
+    .map_err(|err| api_error(err.to_string()))
 }
 
 // ---- session helpers ----
 
-async fn has_enabled_organization<T: OrgStore>(db: &T, user_id: Uuid) -> Result<bool, Reply> {
+async fn can_start_user_session<T: OrgStore + RbacStore>(
+    db: &T,
+    user_id: Uuid,
+) -> Result<bool, Reply> {
+    if db
+        .list_principal_role_assignments(PrincipalKind::User, user_id)
+        .await
+        .map_err(|err| api_error(err.to_string()))?
+        .iter()
+        .any(|assignment| assignment.role == Role::Platform(PlatformRole::Admin))
+    {
+        return Ok(true);
+    }
     db.list_user_orgs(user_id)
         .await
         .map(|memberships| memberships.into_iter().any(|(org, _)| !org.disabled))
@@ -223,7 +234,7 @@ async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore + 
     metadata: SessionMetadata,
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
-    if !has_enabled_organization(db, user_id).await? {
+    if !can_start_user_session(db, user_id).await? {
         return Err(forbidden(ORGANIZATION_MEMBERSHIP_REQUIRED));
     }
     let (refresh_token, refresh_hash) = new_refresh_token();
@@ -305,7 +316,7 @@ pub async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -> Reply
     responses(
         (status = 200, description = "token pair and the authenticated user", body = LoginResponseSchema),
         (status = 401, description = "invalid username or password", body = ApiError),
-        (status = 403, description = "user has no enabled organization membership", body = ApiError),
+        (status = 403, description = "user is neither a platform administrator nor a member of an enabled organization", body = ApiError),
     ),
 )]
 pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
@@ -348,7 +359,7 @@ pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgS
     }
     let user_id = credential.user.id;
     if let Some(user_id) = user_id {
-        let has_membership = match has_enabled_organization(db.as_ref(), user_id).await {
+        let has_membership = match can_start_user_session(db.as_ref(), user_id).await {
             Ok(value) => value,
             Err(reply) => return reply.into_reply(),
         };
@@ -437,7 +448,7 @@ async fn audit_credential_change<T: AuthStore + RbacStore + RuntimeStore>(
     responses(
         (status = 200, description = "rotated token pair and authenticated user", body = LoginResponseSchema),
         (status = 401, description = "invalid or expired refresh token", body = ApiError),
-        (status = 403, description = "user has no enabled organization membership", body = ApiError),
+        (status = 403, description = "user is neither a platform administrator nor a member of an enabled organization", body = ApiError),
     ),
 )]
 pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>(
@@ -1188,7 +1199,7 @@ pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
     };
     let demotes_enabled_admin = request
         .platform_role
-        .is_some_and(|role| role != PlatformRole::Admin)
+        .is_some_and(|role| role != Some(PlatformRole::Admin))
         || request.disabled == Some(true);
     match would_remove_last_enabled_admin(db.as_ref(), &current, demotes_enabled_admin).await {
         Ok(true) => return forbidden("cannot remove the last enabled admin user"),
@@ -1211,18 +1222,26 @@ pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
         .await
     {
         Ok(user) => {
-            if let Some(role) = next_role
-                && let Err(err) = db
-                    .upsert_role_assignment(
-                        PrincipalKind::User,
-                        user_id,
-                        ScopeRef::PLATFORM,
-                        Role::Platform(role),
-                        ctx.principal_id,
-                    )
-                    .await
-            {
-                return api_error(err.to_string());
+            if let Some(role) = next_role {
+                let result = match role {
+                    Some(role) => db
+                        .upsert_role_assignment(
+                            PrincipalKind::User,
+                            user_id,
+                            ScopeRef::PLATFORM,
+                            Role::Platform(role),
+                            ctx.principal_id,
+                        )
+                        .await
+                        .map(|_| ()),
+                    None => {
+                        db.delete_role_assignment(PrincipalKind::User, user_id, ScopeRef::PLATFORM)
+                            .await
+                    }
+                };
+                if let Err(err) = result {
+                    return api_error(err.to_string());
+                }
             }
             if (password_changed || user.disabled)
                 && let Err(err) = db.revoke_user_sessions(user_id).await

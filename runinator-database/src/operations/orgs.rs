@@ -37,7 +37,167 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn reconcile_platform_organization(&self) -> Result<(), SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let lock = if self.dialect() == SqlDialect::Sqlite {
+            ""
+        } else {
+            " FOR UPDATE"
+        };
+        if self.dialect() == SqlDialect::Sqlite {
+            sqlx::query("UPDATE organizations SET updated_at = updated_at WHERE slug = 'platform'")
+                .execute(&mut *tx)
+                .await?;
+        }
+        let row = sqlx::query(&format!(
+            "SELECT id FROM organizations WHERE slug = 'platform'{lock}"
+        ))
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            return Ok(());
+        };
+        let id: Uuid = row.try_get("id")?;
+        let now = Utc::now().timestamp();
+        for (table, column) in [
+            ("teams", "scope_id"),
+            ("orchestration_adapters", "org_id"),
+            ("workflow_files", "org_id"),
+            ("settings", "org_id"),
+            ("org_resource_groups", "org_id"),
+            ("org_usage_ledger", "org_id"),
+            ("api_keys", "org_id"),
+            ("agent_enrollment_tokens", "org_id"),
+            ("calendar_subscriptions", "scope_id"),
+            ("broker_ingress_messages", "scope_id"),
+            ("ingress_control_gates", "owner_scope_id"),
+            ("ingress_control_events", "owner_scope_id"),
+            ("replicas", "registered_by_org_id"),
+            ("freeze_windows", "org_id"),
+        ] {
+            let count: i64 = sqlx::query_scalar(
+                &self.render(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?")),
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if count > 0 {
+                return Err(crate::errors::PLATFORM_RECONCILIATION_BLOCKED.error(table));
+            }
+        }
+        let active: i64 = sqlx::query_scalar(&self.render(
+            "SELECT COUNT(*) FROM broker_ingress_sessions WHERE scope_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+        )).bind(id).bind(now).fetch_one(&mut *tx).await?;
+        if active > 0 {
+            return Err(
+                crate::errors::PLATFORM_RECONCILIATION_BLOCKED.error("active ingress session")
+            );
+        }
+        let unsupported: i64 = sqlx::query_scalar(&self.render(
+            "SELECT COUNT(*) FROM resource_ownership WHERE tenant_scope_id = ? AND resource_type IN ('setting', 'orchestration_adapter', 'library_file')",
+        )).bind(id).fetch_one(&mut *tx).await?;
+        if unsupported > 0 {
+            return Err(
+                crate::errors::PLATFORM_RECONCILIATION_BLOCKED.error("organization-only ownership")
+            );
+        }
+        for (kind, table) in [
+            ("workflow", "workflows"),
+            ("pipeline", "pipelines"),
+            ("console_session", "console_sessions"),
+            ("function_package", "function_packages"),
+            ("execution_profile", "execution_profiles"),
+            ("notification_policy", "notification_policies"),
+        ] {
+            let rows = sqlx::query(&self.render(&format!(
+                "SELECT id FROM {table} WHERE org_id = ? UNION SELECT resource_id AS id FROM resource_ownership WHERE resource_type = ? AND tenant_scope_id = ?"
+            ))).bind(id).bind(kind).bind(id).fetch_all(&mut *tx).await?;
+            for row in rows {
+                let resource_id: Uuid = row.try_get("id")?;
+                let conflicts: i64 = sqlx::query_scalar(&self.render(&format!(
+                    "SELECT COUNT(*) FROM {table} WHERE id = ? AND org_id IS NOT NULL AND org_id <> ?"
+                ))).bind(resource_id).bind(id).fetch_one(&mut *tx).await?;
+                if conflicts > 0 {
+                    return Err(crate::errors::PLATFORM_RECONCILIATION_BLOCKED
+                        .error("conflicting source organization"));
+                }
+                let conflicts: i64 = sqlx::query_scalar(&self.render(
+                    "SELECT COUNT(*) FROM resource_ownership WHERE resource_type = ? AND resource_id = ? AND tenant_scope_id IS NOT NULL AND tenant_scope_id <> ?"
+                )).bind(kind).bind(resource_id).bind(id).fetch_one(&mut *tx).await?;
+                if conflicts > 0 {
+                    return Err(crate::errors::PLATFORM_RECONCILIATION_BLOCKED
+                        .error("conflicting resource tenant"));
+                }
+                let exists: i64 = sqlx::query_scalar(
+                    &self.render(&format!("SELECT COUNT(*) FROM {table} WHERE id = ?")),
+                )
+                .bind(resource_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                sqlx::query(&self.render(
+                    "DELETE FROM resource_grants WHERE resource_type = ? AND resource_id = ?",
+                ))
+                .bind(kind)
+                .bind(resource_id)
+                .execute(&mut *tx)
+                .await?;
+                if exists == 0 {
+                    sqlx::query(&self.render("DELETE FROM resource_ownership WHERE resource_type = ? AND resource_id = ?"))
+                        .bind(kind).bind(resource_id).execute(&mut *tx).await?;
+                    continue;
+                }
+                sqlx::query(&self.render(&format!(
+                    "UPDATE {table} SET org_id = NULL, updated_at = ? WHERE id = ?"
+                )))
+                .bind(now)
+                .bind(resource_id)
+                .execute(&mut *tx)
+                .await?;
+                let updated = sqlx::query(&self.render(
+                    "UPDATE resource_ownership SET tenant_scope_kind = 'platform', tenant_scope_id = NULL, owner_scope_kind = 'platform', owner_scope_id = NULL, authz_version = authz_version + 1, updated_at = ? WHERE resource_type = ? AND resource_id = ?"
+                )).bind(now).bind(kind).bind(resource_id).execute(&mut *tx).await?;
+                if updated.affected() == 0 {
+                    sqlx::query(&self.render(
+                        "INSERT INTO resource_ownership (resource_type, resource_id, tenant_scope_kind, tenant_scope_id, owner_scope_kind, owner_scope_id, created_by, authz_version, created_at, updated_at) VALUES (?, ?, 'platform', NULL, 'platform', NULL, NULL, 1, ?, ?)"
+                    )).bind(kind).bind(resource_id).bind(now).bind(now).execute(&mut *tx).await?;
+                }
+            }
+        }
+        let remaining: i64 = sqlx::query_scalar(&self.render(
+            "SELECT COUNT(*) FROM resource_ownership WHERE tenant_scope_id = ? OR owner_scope_id = ?",
+        )).bind(id).bind(id).fetch_one(&mut *tx).await?;
+        if remaining > 0 {
+            return Err(crate::errors::PLATFORM_RECONCILIATION_BLOCKED
+                .error("unsupported ownership reference"));
+        }
+        for table in ["notifications"] {
+            sqlx::query(&self.render(&format!(
+                "UPDATE {table} SET org_id = NULL WHERE org_id = ?"
+            )))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query(&self.render("DELETE FROM broker_ingress_sessions WHERE scope_id = ?"))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&self.render("DELETE FROM role_assignments WHERE scope_key = ?"))
+            .bind(format!("organization:{id}"))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&self.render("DELETE FROM organizations WHERE id = ?"))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn create_org(&self, name: String, slug: String) -> Result<Organization, SendableError> {
+        if runinator_models::orgs::slugify(&slug) == "platform" {
+            return Err(crate::errors::RESERVED_PLATFORM_ORGANIZATION.bare());
+        }
         let id = Uuid::now_v7();
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(

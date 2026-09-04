@@ -16,6 +16,10 @@ use runinator_models::{
 /// Core persistence operations for Runinator.
 /// Organizations, membership, quotas, usage samples, and resource groups.
 pub trait OrgStore: Send + Sync + 'static {
+    /// atomically retire the legacy bootstrap organization into the implicit platform scope.
+    fn reconcile_platform_organization(
+        &self,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
     // ---- organizations (tenants) + memberships ----
 
     /// Create an organization.

@@ -1,6 +1,7 @@
 //! Hierarchical role assignments, resource ownership, and scoped ACL operations.
 
 use super::*;
+use runinator_models::{auth::PrincipalKind, rbac::PlatformRole};
 
 fn scope_key(scope: ScopeRef) -> String {
     match scope.id {
@@ -161,6 +162,12 @@ where
         role: Role,
         created_by: Option<Uuid>,
     ) -> Result<RoleAssignment, SendableError> {
+        if principal_kind == PrincipalKind::User
+            && scope.kind == ScopeKind::Platform
+            && role != Role::Platform(PlatformRole::Admin)
+        {
+            return Err(crate::errors::HUMAN_PLATFORM_ROLE.bare());
+        }
         let Some(scope) = ScopeRef::new(scope.kind, scope.id) else {
             return Err(invalid_rbac(
                 "platform scopes must have no id and all other scopes require one",
@@ -200,12 +207,13 @@ where
                 || (key != "platform" && old_role == "owner");
             if was_protected && old_role != role.as_str() {
                 let count: i64 = sqlx::query_scalar(&self.render(
-                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role = ? AND (\
+                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role = ? AND (? = false OR r.principal_kind = 'user') AND (\
                      (r.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = r.principal_id AND u.disabled = ?)) OR \
                      (r.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = r.principal_id AND s.disabled = ?)))",
                 ))
                 .bind(&key)
                 .bind(&old_role)
+                .bind(key == "platform" && principal_kind == PrincipalKind::User)
                 .bind(false)
                 .bind(false)
                 .fetch_one(&mut *tx)
@@ -288,12 +296,13 @@ where
                 (key == "platform" && role == "admin") || (key != "platform" && role == "owner");
             if protected {
                 let count: i64 = sqlx::query_scalar(&self.render(
-                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role = ? AND (\
+                    "SELECT COUNT(*) FROM role_assignments r WHERE scope_key = ? AND role = ? AND (? = false OR r.principal_kind = 'user') AND (\
                      (r.principal_kind = 'user' AND EXISTS (SELECT 1 FROM users u WHERE u.id = r.principal_id AND u.disabled = ?)) OR \
                      (r.principal_kind = 'service' AND EXISTS (SELECT 1 FROM service_accounts s WHERE s.id = r.principal_id AND s.disabled = ?)))",
                 ))
                 .bind(&key)
                 .bind(&role)
+                .bind(key == "platform" && principal_kind == PrincipalKind::User)
                 .bind(false)
                 .bind(false)
                 .fetch_one(&mut *tx)

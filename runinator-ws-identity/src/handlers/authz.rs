@@ -306,6 +306,12 @@ pub async fn set_assignment<T: AuthorizationStore>(
     if !role_matches_scope(request.role, scope) {
         return bad_request("role kind does not match scope kind");
     }
+    if principal_kind == PrincipalKind::User
+        && scope.kind == ScopeKind::Platform
+        && request.role != Role::Platform(PlatformRole::Admin)
+    {
+        return bad_request("human platform access must be admin or absent");
+    }
     match can_assign(db.as_ref(), &ctx, scope, request.role).await {
         Ok(true) => {}
         Ok(false) => return forbidden("cannot delegate this role"),
@@ -599,7 +605,11 @@ pub async fn transfer_resource<T: AuthorizationStore>(
         }
         if !matches!(
             resource_type,
-            ResourceType::Setting
+            ResourceType::Workflow
+                | ResourceType::Pipeline
+                | ResourceType::FunctionPackage
+                | ResourceType::ConsoleSession
+                | ResourceType::Setting
                 | ResourceType::ExecutionProfile
                 | ResourceType::NotificationPolicy
         ) {
@@ -651,7 +661,9 @@ pub async fn transfer_resource<T: AuthorizationStore>(
             ScopeKind::User => None,
             ScopeKind::Platform => Some(ScopeRef::PLATFORM),
         };
-        if target_tenant.is_some_and(|tenant| tenant != ownership.tenant) {
+        if target_tenant.is_some_and(|tenant| tenant != ownership.tenant)
+            && !(ctx.is_platform_admin() && request.owner.kind == ScopeKind::Platform)
+        {
             return bad_request("target owner is outside the resource organization");
         }
         if request.owner.kind == ScopeKind::User {

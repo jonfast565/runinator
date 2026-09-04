@@ -13,7 +13,7 @@ use runinator_models::auth::{
     AgentEnrollmentRequestBody, AgentEnrollmentToken, AgentEnrollmentTokenRecord,
     EnrollAgentRequest, LoginRequest,
 };
-use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
+use runinator_models::rbac::PlatformRole;
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
 };
@@ -52,7 +52,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         ValidatedJson(UpdateUserRequest {
             email: None,
             password: None,
-            platform_role: Some(runinator_models::rbac::PlatformRole::Member),
+            platform_role: Some(None),
             disabled: None,
         }),
     )
@@ -107,7 +107,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         ValidatedJson(UpdateUserRequest {
             email: None,
             password: None,
-            platform_role: Some(runinator_models::rbac::PlatformRole::Member),
+            platform_role: Some(None),
             disabled: None,
         }),
     )
@@ -130,15 +130,6 @@ async fn current_user_can_update_profile_and_change_password_without_losing_curr
         .await
         .unwrap();
     let user_id = user.id.unwrap();
-    db.upsert_role_assignment(
-        PrincipalKind::User,
-        user_id,
-        ScopeRef::PLATFORM,
-        Role::Platform(PlatformRole::Member),
-        None,
-    )
-    .await
-    .unwrap();
     let now = Utc::now();
     let current_id = Uuid::new_v4();
     let other_id = Uuid::new_v4();
@@ -282,6 +273,70 @@ async fn login_requires_an_enabled_organization_membership() {
 
     drop(db);
     let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn bootstrap_admin_logs_in_and_refreshes_without_an_organization() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    seed_bootstrap_admin(db.as_ref(), "implicit-admin:secret-pass", false)
+        .await
+        .unwrap();
+    let config = Arc::new(crate::auth::AuthConfig {
+        enabled: true,
+        jwt_secret: b"test-secret".to_vec(),
+        jwt_secret_previous: None,
+        access_ttl_secs: 3600,
+        refresh_ttl_secs: 86400,
+    });
+    let (status, Json(body)) = crate::handlers::auth::login::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(config.clone()),
+        ConnectInfo(SocketAddr::from(([127, 11, 0, 1], 0))),
+        axum::http::HeaderMap::new(),
+        ValidatedJson(LoginRequest {
+            username: "implicit-admin".into(),
+            password: "secret-pass".into(),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = serde_json::to_value(body).unwrap();
+    let token = body["refresh_token"].as_str().unwrap().to_string();
+    let (status, _) = crate::handlers::auth::refresh::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(config),
+        ConnectInfo(SocketAddr::from(([127, 11, 0, 1], 0))),
+        axum::http::HeaderMap::new(),
+        ValidatedJson(runinator_models::auth::RefreshRequest {
+            refresh_token: token,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(db.list_orgs().await.unwrap().is_empty());
+    drop(db);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn user_platform_patch_distinguishes_absent_null_and_admin() {
+    use runinator_models::validation::Validate;
+    for (json, expected) in [
+        (serde_json::json!({}), None),
+        (serde_json::json!({"platform_role":null}), Some(None)),
+        (
+            serde_json::json!({"platform_role":"admin"}),
+            Some(Some(PlatformRole::Admin)),
+        ),
+    ] {
+        let request: UpdateUserRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.platform_role, expected);
+        assert!(request.validate().is_ok());
+    }
+    let request: UpdateUserRequest =
+        serde_json::from_value(serde_json::json!({"platform_role":"member"})).unwrap();
+    assert!(request.validate().is_err());
 }
 
 #[tokio::test]

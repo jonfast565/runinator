@@ -80,6 +80,9 @@ pub async fn create_org<T: OrgStore + RuntimeStore>(
     if slug.is_empty() {
         return bad_request("organization slug resolves to empty; provide an explicit slug");
     }
+    if slug == "platform" {
+        return bad_request("Platform is an implicit scope and cannot be an organization");
+    }
     match db.fetch_org_by_slug(slug.clone()).await {
         Ok(Some(_)) => return bad_request(format!("slug '{slug}' is already taken")),
         Ok(None) => {}

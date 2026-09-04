@@ -107,7 +107,7 @@ const { isLoading: startingRun } = useOperationLoading("Running workflow", { pre
 const PLATFORM_SCOPE = "__platform__";
 const switchingScope = ref(false);
 
-const hasPlatformAccess = computed(() => typeof auth.user?.platform_role === "string");
+const hasPlatformAccess = computed(() => auth.user?.platform_role === "admin");
 const showScopeSwitcher = computed(() => orgs.memberships.length > 1 || hasPlatformAccess.value);
 const activeScopeValue = computed(
   () => orgs.activeOrgId ?? (hasPlatformAccess.value ? PLATFORM_SCOPE : ""),

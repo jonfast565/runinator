@@ -64,5 +64,10 @@ async fn postgres_full_lifecycle() {
 
     assert_dialect_parity(&db).await;
 
+    let org = Uuid::new_v4();
+    sqlx::query("INSERT INTO organizations (id,name,slug,disabled,created_at,updated_at) VALUES ($1,'Platform','platform',false,0,0)")
+        .bind(org).execute(db.pool()).await.unwrap();
+    crate::dialect_parity::assert_platform_reconciliation(&db, org).await;
+
     drop_db(db, &maintenance_url, &dbname).await;
 }

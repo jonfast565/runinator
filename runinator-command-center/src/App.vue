@@ -389,9 +389,7 @@ async function refreshBackendState(refreshProviders: boolean) {
     executionProfiles.refresh().catch(() => undefined),
     gates.refreshGates().catch(() => undefined),
     app.refreshReplicas().catch(() => undefined),
-    // Enter every authenticated frontend session in the server's first org context. This is
-    // especially important for the bootstrap Platform org, because the initial login token has
-    // no organization claim yet.
+    // resolve the initial scope before selecting an organization for tenant users.
     orgs.refresh({ selectDefault: true }).catch(() => undefined),
     refreshProviders ? providers.fetchProviders().catch(() => undefined) : Promise.resolve(),
     catalogMetadata.fetchCatalogs().catch(() => undefined),

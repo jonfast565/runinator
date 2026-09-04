@@ -398,14 +398,14 @@ async fn hierarchical_assignments_ownership_and_scoped_grants_are_enforced() {
     )
     .await
     .unwrap();
-    db.delete_role_assignment(PrincipalKind::User, user_id, ScopeRef::PLATFORM)
-        .await
-        .unwrap();
     assert!(
-        db.set_service_account_disabled(service.id, true)
+        db.delete_role_assignment(PrincipalKind::User, user_id, ScopeRef::PLATFORM)
             .await
             .is_err()
     );
+    db.set_service_account_disabled(service.id, true)
+        .await
+        .unwrap();
 
     let resource_id = Uuid::now_v7();
     let now = Utc::now();

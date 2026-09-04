@@ -108,6 +108,11 @@ password: admin
 
 That seed happens even while HTTP auth is still disabled by default, so the usual local stack keeps working unchanged. If you later enable `RUNINATOR_AUTH_ENABLED=true` for the web service, you can immediately log in with that account and rotate it.
 
+The bootstrap account has the human `platform/admin` assignment and needs no organization
+membership. Platform is an implicit, ID-less scope, not a persisted organization. Production
+deployments must supply their own `RUNINATOR_AUTH_BOOTSTRAP_ADMIN` credentials; `admin/admin`
+is for local development only. Additional platform administrators can be provisioned for recovery.
+
 The same bootstrap step also seeds a dev-only service API key and feeds it to
 the supervisor-managed development worker, desktop agent, and one-shot `runinatorctl workflows apply`,
 and the `bash scripts/run-local.sh sync|dev|smoke-sync` helpers. That means the

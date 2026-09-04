@@ -67,7 +67,26 @@ pub const WORKFLOW_VM_CORRUPT_STATE: ErrorDescriptor = ErrorDescriptor::new(
     "Stored workflow VM state is invalid or incompatible",
 );
 
+pub const PLATFORM_RECONCILIATION_BLOCKED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI513",
+    "database.platform.reconciliation_blocked",
+    "Legacy platform organization cannot be safely reconciled",
+);
+pub const HUMAN_PLATFORM_ROLE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI514",
+    "database.auth.human_platform_role",
+    "Human platform access must be admin or absent",
+);
+pub const RESERVED_PLATFORM_ORGANIZATION: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI515",
+    "database.org.reserved_platform",
+    "Platform is an implicit scope and cannot be an organization",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
+    PLATFORM_RECONCILIATION_BLOCKED,
+    HUMAN_PLATFORM_ROLE,
+    RESERVED_PLATFORM_ORGANIZATION,
     ACTION_DISPATCH_INVALID_JSON,
     ORCHESTRATION_EVENT_INVALID_ID,
     READY_NODE_INVALID_SOURCE_EVENT_ID,

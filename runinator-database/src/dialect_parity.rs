@@ -95,6 +95,7 @@ fn sample_trigger(workflow_id: Uuid) -> WorkflowTrigger {
 /// the store must be exclusive to this call: several assertions count rows or depend on a claim
 /// finding nothing else outstanding.
 pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db: &T) {
+    assert_implicit_platform_identity(db).await;
     assert_workflow_upsert(db).await;
     let after = db.fetch_workflows().await.unwrap().remove(0);
     let id = after.id.expect("the upserted workflow has an id");
@@ -119,6 +120,243 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_workflow_vm_mutex_lifecycle(db, &after).await;
     assert_workflow_effect_retry_lifecycle(db, &after).await;
     assert_unreferenced_artifacts(db).await;
+}
+
+pub(crate) async fn assert_platform_reconciliation<T: DatabaseImpl>(db: &T, org: Uuid) {
+    use runinator_models::ingress_control::{BrokerIngressSession, BrokerIngressSessionMode};
+    use runinator_models::{
+        auth::ResourceType,
+        rbac::{ResourceOwnership, ScopeRef},
+    };
+    let scope = ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org)).unwrap();
+    let mut source = sample_workflow("legacy");
+    source.org_id = Some(org);
+    let source = db.upsert_workflow(&source).await.unwrap();
+    let id = source.id.unwrap();
+    let mismatch = db
+        .upsert_workflow(&sample_workflow("legacy-mismatch"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::Workflow,
+        resource_id: mismatch,
+        tenant: scope,
+        owner: scope,
+        created_by: None,
+        authz_version: 1,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    })
+    .await
+    .unwrap();
+    let dangling = Uuid::new_v4();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::Workflow,
+        resource_id: dangling,
+        tenant: ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org)).unwrap(),
+        owner: ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org)).unwrap(),
+        created_by: None,
+        authz_version: 1,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    })
+    .await
+    .unwrap();
+    let team = db
+        .create_team(
+            "blocker".into(),
+            ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org)).unwrap(),
+        )
+        .await
+        .unwrap();
+    let error = db.reconcile_platform_organization().await.unwrap_err();
+    assert_eq!(
+        runinator_models::errors::error_code_or_unknown(error.as_ref()),
+        "RUNI513"
+    );
+    assert_eq!(
+        db.fetch_workflow(id).await.unwrap().unwrap().org_id,
+        Some(org)
+    );
+    assert!(db.fetch_org(org).await.unwrap().is_some());
+    db.delete_team(team.id.unwrap()).await.unwrap();
+    let mut session = BrokerIngressSession {
+        scope,
+        mode: BrokerIngressSessionMode::HoldOrchestrationNudges,
+        updated_by: None,
+        updated_at: Utc::now(),
+        expires_at: Utc::now() + Duration::minutes(5),
+    };
+    db.put_broker_ingress_session(session.clone())
+        .await
+        .unwrap();
+    let error = db.reconcile_platform_organization().await.unwrap_err();
+    assert_eq!(
+        runinator_models::errors::error_code_or_unknown(error.as_ref()),
+        "RUNI513"
+    );
+    assert_eq!(
+        db.fetch_workflow(id).await.unwrap().unwrap().org_id,
+        Some(org)
+    );
+    session.expires_at = Utc::now() - Duration::minutes(5);
+    // the expired row is persisted but deliberately excluded from the session read-back.
+    assert!(db.put_broker_ingress_session(session).await.is_err());
+    db.reconcile_platform_organization().await.unwrap();
+    db.reconcile_platform_organization().await.unwrap();
+    assert!(db.fetch_org(org).await.unwrap().is_none());
+    assert_eq!(db.fetch_workflow(id).await.unwrap().unwrap().org_id, None);
+    let owner = db
+        .fetch_resource_ownership(ResourceType::Workflow, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.tenant, ScopeRef::PLATFORM);
+    assert_eq!(owner.owner, ScopeRef::PLATFORM);
+    assert_eq!(
+        db.fetch_resource_ownership(ResourceType::Workflow, mismatch)
+            .await
+            .unwrap()
+            .unwrap()
+            .tenant,
+        ScopeRef::PLATFORM
+    );
+    assert!(
+        db.fetch_broker_ingress_session(scope)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.fetch_resource_ownership(ResourceType::Workflow, dangling)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+async fn assert_implicit_platform_identity<T: DatabaseImpl>(db: &T) {
+    use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
+    let user = db
+        .create_user_with_platform_role(
+            format!("tenant-{}", Uuid::new_v4()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let id = user.id.unwrap();
+    assert!(
+        db.list_principal_role_assignments(PrincipalKind::User, id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for role in [
+        PlatformRole::Member,
+        PlatformRole::Auditor,
+        PlatformRole::Operator,
+    ] {
+        assert!(
+            db.upsert_role_assignment(
+                PrincipalKind::User,
+                id,
+                ScopeRef::PLATFORM,
+                Role::Platform(role),
+                None
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            db.create_user_with_platform_role(
+                format!("invalid-{}", Uuid::new_v4()),
+                None,
+                None,
+                Some(role),
+                None
+            )
+            .await
+            .is_err()
+        );
+    }
+    db.upsert_role_assignment(
+        PrincipalKind::User,
+        id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Admin),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.create_org("Platform".into(), "platform".into())
+            .await
+            .is_err()
+    );
+    db.reconcile_platform_organization().await.unwrap();
+    db.reconcile_platform_organization().await.unwrap();
+    assert!(
+        db.fetch_org_by_slug("platform".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let service = db
+        .create_service_account("platform-service".into(), None)
+        .await
+        .unwrap();
+    db.upsert_role_assignment(
+        PrincipalKind::Service,
+        service.id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Admin),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.delete_role_assignment(PrincipalKind::User, id, ScopeRef::PLATFORM)
+            .await
+            .is_err()
+    );
+    assert!(db.update_user(id, None, Some(true)).await.is_err());
+    assert!(db.delete_user(id).await.is_err());
+    let recovery = db
+        .create_user_with_platform_role(
+            "recovery-admin".into(),
+            None,
+            None,
+            Some(PlatformRole::Admin),
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    db.delete_role_assignment(PrincipalKind::User, id, ScopeRef::PLATFORM)
+        .await
+        .unwrap();
+    assert!(
+        db.list_principal_role_assignments(PrincipalKind::User, id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    db.upsert_role_assignment(
+        PrincipalKind::User,
+        id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Admin),
+        None,
+    )
+    .await
+    .unwrap();
+    db.delete_user(recovery).await.unwrap();
 }
 
 /// verifies that local desktop observations retain their configuration boundary and a collection

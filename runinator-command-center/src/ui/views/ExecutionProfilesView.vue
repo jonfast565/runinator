@@ -435,9 +435,7 @@ const app = useAppStore(),
 const { profiles, filteredProfiles: filtered, collectionStatuses } = storeToRefs(profileStore);
 const { activeOrgId } = storeToRefs(orgs);
 const canMutate = computed(() => app.can("credentials:manage"));
-const canSwitchToPlatform = computed(
-  () => !auth.required || typeof auth.user?.platform_role === "string",
-);
+const canSwitchToPlatform = computed(() => !auth.required || auth.user?.platform_role === "admin");
 const draft = reactive<ExecutionProfileInput>(emptyProfile());
 const tabs: { id: Tab; label: string }[] = [
   { id: "identity", label: "1. Identity" },

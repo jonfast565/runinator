@@ -133,7 +133,14 @@ export function createAuthService() {
     await publishAccessToken(result.access_token);
     store.setState((state) => ({
       ...state,
-      user: readPrincipal(result.user),
+      user: {
+        ...readPrincipal(result.user),
+        platform_role: result.assignments.some(
+          (assignment: { role?: { platform?: string } }) => assignment.role?.platform === "admin",
+        )
+          ? "admin"
+          : null,
+      },
       effectiveActions: result.effective_actions.filter(isAction),
       authenticated: true,
     }));

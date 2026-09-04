@@ -4,7 +4,6 @@ use chrono::Utc;
 use log::{info, warn};
 use runinator_models::auth::{ApiKey, ApiKeyRecord, PrincipalKind};
 use runinator_models::errors::SendableError;
-use runinator_models::orgs::OrgRole;
 use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
 use runinator_models::settings::SettingKind;
 use runinator_secrets::secret_cipher::SecretCipher;
@@ -55,6 +54,7 @@ pub async fn bootstrap_database(
     info!("Run bootstrap scripts");
     let scripts: Vec<String> = Vec::new();
     pool.run_init_scripts(&scripts).await?;
+    pool.reconcile_platform_organization().await?;
     ensure_jwt_secret(pool.as_ref(), options.auth_jwt_secret.clone()).await?;
     ensure_jwt_secret_previous(pool.as_ref(), options.auth_jwt_secret_previous.clone()).await?;
     if let Some(spec) = options.auth_bootstrap_admin.as_deref() {
@@ -79,8 +79,6 @@ const SECRET_SCOPE: &str = "auth";
 const SECRET_NAME: &str = "jwt_secret";
 const SECRET_NAME_PREVIOUS: &str = "jwt_secret_previous";
 const DEFAULT_BOOTSTRAP_SERVICE_API_KEY_NAME: &str = "bootstrap-service";
-const PLATFORM_ORGANIZATION_NAME: &str = "Platform";
-const PLATFORM_ORGANIZATION_SLUG: &str = "platform";
 
 // the cipher protecting persisted auth secrets at rest, keyed from the environment
 // (`RUNINATOR_CREDENTIAL_KEY` plus rotation-overlap keys). it is the same cipher the web service
@@ -229,14 +227,6 @@ pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
             return Ok(());
         };
         if !force {
-            let is_platform_admin = db
-                .list_principal_role_assignments(PrincipalKind::User, user_id)
-                .await?
-                .iter()
-                .any(|assignment| assignment.role == Role::Platform(PlatformRole::Admin));
-            if is_platform_admin {
-                ensure_platform_organization(db, user_id).await?;
-            }
             return Ok(());
         }
         db.set_local_password(user_id, hash_admin_password(password)?)
@@ -250,7 +240,6 @@ pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
             None,
         )
         .await?;
-        ensure_platform_organization(db, user_id).await?;
         info!("Reset bootstrap admin '{username}' password (force).");
         return Ok(());
     }
@@ -260,58 +249,15 @@ pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
     if !force && db.count_users().await? > 0 {
         return Ok(());
     }
-    let user = db
-        .create_user_with_platform_role(
-            username.to_string(),
-            None,
-            Some(hash_admin_password(password)?),
-            PlatformRole::Admin,
-            None,
-        )
-        .await?;
-    let Some(user_id) = user.id else {
-        return Err(Box::new(std::io::Error::other(
-            "bootstrap admin was created without an id",
-        )));
-    };
-    ensure_platform_organization(db, user_id).await?;
+    db.create_user_with_platform_role(
+        username.to_string(),
+        None,
+        Some(hash_admin_password(password)?),
+        Some(PlatformRole::Admin),
+        None,
+    )
+    .await?;
     info!("Seeded bootstrap admin user '{username}'.");
-    Ok(())
-}
-
-/// Ensure the bootstrap administrator has an owner membership in the durable platform org.
-/// Retrying the lookup after a failed insert makes parallel bootstrap attempts converge on the
-/// same organization instead of treating the unique slug race as a startup failure.
-async fn ensure_platform_organization<T: DatabaseImpl>(
-    db: &T,
-    user_id: Uuid,
-) -> Result<(), SendableError> {
-    let organization = match db
-        .fetch_org_by_slug(PLATFORM_ORGANIZATION_SLUG.into())
-        .await?
-    {
-        Some(organization) => organization,
-        None => match db
-            .create_org(
-                PLATFORM_ORGANIZATION_NAME.into(),
-                PLATFORM_ORGANIZATION_SLUG.into(),
-            )
-            .await
-        {
-            Ok(organization) => organization,
-            Err(error) => db
-                .fetch_org_by_slug(PLATFORM_ORGANIZATION_SLUG.into())
-                .await?
-                .ok_or(error)?,
-        },
-    };
-    let organization_id = organization.id.ok_or_else(|| {
-        Box::new(std::io::Error::other(
-            "platform organization was created without an id",
-        )) as SendableError
-    })?;
-    db.add_org_member(organization_id, user_id, OrgRole::Owner)
-        .await?;
     Ok(())
 }
 

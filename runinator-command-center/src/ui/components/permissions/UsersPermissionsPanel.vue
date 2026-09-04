@@ -42,7 +42,7 @@
             <td>{{ user.username }}</td>
             <td>{{ user.email || "-" }}</td>
             <td>{{ user.disabled ? "disabled" : "active" }}</td>
-            <td>{{ user.platform_role }}</td>
+            <td>{{ user.platform_role ?? "None" }}</td>
           </tr>
         </tbody>
       </DataTable>
@@ -88,9 +88,7 @@
             <label
               ><span>Platform role</span
               ><select v-model="permissions.userDraft.platform_role" :disabled="isLastEnabledAdmin">
-                <option value="member">Member</option>
-                <option value="auditor">Auditor</option>
-                <option value="operator">Operator</option>
+                <option :value="null">None</option>
                 <option value="admin">Admin</option>
               </select></label
             >

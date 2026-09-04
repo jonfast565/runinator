@@ -802,6 +802,7 @@ async function togglePipelineEnabled() {
   }
 
   const enabled = !current.enabled;
+
   if (await pipeline.setPipelineEnabled(enabled)) {
     app.setStatus(`${current.name} ${enabled ? "enabled" : "disabled"}`);
   }
