@@ -307,7 +307,7 @@ pub async fn upload<T: DatabaseImpl>(
     }
 }
 
-pub fn routes<T: DatabaseImpl>() -> axum::Router {
+pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
     use axum::routing::{delete, get};
     axum::Router::new()
         .route("/workspaces", get(list::<T>).post(create::<T>))
@@ -325,6 +325,7 @@ pub fn routes<T: DatabaseImpl>() -> axum::Router {
             "/workspaces/checkouts/{id}/content",
             get(restore::<T>).post(upload::<T>),
         )
+        .layer(Extension(pool))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
 }
 

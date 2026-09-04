@@ -65,6 +65,19 @@ async fn workspace_management_requires_view_and_ownership() {
     )
     .await;
     assert_eq!(read.status(), StatusCode::OK);
+    let app = crate::handlers::workspaces::routes(db.clone())
+        .layer(Extension(service.clone()))
+        .layer(Extension(user_ctx(reader)));
+    let response = tower::ServiceExt::oneshot(
+        app,
+        axum::http::Request::builder()
+            .uri("/workspaces")
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let hidden = crate::handlers::workspaces::detail::<SqliteDb>(
         Extension(db.clone()),
         Extension(service.clone()),
