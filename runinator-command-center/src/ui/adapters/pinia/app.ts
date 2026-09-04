@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
-import { computed } from "vue";
-import { authService } from "../../../core/services";
+import { computed, watch } from "vue";
+import { authService, orgsService } from "../../../core/services";
 import type { Action, ReplicaCounts, ReplicaRecord } from "../../../core/domain/models";
 import { isTauriRuntime } from "../../../ui/adapters/tauri/runtime";
 import {
@@ -31,6 +31,7 @@ export type { AppTab } from "../../../core/navigation/app";
 export const useAppStore = defineStore("app", () => {
   const state = mirrorServiceState(appService);
   const authState = mirrorServiceState(authService);
+  const orgState = mirrorServiceState(orgsService);
 
   // action predicate mirroring the actions store, reading reactive auth state so any computed
   // that calls it re-runs when the caller's auth or action set changes.
@@ -40,6 +41,10 @@ export const useAppStore = defineStore("app", () => {
     }
 
     return authState.value.effectiveActions.includes(action);
+  }
+
+  function isPlatformScope(): boolean {
+    return !authState.value.required || orgState.value.activeOrgId === null;
   }
 
   // Derive from the mirrored state so consumers update while the user types. Reading the service
@@ -99,16 +104,30 @@ export const useAppStore = defineStore("app", () => {
     return visibleNavSections({
       can,
       isDesktop: isTauriRuntime(),
+      isPlatformScope: isPlatformScope(),
     });
   }
+
+  watch(
+    () => [authState.value.required, orgState.value.activeOrgId],
+    () => {
+      const item = navItemForTab(state.value.activeTab);
+
+      if (item?.requiresPlatformScope && !isPlatformScope()) {
+        appService.setActiveTab("Workflows");
+      }
+    },
+  );
 
   return {
     activeTab: computed({
       get: () => state.value.activeTab,
       set: (tab: AppTab) => {
         // never land on a tab the caller lacks the action for (deep link, restored default).
-        const required = navItemForTab(tab)?.requires;
-        appService.setActiveTab(required && !can(required) ? "Workflows" : tab);
+        const item = navItemForTab(tab);
+        const lacksAction = item?.requires ? !can(item.requires) : false;
+        const unavailable = lacksAction || (item?.requiresPlatformScope && !isPlatformScope());
+        appService.setActiveTab(unavailable ? "Workflows" : tab);
       },
     }),
     sidebarCollapsed: computed({

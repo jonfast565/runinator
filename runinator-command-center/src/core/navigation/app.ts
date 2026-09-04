@@ -48,6 +48,9 @@ export interface NavItem {
   // action the caller must hold for this tab to be visible. absent means visible to any
   // authenticated caller. auth-disabled stacks hold every action, so nothing is hidden there.
   requires?: Action;
+  // this page calls platform-only endpoints and must not be exposed while an organization token
+  // is active, even when that organization grants the same action.
+  requiresPlatformScope?: boolean;
   // placeholder for the global search box; when set the tab's list consumes app.searchQuery.
   // when unset the search box is hidden for this tab so it is never a dead control.
   searchPlaceholder?: string;

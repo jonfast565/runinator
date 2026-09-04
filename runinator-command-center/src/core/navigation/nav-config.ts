@@ -205,6 +205,7 @@ export const navSections: NavSection[] = [
         icon: "shield",
         description: "Grant the minimum required access, then verify users, teams, and API keys.",
         requires: "members:manage",
+        requiresPlatformScope: true,
         searchPlaceholder: "Search users & teams",
       },
       {
@@ -274,11 +275,16 @@ export function isResourceTab(tab: AppTab): boolean {
 export function visibleNavSections(options: {
   can: (action: Action) => boolean;
   isDesktop: boolean;
+  isPlatformScope: boolean;
 }): NavSection[] {
   const sections = navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => !item.requires || options.can(item.requires)),
+      items: section.items.filter(
+        (item) =>
+          (!item.requires || options.can(item.requires)) &&
+          (!item.requiresPlatformScope || options.isPlatformScope),
+      ),
     }))
     .filter((section) => section.items.length > 0);
 

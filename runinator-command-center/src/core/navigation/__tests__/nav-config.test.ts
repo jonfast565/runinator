@@ -14,7 +14,9 @@ describe("visibleNavSections", () => {
   });
 
   it("hides action-gated tabs when the action is absent", () => {
-    const tabs = labels(visibleNavSections({ can: () => false, isDesktop: true }));
+    const tabs = labels(
+      visibleNavSections({ can: () => false, isDesktop: true, isPlatformScope: false }),
+    );
 
     // gated admin/secrets tabs are hidden...
     expect(tabs).not.toContain("AdminSettings");
@@ -30,18 +32,34 @@ describe("visibleNavSections", () => {
 
   it("shows a tab exactly when its required action is held", () => {
     const held = new Set<Action>(["audit:read"]);
-    const tabs = labels(visibleNavSections({ can: (action) => held.has(action), isDesktop: true }));
+    const tabs = labels(
+      visibleNavSections({
+        can: (action) => held.has(action),
+        isDesktop: true,
+        isPlatformScope: false,
+      }),
+    );
 
     expect(tabs).toContain("AuditLog");
     expect(tabs).not.toContain("Permissions");
   });
 
   it("shows every gated tab when all actions are held (e.g. auth disabled)", () => {
-    const tabs = labels(visibleNavSections({ can: () => true, isDesktop: true }));
+    const tabs = labels(
+      visibleNavSections({ can: () => true, isDesktop: true, isPlatformScope: true }),
+    );
 
     expect(tabs).toContain("AdminSettings");
     expect(tabs).toContain("Permissions");
     expect(tabs).toContain("Secrets");
+  });
+
+  it("hides platform-only tabs while an organization scope is active", () => {
+    const tabs = labels(
+      visibleNavSections({ can: () => true, isDesktop: true, isPlatformScope: false }),
+    );
+
+    expect(tabs).not.toContain("Permissions");
   });
 
   it("groups navigation by the operator's workflow", () => {
