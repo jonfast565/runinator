@@ -12,7 +12,7 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
-**Last reprioritized:** 2026-09-04, after the systems-inspired product review (11.1–11.3).
+**Last reprioritized:** 2026-09-04, after the systems-inspired product review (11.1–11.4).
 
 ---
 
@@ -37,6 +37,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 9.6 | Editor-first workflow tests | **P2** | workflows, REXRAP, ctl, command-center |
 | 11.1 | Named outputs and lifecycle disposition | **P2** | models, blob, engine, REXRAP, command-center |
 | 11.2 | Structured execution outcomes | **P2** | models/comm, workflows, engine, worker, REXRAP |
+| 11.4 | Durable workflow state and mailboxes | **P2** | models, store/database, runtime, engine, REXRAP |
 | 8.6 | Split the utilities catch-all | **shipped 2026-08-22** | observability, secrets, platform, pack-wire, data-export |
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
 | 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
@@ -170,6 +171,13 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Approach:** Add a shared `ExecutionOutcome` envelope containing the existing terminal class plus optional stable reason code, process exit code or signal, retryability hint, provider details, and a redacted human diagnostic. Preserve the terminal class as the engine's settlement authority; additional fields explain the outcome and support typed REXRAP route predicates such as a declared reason-code set or exit-code range. Provider catalogs declare which outcome details an action may emit so the editor and semantic analyzer can validate routes.
 - **Boundary note:** Do not import JCL condition-code conventions or collapse transport/runtime failures into an integer. The envelope crosses every effect-result transport and must round-trip through all broker backends and database mappers. Retry remains an engine policy evaluated from the frozen action definition and trusted classification, never an unchecked provider request to retry forever.
 - **Acceptance shape:** Shell and foreign-code actions preserve exit status without turning stderr into an API; HTTP/database providers can expose stable domain reasons; secrets are redacted before persistence; old providers that return only a terminal class remain wire-compatible through optional fields.
+
+### 11.4 Durable workflow state and mailboxes
+- **Owning crates:** `runinator-models`, `runinator-store`/`runinator-database`, `runinator-workflows`, `runinator-runtime`, `runinator-engine`, `runinator-rexrap-*`, `runinator-ws-runtime`, `runinator-command-center`.
+- **Problem:** Signals resume a known parked continuation, emitted events describe milestones, artifacts hold immutable bytes, and broker queues transport internal commands. None is an author-facing durable coordination resource for state shared across runs or for ordered work that an independent consumer can claim and acknowledge. Workflows currently approximate these patterns through external databases, provider-specific queues, or polling conventions with inconsistent recovery and authorization.
+- **Approach:** Add two typed, organization-scoped resources. A **state collection** stores named records for repeated read/update/delete with schema validation, compare-and-swap revision, optional TTL, and an audited lifecycle. A **mailbox** appends immutable messages and supports partition-key ordering, deduplication keys, bounded claim leases, explicit ack/nack, retry delay, retention, and dead-letter disposition. REXRAP declarations bind a workflow to existing resources and lower operations to engine-owned infrastructure effects; optional mailbox triggers may start a workflow through the ordinary durable trigger/admission path.
+- **Boundary note:** These are control-plane resources, not public broker topics and not wrappers around backend-specific queue APIs. Store traits own their portable contracts, SQL backends own persistence and claim transactions, and the engine owns authorization, leasing, trigger admission, and settlement. State sharing is deny-by-default and explicitly scoped; arbitrary global names are not available. Mailbox delivery is at-least-once: an ack may follow an external side effect, so consumers still need `@idempotent` keys or upstream idempotency rather than an exactly-once claim.
+- **Acceptance shape:** A process restart cannot lose an acknowledged state revision or an unacknowledged message; an expired claimant cannot ack over a newer lease; FIFO is defined and tested within one partition rather than promised globally; duplicate publishes with the same scoped key create one logical message; poison messages reach a visible remediable dead-letter state; quotas and retention prevent either resource from growing without bound.
 
 ---
 
