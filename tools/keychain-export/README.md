@@ -27,6 +27,10 @@ swift build -c release
 It is also compiled by `cargo run -p xtask -- build` on macOS, purely to
 compile-check it — it is not packaged into any container.
 
+`cargo run -p runinator-desktop-agent` also builds and stages the helper on
+macOS. A profile command using `keychain-export` resolves to that staged copy,
+so a development agent does not depend on your shell `PATH`.
+
 ## Usage
 
 ```sh

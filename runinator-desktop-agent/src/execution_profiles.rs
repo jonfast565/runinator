@@ -609,7 +609,14 @@ fn resolve_command_program(program: &str) -> PathBuf {
 
 fn keychain_export_path() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
-    bundled_keychain_export(&executable).or_else(|| development_keychain_export(&executable))
+    bundled_keychain_export(&executable)
+        .or_else(cargo_built_keychain_export)
+        .or_else(|| development_keychain_export(&executable))
+}
+
+fn cargo_built_keychain_export() -> Option<PathBuf> {
+    let path = PathBuf::from(option_env!("RUNINATOR_KEYCHAIN_EXPORT_PATH")?);
+    path.is_file().then_some(path)
 }
 
 fn bundled_keychain_export(executable: &Path) -> Option<PathBuf> {
@@ -864,5 +871,11 @@ mod tests {
         assert_eq!(bundled_keychain_export(&executable), Some(helper));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cargo_build_stages_keychain_export() {
+        assert!(cargo_built_keychain_export().is_some());
     }
 }

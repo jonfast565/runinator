@@ -39,3 +39,7 @@ macOS reads the bundle's `Info.plist` at launch to show **Runinator Desktop
 Agent** in the Dock. The bundle also contains `keychain-export` in
 `Contents/Resources`; approved execution profiles can use that command name
 without relying on the launch environment's `PATH`.
+
+For macOS development, `cargo run -p runinator-desktop-agent` builds and stages
+that same helper with the desktop-agent binary, so the profile command works
+from a clean checkout without a separate `xtask` build.
