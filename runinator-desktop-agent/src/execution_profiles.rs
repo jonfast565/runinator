@@ -31,6 +31,7 @@ pub struct LocalProfileStatus {
     pub id: uuid::Uuid,
     pub name: String,
     pub config_digest: String,
+    pub enabled: bool,
     pub approved: bool,
     pub message: String,
 }
@@ -77,6 +78,7 @@ async fn synchronize(
             id: profile.id,
             name: profile.name.clone(),
             config_digest: profile.config_digest.clone(),
+            enabled: profile.enabled,
             approved: approvals.get(&profile.id) == Some(&profile.config_digest),
             message: if !profile.enabled {
                 "disabled centrally".into()

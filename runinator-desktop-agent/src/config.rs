@@ -273,17 +273,20 @@ pub fn load() -> AgentConfig {
     config
 }
 
-/// best-effort save; a failure here should never block the caller (e.g. starting the agent).
-pub fn save(config: &AgentConfig) {
+/// best-effort save; reports whether the settings reached disk without blocking the caller.
+pub fn save(config: &AgentConfig) -> bool {
     let Ok(path) = runinator_platform::app_data::app_data_path(CONFIG_FILE_NAME) else {
-        return;
+        return false;
     };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return false;
     }
-    if let Ok(raw) = serde_json::to_string_pretty(config) {
-        let _ = std::fs::write(path, raw);
-    }
+    let Ok(raw) = serde_json::to_string_pretty(config) else {
+        return false;
+    };
+    std::fs::write(path, raw).is_ok()
 }
 
 #[cfg(test)]

@@ -36,6 +36,46 @@ struct Snapshot {
     execution_profiles: Vec<crate::execution_profiles::LocalProfileStatus>,
 }
 
+/// locally persisted approval can be fresher than the background collection status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileApprovalState {
+    Approved,
+    Required,
+    Changed,
+    Disabled,
+}
+
+fn profile_approval_state(
+    enabled: bool,
+    config_digest: &str,
+    approved_digest: Option<&str>,
+) -> ProfileApprovalState {
+    if !enabled {
+        ProfileApprovalState::Disabled
+    } else {
+        match approved_digest {
+            Some(digest) if digest == config_digest => ProfileApprovalState::Approved,
+            Some(_) => ProfileApprovalState::Changed,
+            None => ProfileApprovalState::Required,
+        }
+    }
+}
+
+fn profile_approval_presentation(state: ProfileApprovalState) -> (&'static str, egui::Color32) {
+    match state {
+        ProfileApprovalState::Approved => ("Approved on this computer", DOT_GREEN),
+        ProfileApprovalState::Required => ("Not approved on this computer", DOT_AMBER),
+        ProfileApprovalState::Changed => ("Approval needs renewal", DOT_AMBER),
+        ProfileApprovalState::Disabled => ("Disabled centrally", DOT_GRAY),
+    }
+}
+
+struct ProfileApprovalFeedback {
+    profile_id: uuid::Uuid,
+    message: String,
+    color: egui::Color32,
+}
+
 struct RuntimeDashboard<'a> {
     status: &'a AgentStatus,
     metrics: &'a AgentMetrics,
@@ -190,6 +230,14 @@ pub struct DesktopAgentApp {
     // must only ever be held in memory and are never written to the saved desktop-agent settings.
     reenrollment_token: String,
     reenrollment_dialog: bool,
+    // runtime configuration has its own surface, leaving the main window focused on the agent session.
+    settings_dialog: bool,
+    // approval is separate from enrollment: it authorizes a particular local collection spec.
+    execution_profiles_dialog: bool,
+    // retain the just-saved action text until the collection status catches up.
+    execution_profile_feedback: Option<ProfileApprovalFeedback>,
+    // logs are useful for diagnosis but should not crowd the primary session dashboard.
+    logs_dialog: bool,
     // `None` when the platform tray failed to initialize; the window is then the only way in, so it
     // remains visible rather than stranding the user with no way to reach it.
     tray: Option<AgentTray>,
@@ -260,6 +308,10 @@ impl DesktopAgentApp {
             label_input: String::new(),
             reenrollment_token: String::new(),
             reenrollment_dialog: false,
+            settings_dialog: false,
+            execution_profiles_dialog: false,
+            execution_profile_feedback: None,
+            logs_dialog: false,
             tray,
             last_tray_signature: None,
             log_filter: String::new(),
@@ -291,54 +343,166 @@ impl DesktopAgentApp {
         }
     }
 
-    fn execution_profile_approvals(
+    fn show_execution_profile_approval_dialog(
         &mut self,
-        ui: &mut egui::Ui,
+        ctx: &egui::Context,
         profiles: &[crate::execution_profiles::LocalProfileStatus],
     ) {
-        if profiles.is_empty() {
+        if !self.execution_profiles_dialog {
             return;
         }
-        ui.add_space(10.0);
-        ui.group(|ui| {
-            ui.label(egui::RichText::new("Execution profile collection").strong());
-            ui.label(
-                egui::RichText::new(
-                    "Approve each centrally configured collection specification on this machine. Any path, command, glob, or mapping edit revokes that approval automatically.",
-                )
-                .small()
-                .weak(),
-            );
-            for profile in profiles {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(&profile.name);
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} · config {}",
-                                profile.message,
-                                &profile.config_digest[..profile.config_digest.len().min(12)]
-                            ))
-                            .small()
-                            .weak(),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if profile.approved {
-                            if ui.button("Revoke").clicked() {
-                                self.draft.approved_execution_profiles.remove(&profile.id);
-                                config::save(&self.draft);
-                            }
-                        } else if ui.button("Approve collection").clicked() {
-                            self.draft.approved_execution_profiles
-                                .insert(profile.id, profile.config_digest.clone());
-                            config::save(&self.draft);
+
+        let mut open = self.execution_profiles_dialog;
+        let mut approval_change = None;
+        egui::Window::new("Execution profile approvals")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .min_width(560.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Approve the centrally configured collection specifications that may read files or run commands on this computer.",
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "This is separate from enrollment: enrollment creates the agent credential; approval authorizes a specific local profile version.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(8.0);
+
+                if profiles.is_empty() {
+                    ui.label(
+                        egui::RichText::new(
+                            "No execution profiles are available yet. Start the agent and wait for it to connect before reviewing profiles.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                    return;
+                }
+
+                egui::ScrollArea::vertical()
+                    .max_height(440.0)
+                    .show(ui, |ui| {
+                        for profile in profiles {
+                            let approval = self
+                                .draft
+                                .approved_execution_profiles
+                                .get(&profile.id)
+                                .map(String::as_str);
+                            let state = profile_approval_state(
+                                profile.enabled,
+                                &profile.config_digest,
+                                approval,
+                            );
+                            let (approval_label, approval_color) =
+                                profile_approval_presentation(state);
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new(&profile.name).strong());
+                                        ui.colored_label(
+                                            approval_color,
+                                            egui::RichText::new(approval_label).small(),
+                                        );
+                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| match state {
+                                            ProfileApprovalState::Approved => {
+                                                if ui.button("Revoke approval").clicked() {
+                                                    approval_change = Some((
+                                                        profile.id,
+                                                        None,
+                                                        "Local approval revoked.",
+                                                    ));
+                                                }
+                                            }
+                                            ProfileApprovalState::Required
+                                            | ProfileApprovalState::Changed => {
+                                                if ui.button("Approve profile").clicked() {
+                                                    approval_change = Some((
+                                                        profile.id,
+                                                        Some(profile.config_digest.clone()),
+                                                        "Approval saved locally. Collection will run on the next profile sync.",
+                                                    ));
+                                                }
+                                            }
+                                            ProfileApprovalState::Disabled => {}
+                                        },
+                                    );
+                                });
+                                if state == ProfileApprovalState::Changed {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "The central collection specification changed after the last approval. Review and approve this new version to allow collection again.",
+                                        )
+                                        .small()
+                                        .weak(),
+                                    );
+                                }
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Collection status: {} · config {}",
+                                        profile.message,
+                                        &profile.config_digest[..profile.config_digest.len().min(12)]
+                                    ))
+                                    .small()
+                                    .weak(),
+                                );
+                                if let Some(feedback) = self
+                                    .execution_profile_feedback
+                                    .as_ref()
+                                    .filter(|feedback| feedback.profile_id == profile.id)
+                                {
+                                    ui.colored_label(
+                                        feedback.color,
+                                        egui::RichText::new(&feedback.message).small(),
+                                    );
+                                }
+                            });
+                            ui.add_space(4.0);
                         }
                     });
-                });
+            });
+
+        if let Some((id, digest, feedback)) = approval_change {
+            let previous_approval = self.draft.approved_execution_profiles.get(&id).cloned();
+            match digest {
+                Some(digest) => {
+                    self.draft.approved_execution_profiles.insert(id, digest);
+                }
+                None => {
+                    self.draft.approved_execution_profiles.remove(&id);
+                }
             }
-        });
+            self.execution_profile_feedback = Some(if config::save(&self.draft) {
+                ProfileApprovalFeedback {
+                    profile_id: id,
+                    message: feedback.to_string(),
+                    color: DOT_GREEN,
+                }
+            } else {
+                match previous_approval {
+                    Some(digest) => {
+                        self.draft.approved_execution_profiles.insert(id, digest);
+                    }
+                    None => {
+                        self.draft.approved_execution_profiles.remove(&id);
+                    }
+                }
+                ProfileApprovalFeedback {
+                    profile_id: id,
+                    message: "Could not save the local approval; no change was applied."
+                        .to_string(),
+                    color: DOT_RED,
+                }
+            });
+        }
+        self.execution_profiles_dialog = open;
     }
 
     // handle pending tray clicks/menu choices; called once per frame.
@@ -972,10 +1136,16 @@ impl DesktopAgentApp {
         });
     }
 
-    fn settings_actions(&mut self, ui: &mut egui::Ui, starting: bool, busy: bool) {
+    fn settings_actions(&mut self, ui: &mut egui::Ui, running: bool, starting: bool, busy: bool) {
         let validation = validate_config(&self.draft);
         ui.horizontal(|ui| {
-            if starting {
+            if ui.button("Save settings").clicked() {
+                config::save(&self.draft);
+            }
+
+            if running {
+                ui.label(egui::RichText::new("Agent is running").small().weak());
+            } else if starting {
                 if ui
                     .button("Cancel startup")
                     .on_hover_text("Stop the agent coming up and return to settings")
@@ -1009,24 +1179,85 @@ impl DesktopAgentApp {
                     self.draft.api_key.clone(),
                 );
             }
-
-            let can_enroll = !busy && validation.is_none();
-            if ui
-                .add_enabled(can_enroll, egui::Button::new("Enroll with token…"))
-                .on_hover_text(
-                    "Create a first-time desktop-agent credential with a one-time enrollment token",
-                )
-                .clicked()
-            {
-                self.reenrollment_dialog = true;
-            }
         });
-        if let Some(reason) = validation.filter(|_| !starting) {
+        if let Some(reason) = validation.filter(|_| !running && !starting) {
             ui.colored_label(
                 egui::Color32::from_rgb(210, 90, 70),
                 egui::RichText::new(reason).small(),
             );
         }
+    }
+
+    fn show_settings_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        running: bool,
+        control: Control,
+        busy: bool,
+    ) {
+        if !self.settings_dialog {
+            return;
+        }
+
+        let mut open = self.settings_dialog;
+        egui::Window::new("Desktop agent settings")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(800.0)
+            .min_width(600.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Changes are saved for future agent sessions and take effect the next time the agent starts.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(6.0);
+
+                let starting = control == Control::Starting;
+                if starting {
+                    ui.colored_label(
+                        DOT_BLUE,
+                        egui::RichText::new(
+                            "Starting — changes below apply the next time you start.",
+                        )
+                        .small(),
+                    );
+                    ui.add_space(4.0);
+                }
+                if self.draft.api_key.as_deref().is_some_and(str::is_empty) {
+                    self.draft.api_key = None;
+                }
+
+                egui::ScrollArea::vertical()
+                    .max_height(560.0)
+                    .show(ui, |ui| {
+                        if ui.available_width() >= 1_000.0 {
+                            ui.columns(2, |columns| {
+                                self.settings_essentials(&mut columns[0]);
+                                self.settings_connection(&mut columns[1]);
+                                columns[0].add_space(8.0);
+                                self.settings_desktop(&mut columns[0]);
+                                columns[1].add_space(8.0);
+                                self.settings_worker_tuning(&mut columns[1]);
+                            });
+                        } else {
+                            self.settings_essentials(ui);
+                            ui.add_space(8.0);
+                            self.settings_connection(ui);
+                            ui.add_space(8.0);
+                            self.settings_desktop(ui);
+                            ui.add_space(8.0);
+                            self.settings_worker_tuning(ui);
+                        }
+                    });
+                ui.add_space(8.0);
+                self.settings_actions(ui, running, starting, busy);
+            });
+        self.settings_dialog = open;
     }
 
     /// Small native sparklines give the window the same short-horizon operational visibility as
@@ -1141,9 +1372,26 @@ impl DesktopAgentApp {
         );
     }
 
-    // the log console, rendered in a bottom-pinned panel so it stays at the foot of the window while
-    // the config/status area scrolls above it. carries the level/filter controls, copy/save/clear
-    // actions, and the (filtered) line view.
+    fn show_logs_dialog(&mut self, ctx: &egui::Context) {
+        if !self.logs_dialog {
+            return;
+        }
+
+        let mut open = self.logs_dialog;
+        egui::Window::new("Desktop agent logs")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(880.0)
+            .default_height(560.0)
+            .min_width(620.0)
+            .min_height(360.0)
+            .open(&mut open)
+            .show(ctx, |ui| self.log_panel(ui));
+        self.logs_dialog = open;
+    }
+
+    // carries the level/filter controls, copy/save/clear actions, and the filtered line view.
     fn log_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -1458,18 +1706,12 @@ impl eframe::App for DesktopAgentApp {
             _ => None,
         };
         self.show_reenrollment_dialog(ctx, reenrollment_reason.as_deref());
+        self.show_settings_dialog(ctx, status.running, control, busy);
+        self.show_execution_profile_approval_dialog(ctx, &execution_profiles);
+        self.show_logs_dialog(ctx);
 
         let presentation = present_status(&connection, busy);
         self.sync_tray(&presentation);
-
-        // pin the log to the bottom of the window (added before the central panel, per egui's panel
-        // ordering) so it stays put while the config/status area above it scrolls.
-        egui::TopBottomPanel::bottom("log-panel")
-            .resizable(true)
-            .default_height(280.0)
-            .show(ctx, |ui| {
-                self.log_panel(ui);
-            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
@@ -1482,12 +1724,60 @@ impl eframe::App for DesktopAgentApp {
                         status_light(ui, &presentation);
                         ui.colored_label(presentation.color, &presentation.label);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let validation = validate_config(&self.draft);
+                            let starting = control == Control::Starting;
+                            if ui.button("Execution profiles…").clicked() {
+                                self.execution_profiles_dialog = true;
+                            }
+                            if ui.button("Settings…").clicked() {
+                                self.settings_dialog = true;
+                            }
+                            if ui.button("Logs…").clicked() {
+                                self.logs_dialog = true;
+                            }
+                            if !status.running
+                                && ui
+                                    .add_enabled(
+                                        !busy && validation.is_none(),
+                                        egui::Button::new("Enroll with token…"),
+                                    )
+                                    .on_hover_text(
+                                        "Create a first-time desktop-agent credential with a one-time enrollment token",
+                                    )
+                                    .clicked()
+                            {
+                                self.reenrollment_dialog = true;
+                            }
                             if status.running
                                 && ui
                                     .add_enabled(!busy, egui::Button::new("Stop agent"))
                                     .clicked()
                             {
                                 agent::stop(self.rt.handle(), self.shared.clone());
+                            } else if starting
+                                && ui
+                                    .button("Cancel startup")
+                                    .on_hover_text("Stop the agent coming up and return to settings")
+                                    .clicked()
+                            {
+                                agent::cancel_start(self.rt.handle(), self.shared.clone());
+                            } else if !status.running && !starting {
+                                let start = ui.add_enabled(
+                                    !busy && validation.is_none(),
+                                    egui::Button::new("Start agent"),
+                                );
+                                let start = match &validation {
+                                    Some(reason) => start.on_disabled_hover_text(reason.clone()),
+                                    None => start,
+                                };
+                                if start.clicked() {
+                                    config::save(&self.draft);
+                                    agent::start(
+                                        self.rt.handle(),
+                                        self.shared.clone(),
+                                        self.draft.clone(),
+                                    );
+                                }
                             }
                             if ui
                                 .add_enabled(has_app || has_url, egui::Button::new("Open UI"))
@@ -1567,46 +1857,29 @@ impl eframe::App for DesktopAgentApp {
                                 service_url: &self.draft.service_url,
                             },
                         );
-                        self.execution_profile_approvals(ui, &execution_profiles);
                     } else {
                         let starting = control == Control::Starting;
                         if starting {
-                            // the form stays editable while a start is in flight, so say what an edit does
-                            // now: the running attempt is already carrying the config it was given.
                             ui.colored_label(
                                 DOT_BLUE,
-                                egui::RichText::new(
-                                    "Starting — changes below apply the next time you start.",
-                                )
-                                .small(),
+                                egui::RichText::new("Starting desktop agent…").small(),
                             );
-                            ui.add_space(4.0);
-                        }
-                        if self.draft.api_key.as_deref().is_some_and(str::is_empty) {
-                            self.draft.api_key = None;
-                        }
-
-                        if ui.available_width() >= 1_000.0 {
-                            ui.columns(2, |columns| {
-                                self.settings_essentials(&mut columns[0]);
-                                self.settings_connection(&mut columns[1]);
-                                columns[0].add_space(8.0);
-                                self.settings_actions(&mut columns[0], starting, busy);
-                                columns[1].add_space(8.0);
-                                self.settings_desktop(&mut columns[1]);
-                                columns[1].add_space(8.0);
-                                self.settings_worker_tuning(&mut columns[1]);
-                            });
                         } else {
-                            self.settings_essentials(ui);
-                            ui.add_space(8.0);
-                            self.settings_connection(ui);
-                            ui.add_space(8.0);
-                            self.settings_desktop(ui);
-                            ui.add_space(8.0);
-                            self.settings_worker_tuning(ui);
-                            ui.add_space(8.0);
-                            self.settings_actions(ui, starting, busy);
+                            ui.group(|ui| {
+                                ui.label(egui::RichText::new("Agent is stopped").strong());
+                                ui.label(
+                                    "Open Settings to configure the next session, then enroll or start the agent from the toolbar.",
+                                );
+                                if let Some(reason) = validate_config(&self.draft) {
+                                    ui.colored_label(
+                                        DOT_AMBER,
+                                        egui::RichText::new(format!(
+                                            "Settings need attention: {reason}"
+                                        ))
+                                        .small(),
+                                    );
+                                }
+                            });
                         }
                     }
                 });

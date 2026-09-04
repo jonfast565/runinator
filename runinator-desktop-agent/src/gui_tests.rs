@@ -130,3 +130,39 @@ fn required_identity_labels_are_not_editable_configuration() {
     assert!(config::is_reserved_identity_label("pool=remote"));
     assert!(!config::is_reserved_identity_label("zone=home"));
 }
+
+#[test]
+fn execution_profile_approval_states_distinguish_saved_and_invalidated_approvals() {
+    assert_eq!(
+        profile_approval_state(true, "current", Some("current")),
+        ProfileApprovalState::Approved
+    );
+    assert_eq!(
+        profile_approval_state(true, "current", None),
+        ProfileApprovalState::Required
+    );
+    assert_eq!(
+        profile_approval_state(true, "current", Some("previous")),
+        ProfileApprovalState::Changed
+    );
+    assert_eq!(
+        profile_approval_state(false, "current", Some("current")),
+        ProfileApprovalState::Disabled
+    );
+}
+
+#[test]
+fn execution_profile_approval_labels_make_local_state_clear() {
+    assert_eq!(
+        profile_approval_presentation(ProfileApprovalState::Approved).0,
+        "Approved on this computer"
+    );
+    assert_eq!(
+        profile_approval_presentation(ProfileApprovalState::Required).0,
+        "Not approved on this computer"
+    );
+    assert_eq!(
+        profile_approval_presentation(ProfileApprovalState::Changed).0,
+        "Approval needs renewal"
+    );
+}
