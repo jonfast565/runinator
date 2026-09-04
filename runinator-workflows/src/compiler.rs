@@ -503,6 +503,20 @@ fn lower_node(
                     },
                 },
             ));
+            // bind successful results explicitly; source maps remain a rendering projection.
+            let output_slot = format!(
+                "{}{id}",
+                runinator_models::workflow_vm::WORKFLOW_NODE_OUTPUT_PREFIX,
+                id = node.id,
+            );
+            output.push(PendingInstruction::instruction(
+                WorkflowInstruction::StoreLocal {
+                    name: output_slot.clone(),
+                },
+            ));
+            output.push(PendingInstruction::instruction(
+                WorkflowInstruction::LoadLocal { name: output_slot },
+            ));
             if let Some(compensation) = &node.compensation {
                 output.push(PendingInstruction::instruction(
                     WorkflowInstruction::RegisterCompensation {
@@ -1978,7 +1992,7 @@ mod tests {
         let mut instructions = Vec::new();
         lower_node(&action_node, &mut instructions).unwrap();
         assert!(matches!(
-            instructions.get(1),
+            instructions.get(3),
             Some(PendingInstruction::Instruction(instruction))
                 if matches!(instruction.as_ref(), WorkflowInstruction::RegisterCompensation { compensation_key, .. } if compensation_key == "charge")
         ));

@@ -916,3 +916,6 @@ fn node_suite_tracks_every_author_facing_vm_node_kind() {
     ];
     assert_eq!(covered, WorkflowNodeKind::ALL);
 }
+
+#[path = "workflow_vm_action_output_tests.rs"]
+mod action_output_tests;

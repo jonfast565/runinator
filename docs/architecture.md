@@ -89,6 +89,12 @@ flowchart LR
 
 `runinator-ws` embeds the engine in the default topology. Deployments that need to scale HTTP and background work independently instead run `runinator-engine-worker` against the same database and broker; it hosts the same `runinator-engine` library rather than introducing another execution path.
 
+Compiled action nodes store successful results in durable continuation locals before following
+their outgoing edges. The evaluator exposes these bindings as `steps.<node>.output` for node
+references in conditions, later action inputs, and workflow outputs. Explicit bytecode stores the
+binding; source maps only project execution locations. Failed actions follow their failure edges
+without publishing a successful output binding.
+
 ## Major boundaries
 
 ### API and user-facing clients

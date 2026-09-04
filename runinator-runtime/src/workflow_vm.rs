@@ -1613,6 +1613,22 @@ fn local_context(continuation: &WorkflowContinuation) -> Value {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<runinator_models::value::Map>();
     let mut context = locals.clone();
+    let mut steps = context
+        .get("steps")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (name, output) in &continuation.locals {
+        if let Some(node_id) =
+            name.strip_prefix(runinator_models::workflow_vm::WORKFLOW_NODE_OUTPUT_PREFIX)
+        {
+            steps.insert(
+                node_id.into(),
+                runinator_models::json!({ "output": output }),
+            );
+        }
+    }
+    context.insert("steps".into(), Value::Object(steps));
     // Compute bytecode reads `let` references with `LoadLocal`. The invocation VM seeds its entry
     // frame from this namespace so loop/map body values survive when effect arguments are frozen.
     context.insert("let".into(), Value::Object(locals));

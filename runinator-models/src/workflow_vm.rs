@@ -29,6 +29,9 @@ pub const WORKFLOW_JOURNAL_VERSION: u32 = 1;
 /// already-snapshotted workflow bytecode.
 pub const WORKFLOW_EFFECT_PROTOCOL_VERSION: u32 = 1;
 
+/// Local-slot prefix for compiled node outputs exposed through `steps.<node>.output`.
+pub const WORKFLOW_NODE_OUTPUT_PREFIX: &str = "__workflow_vm_node_output:";
+
 /// Wall-clock budget for a provider action that declares no `timeout_seconds`.
 ///
 /// The worker enforces this in process, and the engine arms its deadline backstop from the same
