@@ -452,6 +452,10 @@ pub enum AgentCommands {
 pub enum OrgCommands {
     /// List the organizations you belong to, with your role in each.
     List,
+    /// Select an organization for this and future commands. Available in the interactive repl too.
+    Use { org: uuid::Uuid },
+    /// Return to the platform authorization scope. Requires a platform role.
+    Platform,
     /// Create an organization; you become its owner.
     Create { name: String },
     /// Show an org's dedicated node allocation and projected monthly cost.

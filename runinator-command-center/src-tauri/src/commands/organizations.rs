@@ -32,6 +32,11 @@ pub async fn switch_org(
 }
 
 #[tauri::command]
+pub async fn switch_platform(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    post_json(&state, "auth/switch-platform", &serde_json::json!({})).await
+}
+
+#[tauri::command]
 pub async fn list_org_members(
     state: State<'_, CommandCenterState>,
     org_id: Uuid,

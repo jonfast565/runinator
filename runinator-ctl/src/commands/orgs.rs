@@ -1,10 +1,44 @@
 use super::*;
 
-pub(super) async fn orgs(client: &Client, command: &OrgCommands, json_output: bool) -> Result<()> {
+pub(super) async fn orgs(
+    client: &Client,
+    command: &OrgCommands,
+    api_base_url: &str,
+    json_output: bool,
+) -> Result<()> {
     match command {
         OrgCommands::List => {
             let value = client.list_my_orgs().await?;
             output::json(&value)
+        }
+        OrgCommands::Use { org } => {
+            let context = client.switch_org(*org).await?;
+            crate::auth::persist_active_scope(
+                api_base_url,
+                context.access_token.clone(),
+                Some(*org),
+            )?;
+            if json_output {
+                output::json(&serde_json::json!({
+                    "active_scope": "organization",
+                    "org_id": org,
+                    "org": context.org,
+                    "role": context.role,
+                }))
+            } else {
+                println!("active organization: {}", context.org.name);
+                Ok(())
+            }
+        }
+        OrgCommands::Platform => {
+            let context = client.switch_platform().await?;
+            crate::auth::persist_active_scope(api_base_url, context.access_token, None)?;
+            if json_output {
+                output::json(&serde_json::json!({ "active_scope": "platform" }))
+            } else {
+                println!("active scope: platform");
+                Ok(())
+            }
         }
         OrgCommands::Create { name } => {
             let value = client.create_org(name).await?;

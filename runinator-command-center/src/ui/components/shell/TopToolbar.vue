@@ -41,14 +41,14 @@
     </div>
     <div class="actions">
       <select
-        v-if="orgs.hasOrgs"
+        v-if="showScopeSwitcher"
         class="org-select"
-        :value="orgs.activeOrgId ?? ''"
-        title="Active organization"
-        :disabled="app.interactionsDisabled"
+        :value="activeScopeValue"
+        title="Active authorization scope"
+        :disabled="app.interactionsDisabled || switchingScope"
         @change="onSwitchOrg"
       >
-        <option value="" disabled>Org…</option>
+        <option v-if="hasPlatformAccess" :value="PLATFORM_SCOPE">Platform</option>
         <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">
           {{ m.org.name }}
         </option>
@@ -84,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import Icon from "../shared/Icon.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
@@ -104,12 +104,32 @@ const auth = useAuthStore();
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
 const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
+const PLATFORM_SCOPE = "__platform__";
+const switchingScope = ref(false);
 
-function onSwitchOrg(event: Event) {
+const hasPlatformAccess = computed(() => typeof auth.user?.platform_role === "string");
+const showScopeSwitcher = computed(() => orgs.memberships.length > 1 || hasPlatformAccess.value);
+const activeScopeValue = computed(
+  () => orgs.activeOrgId ?? (hasPlatformAccess.value ? PLATFORM_SCOPE : ""),
+);
+
+async function onSwitchOrg(event: Event) {
   const orgId = (event.target as HTMLSelectElement).value;
 
-  if (orgId) {
-    void orgs.setActive(orgId);
+  if (!orgId) {
+    return;
+  }
+
+  switchingScope.value = true;
+
+  try {
+    if (orgId === PLATFORM_SCOPE) {
+      await orgs.setActivePlatform();
+    } else {
+      await orgs.setActive(orgId);
+    }
+  } finally {
+    switchingScope.value = false;
   }
 }
 

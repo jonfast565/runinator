@@ -2,6 +2,7 @@ import {
   createOrg as apiCreateOrg,
   listMyOrgs,
   switchOrg,
+  switchPlatform,
   type OrgMembershipView,
   type OrgRole,
 } from "../api/commandCenterApi";
@@ -122,6 +123,26 @@ export function createOrgsService(app: AppService, auth: AuthService) {
         return false;
       }
     },
+    async setActivePlatform(): Promise<boolean> {
+      if (!auth.getState().required) {
+        service.setActiveLocal(null);
+        app.setStatus("Active scope: Platform");
+        return true;
+      }
+
+      try {
+        const context = await switchPlatform();
+        await auth.applyAccessToken(context.access_token);
+        await auth.reloadMe();
+      } catch {
+        app.setError("Could not switch to platform scope");
+        return false;
+      }
+
+      service.setActiveLocal(null);
+      app.setStatus("Active scope: Platform");
+      return true;
+    },
     async create(name: string): Promise<boolean> {
       const org = await app
         .runOperation("Creating organization", () => apiCreateOrg(name))
@@ -140,6 +161,20 @@ export function createOrgsService(app: AppService, auth: AuthService) {
       service.setActiveLocal(null);
     },
   };
+
+  auth.registerScopeRestorer(async () => {
+    const orgId = store.getState().activeOrgId;
+
+    if (!orgId) {
+      return;
+    }
+
+    if (!(await service.setActive(orgId))) {
+      // The user may have been removed from the organization while their token was refreshed.
+      // Keep the valid platform token rather than displaying an organization it no longer covers.
+      service.setActiveLocal(null);
+    }
+  });
 
   return service;
 }

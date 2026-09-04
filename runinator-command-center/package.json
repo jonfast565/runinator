@@ -1,7 +1,7 @@
 {
   "name": "runinator-command-center",
   "private": true,
-  "version": "0.14.623",
+  "version": "0.14.624",
   "type": "module",
   "scripts": {
     "build:ctl-wasm": "node scripts/build-ctl-wasm.mjs",

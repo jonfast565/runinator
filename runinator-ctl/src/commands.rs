@@ -136,7 +136,7 @@ pub async fn run_command(
             namespaces::namespaces(client, command, json_output).await
         }
         Commands::Nodes { command } => nodes::nodes(client, command, json_output).await,
-        Commands::Orgs { command } => orgs::orgs(client, command, json_output).await,
+        Commands::Orgs { command } => orgs::orgs(client, command, api_base_url, json_output).await,
         Commands::Replicas { command } => replicas::replicas(client, command, json_output).await,
         Commands::Agents { command } => {
             agents::agents(client, command, api_base_url, json_output).await

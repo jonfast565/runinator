@@ -8,9 +8,10 @@ vi.mock("../../api/commandCenterApi", () => ({
   createOrg: vi.fn(),
   listMyOrgs: vi.fn(),
   switchOrg: vi.fn(),
+  switchPlatform: vi.fn(),
 }));
 
-import { listMyOrgs, switchOrg } from "../../api/commandCenterApi";
+import { listMyOrgs, switchOrg, switchPlatform } from "../../api/commandCenterApi";
 
 function membership(id: string, name: string): OrgMembershipView {
   return {
@@ -34,9 +35,13 @@ const app = {
 
 const applyAccessToken = vi.fn();
 const reloadMe = vi.fn();
+const getState = vi.fn();
+const registerScopeRestorer = vi.fn();
 const auth = {
   applyAccessToken,
   reloadMe,
+  getState,
+  registerScopeRestorer,
 } as unknown as AuthService;
 
 describe("organizations service", () => {
@@ -54,6 +59,7 @@ describe("organizations service", () => {
     });
     applyAccessToken.mockResolvedValue(undefined);
     reloadMe.mockResolvedValue(undefined);
+    getState.mockReturnValue({ required: true });
   });
 
   it("selects the first server-provided org when a frontend session begins", async () => {
@@ -65,5 +71,22 @@ describe("organizations service", () => {
     expect(switchOrg).toHaveBeenCalledWith("platform");
     expect(service.getState().activeOrgId).toBe("platform");
     expect(service.activeOrg()?.name).toBe("Platform");
+  });
+
+  it("returns a platform-capable user to the org-less platform scope", async () => {
+    const service = createOrgsService(app, auth);
+    service.setActiveLocal("acme");
+
+    vi.mocked(switchPlatform).mockResolvedValue({
+      access_token: "platform-token",
+      expires_in: 3600,
+    });
+
+    await service.setActivePlatform();
+
+    expect(switchPlatform).toHaveBeenCalledOnce();
+    expect(applyAccessToken).toHaveBeenCalledWith("platform-token");
+    expect(service.getState().activeOrgId).toBeNull();
+    expect(app.setStatus).toHaveBeenCalledWith("Active scope: Platform");
   });
 });

@@ -26,6 +26,8 @@ export interface AuthState {
   accessTokenRevision: number;
 }
 
+type ScopeRestorer = () => Promise<void>;
+
 function isAction(value: unknown): value is Action {
   return typeof value === "string";
 }
@@ -90,6 +92,7 @@ export function createAuthService() {
   let refreshToken: string | null = null;
   let refreshPromise: Promise<boolean> | null = null;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let scopeRestorer: ScopeRestorer | null = null;
   const store = createStore<AuthState>({
     required: false,
     authenticated: false,
@@ -188,6 +191,18 @@ export function createAuthService() {
   async function tryRefresh(token: string): Promise<boolean> {
     try {
       await apply(await refreshSession(token));
+
+      // Refresh intentionally mints an org-less token. The organization service restores the
+      // operator's explicit selection before this refresh is considered complete.
+      if (scopeRestorer) {
+        try {
+          await scopeRestorer();
+        } catch {
+          // The refreshed platform token remains valid even when a concurrent membership change
+          // prevents restoring the old organization.
+        }
+      }
+
       return true;
     } catch {
       await clear();
@@ -308,6 +323,10 @@ export function createAuthService() {
     async applyAccessToken(access: string) {
       persist(access, refreshToken);
       await publishAccessToken(access);
+      scheduleAccessTokenRefresh(access);
+    },
+    registerScopeRestorer(restorer: ScopeRestorer) {
+      scopeRestorer = restorer;
     },
     // re-hydrate the principal (and its actions) under the current token. called after an org
     // switch, where the token — and therefore the org-derived action set — changes.

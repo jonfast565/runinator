@@ -19,7 +19,10 @@ export const useOrgsStore = defineStore("orgs", () => {
     hasOrgs: computed(() => orgsService.hasOrgs()),
     refresh: (options?: RefreshOrgsOptions) => orgsService.refresh(options),
     setActive: (orgId: string) => orgsService.setActive(orgId),
+    setActivePlatform: () => orgsService.setActivePlatform(),
     create: (name: string) => orgsService.create(name),
-    clear: () => { orgsService.clear(); },
+    clear: () => {
+      orgsService.clear();
+    },
   };
 });

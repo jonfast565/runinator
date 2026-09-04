@@ -1945,6 +1945,11 @@ export interface OrgContextResponse {
   role: OrgRole;
 }
 
+export interface PlatformContextResponse {
+  access_token: string;
+  expires_in: number;
+}
+
 export interface OrgResourceGroup {
   org_id: string;
   backend: string;
@@ -2001,6 +2006,10 @@ export async function createOrg(name: string) {
 
 export async function switchOrg(orgId: string) {
   return command<OrgContextResponse>("switch_org", { orgId });
+}
+
+export async function switchPlatform() {
+  return command<PlatformContextResponse>("switch_platform");
 }
 
 export async function listOrgMembers(orgId: string) {
@@ -2060,12 +2069,7 @@ export async function saveCredential(
   });
 }
 
-export async function moveCredential(
-  id: string,
-  scope: string,
-  name: string,
-  kind: SettingKind,
-) {
+export async function moveCredential(id: string, scope: string, name: string, kind: SettingKind) {
   return command<CredentialSummary>("move_credential", {
     settingId: id,
     request: { scope, name, kind },

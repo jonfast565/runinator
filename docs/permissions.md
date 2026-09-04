@@ -16,7 +16,8 @@ every request, so revocation and demotion take effect immediately.
 
 An enabled organization membership is required to create or refresh a user session. Login returns
 an org-less token; the client selects an active organization through `/auth/switch-org` before
-performing organization-scoped work. This prevents a credential that has lost all organization
+performing organization-scoped work. A user with a platform role may return to the platform scope
+through `/auth/switch-platform`. This prevents a credential that has lost all organization
 membership from retaining a usable session.
 
 Top-level shareable resources—workflows, pipelines, function packages, and console sessions—have an

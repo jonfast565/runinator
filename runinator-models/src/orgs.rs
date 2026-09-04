@@ -100,7 +100,7 @@ pub struct UpdateOrgMemberRequest {
     pub role: OrgRole,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwitchOrgRequest {
     pub org_id: Uuid,
 }
@@ -155,6 +155,14 @@ pub struct OrgContextResponse {
     pub expires_in: i64,
     pub org: Organization,
     pub role: OrgRole,
+}
+
+/// the platform-scope context returned after leaving an active organization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformContextResponse {
+    pub access_token: String,
+    /// access-token lifetime in seconds.
+    pub expires_in: i64,
 }
 
 /// derive a URL/label-safe slug from a display name: lowercase, non-alphanumerics to hyphens,

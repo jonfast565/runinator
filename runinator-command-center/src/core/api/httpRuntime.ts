@@ -1203,6 +1203,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "auth/switch-org",
     body: (args) => ({ org_id: arg(args, "orgId") }),
   },
+  switch_platform: { method: "POST", path: () => "auth/switch-platform" },
   list_org_members: {
     method: "GET",
     path: (args) => `orgs/${escape(arg(args, "orgId"))}/members`,

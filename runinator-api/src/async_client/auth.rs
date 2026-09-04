@@ -1,8 +1,13 @@
 use runinator_models::{
-    api_routes::{API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH},
+    api_routes::{
+        API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH, API_AUTH_SWITCH_ORG,
+        API_AUTH_SWITCH_PLATFORM,
+    },
     auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
+    orgs::{OrgContextResponse, PlatformContextResponse, SwitchOrgRequest},
     web::TaskResponse,
 };
+use uuid::Uuid;
 
 use crate::{locator::ServiceLocator, Result};
 
@@ -57,5 +62,25 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
+    }
+
+    /// Select one of the caller's organizations for subsequent requests.
+    pub async fn switch_org(&self, org_id: Uuid) -> Result<OrgContextResponse> {
+        let url = self.build_url(API_AUTH_SWITCH_ORG).await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&SwitchOrgRequest { org_id })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<OrgContextResponse>().await?)
+    }
+
+    /// Return a platform-role holder to their platform authorization scope.
+    pub async fn switch_platform(&self) -> Result<PlatformContextResponse> {
+        let url = self.build_url(API_AUTH_SWITCH_PLATFORM).await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PlatformContextResponse>().await?)
     }
 }

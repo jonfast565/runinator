@@ -4,7 +4,7 @@ use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_models::auth::AuthContext;
 use runinator_models::orgs::{
     AddOrgMemberRequest, CreateOrgRequest, OrgContextResponse, OrgMembershipView, OrgRole,
-    SwitchOrgRequest, UpdateOrgMemberRequest, UpdateOrgRequest, slugify,
+    PlatformContextResponse, SwitchOrgRequest, UpdateOrgMemberRequest, UpdateOrgRequest, slugify,
 };
 use runinator_models::value::Value;
 use runinator_store::{RuntimeStore, roles::OrgStore};
@@ -333,6 +333,35 @@ pub async fn switch_org<T: OrgStore + RuntimeStore>(
     })
 }
 
+/// switch back to the platform scope without rotating the refresh session.
+pub async fn switch_platform<T: OrgStore + RuntimeStore>(
+    Extension(config): Extension<Arc<AuthConfig>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::View,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
+        return reply.into_reply();
+    }
+    let user_id = match require_principal(&ctx) {
+        Ok(id) => id,
+        Err(reply) => return reply.into_reply(),
+    };
+    let session_id = match ctx.session_id {
+        Some(id) => id,
+        None => return forbidden(),
+    };
+    let (access_token, _exp) = match issue_access_token(&config, user_id, session_id, None) {
+        Ok(pair) => pair,
+        Err(err) => return api_error(err),
+    };
+    ok_value(&PlatformContextResponse {
+        access_token,
+        expires_in: config.access_ttl_secs,
+    })
+}
+
 /// reject a role change/removal that would leave `org_id` with no owner.
 async fn guard_last_owner<T: OrgStore + RuntimeStore>(
     db: &T,
@@ -370,6 +399,10 @@ pub fn routes<T: OrgStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Rout
         .route(
             "/auth/switch-org",
             post(switch_org::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/switch-platform",
+            post(switch_platform::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/orgs",

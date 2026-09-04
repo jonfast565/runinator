@@ -5,6 +5,8 @@ pub const API_AUTH_CONFIG: &str = "/auth/config";
 pub const API_AUTH_LOGIN: &str = "/auth/login";
 pub const API_AUTH_REFRESH: &str = "/auth/refresh";
 pub const API_AUTH_LOGOUT: &str = "/auth/logout";
+pub const API_AUTH_SWITCH_ORG: &str = "/auth/switch-org";
+pub const API_AUTH_SWITCH_PLATFORM: &str = "/auth/switch-platform";
 pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
 /// server-side dry-run / branch preview (no actions published).

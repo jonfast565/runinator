@@ -226,7 +226,7 @@ watch(
 watch(
   () => orgs.activeOrgId,
   (orgId, previousOrgId) => {
-    if (!orgId || orgId === previousOrgId || !app.serviceUrl || !auth.authenticated) {
+    if (orgId === previousOrgId || !app.serviceUrl || !auth.authenticated) {
       return;
     }
 
@@ -372,8 +372,10 @@ async function refreshTenantScopedState() {
     app.refreshReplicas().catch(() => undefined),
   ]);
 
-  if (refreshId === tenantRefreshId && orgs.activeOrg) {
-    app.setStatus(`Active organization: ${orgs.activeOrg.name}`);
+  if (refreshId === tenantRefreshId) {
+    app.setStatus(
+      orgs.activeOrg ? `Active organization: ${orgs.activeOrg.name}` : "Active scope: Platform",
+    );
   }
 }
 

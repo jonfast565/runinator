@@ -133,7 +133,7 @@ RUNINATOR_PASSWORD=… runinatorctl --username admin status
 Keep the password in the environment rather than on the command line so it stays out of shell
 history and the process listing.
 
-An enabled organization membership is required to log in or refresh a session. Login first creates an org-less session; choose an active organization with `/auth/switch-org` (the command center does this as you change organization) before making organization-scoped requests. `runinatorctl` will refresh its stored session automatically on later commands and will ask you to log in before calling an auth-enabled server when no valid local session, credentials, or `--api-key` is available. Remove the stored session with:
+An enabled organization membership is required to log in or refresh a session. Login first creates an org-less session; choose an active organization with `/auth/switch-org` (the command center does this as you change organization) before making organization-scoped requests. `runinatorctl orgs use <org-id>` persists that selection for later commands and the interactive repl; a user with a platform role can return to the platform scope with `runinatorctl orgs platform`. `runinatorctl` restores its selected organization after refreshing the stored session and will ask you to log in before calling an auth-enabled server when no valid local session, credentials, or `--api-key` is available. Remove the stored session with:
 
 ```bash
 runinatorctl logout

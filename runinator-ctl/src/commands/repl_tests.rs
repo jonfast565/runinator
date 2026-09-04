@@ -3,7 +3,7 @@
 use super::*;
 
 use runinator_ctl_core::cli::{
-    CliTimelineFormat, Commands, PipelineCommands, RunCommands, WorkflowCommands,
+    CliTimelineFormat, Commands, OrgCommands, PipelineCommands, RunCommands, WorkflowCommands,
 };
 
 fn tokens(line: &str) -> Vec<String> {
@@ -67,6 +67,26 @@ fn parses_a_command_line_command() {
         }
     ));
     assert!(!parsed.json);
+}
+
+#[test]
+fn parses_organization_scope_commands_in_the_repl() {
+    let org_id = "00000000-0000-0000-0000-000000000001";
+    let parsed = parse(&tokens(&format!("orgs use {org_id}"))).expect("parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Orgs {
+            command: OrgCommands::Use { org: parsed_org_id }
+        } if parsed_org_id.to_string() == org_id
+    ));
+
+    let parsed = parse(&tokens("orgs platform")).expect("parses");
+    assert!(matches!(
+        parsed.command,
+        Commands::Orgs {
+            command: OrgCommands::Platform
+        }
+    ));
 }
 
 #[test]

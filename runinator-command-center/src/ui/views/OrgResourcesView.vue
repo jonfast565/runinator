@@ -151,7 +151,7 @@
           </DataTable>
         </div>
 
-        <div v-if="can('org:nodes:scale')" class="panel shrink-0">
+        <div v-if="can('nodes:operate')" class="panel shrink-0">
           <div class="panel-toolbar">
             <div class="flex items-center gap-1">
               <h3 class="m-0 text-sm font-semibold text-fg">Scale a pool</h3>

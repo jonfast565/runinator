@@ -9,6 +9,7 @@ use runinator_models::auth::LoginResponse;
 use runinator_models::json;
 use runinator_platform::app_data::{app_data_dir, app_data_path};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     commands::{self, Result},
@@ -26,6 +27,8 @@ struct StoredSession {
     username: String,
     access_token: String,
     refresh_token: String,
+    #[serde(default)]
+    active_org_id: Option<Uuid>,
 }
 
 pub async fn login(cli: &Cli) -> Result<()> {
@@ -55,6 +58,7 @@ async fn store_login(cli: &Cli, username: &str, password: &str) -> Result<Stored
         username: session.user.username.clone(),
         access_token: session.access_token,
         refresh_token: session.refresh_token,
+        active_org_id: None,
     };
     write_session(&stored)?;
     Ok(stored)
@@ -177,17 +181,58 @@ pub async fn build_authenticated_client(cli: &Cli) -> Result<Client> {
         }
         Err(err) => return Err(Box::new(err)),
     };
-    let stored = StoredSession {
+    // Persist the rotation before restoring the selected scope. If the membership was revoked
+    // between invocations, the new refresh token remains usable and the stale selection is
+    // cleared instead of stranding the user behind a consumed refresh token.
+    let mut refreshed_stored = StoredSession {
         api_base_url: cli.api_base_url.clone(),
         username: refreshed.user.username.clone(),
         access_token: refreshed.access_token.clone(),
         refresh_token: refreshed.refresh_token.clone(),
+        active_org_id: stored.active_org_id,
     };
-    write_session(&stored)?;
+    write_session(&refreshed_stored)?;
+
+    let mut access_token = refreshed.access_token;
+    if let Some(org_id) = refreshed_stored.active_org_id {
+        let scoped = AsyncApiClient::with_credentials(
+            StaticLocator::new(cli.api_base_url.clone()),
+            Some(access_token.clone()),
+        )?;
+        access_token = match scoped.switch_org(org_id).await {
+            Ok(context) => context.access_token,
+            Err(error) => {
+                refreshed_stored.active_org_id = None;
+                write_session(&refreshed_stored)?;
+                return Err(Box::new(error));
+            }
+        };
+    }
+    refreshed_stored.access_token = access_token.clone();
+    write_session(&refreshed_stored)?;
     Ok(AsyncApiClient::with_credentials(
         StaticLocator::new(cli.api_base_url.clone()),
-        Some(refreshed.access_token),
+        Some(access_token),
     )?)
+}
+
+/// Persist the access token and active scope selected by an `orgs use` or `orgs platform` command.
+pub(crate) fn persist_active_scope(
+    api_base_url: &str,
+    access_token: String,
+    active_org_id: Option<Uuid>,
+) -> Result<()> {
+    let Some(mut stored) = read_session()? else {
+        return Err(commands::err("no stored session is available to update"));
+    };
+    if !same_api_base(&stored.api_base_url, api_base_url) {
+        return Err(commands::err(
+            "stored session belongs to a different API base URL",
+        ));
+    }
+    stored.access_token = access_token;
+    stored.active_org_id = active_org_id;
+    write_session(&stored)
 }
 
 fn prompt(label: &str) -> Result<String> {
