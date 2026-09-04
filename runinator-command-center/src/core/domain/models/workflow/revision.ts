@@ -13,6 +13,8 @@ export interface WorkflowRevision {
   version: string;
   name: string;
   input_type: JsonRecord;
+  output_type?: JsonRecord;
+  digest?: string;
   definition: JsonRecord;
   source: RevisionSource;
   actor_id?: string | null;

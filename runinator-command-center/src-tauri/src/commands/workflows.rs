@@ -1,5 +1,74 @@
 use super::*;
+
+#[tauri::command]
+pub async fn workflow_contract_impact(
+    state: State<'_, CommandCenterState>,
+    workflow: WorkflowDefinition,
+) -> CommandResult<runinator_models::workflow_contracts::WorkflowContractImpact> {
+    let id = workflow
+        .id
+        .ok_or_else(|| CommandError::Unexpected("workflow id is required".into()))?;
+    let url = build_state_url(&state, &format!("workflows/{id}/contract-impact")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&workflow)
+        .send()
+        .await?;
+    Ok(handle_response(url, response).await?.json().await?)
+}
 use runinator_models::{api_routes::API_PACKS_IMPORT, bundles::PackImportResult};
+
+#[tauri::command]
+pub async fn fetch_workflow_revisions(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    limit: Option<i64>,
+) -> CommandResult<Vec<runinator_models::revisions::WorkflowRevision>> {
+    get_json(
+        &state,
+        &format!(
+            "workflows/{workflow_id}/revisions?limit={}",
+            limit.unwrap_or(50)
+        ),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_revision(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    revision: i64,
+) -> CommandResult<runinator_models::revisions::WorkflowRevision> {
+    get_json(
+        &state,
+        &format!("workflows/{workflow_id}/revisions/{revision}"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn restore_workflow_revision(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    revision: i64,
+    contract_override_reason: Option<String>,
+) -> CommandResult<WorkflowDefinition> {
+    let mut url = build_state_url(
+        &state,
+        &format!("workflows/{workflow_id}/revisions/{revision}/restore"),
+    )
+    .await?;
+    if let Some(reason) = contract_override_reason {
+        url.query_pairs_mut()
+            .append_pair("contract_override_reason", &reason);
+    }
+    let response = state.client.read().await.post(url.clone()).send().await?;
+    Ok(handle_response(url, response).await?.json().await?)
+}
 
 #[tauri::command]
 pub async fn fetch_workflows(
@@ -12,8 +81,10 @@ pub async fn fetch_workflows(
 pub async fn save_workflow(
     state: State<'_, CommandCenterState>,
     workflow: WorkflowDefinition,
+    contract_override_reason: Option<String>,
 ) -> CommandResult<WorkflowDefinition> {
-    super::runs::save_workflow_to_service(&state, &workflow).await
+    super::runs::save_workflow_to_service(&state, &workflow, contract_override_reason.as_deref())
+        .await
 }
 
 #[tauri::command]

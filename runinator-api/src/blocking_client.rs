@@ -146,9 +146,22 @@ where
     ) -> Result<PackImportResult> {
         let body = runinator_pack_wire::pack::build_pack_zip(workflows, settings, pipelines)
             .map_err(|err| ApiError::Pack(err.to_string()))?;
+        self.import_reviewed_pack_zip(body, overwrite, None)
+    }
+
+    pub fn import_reviewed_pack_zip(
+        &self,
+        body: Vec<u8>,
+        overwrite: bool,
+        contract_override_reason: Option<&str>,
+    ) -> Result<PackImportResult> {
         let mut url = self.build_url(API_PACKS_IMPORT)?;
         if overwrite {
             url.set_query(Some("overwrite=true"));
+        }
+        if let Some(reason) = contract_override_reason {
+            url.query_pairs_mut()
+                .append_pair("contract_override_reason", reason);
         }
         let response = self
             .http_post(url.clone())

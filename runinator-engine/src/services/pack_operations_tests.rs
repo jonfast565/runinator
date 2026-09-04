@@ -80,6 +80,7 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
     }];
     let workflows = WorkflowBundle {
         workflows: vec![WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "Reconcile invoices".into(),
             key: Some("reconcile".into()),
@@ -148,6 +149,7 @@ async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
 
     let result = service
         .import_compiled_pack(PackImportRequest {
+            contract_override_reason: None,
             workflows,
             settings: Some(&settings),
             pipelines: Some(&pipelines),
@@ -209,6 +211,7 @@ async fn portable_pack_preserves_an_unresolved_environment_secret() {
     let org_id = Uuid::now_v7();
     let importing_user = Uuid::now_v7();
     let workflow = WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: "environment secret".into(),
         key: Some("environment-secret".into()),
@@ -232,6 +235,7 @@ async fn portable_pack_preserves_an_unresolved_environment_secret() {
 
     let result = service
         .import_compiled_pack(PackImportRequest {
+            contract_override_reason: None,
             workflows: WorkflowBundle {
                 workflows: vec![workflow],
                 triggers: Vec::new(),
@@ -266,6 +270,7 @@ async fn portable_pack_preserves_an_unresolved_environment_secret() {
 
 fn workflow_with_binding(binding: FunctionBinding) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: "same-pack function".into(),
         key: None,
@@ -461,6 +466,7 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
         ..Default::default()
     };
     let workflow = WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: "same-pack profile".into(),
         key: Some("same-pack-profile".into()),
@@ -493,6 +499,7 @@ async fn profile_declared_and_consumed_in_one_pack_binds_to_server_uuid() {
 
     let result = service
         .import_compiled_pack(PackImportRequest {
+            contract_override_reason: None,
             workflows: WorkflowBundle {
                 workflows: vec![workflow],
                 triggers: Vec::new(),

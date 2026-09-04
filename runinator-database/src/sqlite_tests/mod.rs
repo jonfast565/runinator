@@ -39,6 +39,7 @@ use uuid::Uuid;
 
 fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: name.to_string(),
         key: None,

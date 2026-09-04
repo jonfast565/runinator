@@ -80,7 +80,7 @@ use runinator_store::{
 };
 
 const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state_version, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
-const WORKFLOW_COLUMNS: &str = "id, name, resource_key, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at";
+const WORKFLOW_COLUMNS: &str = "id, name, resource_key, namespace, org_id, version, enabled, input_schema, output_schema, definition, created_at, updated_at";
 /// every column `mappers::row_to_ready_node` reads. hoisted because this list appeared verbatim in
 /// seven places, and a mapper reading a column one of them forgot to select panics only on that one
 /// code path.
@@ -990,7 +990,7 @@ impl ArchiveTableSql for ArchiveTable {
             ],
             ArchiveTable::WorkflowRevisions => archive_columns![
                 "id" => Uuid, "workflow_id" => Uuid, "revision" => Integer, "version" => Text,
-                "name" => Text, "definition" => Text, "input_schema" => Text,
+                "name" => Text, "definition" => Text, "input_schema" => Text, "output_schema" => OptionalText,
                 "source" => Text, "actor_id" => OptionalUuid, "actor_kind" => Text,
                 "note" => OptionalText, "created_at" => Integer, "digest" => Text,
             ],
@@ -1289,7 +1289,7 @@ impl ArchiveTableSql for ArchiveTable {
             "SELECT id, org_id, backend, kind, node_count, sampled_at FROM org_usage_ledger WHERE id = ?".to_string()
         }
         ArchiveTable::WorkflowRevisions => {
-            "SELECT id, workflow_id, revision, version, name, definition, input_schema, source, actor_id, actor_kind, note, created_at FROM workflow_revisions WHERE id = ?".to_string()
+            "SELECT id, workflow_id, revision, version, name, definition, input_schema, output_schema, source, actor_id, actor_kind, note, created_at FROM workflow_revisions WHERE id = ?".to_string()
         }
         ArchiveTable::AgentDirectives => {
             "SELECT directive_id, replica_id, kind_json, state, issued_at, expires_at, published_at, completed_at, payload_json, message, attempts, claimed_at, claimed_by_runtime_id FROM agent_directives WHERE directive_id = ? AND completed_at IS NOT NULL".to_string()
@@ -1489,7 +1489,7 @@ impl ArchiveTableSql for ArchiveTable {
                 "id": row.get::<Uuid, _>("id").to_string(), "workflow_id": row.get::<Uuid, _>("workflow_id").to_string(),
                 "revision": row.get::<i64, _>("revision"), "version": row.get::<String, _>("version"),
                 "name": row.get::<String, _>("name"), "definition": row.get::<String, _>("definition"),
-                "input_schema": row.get::<String, _>("input_schema"), "source": row.get::<String, _>("source"),
+                "input_schema": row.get::<String, _>("input_schema"), "output_schema": row.get::<Option<String>, _>("output_schema"), "source": row.get::<String, _>("source"),
                 "actor_id": row.get::<Option<Uuid>, _>("actor_id").map(|id| id.to_string()), "actor_kind": row.get::<String, _>("actor_kind"),
                 "note": row.get::<Option<String>, _>("note"), "created_at": row.get::<i64, _>("created_at"),
             }),

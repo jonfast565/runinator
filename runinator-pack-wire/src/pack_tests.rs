@@ -12,6 +12,7 @@ use std::io::Write;
 fn pack_zip_round_trips() {
     let workflows = WorkflowBundle {
         workflows: vec![WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "demo".into(),
             key: Some("demo".into()),
@@ -183,6 +184,7 @@ fn a_pack_may_carry_a_publish_without_its_artifact() {
 fn old_unnamespaced_compiled_packs_are_rejected() {
     let workflows = WorkflowBundle {
         workflows: vec![WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "legacy".into(),
             key: None,

@@ -27,6 +27,7 @@ async fn test_db() -> (Arc<SqliteDb>, PathBuf) {
 
 fn workflow() -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: "run operations".into(),
         key: None,

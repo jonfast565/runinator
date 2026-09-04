@@ -881,6 +881,17 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     let request = body
         .map(|ValidatedJson(request)| request)
         .unwrap_or_default();
+    let replay_options = runinator_models::replay::ReplayOptions {
+        from_step_id: request.from_step_id.clone(),
+        plan_fingerprint: request.plan_fingerprint.clone(),
+        acknowledge_review: request.acknowledge_review,
+    };
+    if let Err(error) = operations
+        .validate_replay(workflow_run_id, &replay_options)
+        .await
+    {
+        return bad_request(error.to_string());
+    }
     let override_request = ManagedRunOverrideRequest {
         reason: request.override_reason.clone(),
         idempotency_key: request.idempotency_key.clone(),
@@ -897,8 +908,10 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
     {
         return reply.into_reply();
     }
-    let from_step_id = request.from_step_id;
-    match operations.replay(workflow_run_id, from_step_id).await {
+    match operations
+        .replay_reviewed(workflow_run_id, replay_options)
+        .await
+    {
         Ok(run) => (
             StatusCode::ACCEPTED,
             Json(ApiResponse::WorkflowRun(Box::new(
@@ -922,6 +935,29 @@ async fn require_unmanaged_workflow_run<T: RunOperationsStore>(
         Ok(None) => Ok(()),
         Err(error) => Err(api_error(error.to_string())),
     }
+}
+
+#[derive(Default, serde::Deserialize)]
+pub struct ReplayPlanQuery {
+    pub from_step_id: Option<String>,
+}
+
+pub async fn get_replay_plan<T: RunOperationsStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ReplayPlanQuery>,
+) -> Result<Json<runinator_models::replay::ReplayPlan>, (StatusCode, Json<ApiResponse>)> {
+    AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(id, runinator_models::auth::Permission::Run)
+        .await
+        .map_err(|reply| reply.into_reply())?;
+    operations
+        .replay_plan(id, query.from_step_id)
+        .await
+        .map(Json)
+        .map_err(|error| bad_request(error.to_string()))
 }
 async fn authorize_workflow_run_control<T: RunOperationsStore>(
     db: Arc<T>,
@@ -1354,6 +1390,10 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
             post(replay_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_runs/{id}/replay-plan",
+            get(get_replay_plan::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_runs/{id}/rename",
             post(rename_workflow_run::<T>).layer(Extension(pool.clone())),
         )
@@ -1361,6 +1401,19 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
+    endpoint!(
+        "get",
+        "/workflow_runs/{id}/replay-plan",
+        "Workflow runs",
+        "Preview replay safety",
+        "Read-only replay plan from the frozen module and durable receipts. Use from_step_id to select a restart; review requires acknowledgement bound to the returned fingerprint.",
+        false,
+        None,
+        &[],
+        200,
+        "replay plan",
+        Example::None,
+    ),
     endpoint!(
         "post",
         "/workflow_triggers/{id}/runs",

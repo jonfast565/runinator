@@ -102,12 +102,17 @@ pub async fn fetch_workflow_node_transitions(
 pub(super) async fn save_workflow_to_service(
     state: &CommandCenterState,
     workflow: &WorkflowDefinition,
+    contract_override_reason: Option<&str>,
 ) -> CommandResult<WorkflowDefinition> {
     let path = workflow
         .id
         .map(|id| format!("workflows/{id}"))
         .unwrap_or_else(|| "workflows".to_string());
-    let url = build_state_url(state, &path).await?;
+    let mut url = build_state_url(state, &path).await?;
+    if let Some(reason) = contract_override_reason {
+        url.query_pairs_mut()
+            .append_pair("contract_override_reason", reason);
+    }
     let response = if workflow.id.is_some() {
         state
             .client
@@ -330,6 +335,8 @@ pub async fn replay_workflow_run(
     from_step_id: Option<String>,
     override_reason: Option<String>,
     idempotency_key: Option<String>,
+    plan_fingerprint: Option<String>,
+    acknowledge_review: Option<bool>,
 ) -> CommandResult<WorkflowRunCreated> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/replay")).await?;
     let response = state
@@ -341,6 +348,8 @@ pub async fn replay_workflow_run(
             "from_step_id": from_step_id,
             "override_reason": override_reason,
             "idempotency_key": idempotency_key,
+            "plan_fingerprint": plan_fingerprint,
+            "acknowledge_review": acknowledge_review.unwrap_or(false),
         }))
         .send()
         .await?;
@@ -353,6 +362,24 @@ pub async fn replay_workflow_run(
         .and_then(|raw| raw.parse::<Uuid>().ok())
         .ok_or_else(|| CommandError::Unexpected("missing workflow run id".into()))?;
     Ok(WorkflowRunCreated { id })
+}
+
+#[tauri::command]
+pub async fn fetch_replay_plan(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    from_step_id: Option<String>,
+) -> CommandResult<runinator_models::replay::ReplayPlan> {
+    let mut url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/replay-plan"),
+    )
+    .await?;
+    if let Some(node) = from_step_id {
+        url.query_pairs_mut().append_pair("from_step_id", &node);
+    }
+    let response = state.client.read().await.get(url.clone()).send().await?;
+    Ok(handle_response(url, response).await?.json().await?)
 }
 
 #[tauri::command]

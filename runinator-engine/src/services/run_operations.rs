@@ -275,9 +275,42 @@ impl<
         workflow_run_id: Uuid,
         from_step_id: Option<String>,
     ) -> Result<WorkflowRun, SendableError> {
+        self.replay_reviewed(
+            workflow_run_id,
+            runinator_models::replay::ReplayOptions {
+                from_step_id,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn replay_plan(
+        &self,
+        workflow_run_id: Uuid,
+        from_step_id: Option<String>,
+    ) -> Result<runinator_models::replay::ReplayPlan, SendableError> {
+        repository::replay_plan(self.store.as_ref(), workflow_run_id, from_step_id).await
+    }
+
+    pub async fn validate_replay(
+        &self,
+        workflow_run_id: Uuid,
+        options: &runinator_models::replay::ReplayOptions,
+    ) -> Result<(), SendableError> {
+        let plan = self
+            .replay_plan(workflow_run_id, options.from_step_id.clone())
+            .await?;
+        repository::validate_replay_plan(&plan, options)
+    }
+
+    pub async fn replay_reviewed(
+        &self,
+        workflow_run_id: Uuid,
+        options: runinator_models::replay::ReplayOptions,
+    ) -> Result<WorkflowRun, SendableError> {
         let run =
-            repository::replay_workflow_run(self.store.as_ref(), workflow_run_id, from_step_id)
-                .await?;
+            repository::replay_with_options(self.store.as_ref(), workflow_run_id, options).await?;
         self.publish_run_changed(run.id).await;
         self.nudge_workflow_vm();
         Ok(run)

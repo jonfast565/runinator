@@ -1,4 +1,6 @@
 import { command, isTauriRuntime } from "./runtime";
+import { reviewReplayPlan } from "./replayReview";
+import type { ReplayPlan, WorkflowContractImpact } from "../domain/models/workflow/replay";
 import { apiBaseUrl, httpAuthToken, setHttpAuthToken } from "./httpRuntime";
 import { asJsonRecord } from "../domain/json";
 import type {
@@ -645,8 +647,11 @@ export async function fetchWorkflows() {
   return command<WorkflowDefinition[]>("fetch_workflows");
 }
 
-export async function saveWorkflow(workflow: WorkflowDefinition) {
-  return command<WorkflowDefinition>("save_workflow", { workflow });
+export async function saveWorkflow(workflow: WorkflowDefinition, contractOverrideReason?: string) {
+  return command<WorkflowDefinition>("save_workflow", {
+    workflow,
+    ...(contractOverrideReason ? { contractOverrideReason } : {}),
+  });
 }
 
 export async function saveWorkflowBundle(request: WorkflowBundle) {
@@ -734,8 +739,16 @@ export async function fetchWorkflowRevision(workflowId: string, revision: number
   return command<WorkflowRevision>("fetch_workflow_revision", { workflowId, revision });
 }
 
-export async function restoreWorkflowRevision(workflowId: string, revision: number) {
-  return command<WorkflowDefinition>("restore_workflow_revision", { workflowId, revision });
+export async function restoreWorkflowRevision(
+  workflowId: string,
+  revision: number,
+  contractOverrideReason?: string,
+) {
+  return command<WorkflowDefinition>("restore_workflow_revision", {
+    workflowId,
+    revision,
+    ...(contractOverrideReason ? { contractOverrideReason } : {}),
+  });
 }
 
 export async function fetchWorkflowTriggers(workflowId: string) {
@@ -1607,12 +1620,31 @@ export async function replayWorkflowRun(
   workflowRunId: string,
   options: { fromStepId?: string; override?: ManagedRunOverrideOptions } = {},
 ) {
+  const plan = await fetchReplayPlan(workflowRunId, options.fromStepId);
+
+  if (!(await reviewReplayPlan(plan)) || plan.verdict === "blocked") {
+    throw new Error("Replay canceled; no run was created.");
+  }
+
   return command<WorkflowRunCreated>("replay_workflow_run", {
     workflowRunId,
     fromStepId: options.fromStepId ?? null,
+    planFingerprint: plan.plan_fingerprint,
+    acknowledgeReview: plan.verdict === "review",
     overrideReason: options.override?.reason ?? null,
     idempotencyKey: options.override?.idempotencyKey ?? null,
   });
+}
+
+export function fetchReplayPlan(workflowRunId: string, fromStepId?: string) {
+  return command<ReplayPlan>("fetch_replay_plan", {
+    workflowRunId,
+    fromStepId: fromStepId ?? null,
+  });
+}
+
+export function fetchWorkflowContractImpact(workflow: WorkflowDefinition) {
+  return command<WorkflowContractImpact>("workflow_contract_impact", { workflow });
 }
 
 export async function renameWorkflowRun(workflowRunId: string, name: string | null) {

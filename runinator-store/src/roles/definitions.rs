@@ -18,6 +18,16 @@ use runinator_models::{
 /// Core persistence operations for Runinator.
 /// The authored artefacts a run executes: workflow and pipeline definitions, their org ownership, and the provider catalog.
 pub trait DefinitionStore: Send + Sync + 'static {
+    /// Publish a head, immutable revision, and optional audit in one transaction.
+    /// Refuses a stale comparison instead of racing another publisher.
+    fn publish_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+        previous: Option<&WorkflowDefinition>,
+        revision: &WorkflowRevision,
+        audit: Option<Value>,
+    ) -> impl Future<Output = Result<WorkflowDefinition, SendableError>> + Send;
+
     /// Create or update a workflow definition.
     fn upsert_workflow(
         &self,

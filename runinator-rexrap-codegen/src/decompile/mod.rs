@@ -127,8 +127,13 @@ pub fn decompile_definition(
         decompiler.indent += 1;
     }
 
-    let returns = metadata
-        .output_type()
+    let returns = (definition.output_type != runinator_models::types::RuninatorType::Any)
+        .then(|| definition.output_type.clone())
+        .or_else(|| {
+            metadata
+                .output_type()
+                .filter(|ty| *ty == runinator_models::types::RuninatorType::Any)
+        })
         .map(|ty| format!(" returns {}", expr::render_type(&ty)))
         .unwrap_or_default();
     decompiler.line(&format!(

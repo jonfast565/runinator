@@ -9,6 +9,7 @@ import {
   pauseWorkflowRun,
   renameWorkflowRun,
   replayWorkflowRun,
+  fetchReplayPlan,
   resumeWorkflowRun,
 } from "../../api/commandCenterApi";
 import type { RunSummary, WorkflowRunDetail } from "../../domain/models";
@@ -192,6 +193,14 @@ export const runCommands: ConsoleCommand[] = [
         fromStepId: flag(flags, "from-step"),
       });
       print(done(`replayed as run ${created.id}`));
+    },
+  },
+  {
+    path: ["runs", "replay-plan"],
+    usage: "runs replay-plan <run-id> [--from-step STEP]",
+    summary: "inspect replay safety without creating a run",
+    run: async ({ args, flags, print }) => {
+      print(json(await fetchReplayPlan(requiredArg(args, 0, "run id"), flag(flags, "from-step"))));
     },
   },
   {

@@ -75,9 +75,45 @@ pub async fn upsert_prepared_workflow<T: DefinitionStore + RuntimeStore + Functi
     let workflow =
         validate_workflow_definition_with_catalog_and_known_subflows(db, workflow, known_subflows)
             .await?;
-    let saved = db.upsert_workflow(&workflow).await?;
-    record_workflow_revision(db, &saved, author).await;
-    Ok(saved)
+    let workflow_id = workflow
+        .id
+        .ok_or_else(|| crate::errors::CONTRACT_PUBLICATION.error("prepared workflow has no id"))?;
+    let previous = db.fetch_workflow(workflow_id).await?;
+    let impact = runinator_models::workflow_contracts::WorkflowContractImpact::compare(
+        previous.as_ref(),
+        &workflow,
+    );
+    let reason = author.contract_override_reason.as_deref().map(str::trim);
+    if reason.is_some_and(str::is_empty) {
+        return Err(crate::errors::CONTRACT_PUBLICATION.error("override reason must not be empty"));
+    }
+    if impact.requires_major_bump && reason.is_none() {
+        return Err(crate::errors::CONTRACT_PUBLICATION.error(format!(
+            "{}; increase the major version or request an owner-authorized override",
+            impact.reasons.join("; ")
+        )));
+    }
+    let audit = reason.filter(|_| impact.requires_major_bump).map(|reason| {
+        runinator_models::json!({
+            "actor_id": author.actor_id, "actor_kind": author.actor_kind,
+            "action": "workflow.contract.override", "resource_type": "workflow",
+            "resource_id": workflow_id, "outcome": "accepted", "detail": reason,
+            "metadata": { "impact": impact }
+        })
+    });
+    let mut revision = workflow_revision(&workflow, workflow_id, author);
+    if let Some(reason) = reason.filter(|_| impact.requires_major_bump) {
+        revision.note = Some(format!(
+            "{}contract override: {reason}",
+            author
+                .note
+                .as_ref()
+                .map(|n| format!("{n}; "))
+                .unwrap_or_default()
+        ));
+    }
+    db.publish_workflow(&workflow, previous.as_ref(), &revision, audit)
+        .await
 }
 
 /// capture an accepted definition as an immutable revision.
@@ -93,13 +129,29 @@ pub async fn record_workflow_revision<T: DefinitionStore>(
     let Some(workflow_id) = saved.id else {
         return;
     };
-    let revision = WorkflowRevision {
+    let revision = workflow_revision(saved, workflow_id, author);
+    if let Err(err) = db.insert_workflow_revision(&revision).await {
+        log::warn!(
+            "failed to record revision for workflow {workflow_id} ('{}'): {err}",
+            saved.name
+        );
+    }
+}
+
+fn workflow_revision(
+    saved: &WorkflowDefinition,
+    workflow_id: Uuid,
+    author: &RevisionAuthor,
+) -> WorkflowRevision {
+    WorkflowRevision {
+        output_type: saved.output_type.clone(),
         id: Uuid::nil(),
         workflow_id,
         revision: 0,
-        digest: WorkflowRevision::content_digest(
+        digest: WorkflowRevision::contract_digest(
             saved.version,
             &saved.input_type,
+            &saved.output_type,
             &saved.definition,
         ),
         version: saved.version,
@@ -111,12 +163,6 @@ pub async fn record_workflow_revision<T: DefinitionStore>(
         actor_kind: author.actor_kind.clone(),
         note: author.note.clone(),
         created_at: None,
-    };
-    if let Err(err) = db.insert_workflow_revision(&revision).await {
-        log::warn!(
-            "failed to record revision for workflow {workflow_id} ('{}'): {err}",
-            saved.name
-        );
     }
 }
 
@@ -126,6 +172,63 @@ pub async fn fetch_workflow_revisions<T: DefinitionStore>(
     limit: i64,
 ) -> Result<Vec<WorkflowRevision>, SendableError> {
     db.fetch_workflow_revisions(workflow_id, limit).await
+}
+
+pub async fn workflow_contract_impact<T: DefinitionStore + RuntimeStore>(
+    db: &T,
+    proposed: &WorkflowDefinition,
+) -> Result<runinator_models::workflow_contracts::WorkflowContractImpact, SendableError> {
+    use runinator_models::workflow_contracts::{ContractDependent, WorkflowContractImpact};
+    let previous = match proposed.id {
+        Some(id) => db.fetch_workflow(id).await?,
+        None => None,
+    };
+    let mut impact = WorkflowContractImpact::compare(previous.as_ref(), proposed);
+    let Some(id) = proposed.id else {
+        return Ok(impact);
+    };
+    for workflow in db.fetch_workflows().await? {
+        let Some(dependent_id) = workflow.id else {
+            continue;
+        };
+        for node in &workflow.definition.nodes {
+            if node.subflow.target_workflow_id().or(node.subflow_id) == Some(id) {
+                impact.dependents.push(ContractDependent {
+                    kind: "workflow".into(),
+                    id: dependent_id,
+                    name: workflow.name.clone(),
+                    pinned: node
+                        .subflow
+                        .target
+                        .as_ref()
+                        .is_some_and(|r| r.revision_pin.is_some()),
+                });
+            }
+        }
+    }
+    for pipeline in db.fetch_pipelines().await? {
+        if let Some(pipeline_id) = pipeline.id
+            && pipeline
+                .graph
+                .members
+                .iter()
+                .any(|member| member.workflow_id == id)
+        {
+            impact.dependents.push(ContractDependent {
+                kind: "pipeline".into(),
+                id: pipeline_id,
+                name: pipeline.name,
+                pinned: false,
+            });
+        }
+    }
+    impact
+        .dependents
+        .sort_by(|a, b| (&a.kind, a.id, a.pinned).cmp(&(&b.kind, b.id, b.pinned)));
+    impact
+        .dependents
+        .dedup_by(|a, b| a.kind == b.kind && a.id == b.id && a.pinned == b.pinned);
+    Ok(impact)
 }
 
 pub async fn fetch_workflow_revision<T: DefinitionStore>(
@@ -470,6 +573,28 @@ pub async fn import_workflow_bundle_with<
     bundle: WorkflowBundle,
     overwrite: bool,
 ) -> Result<WorkflowBundle, SendableError> {
+    import_workflow_bundle_authored(
+        db,
+        bundle,
+        overwrite,
+        &RevisionAuthor::system(RevisionSource::Pack),
+    )
+    .await
+}
+
+pub async fn import_workflow_bundle_authored<
+    T: DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + ExecutionProfileStore,
+>(
+    db: &T,
+    bundle: WorkflowBundle,
+    overwrite: bool,
+    pack_author: &RevisionAuthor,
+) -> Result<WorkflowBundle, SendableError> {
     // Assign/locate each logical UUID and resolve every path while the entire pack is in memory.
     // This is the temporary-reference phase: a pair of brand-new, mutually-recursive workflows is
     // never persisted with a name edge merely because its peer has not been saved yet.
@@ -497,7 +622,6 @@ pub async fn import_workflow_bundle_with<
     // a pack apply overwrites definitions wholesale, which is exactly the change most worth being
     // able to see and undo later. the store drops a revision whose definition is unchanged, so a
     // pack that reapplies on a schedule leaves history alone.
-    let pack_author = RevisionAuthor::system(RevisionSource::Pack);
     let mut workflows = Vec::with_capacity(bundle.workflows.len());
     for workflow in bundle.workflows {
         // an incoming id is an explicit save (e.g. the command center) and always wins.
@@ -520,7 +644,7 @@ pub async fn import_workflow_bundle_with<
             continue;
         }
         let imported =
-            upsert_prepared_workflow(db, &workflow, &known_subflows, &pack_author).await?;
+            upsert_prepared_workflow(db, &workflow, &known_subflows, pack_author).await?;
         // materialize this workflow's declared `trigger cron` schedules (idempotent).
         materialize_workflow_triggers(db, &imported).await?;
         // and its declared `notify on ...` alerting policies, reconciled the same way.

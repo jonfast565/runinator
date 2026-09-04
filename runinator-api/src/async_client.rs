@@ -1246,10 +1246,22 @@ where
         &self,
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition> {
-        let url = match workflow.id {
+        self.publish_workflow(workflow, None).await
+    }
+
+    pub async fn publish_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+        contract_override_reason: Option<&str>,
+    ) -> Result<WorkflowDefinition> {
+        let mut url = match workflow.id {
             Some(id) => self.build_url(&api_workflow(id)).await?,
             None => self.build_url(API_WORKFLOWS).await?,
         };
+        if let Some(reason) = contract_override_reason {
+            url.query_pairs_mut()
+                .append_pair("contract_override_reason", reason);
+        }
         let response = match workflow.id {
             Some(_) => {
                 self.send(self.http_patch(url.clone()).json(workflow))
@@ -1413,9 +1425,22 @@ where
     }
 
     async fn import_pack_zip(&self, body: Vec<u8>, overwrite: bool) -> Result<PackImportResult> {
+        self.import_reviewed_pack_zip(body, overwrite, None).await
+    }
+
+    pub async fn import_reviewed_pack_zip(
+        &self,
+        body: Vec<u8>,
+        overwrite: bool,
+        contract_override_reason: Option<&str>,
+    ) -> Result<PackImportResult> {
         let mut url = self.build_url(API_PACKS_IMPORT).await?;
         if overwrite {
             url.set_query(Some("overwrite=true"));
+        }
+        if let Some(reason) = contract_override_reason {
+            url.query_pairs_mut()
+                .append_pair("contract_override_reason", reason);
         }
         let response = self
             .send(
@@ -2221,15 +2246,60 @@ where
         workflow_run_id: Uuid,
         from_step_id: Option<String>,
     ) -> Result<WorkflowRun> {
+        self.replay_workflow_run_reviewed(
+            workflow_run_id,
+            &runinator_models::replay::ReplayOptions {
+                from_step_id,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn workflow_replay_plan(
+        &self,
+        workflow_run_id: Uuid,
+        from_step_id: Option<&str>,
+    ) -> Result<runinator_models::replay::ReplayPlan> {
+        let mut url = self
+            .build_url(&runinator_models::api_routes::api_workflow_run_replay_plan(
+                workflow_run_id,
+            ))
+            .await?;
+        if let Some(node) = from_step_id {
+            url.query_pairs_mut().append_pair("from_step_id", node);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn workflow_contract_impact(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<runinator_models::workflow_contracts::WorkflowContractImpact> {
+        let id = workflow
+            .id
+            .ok_or_else(|| ApiError::UnexpectedResponse("workflow id is required".into()))?;
+        let url = self
+            .build_url(&runinator_models::api_routes::api_workflow_contract_impact(
+                id,
+            ))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(workflow))
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn replay_workflow_run_reviewed(
+        &self,
+        workflow_run_id: Uuid,
+        options: &runinator_models::replay::ReplayOptions,
+    ) -> Result<WorkflowRun> {
         let url = self
             .build_url(&api_workflow_run_replay(workflow_run_id))
             .await?;
-        let response = self
-            .send(
-                self.http_post(url.clone())
-                    .json(&json!({ "from_step_id": from_step_id })),
-            )
-            .await?;
+        let response = self.send(self.http_post(url.clone()).json(options)).await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
         serde_json::from_value(

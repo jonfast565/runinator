@@ -432,6 +432,7 @@ async fn start_member_run<T: RuntimeStore + WorkflowVmStore>(
         .map_err(|error| -> SendableError { Box::new(error) })?;
     let config = runinator_runtime::config::config_tree_for_workflow(db, &snapshot).await;
     db.create_workflow_vm_run(NewWorkflowVmRun {
+        replay_seed: None,
         workflow_id,
         workflow_snapshot: snapshot,
         parameters,

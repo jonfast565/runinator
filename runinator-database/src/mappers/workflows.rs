@@ -1,8 +1,20 @@
 use super::*;
 
+fn workflow_output_type(schema: Option<String>, definition: String) -> RuninatorType {
+    if let Some(schema) = schema {
+        return parse_type(schema);
+    }
+    // only legacy null columns consult graph metadata; an explicit Any remains authoritative.
+    parse_json(definition)
+        .pointer("/metadata/rexrap/output_type")
+        .and_then(|value| serde_json::from_value(value.clone().into()).ok())
+        .unwrap_or_default()
+}
+
 macro_rules! workflow_from_row {
     ($row:expr) => {{
         WorkflowDefinition {
+            output_type: workflow_output_type($row.get("output_schema"), $row.get("definition")),
             id: $row.get("id"),
             name: $row.get("name"),
             key: $row.get("resource_key"),
@@ -24,6 +36,7 @@ row_mapper!(row_to_workflow(row) -> WorkflowDefinition { workflow_from_row!(row)
 macro_rules! workflow_revision_from_row {
     ($row:expr) => {{
         WorkflowRevision {
+            output_type: workflow_output_type($row.get("output_schema"), $row.get("definition")),
             id: $row.get("id"),
             workflow_id: $row.get("workflow_id"),
             revision: $row.get("revision"),

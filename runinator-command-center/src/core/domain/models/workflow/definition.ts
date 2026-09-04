@@ -12,13 +12,16 @@ export interface WorkflowDefinition {
   version: string;
   enabled: boolean;
   input_type: JsonRecord;
+  output_type?: JsonRecord;
   definition: JsonRecord;
   // owning organization (tenant); null means platform-global / unassigned.
   org_id?: string | null;
 }
 
 /** The canonical, name-first path shown in navigation and inspectors. */
-export function workflowPath(workflow: Pick<WorkflowDefinition, "name" | "key" | "namespace">): string {
+export function workflowPath(
+  workflow: Pick<WorkflowDefinition, "name" | "key" | "namespace">,
+): string {
   const key = workflow.key ?? workflow.name;
   return workflow.namespace ? `${workflow.namespace}.${key}` : key;
 }

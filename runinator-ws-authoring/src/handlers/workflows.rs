@@ -30,6 +30,21 @@ use runinator_ws_core::{ValidatedJson, models::ApiResponse};
 use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
+#[derive(Default, Deserialize)]
+pub struct WorkflowPublishOptions {
+    pub contract_override_reason: Option<String>,
+}
+
+fn publication_error(
+    error: runinator_models::errors::SendableError,
+) -> (StatusCode, Json<ApiResponse>) {
+    match runinator_models::errors::extract_error_code(error.as_ref()).as_deref() {
+        Some("RUNI172") => bad_request(error.to_string()),
+        Some("RUNI516") => (StatusCode::CONFLICT, bad_request(error.to_string()).1),
+        _ => api_error(error.to_string()),
+    }
+}
+
 pub async fn upsert_workflow<
     T: AuthorizationStore
         + DefinitionStore
@@ -43,6 +58,7 @@ pub async fn upsert_workflow<
     Extension(db): Extension<Arc<T>>,
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
+    Query(options): Query<WorkflowPublishOptions>,
     ValidatedJson(mut workflow): ValidatedJson<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // updating an existing workflow requires edit; creating one stamps the creator as owner.
@@ -131,10 +147,17 @@ pub async fn upsert_workflow<
             Err(err) => return api_error(err.to_string()),
         }
     }
-    match authoring
-        .save_prepared(&workflow, &ctx.revision_author())
-        .await
-    {
+    let mut author = ctx.revision_author();
+    if options.contract_override_reason.is_some() {
+        if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_workflow(workflow_id, Permission::Own)
+            .await
+        {
+            return reply;
+        }
+        author.contract_override_reason = options.contract_override_reason;
+    }
+    match authoring.save_prepared(&workflow, &author).await {
         Ok(workflow) => {
             if !is_update
                 && let Some(id) = workflow.id
@@ -144,7 +167,7 @@ pub async fn upsert_workflow<
             }
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }
-        Err(err) => api_error(err.to_string()),
+        Err(err) => publication_error(err),
     }
 }
 
@@ -542,6 +565,7 @@ pub async fn restore_workflow_revision<
     Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((workflow_id, revision)): Path<(Uuid, i64)>,
+    Query(options): Query<WorkflowPublishOptions>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_workflow(workflow_id, Permission::Edit)
@@ -549,12 +573,22 @@ pub async fn restore_workflow_revision<
     {
         return reply;
     }
+    let mut author = ctx.revision_author();
+    if options.contract_override_reason.is_some() {
+        if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_workflow(workflow_id, Permission::Own)
+            .await
+        {
+            return reply;
+        }
+        author.contract_override_reason = options.contract_override_reason;
+    }
     match authoring
-        .restore_revision(workflow_id, revision, &ctx.revision_author())
+        .restore_revision(workflow_id, revision, &author)
         .await
     {
         Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
-        Err(err) => api_error(err.to_string()),
+        Err(err) => publication_error(err),
     }
 }
 
@@ -599,6 +633,49 @@ pub async fn duplicate_workflow<
         }
         Err(err) => api_error(err.to_string()),
     }
+}
+
+pub async fn workflow_contract_impact<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    ValidatedJson(mut proposed): ValidatedJson<WorkflowDefinition>,
+) -> Result<
+    Json<runinator_models::workflow_contracts::WorkflowContractImpact>,
+    (StatusCode, Json<ApiResponse>),
+> {
+    let checker = AuthzChecker::new(db.as_ref(), &ctx);
+    checker.require_workflow(id, Permission::View).await?;
+    proposed.id = Some(id);
+    let mut impact = authoring
+        .contract_impact(&proposed)
+        .await
+        .map_err(|e| api_error(e.to_string()))?;
+    let mut visible = Vec::new();
+    for dependent in impact.dependents {
+        let kind = if dependent.kind == "workflow" {
+            ResourceType::Workflow
+        } else {
+            ResourceType::Pipeline
+        };
+        if checker
+            .require_resource(kind, dependent.id, Permission::View)
+            .await
+            .is_ok()
+        {
+            visible.push(dependent);
+        }
+    }
+    impact.dependents = visible;
+    Ok(Json(impact))
 }
 
 pub async fn delete_workflow<
@@ -681,6 +758,10 @@ pub fn routes<
             get(get_workflow_revisions::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflows/{id}/contract-impact",
+            post(workflow_contract_impact::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflows/{id}/revisions/{revision}",
             get(get_workflow_revision::<T>).layer(Extension(pool.clone())),
         )
@@ -692,6 +773,19 @@ pub fn routes<
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
+    endpoint!(
+        "post",
+        "/workflows/{id}/contract-impact",
+        "Workflows",
+        "Preview contract compatibility",
+        "Read-only input/output compatibility, required major bump, and visible direct consumers. Pinned consumers keep their revision.",
+        false,
+        json_body("Proposed definition", Example::Workflow),
+        &[],
+        200,
+        "contract impact",
+        Example::None,
+    ),
     endpoint!(
         "get",
         "/workflows",

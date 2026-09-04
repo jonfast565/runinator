@@ -95,9 +95,32 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             "deleted workflow run",
             json_output,
         )?,
-        RunCommands::Replay { id, from_step_id } => {
+        RunCommands::ReplayPlan { id, from_step_id } => {
+            let plan = client
+                .workflow_replay_plan(*id, from_step_id.as_deref())
+                .await?;
+            output::json(&plan)?;
+        }
+        RunCommands::Replay {
+            id,
+            from_step_id,
+            acknowledge_review,
+        } => {
+            let plan = client
+                .workflow_replay_plan(*id, from_step_id.as_deref())
+                .await?;
+            if !json_output {
+                output::json(&plan)?;
+            }
             let run = client
-                .replay_workflow_run(*id, from_step_id.clone())
+                .replay_workflow_run_reviewed(
+                    *id,
+                    &runinator_models::replay::ReplayOptions {
+                        from_step_id: from_step_id.clone(),
+                        plan_fingerprint: Some(plan.plan_fingerprint),
+                        acknowledge_review: *acknowledge_review,
+                    },
+                )
                 .await?;
             if json_output {
                 return output::json(&run);

@@ -301,7 +301,14 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     },
     path: (args) => {
       const workflow = arg(args, "workflow") as { id?: string | null };
-      return workflow.id != null ? `workflows/${escape(workflow.id)}` : "workflows";
+      const path = workflow.id != null ? `workflows/${escape(workflow.id)}` : "workflows";
+
+      return (
+        path +
+        (argOpt(args, "contractOverrideReason")
+          ? `?contract_override_reason=${escape(arg(args, "contractOverrideReason"))}`
+          : "")
+      );
     },
     body: (args) => arg(args, "workflow"),
   },
@@ -350,7 +357,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   restore_workflow_revision: {
     method: "POST",
     path: (args) =>
-      `workflows/${escape(arg(args, "workflowId"))}/revisions/${escape(String(arg(args, "revision")))}/restore`,
+      `workflows/${escape(arg(args, "workflowId"))}/revisions/${escape(String(arg(args, "revision")))}/restore${argOpt(args, "contractOverrideReason") ? `?contract_override_reason=${escape(arg(args, "contractOverrideReason"))}` : ""}`,
   },
   fetch_workflow_triggers: {
     method: "GET",
@@ -735,10 +742,23 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/replay`,
     body: (args) => ({
       from_step_id: argOpt(args, "fromStepId") ?? null,
+      plan_fingerprint: argOpt(args, "planFingerprint") ?? null,
+      acknowledge_review: argOpt(args, "acknowledgeReview") ?? false,
       override_reason: argOpt(args, "overrideReason") ?? null,
       idempotency_key: argOpt(args, "idempotencyKey") ?? null,
     }),
     transform: extractWorkflowRunId,
+  },
+  fetch_replay_plan: {
+    method: "GET",
+    path: (args) =>
+      `workflow_runs/${escape(arg(args, "workflowRunId"))}/replay-plan${argOpt(args, "fromStepId") ? `?from_step_id=${escape(arg(args, "fromStepId"))}` : ""}`,
+  },
+  workflow_contract_impact: {
+    method: "POST",
+    path: (args) =>
+      `workflows/${escape((arg(args, "workflow") as { id: string }).id)}/contract-impact`,
+    body: (args) => arg(args, "workflow"),
   },
   rename_workflow_run: {
     method: "POST",

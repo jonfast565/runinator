@@ -33,6 +33,7 @@ async fn test_db() -> (Arc<SqliteDb>, PathBuf) {
 
 fn member_workflow() -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: "pipeline member".into(),
         key: Some("pipeline_member".into()),

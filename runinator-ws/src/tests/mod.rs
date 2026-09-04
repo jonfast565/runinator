@@ -80,6 +80,7 @@ async fn save_workflow<T: DatabaseImpl>(
 
 fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id,
         name: name.into(),
         key: None,

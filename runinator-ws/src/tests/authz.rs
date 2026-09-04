@@ -32,6 +32,75 @@ async fn register_workflow_ownership(db: &SqliteDb, workflow_id: Uuid, org_id: O
 }
 
 #[tokio::test]
+async fn breaking_contract_override_requires_own_and_is_audited() {
+    use crate::handlers::workflows::{WorkflowPublishOptions, upsert_workflow};
+    use axum::extract::Query;
+    let (db, _path) = test_db().await;
+    let db = Arc::new(db);
+    let mut initial = workflow(None, "contract-owner-policy");
+    initial.namespace = Some("tests".into());
+    initial.key = Some("contract_owner_policy".into());
+    initial.output_type = runinator_models::types::RuninatorType::String;
+    let saved = save_workflow(db.as_ref(), &initial).await.unwrap();
+    let id = saved.id.unwrap();
+    register_workflow_ownership(db.as_ref(), id, None).await;
+    let editor = db
+        .create_user("contract-editor".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let owner = db
+        .create_user("contract-owner".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    db.create_grant(grant(id, PrincipalType::User, editor, Permission::Edit))
+        .await
+        .unwrap();
+    db.create_grant(grant(id, PrincipalType::User, owner, Permission::Own))
+        .await
+        .unwrap();
+    let service = Arc::new(WorkflowAuthoring::new(
+        db.clone(),
+        UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
+    ));
+    let mut proposed = saved.clone();
+    proposed.output_type = runinator_models::types::RuninatorType::Any;
+    for (principal, reason, expected) in [
+        (editor, None, StatusCode::BAD_REQUEST),
+        (editor, Some("coordinated migration"), StatusCode::FORBIDDEN),
+        (owner, Some("coordinated migration"), StatusCode::OK),
+    ] {
+        let (status, body) = upsert_workflow::<SqliteDb>(
+            Extension(db.clone()),
+            Extension(service.clone()),
+            Extension(user_ctx(principal)),
+            Query(WorkflowPublishOptions {
+                contract_override_reason: reason.map(str::to_string),
+            }),
+            ValidatedJson(proposed.clone()),
+        )
+        .await;
+        assert_eq!(
+            status,
+            expected,
+            "{}",
+            serde_json::to_value(body.0).unwrap()
+        );
+    }
+    assert_eq!(db.fetch_workflow_revisions(id, 50).await.unwrap().len(), 2);
+    assert_eq!(
+        db.fetch_audit_log(None, Some("workflow.contract.override".into()), 50)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn platform_admin_can_transfer_an_organization_workflow_to_platform() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);

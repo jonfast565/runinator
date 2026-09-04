@@ -1139,6 +1139,7 @@ mod tests {
     #[test]
     fn compiles_graph_blocks_with_complete_source_map() {
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "linear".into(),
             key: None,
@@ -1184,6 +1185,7 @@ mod tests {
     #[test]
     fn fixes_a_terminal_failure_edge_to_the_fail_block() {
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "failure".into(),
             key: None,
@@ -1239,6 +1241,7 @@ mod tests {
         action.transitions.on_failure = Some(WorkflowNodeRef::new("recover"));
         action.transitions.on_timeout = Some(WorkflowNodeRef::new("slow"));
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "ordered".into(),
             key: None,
@@ -1301,6 +1304,7 @@ mod tests {
         action.transitions.on_failure = Some(WorkflowNodeRef::new("recover"));
         action.transitions.on_timeout = Some(WorkflowNodeRef::new("slow"));
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "edges".into(),
             key: None,
@@ -1417,6 +1421,7 @@ mod tests {
         let mut resume = node("give_up", WorkflowNodeKind::Resume, None);
         resume.parameters = serde_json::from_value(serde_json::json!({ "mode": "fail" })).unwrap();
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "interrupts".into(),
             key: None,
@@ -1531,6 +1536,7 @@ mod tests {
         // that used to be re-read from the graph at dispatch time.
         action.tags.push("billing".into());
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "policy".into(),
             key: None,
@@ -1632,6 +1638,7 @@ mod tests {
         }))
         .unwrap();
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "switch".into(),
             key: None,
@@ -1782,6 +1789,7 @@ mod tests {
         graph_nodes.push(action);
         graph_nodes.push(node("end", WorkflowNodeKind::End, None));
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "phase-four".into(),
             key: None,
@@ -2004,6 +2012,7 @@ mod tests {
         start.reentry.enabled = true;
         start.reentry.max_visits = 2;
         let definition = WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "reentry".into(),
             key: None,

@@ -90,10 +90,48 @@
 
         <JsonDiff
           v-if="diffPair"
-          :before="diffPair.before.definition"
-          :after="diffPair.after.definition"
+          :before="{
+            definition: diffPair.before.definition,
+            input_type: diffPair.before.input_type,
+            output_type: diffPair.before.output_type ?? { type: 'any' },
+          }"
+          :after="{
+            definition: diffPair.after.definition,
+            input_type: diffPair.after.input_type,
+            output_type: diffPair.after.output_type ?? { type: 'any' },
+          }"
           :title="`View changes from revision ${diffPair.before.revision} to ${diffPair.after.revision}`"
         />
+
+        <section v-if="diffPair" class="revision-callout">
+          <button type="button" class="btn" :disabled="impactLoading" @click="previewImpact">
+            Preview restoring revision {{ diffPair.before.revision }}: contract impact
+          </button>
+          <p v-if="impact">
+            {{ impact.compatibility }} ·
+            {{
+              impact.requires_major_bump
+                ? "A major bump or owner-authorized override is required."
+                : "No major bump is required by the contract policy."
+            }}
+          </p>
+          <ul v-if="impact">
+            <li v-for="reason in impact.reasons" :key="reason">{{ reason }}</li>
+            <li
+              v-for="dependent in impact.dependents"
+              :key="`${dependent.kind}-${dependent.id}-${dependent.pinned}`"
+            >
+              {{ dependent.kind }} {{ dependent.name }} ·
+              {{ dependent.pinned ? "pinned; unchanged" : "follows current contract" }}
+            </li>
+          </ul>
+          <p v-if="impactError">{{ impactError }}</p>
+          <label v-if="impact?.requires_major_bump"
+            >Audited override reason (workflow Own permission required)<input
+              v-model="overrideReason"
+              placeholder="Why is this breaking restore intentional?"
+          /></label>
+        </section>
 
         <div class="revision-list">
           <article
@@ -159,6 +197,8 @@ import EmptyState from "../shared/EmptyState.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import Icon from "../shared/Icon.vue";
 import JsonDiff from "./JsonDiff.vue";
+import { fetchWorkflows, fetchWorkflowContractImpact } from "../../../core/api/commandCenterApi";
+import type { WorkflowContractImpact } from "../../../core/domain/models/workflow/replay";
 
 const props = defineProps<{ workflowId: string | null }>();
 // carries the restored definition so the editor can reset its draft to it. without that the open
@@ -173,6 +213,54 @@ const restoring = ref<number | null>(null);
 const compareA = ref<number | null>(null);
 const compareB = ref<number | null>(null);
 const expanded = ref(false);
+const impact = ref<WorkflowContractImpact | null>(null);
+const impactLoading = ref(false);
+const impactError = ref("");
+const overrideReason = ref("");
+let impactGeneration = 0;
+watch([compareA, compareB, () => props.workflowId], () => {
+  impactGeneration++;
+  impact.value = null;
+  impactError.value = "";
+});
+
+async function previewImpact() {
+  const pair = diffPair.value;
+
+  if (!pair || !props.workflowId) {
+    return;
+  }
+
+  const generation = ++impactGeneration;
+  impactLoading.value = true;
+  impactError.value = "";
+
+  try {
+    const current = (await fetchWorkflows()).find((workflow) => workflow.id === props.workflowId);
+
+    if (!current) {
+      throw new Error("Workflow no longer available");
+    }
+
+    const result = await fetchWorkflowContractImpact({
+      ...current,
+      version: pair.before.version,
+      input_type: pair.before.input_type,
+      output_type: pair.before.output_type ?? { type: "any" },
+      definition: pair.before.definition,
+    });
+
+    if (generation === impactGeneration) {
+      impact.value = result;
+    }
+  } catch (error) {
+    if (generation === impactGeneration) {
+      impactError.value = String(error);
+    }
+  } finally {
+    impactLoading.value = false;
+  }
+}
 
 // the newest revision is the one matching the stored definition.
 const headRevision = computed(() => (revisions.value.length ? revisions.value[0].revision : null));
@@ -257,7 +345,13 @@ async function restore(revision: WorkflowRevision) {
   restoring.value = revision.revision;
 
   try {
-    const restored = await workflowRevisionsService.restore(props.workflowId, revision.revision);
+    const restored = await workflowRevisionsService.restore(
+      props.workflowId,
+      revision.revision,
+      impact.value?.requires_major_bump && diffPair.value?.before.revision === revision.revision
+        ? overrideReason.value.trim() || undefined
+        : undefined,
+    );
     app.setStatus(`Restored revision ${String(revision.revision)}`);
     emit("restored", restored);
     await refresh();

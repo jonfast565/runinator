@@ -35,10 +35,14 @@
     <IngressControlView v-if="app.activeTab === 'IngressControl'" />
     <AuditLogView v-if="app.activeTab === 'AuditLog'" />
   </AppShell>
+  <ReplayPlanDialog v-if="replayPlan" :plan="replayPlan" @complete="completeReplayReview" />
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, onBeforeUnmount, onMounted, watch } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, onMounted, watch, shallowRef } from "vue";
+import ReplayPlanDialog from "./ui/components/workflow/ReplayPlanDialog.vue";
+import { setReplayPlanReviewer } from "./core/api/replayReview";
+import type { ReplayPlan } from "./core/domain/models/workflow/replay";
 import { getPlatformAdapter } from "./core/platform";
 import { pingBackendHealth } from "./core/api/httpRuntime";
 import AppShell from "./ui/components/shell/AppShell.vue";
@@ -65,6 +69,26 @@ import { useExecutionProfilesStore } from "./ui/adapters/pinia/executionProfiles
 import { useResizableTables } from "./ui/composables/useResizableTables";
 
 const RunsView = defineAsyncComponent(() => import("./ui/views/RunsView.vue"));
+const replayPlan = shallowRef<ReplayPlan | null>(null);
+let replayResolve: ((accepted: boolean) => void) | undefined;
+setReplayPlanReviewer(
+  (plan) =>
+    new Promise<boolean>((resolve) => {
+      replayPlan.value = plan;
+      replayResolve = resolve;
+    }),
+);
+
+function completeReplayReview(accepted: boolean) {
+  replayPlan.value = null;
+  replayResolve?.(accepted);
+  replayResolve = undefined;
+}
+
+onBeforeUnmount(() => {
+  completeReplayReview(false);
+  setReplayPlanReviewer(undefined);
+});
 const ProfileSecurityView = defineAsyncComponent(
   () => import("./ui/views/ProfileSecurityView.vue"),
 );

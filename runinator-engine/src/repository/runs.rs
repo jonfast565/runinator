@@ -100,6 +100,7 @@ pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
     // in-flight run neither loses its settings nor changes behaviour after an edit.
     let config = runinator_runtime::config::config_tree_for_workflow(db, &workflow_snapshot).await;
     db.create_workflow_vm_run(NewWorkflowVmRun {
+        replay_seed: None,
         workflow_id,
         workflow_snapshot,
         parameters,

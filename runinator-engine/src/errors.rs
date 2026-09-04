@@ -265,6 +265,8 @@ pub const CONSOLE_CELL_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
 );
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
+    CONTRACT_PUBLICATION,
+    REPLAY_UNSAFE,
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
     IMPORT_UNKNOWN_CHAINED_TARGET,
@@ -314,6 +316,17 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     CONSOLE_SESSION_NOT_FOUND,
     CONSOLE_CELL_NOT_FOUND,
 ];
+
+pub const CONTRACT_PUBLICATION: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI172",
+    "workflow.contract.publication",
+    "Workflow contract publication refused",
+);
+pub const REPLAY_UNSAFE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI173",
+    "workflow.replay.unsafe",
+    "Replay safety check refused execution",
+);
 
 /// orchestration engine error dictionary.
 pub struct EngineErrorCatalog;

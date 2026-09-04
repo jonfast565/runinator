@@ -644,7 +644,12 @@ pub enum WorkflowCommands {
     /// definition / import a workflow bundle from a JSON file. A source's `settings` blocks are
     /// imported with the pack to seed config/secret slots. When no path is given, falls back to the
     /// `~/.runinator/workflows` folder if it exists.
-    Apply { file: Option<PathBuf> },
+    Apply {
+        file: Option<PathBuf>,
+        /// Audited reason for overriding a breaking contract without a major bump (requires Own).
+        #[arg(long)]
+        contract_override_reason: Option<String>,
+    },
     /// Dry-run a workflow pack against `tests` blocks in .rrx sources: simulate the state machine offline with
     /// mocked task outputs and assert on the branch taken and final outputs. No server required.
     Test {
@@ -785,6 +790,15 @@ pub enum RunCommands {
     Replay {
         id: Uuid,
         /// Replay from this node id rather than from the start.
+        #[arg(long = "from-step")]
+        from_step_id: Option<String>,
+        /// Acknowledge the freshly fetched safety plan before repeating external effects.
+        #[arg(long)]
+        acknowledge_review: bool,
+    },
+    /// Inspect a replay without creating a run or issuing provider work.
+    ReplayPlan {
+        id: Uuid,
         #[arg(long = "from-step")]
         from_step_id: Option<String>,
     },

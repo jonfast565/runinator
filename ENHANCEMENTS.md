@@ -84,6 +84,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - Delivered through the shipped notification-policy layer (**6.1**, Appendix B); it is the cheapest proof that layer generalizes beyond run failures.
 
 ### 9.1 Replay safety planner
+- **Implemented in 0.15.644:** frozen-snapshot planning, conservative action/idempotency evidence, receipt-backed ancestor seeding, and fingerprint-bound acknowledgement through the API, CLI, and command center. Stateful or incomplete ancestry is blocked. See [replay and contract guidance](docs/help/replay-and-contracts.md).
 - **Owning crates:** `runinator-engine` (debug/run operations), `runinator-ws-runtime`, `runinator-command-center`.
 - **Problem:** A replay is deliberately capable of re-running external effects. The engine already refuses a restart point whose ancestry crosses stateful control flow, but the operator sees only a generic confirmation and cannot tell which prior outputs will be seeded, which actions will execute again, or whether their idempotency keys make that safe.
 - **Approach:** Add a read-only replay-plan endpoint that returns the frozen definition, selected restart point, seeded ancestor receipts, actions that will execute, each action's declared/resolved idempotency posture, and a `safe` / `review` / `blocked` verdict. The command center presents this plan and requires an explicit unsafe acknowledgement where appropriate; the existing replay command remains the sole mutating path.
@@ -96,6 +97,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Boundary note:** Authorization and recipient resolution must occur in the engine/service layer, with every decision audited. Do not implement escalation as command-center timers or direct provider calls; it must survive a week-long parked run and replica failover.
 
 ### 9.3 Published workflow I/O contracts
+- **Implemented in 0.15.644:** persisted declared output types (undeclared outputs remain `Any`), structural compatibility and direct-dependent impact, major-version enforcement with authorized audited overrides, and atomic head/revision/audit publication for saves and pack imports. Revision history previews contract impact; existing runs retain their frozen modules.
 - **Owning crates:** `runinator-models`, `runinator-store`/`runinator-database`, `runinator-rexrap-sema`, `runinator-rexrap-codegen`, `runinator-pack`, `runinator-ws-authoring`, `runinator-command-center`.
 - **Problem:** REXRAP can declare a workflow return shape, but stored definitions only persist input schema; when the authoring service builds signatures for existing workflows it assigns the output `Any`. Published subflows consequently lose a type boundary, and revision history cannot explain whether a change is breaking.
 - **Approach:** Persist a declared/inferred output contract with each workflow revision, use it for subflow typing, and classify input/output changes as compatible or breaking. Add an impact view for direct subflow/pipeline dependents and require an intentional semver bump or override before importing a breaking revision.

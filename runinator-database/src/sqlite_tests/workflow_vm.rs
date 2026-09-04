@@ -30,6 +30,7 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
 
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: parameters.clone(),
@@ -73,6 +74,7 @@ async fn debug_vm_run_stops_at_its_first_boundary() {
     let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
@@ -152,6 +154,7 @@ async fn vm_run_start_materializes_and_fires_each_periodic_timer_once() {
 
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
@@ -230,6 +233,7 @@ async fn terminal_vm_run_surfaces_the_continuation_failure() {
     let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
@@ -338,6 +342,7 @@ async fn terminal_vm_pipeline_members_are_recoverable_until_the_attempt_settles(
         .unwrap();
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
