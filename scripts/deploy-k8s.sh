@@ -2,7 +2,7 @@
 # Deploy the runinator stack to a Kubernetes cluster using kustomize.
 #
 # Usage:
-#   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--pack-import-timeout 600s] [--recreate-infra] [--delete]
+#   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--recreate-infra] [--delete]
 #
 # By default the postgres and rabbitmq StatefulSets are only applied when they
 # do not already exist in the target namespace. Pass --recreate-infra to apply
@@ -15,10 +15,10 @@
 # Manual local images use the overlay's default dev tag. All rust services share
 # deploy/Dockerfile and are selected with --target; BuildKit caches the common
 # builder stage so the cargo compile runs once for the whole set:
-#   for t in ws engine-worker waker worker archiver ctl bootstrap; do
+#   for t in ws engine-worker waker worker archiver bootstrap; do
 #     docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
 #   done
-# (`ctl` produces runinator-ctl:dev; `engine-worker` produces runinator-engine-worker:dev.)
+# (`engine-worker` produces runinator-engine-worker:dev.)
 
 set -euo pipefail
 
@@ -26,7 +26,6 @@ overlay="local"
 context=""
 delete=0
 recreate_infra=0
-pack_import_timeout="600s"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -36,10 +35,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --context)
             context="$2"
-            shift 2
-            ;;
-        --pack-import-timeout)
-            pack_import_timeout="$2"
             shift 2
             ;;
         --recreate-infra)
@@ -199,7 +194,4 @@ if [[ "$verb" == "apply" ]]; then
         exit 1
     fi
 
-    if ! kube wait --for=condition=complete job/runinator-pack-import --namespace runinator --timeout "$pack_import_timeout"; then
-        echo "warn: pack-import job did not complete within timeout" >&2
-    fi
 fi

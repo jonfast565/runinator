@@ -20,7 +20,6 @@ resources:
   - blob.yaml
   - waker.yaml
   - worker.yaml
-  - pack-import.yaml
   - command-center.yaml
   - autoscaling.yaml
   - pdb.yaml
@@ -37,8 +36,6 @@ images:
   - name: runinator-archiver
     newTag: dev
   - name: runinator-blob
-    newTag: dev
-  - name: runinator-ctl
     newTag: dev
   - name: runinator-bootstrap
     newTag: dev

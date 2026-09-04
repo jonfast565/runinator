@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::deploy::{ctl_image_from_bootstrap, postgres_data_claim_name};
+use super::deploy::postgres_data_claim_name;
 use super::images::{image_tag, versioned_image_tag};
 use super::kustomize::{add_component, set_overlay_images, split_image_reference};
 use super::yaml_docs::{
@@ -230,18 +230,4 @@ spec:
         postgres_data_claim_name(&docs).unwrap(),
         "postgres-data-runinator-postgres-0"
     );
-}
-
-#[test]
-fn ctl_image_from_bootstrap_keeps_the_deployed_registry_and_tag() {
-    assert_eq!(
-        ctl_image_from_bootstrap("registry.example.com/runinator/runinator-bootstrap:0.3.498")
-            .unwrap(),
-        "registry.example.com/runinator/runinator-ctl:0.3.498"
-    );
-    assert_eq!(
-        ctl_image_from_bootstrap("runinator-bootstrap@sha256:abc").unwrap(),
-        "runinator-ctl@sha256:abc"
-    );
-    assert!(ctl_image_from_bootstrap("runinator-bootstrap-extra:0.3.498").is_err());
 }

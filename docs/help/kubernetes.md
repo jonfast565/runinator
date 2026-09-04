@@ -78,7 +78,7 @@ Every rust service is one `--target` of the shared `deploy/Dockerfile`, so the
 whole dependency graph compiles once for the entire set:
 
 ```bash
-for t in ws engine-worker waker worker archiver blob ctl bootstrap broker adapter-host; do
+for t in ws engine-worker waker worker archiver blob bootstrap broker adapter-host; do
   docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
 done
 ```
@@ -147,11 +147,6 @@ start. `deploy/k8s/base/db-bootstrap-job.yaml` is kept as an optional
 out-of-band ops manifest; it is not part of the default kustomize base because
 Kubernetes Job pod templates are immutable across image tag changes.
 
-The bundled pack-import Job now logs in with the bootstrap-admin credentials
-before it runs `workflows apply`, so `runinator-app-secret` must carry
-`RUNINATOR_BOOTSTRAP_ADMIN_USERNAME` and `RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD`
-alongside `RUNINATOR_AUTH_BOOTSTRAP_ADMIN`.
-
 For non-Kubernetes environments, `runinator-bootstrap` also supports
 `--database mariadb` with a `mysql://...` connection string,
 in addition to the existing SQLite and Postgres modes.
@@ -218,11 +213,13 @@ cargo run -p xtask -- k8s deploy \
   --broker-backend kafka
 ```
 
-The deploy waits up to 10 minutes for the pack-import Job to complete. Override
-that when importing larger workflow packs:
+Kubernetes deployments do not import workflow packs. To apply a pack, keep a web-service
+port-forward running in one terminal, log in from the host CLI, and apply the selected directory:
 
 ```bash
-cargo run -p xtask -- k8s deploy --pack-import-timeout-secs 900
+bash scripts/port-forward-ws.sh
+runinatorctl --api-base-url http://127.0.0.1:8081/ login
+runinatorctl --api-base-url http://127.0.0.1:8081/ workflows apply packs/<pack-name>
 ```
 
 The local overlay includes development-only Postgres, RabbitMQ, and app
@@ -291,15 +288,15 @@ cargo run -p xtask -- k8s redeploy-database
 
 To replace PostgreSQL with a completely empty database, use the explicit
 destructive mode below. It scales only PostgreSQL down, deletes its generated
-data PVC, recreates PostgreSQL, restarts the web service so its bootstrap
-init-container applies the schema, and re-runs the bundled pack import. It does
-not redeploy RabbitMQ or the other application workloads.
+data PVC, recreates PostgreSQL, and restarts the web service so its bootstrap
+init-container applies the schema. It does not redeploy RabbitMQ or the other
+application workloads.
 
 ```bash
 cargo run -p xtask -- k8s redeploy-database --from-scratch
 ```
 
-Add `--skip-pack-import` when a schema-only empty database is intentional.
+Apply any required workflow packs afterward with the host CLI procedure above.
 
 By default only the command-center is reachable from outside the cluster (it
 proxies `/api` and `/ws` to the web service). To additionally expose the web

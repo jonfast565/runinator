@@ -3,9 +3,9 @@
 Targets a single-node local cluster (Docker Desktop, k3d, minikube, kind).
 The overlay includes development-only Secrets for Postgres, RabbitMQ, and the
 app credential store. It also seeds a dev-only bootstrap admin plus a shared
-service API key so the local `runinator-ws`, `runinator-worker`, and pack-import job
-can all run unchanged with `RUNINATOR_AUTH_ENABLED=true`. The waker is broker-only and
-does not receive service credentials.
+service API key so the local `runinator-ws` and `runinator-worker` can run unchanged
+with `RUNINATOR_AUTH_ENABLED=true`. The waker is broker-only and does not receive service
+credentials.
 
 Expects a default `StorageClass` (k3d ships `local-path`; kind needs the
 local-path provisioner installed; minikube enables it by default).

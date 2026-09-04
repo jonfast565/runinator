@@ -89,8 +89,6 @@ struct LocalUpArgs {
 enum K8sCommand {
     /// Build (unless --skip-build) and apply the runinator stack to a cluster.
     Deploy(K8sDeployArgs),
-    /// Re-run only the bundled workflow-pack import Job using the deployed ctl image.
-    ImportPacks(K8sImportPacksArgs),
     /// Apply only the Grafana dashboard, datasource, provider, deployment, and service resources.
     RedeployGrafana(K8sGrafanaArgs),
     /// Apply only the PostgreSQL Service and StatefulSet resources.
@@ -103,7 +101,6 @@ impl K8sCommand {
     fn kube_context(&self) -> Option<&str> {
         match self {
             Self::Deploy(args) => args.kube_context.as_deref(),
-            Self::ImportPacks(args) => args.kube_context.as_deref(),
             Self::RedeployGrafana(args) => args.kube_context.as_deref(),
             Self::RedeployDatabase(args) => args.kube_context.as_deref(),
             Self::Delete(args) => args.kube_context.as_deref(),
@@ -113,25 +110,11 @@ impl K8sCommand {
     fn operation(&self) -> &'static str {
         match self {
             Self::Deploy(_) => "deploy",
-            Self::ImportPacks(_) => "import-packs",
             Self::RedeployGrafana(_) => "redeploy-grafana",
             Self::RedeployDatabase(_) => "redeploy-database",
             Self::Delete(_) => "delete",
         }
     }
-}
-
-#[derive(clap::Args)]
-struct K8sImportPacksArgs {
-    /// kubectl context to use; defaults to the current context.
-    #[arg(long)]
-    kube_context: Option<String>,
-    /// kustomize overlay directory or a raw manifest file.
-    #[arg(long, default_value = "deploy/k8s/overlays/local")]
-    manifest: PathBuf,
-    /// seconds to wait for the bundled pack-import Job to complete.
-    #[arg(long, default_value_t = 600)]
-    pack_import_timeout_secs: u32,
 }
 
 #[derive(clap::Args)]
@@ -153,16 +136,9 @@ struct K8sDatabaseArgs {
     #[arg(long, default_value = "deploy/k8s/overlays/local")]
     manifest: PathBuf,
     /// discard the PostgreSQL data PVC before recreating the database. This destroys all durable
-    /// Runinator state, then re-runs the web-service bootstrap and bundled pack import.
+    /// Runinator state, then re-runs the web-service bootstrap.
     #[arg(long, default_value_t = false)]
     from_scratch: bool,
-    /// do not re-import bundled workflow packs after --from-scratch. Use this only when the fresh
-    /// database must remain schema-only.
-    #[arg(long, default_value_t = false)]
-    skip_pack_import: bool,
-    /// seconds to wait for the bundled pack-import Job after --from-scratch.
-    #[arg(long, default_value_t = 600)]
-    pack_import_timeout_secs: u32,
 }
 
 #[derive(clap::Args)]
@@ -199,9 +175,6 @@ struct K8sDeployArgs {
     /// kustomize overlay directory or a raw manifest file.
     #[arg(long, default_value = "deploy/k8s/overlays/local")]
     manifest: PathBuf,
-    /// seconds to wait for the pack-import job to complete.
-    #[arg(long, default_value_t = 600)]
-    pack_import_timeout_secs: u32,
     /// re-apply the postgres/rabbitmq StatefulSets even if they already exist (may roll them).
     #[arg(long, default_value_t = false)]
     recreate_infra: bool,
@@ -258,7 +231,6 @@ fn run_process() -> anyhow::Result<()> {
 
             let result = match command {
                 K8sCommand::Deploy(args) => run_k8s_deploy(&workspace_root, &args),
-                K8sCommand::ImportPacks(args) => run_k8s_import_packs(&workspace_root, &args),
                 K8sCommand::RedeployGrafana(args) => {
                     run_k8s_redeploy_grafana(&workspace_root, &args)
                 }
@@ -436,30 +408,11 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
         workspace_root,
         manifest_path: &manifest_path,
         kube_context: args.kube_context.as_deref(),
-        pack_import_timeout_secs: args.pack_import_timeout_secs,
         image_map,
         delete: false,
         command_center_only: args.command_center_only,
         recreate_infra: args.recreate_infra,
         expose_direct_ingress: args.expose_direct_ingress,
-    })
-}
-
-fn run_k8s_import_packs(
-    workspace_root: &std::path::Path,
-    args: &K8sImportPacksArgs,
-) -> anyhow::Result<()> {
-    let manifest_path = if args.manifest.is_absolute() {
-        args.manifest.clone()
-    } else {
-        workspace_root.join(&args.manifest)
-    };
-
-    k8s::deploy::import_packs(k8s::deploy::PackImportOptions {
-        workspace_root,
-        manifest_path: &manifest_path,
-        kube_context: args.kube_context.as_deref(),
-        pack_import_timeout_secs: args.pack_import_timeout_secs,
     })
 }
 
@@ -475,7 +428,6 @@ fn run_k8s_delete(workspace_root: &std::path::Path, args: &K8sDeleteArgs) -> any
         workspace_root,
         manifest_path: &manifest_path,
         kube_context: args.kube_context.as_deref(),
-        pack_import_timeout_secs: 600,
         image_map: None,
         delete: true,
         command_center_only: args.command_center_only,
@@ -518,7 +470,5 @@ fn run_k8s_redeploy_database(
         manifest_path: &manifest_path,
         kube_context: args.kube_context.as_deref(),
         from_scratch: args.from_scratch,
-        skip_pack_import: args.skip_pack_import,
-        pack_import_timeout_secs: args.pack_import_timeout_secs,
     })
 }

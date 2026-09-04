@@ -37,12 +37,6 @@ const IMAGES: &[ImageSpec] = &[
         context: ".",
     },
     ImageSpec {
-        name: "runinator-ctl",
-        dockerfile: "deploy/Dockerfile",
-        target: Some("ctl"),
-        context: ".",
-    },
-    ImageSpec {
         name: "runinator-ws",
         dockerfile: "deploy/Dockerfile",
         target: Some("ws"),

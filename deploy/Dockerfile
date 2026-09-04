@@ -9,7 +9,6 @@
 #   docker build -f deploy/Dockerfile --target waker      -t runinator-waker:dev      .
 #   docker build -f deploy/Dockerfile --target worker     -t runinator-worker:dev     .
 #   docker build -f deploy/Dockerfile --target archiver   -t runinator-archiver:dev   .
-#   docker build -f deploy/Dockerfile --target ctl        -t runinator-ctl:dev        .
 #   docker build -f deploy/Dockerfile --target bootstrap  -t runinator-bootstrap:dev  .
 #   docker build -f deploy/Dockerfile --target broker     -t runinator-broker:dev     .
 #   docker build -f deploy/Dockerfile --target blob       -t runinator-blob:dev       .
@@ -29,7 +28,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.14.622
+ARG RUNINATOR_VERSION=0.14.623
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -51,9 +50,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/workspace/target,id=runinator-target-${TARGETARCH},sharing=locked \
     case "$RUNINATOR_K8S_DATABASE_BACKEND" in \
-      sqlite) database_features='runinator-ws/sqlite,runinator-engine-worker/sqlite,runinator-worker/db-sqlite,runinator-archiver/sqlite,runinator-bootstrap/sqlite,runinator-ctl/db-sqlite' ;; \
-      postgres) database_features='runinator-ws/postgres,runinator-engine-worker/postgres,runinator-worker/db-postgres,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres' ;; \
-      mariadb) database_features='runinator-ws/mariadb,runinator-engine-worker/mariadb,runinator-worker/db-mariadb,runinator-archiver/mariadb,runinator-bootstrap/mariadb,runinator-ctl/db-mariadb' ;; \
+      sqlite) database_features='runinator-ws/sqlite,runinator-engine-worker/sqlite,runinator-worker/db-sqlite,runinator-archiver/sqlite,runinator-bootstrap/sqlite' ;; \
+      postgres) database_features='runinator-ws/postgres,runinator-engine-worker/postgres,runinator-worker/db-postgres,runinator-archiver/postgres,runinator-bootstrap/postgres' ;; \
+      mariadb) database_features='runinator-ws/mariadb,runinator-engine-worker/mariadb,runinator-worker/db-mariadb,runinator-archiver/mariadb,runinator-bootstrap/mariadb' ;; \
       *) echo "unsupported RUNINATOR_K8S_DATABASE_BACKEND: $RUNINATOR_K8S_DATABASE_BACKEND (expected sqlite, postgres, or mariadb)" >&2; exit 2 ;; \
     esac \
     && case "$RUNINATOR_K8S_BROKER_BACKEND" in \
@@ -69,7 +68,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         -p runinator-worker \
         -p runinator-archiver \
         -p runinator-waker \
-        -p runinator-ctl \
         -p runinator-bootstrap \
         -p runinator-broker \
         -p runinator-blob \
@@ -81,7 +79,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
           target/release/runinator-worker \
           target/release/runinator-archiver \
           target/release/runinator-waker \
-          target/release/runinatorctl \
           target/release/runinator-bootstrap \
           target/release/runinator-broker \
           target/release/runinator-blob \
@@ -165,21 +162,6 @@ COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /u
 ENV RUNINATOR_ADAPTER_HOST_PORT=8790
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-adapter-host"]
-
-# ---- ctl: short-lived pack importer ----
-FROM runtime-base AS ctl
-COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/bin/runinatorctl
-# bake every pack in, each keeping its own subdirectory so `.rrx` source names never collide
-# across packs; the import job applies each workflow-containing directory.
-COPY --chown=runinator:runinator packs /home/runinator/.runinator/workflows/packs
-ENV RUNINATOR_API_BASE_URL=http://127.0.0.1:8080/
-USER runinator
-# short-lived: compile and import a workflow pack, then exit. the default applies the SDLC pack
-# directory; the `.rrx` compiler discovers its nested sources. override the final argument to
-# import a different pack, or pass other runinatorctl subcommands. the k8s pack-import job
-# overrides this to loop over every baked-in pack.
-ENTRYPOINT ["/usr/local/bin/runinatorctl"]
-CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc"]
 
 # ---- bootstrap ----
 FROM runtime-base AS bootstrap

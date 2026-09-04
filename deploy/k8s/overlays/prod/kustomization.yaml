@@ -27,9 +27,6 @@ images:
   - name: runinator-blob
     newName: REPLACE_REGISTRY/runinator-blob
     newTag: latest
-  - name: runinator-ctl
-    newName: REPLACE_REGISTRY/runinator-ctl
-    newTag: latest
   - name: runinator-adapter-host
     newName: REPLACE_REGISTRY/runinator-adapter-host
     newTag: latest

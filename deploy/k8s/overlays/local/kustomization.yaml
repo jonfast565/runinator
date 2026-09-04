@@ -89,9 +89,6 @@ images:
   - name: runinator-blob
     newName: runinator-blob
     newTag: dev
-  - name: runinator-ctl
-    newName: runinator-ctl
-    newTag: dev
   - name: runinator-adapter-host
     newName: runinator-adapter-host
     newTag: dev

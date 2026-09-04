@@ -29,11 +29,9 @@ Redeploy the cluster after every change except:
 
 ### Pack-only changes
 
-- Add workflow packs under `packs/` so they are bundled into the `runinator-ctl` image for the next
-  normal deployment.
-- Once that image is deployed, refresh only the bundled packs with
-  `cargo run -p xtask -- k8s import-packs`; do not redeploy unrelated services merely to rerun the
-  pack-import Job.
+- Add workflow packs under `packs/` and apply them explicitly with `runinatorctl workflows apply`.
+  Kubernetes deployments never import packs automatically. When targeting a cluster, first start
+  `scripts/port-forward-ws.sh` and point the CLI at that forwarded URL.
 
 All agent-driven Kubernetes mutations must go through `cargo run -p xtask -- k8s ...`. Never call
 `kubectl`, Helm, or `scripts/deploy-k8s.sh` directly for deployment. Mutating `xtask k8s` commands

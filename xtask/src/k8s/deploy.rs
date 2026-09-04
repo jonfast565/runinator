@@ -1,7 +1,7 @@
 //! orchestrates a kustomize-based apply/delete against a running cluster: renders image overrides
 //! into a disposable overlay copy, preserves already-running postgres/rabbitmq state unless asked
 //! to recreate it, cleans up resources that were superseded by earlier renames, and waits for
-//! rollouts + the pack-import job.
+//! rollouts.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,19 +17,11 @@ pub struct DeployOptions<'a> {
     pub workspace_root: &'a Path,
     pub manifest_path: &'a Path,
     pub kube_context: Option<&'a str>,
-    pub pack_import_timeout_secs: u32,
     pub image_map: Option<HashMap<String, String>>,
     pub delete: bool,
     pub command_center_only: bool,
     pub recreate_infra: bool,
     pub expose_direct_ingress: bool,
-}
-
-pub struct PackImportOptions<'a> {
-    pub workspace_root: &'a Path,
-    pub manifest_path: &'a Path,
-    pub kube_context: Option<&'a str>,
-    pub pack_import_timeout_secs: u32,
 }
 
 pub struct GrafanaRedeployOptions<'a> {
@@ -43,8 +35,6 @@ pub struct DatabaseRedeployOptions<'a> {
     pub manifest_path: &'a Path,
     pub kube_context: Option<&'a str>,
     pub from_scratch: bool,
-    pub skip_pack_import: bool,
-    pub pack_import_timeout_secs: u32,
 }
 
 const STALE_RESOURCES: &[&str] = &[
@@ -193,7 +183,7 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
     );
     for stale_resource in STALE_RESOURCES {
         exec::warn_on_err(
-            &format!("pack-import cleanup skipped or failed for '{stale_resource}'"),
+            &format!("stale-resource cleanup skipped or failed for '{stale_resource}'"),
             || {
                 let args = kubectl_args(
                     &ctx_args,
@@ -297,23 +287,6 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
 
     run_rollout_checks(options.workspace_root, &ctx_args, &rollout_targets);
 
-    exec::warn_on_err("pack-import job did not complete within timeout", || {
-        let timeout = format!("{}s", options.pack_import_timeout_secs);
-        let args = kubectl_args(
-            &ctx_args,
-            &[
-                "wait",
-                "--for=condition=complete",
-                "job/runinator-pack-import",
-                "--namespace",
-                NAMESPACE,
-                "--timeout",
-                &timeout,
-            ],
-        );
-        exec::run("kubectl", &args, options.workspace_root)
-    });
-
     Ok(())
 }
 
@@ -360,43 +333,11 @@ pub fn redeploy_grafana(options: GrafanaRedeployOptions) -> Result<()> {
     Ok(())
 }
 
-/// Recreate only the bundled pack-import Job. The Job uses the ctl image paired with the deployed
-/// web service, so callers must deploy a release containing any new pack files before using this.
-pub fn import_packs(options: PackImportOptions) -> Result<()> {
-    exec::require_tool("kubectl")?;
-
-    let resolved_path = if options.manifest_path.is_absolute() {
-        options.manifest_path.to_path_buf()
-    } else {
-        options.workspace_root.join(options.manifest_path)
-    };
-    anyhow::ensure!(
-        resolved_path.exists(),
-        "kubernetes manifest or overlay not found at {}",
-        resolved_path.display()
-    );
-
-    let ctx_args = context_args(options.kube_context);
-    let rendered = render_manifest(
-        options.workspace_root,
-        &ctx_args,
-        &resolved_path,
-        resolved_path.is_dir(),
-    )?;
-    let docs = yaml_docs::parse_documents(&rendered)?;
-    reimport_bundled_packs(
-        options.workspace_root,
-        &ctx_args,
-        &docs,
-        options.pack_import_timeout_secs,
-    )
-}
-
 /// Apply only PostgreSQL's Service and StatefulSet from a rendered overlay. Re-applying the
 /// StatefulSet updates its pod template without deleting its PVC. `from_scratch` instead scales
 /// PostgreSQL down and deletes its sole generated data claim before recreating the StatefulSet.
-/// It then restarts only the web service to run its database bootstrap and re-runs the bundled pack
-/// import, so the newly empty database becomes usable without applying the rest of the stack.
+/// It then restarts only the web service to run its database bootstrap, so the newly empty database
+/// becomes usable without applying the rest of the stack.
 pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
     exec::require_tool("kubectl")?;
 
@@ -436,13 +377,7 @@ pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
     run_rollout_checks(options.workspace_root, &ctx_args, &[rollout]);
 
     if options.from_scratch {
-        bootstrap_fresh_database(
-            options.workspace_root,
-            &ctx_args,
-            &docs,
-            options.skip_pack_import,
-            options.pack_import_timeout_secs,
-        )?;
+        bootstrap_fresh_database(options.workspace_root, &ctx_args, &docs)?;
     }
 
     Ok(())
@@ -526,8 +461,6 @@ fn bootstrap_fresh_database(
     workspace_root: &Path,
     ctx_args: &[String],
     docs: &[Value],
-    skip_pack_import: bool,
-    pack_import_timeout_secs: u32,
 ) -> Result<()> {
     println!("==> Restarting the web service to bootstrap the fresh database");
     let restart_args = kubectl_args(
@@ -551,130 +484,6 @@ fn bootstrap_fresh_database(
         )],
     );
 
-    if skip_pack_import {
-        println!("==> Skipping bundled pack import (--skip-pack-import)");
-        return Ok(());
-    }
-
-    reimport_bundled_packs(workspace_root, ctx_args, docs, pack_import_timeout_secs)
-}
-
-fn reimport_bundled_packs(
-    workspace_root: &Path,
-    ctx_args: &[String],
-    docs: &[Value],
-    pack_import_timeout_secs: u32,
-) -> Result<()> {
-    // Checked-in manifest images normally still say `:dev`, while the deployed stack may use a
-    // versioned registry image. Match the deployed release so the Job is available on the same
-    // cluster nodes and imports packs from that release.
-    let pack_import_image = deployed_ctl_image(workspace_root, ctx_args)?;
-    let mut pack_import = docs
-        .iter()
-        .find(|doc| {
-            yaml_docs::doc_kind(doc) == Some("Job")
-                && yaml_docs::doc_name(doc) == Some("runinator-pack-import")
-        })
-        .cloned()
-        .ok_or_else(|| {
-            anyhow::anyhow!("rendered manifest does not contain job/runinator-pack-import")
-        })?;
-    set_pack_import_image(&mut pack_import, &pack_import_image)?;
-    let delete_args = kubectl_args(
-        ctx_args,
-        &[
-            "delete",
-            "job/runinator-pack-import",
-            "--namespace",
-            NAMESPACE,
-            "--ignore-not-found=true",
-            "--wait=true",
-            "--timeout=120s",
-        ],
-    );
-    exec::run("kubectl", &delete_args, workspace_root)?;
-
-    println!("==> Re-importing bundled packs into the fresh database");
-    let stdin = yaml_docs::serialize_documents(&[pack_import])?;
-    let apply_args = kubectl_args(ctx_args, &["apply", "-f", "-"]);
-    exec::run_with_stdin("kubectl", &apply_args, workspace_root, &stdin)?;
-
-    let timeout = format!("{pack_import_timeout_secs}s");
-    let wait_args = kubectl_args(
-        ctx_args,
-        &[
-            "wait",
-            "--for=condition=complete",
-            "job/runinator-pack-import",
-            "--namespace",
-            NAMESPACE,
-            "--timeout",
-            &timeout,
-        ],
-    );
-    exec::run("kubectl", &wait_args, workspace_root)
-}
-
-fn deployed_ctl_image(workspace_root: &Path, ctx_args: &[String]) -> Result<String> {
-    let image_query = "jsonpath={.spec.template.spec.initContainers[0].image}";
-    let args = kubectl_args(
-        ctx_args,
-        &[
-            "get",
-            "deployment/runinator-ws",
-            "--namespace",
-            NAMESPACE,
-            "-o",
-            image_query,
-        ],
-    );
-    let bootstrap_image = exec::capture("kubectl", &args, workspace_root)?;
-    ctl_image_from_bootstrap(bootstrap_image.trim())
-}
-
-/// The K8s images are built as one release and differ only by the final target name. Retain the
-/// registry, repository, tag, or digest chosen by the deployment while selecting the ctl target.
-pub(super) fn ctl_image_from_bootstrap(bootstrap_image: &str) -> Result<String> {
-    let component_start = bootstrap_image
-        .rfind('/')
-        .map_or(0, |slash| slash.saturating_add(1));
-    let (prefix, component) = bootstrap_image.split_at(component_start);
-    let suffix = component
-        .strip_prefix("runinator-bootstrap")
-        .ok_or_else(|| {
-            anyhow::anyhow!("expected a runinator-bootstrap image, got '{bootstrap_image}'")
-        })?;
-    anyhow::ensure!(
-        suffix.is_empty() || suffix.starts_with(':') || suffix.starts_with('@'),
-        "expected a runinator-bootstrap image, got '{bootstrap_image}'"
-    );
-    Ok(format!("{prefix}runinator-ctl{suffix}"))
-}
-
-fn set_pack_import_image(pack_import: &mut Value, image: &str) -> Result<()> {
-    let containers = pack_import
-        .get_mut("spec")
-        .and_then(|spec| spec.get_mut("template"))
-        .and_then(|template| template.get_mut("spec"))
-        .and_then(|spec| spec.get_mut("containers"))
-        .and_then(Value::as_sequence_mut)
-        .ok_or_else(|| anyhow::anyhow!("pack-import Job has no pod containers"))?;
-    let container = containers
-        .iter_mut()
-        .find(|container| {
-            container
-                .get("name")
-                .and_then(Value::as_str)
-                .is_some_and(|name| name == "pack-import")
-        })
-        .ok_or_else(|| anyhow::anyhow!("pack-import Job has no pack-import container"))?;
-    let mapping = container
-        .as_mapping_mut()
-        .ok_or_else(|| anyhow::anyhow!("pack-import container is not a mapping"))?;
-    mapping.insert(
-        Value::String("image".to_string()),
-        Value::String(image.to_string()),
-    );
     Ok(())
 }
 

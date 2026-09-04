@@ -6,17 +6,13 @@ to the desktop worker (`runner=desktop`), invokes Claude Code with the private
 profile, and publishes `yes` on success. It publishes `no` and fails when Claude
 says `no`, or when the Claude invocation cannot start or complete.
 
-The Kubernetes pack-import job includes this directory with the other bundled
-packs. After deploying an image that contains this pack, re-run only that job:
+To import this pack into Kubernetes, keep a web-service port-forward running in
+one terminal and use the host CLI in another:
 
 ```bash
-cargo run -p xtask -- k8s import-packs
-```
-
-For a local or non-Kubernetes target, apply this individual pack directly:
-
-```bash
-runinatorctl workflows apply packs/claude-availability
+bash scripts/port-forward-ws.sh
+runinatorctl --api-base-url http://127.0.0.1:8081/ login
+runinatorctl --api-base-url http://127.0.0.1:8081/ workflows apply packs/claude-availability
 ```
 
 After the desktop agent receives the new profile configuration, approve
