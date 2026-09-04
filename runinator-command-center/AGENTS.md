@@ -1,59 +1,61 @@
 # AGENTS.md
 
-Guidance for agents working in `runinator-command-center`.
+Guidance for `runinator-command-center`, the Tauri/Vue control client.
 
 ## Ownership
 
-`runinator-command-center` is the Tauri/Vue client. Keep UI state, graph editing, workflow run inspection, and API interaction here. Do not change runtime crate behavior from the UI unless the user explicitly asks for a cross-runtime feature.
+The command center edits packs, calls the web service, and presents runtime state. It never hosts a
+worker, loads providers, or exposes worker lifecycle APIs; machine-local execution belongs to the
+standalone `runinator-desktop-agent`.
 
-## Layer Boundaries
+The frontend has a framework-agnostic core and a Vue presentation layer:
 
-The frontend is split into a framework-agnostic core and a Vue presentation layer:
-
-| Layer | Path | Rules |
+| Layer | Path | Rule |
 | --- | --- | --- |
-| **core/** | `src/core/` | Framework-agnostic TypeScript. No imports from `vue`, `pinia`, `@vue-flow/*`, `@codemirror/*`, `@tauri-apps/*`, or `src/ui/**`. |
-| **ui/** | `src/ui/` | Vue presentation: views, components, composables, adapters. |
+| Core | `src/core/` | No Vue, Pinia, Vue Flow, CodeMirror, Tauri, or `src/ui/` imports. |
+| UI | `src/ui/` | Views, components, composables, and framework/platform adapters. |
 
-### core/ layout
+Business logic belongs in `src/core/services/` or pure `src/core/utils/`; Pinia adapters remain thin.
+Graph transforms live in `src/core/workflow/`, Vue Flow rendering in `src/ui/adapters/vue-flow/`, browser
+file/download helpers in `src/ui/adapters/browser/`, and desktop invokes in `src/ui/adapters/tauri/`.
+Bootstrap selects the platform adapter and registers the CodeMirror text-editor factory before
+mounting.
 
-- `core/domain/` — wire models (`models/`, `json.ts`)
-- `core/api/` — `commandCenterApi`, `httpRuntime`, injected `CommandRuntime`
-- `core/services/` — framework-agnostic application logic; the singleton registry is `core/services/index.ts`
-- `core/realtime/` — WebSocket clients and event routing
-- `core/navigation/` — tabs, nav config, breakpoints, URL sync helpers
-- `core/workflow/` — workflow graph domain logic
-- `core/utils/` — pure helpers
-- `core/platform/` — platform adapter interfaces
+## Area Wiring
 
-### ui/ layout
+Functions, Console, and Orchestrations use the same vertical slice:
 
-- `ui/views/` — screen components
-- `ui/components/` — shell, shared, workflow widgets
-- `ui/composables/` — thin Vue lifecycle glue over core clients
-- `ui/adapters/pinia/` — Pinia stores mirroring core services
-- `ui/adapters/vue-flow/` — graph canvas adapter
-- `ui/adapters/codemirror/` — editor extensions
-- `ui/adapters/browser/` — DOM file/download helpers, HTTP runtime
-- `ui/adapters/tauri/` — desktop invoke bridge
+- Wire/domain model under `src/core/domain/models/<area>/` and its central export.
+- Service under `src/core/services/` and `src/core/services/index.ts`.
+- API method plus `src/core/api/httpRuntime.ts` registry entry.
+- Pinia adapter under `src/ui/adapters/pinia/` and view under `src/ui/views/`.
+- Navigation tab/config, `App.vue` wiring, and matching Tauri command/`generate_handler![]` entry
+  where desktop bridging is required.
 
-## Where To Start
+Do not duplicate backend validation; client validation is fast feedback only. Keep API payloads
+compatible with `src/core/domain/models/`.
 
-- App shell: `src/App.vue`, `src/ui/components/shell/`
-- API facade: `src/core/api/commandCenterApi.ts`, runtime bootstrap in `src/main.ts`
-- Services registry: `src/core/services/index.ts`
-- Pinia adapters: `src/ui/adapters/pinia/`
-- Workflow graph: `src/core/workflow/`, services `src/core/services/workflows/`, canvas `src/ui/components/workflow/WorkflowCanvas.vue`
-- Rust/Tauri commands: `src-tauri/src/`
+## Console and Function Publishing
 
-## Boundaries
+The browser console derives parsing, validation, help, completion, and multiline readiness from
+`runinator-ctl-wasm`. TypeScript command objects are execution adapters, not a second command
+registry or tokenizer. Read `runinator-ctl/AGENTS.md` for the shared command-surface contract.
+Interactive process terminals remain worker PTY/ConPTY streams rendered by xterm; WASM is not a
+PTY and never launches processes.
 
-- Keep model compatibility with API payloads in `src/core/domain/models/`.
-- Put business logic in `src/core/services/` or pure `src/core/utils/`; Pinia adapters stay thin.
-- Graph transforms belong in `src/core/workflow/`; Vue Flow rendering in `src/ui/adapters/vue-flow/`.
-- Browser-only helpers live in `src/ui/adapters/browser/files.ts`.
-- Do not duplicate backend validation rules; client validation is fast feedback only.
-- The command center is an API client and pack-development surface. It must not depend on `runinator-worker`, load providers, manage a worker lifecycle, or expose start/stop-worker platform APIs. Machine-local execution belongs exclusively to the standalone `runinator-desktop-agent` application.
+The Functions publish dialog uploads an archive the operator already built plus its manifest and
+computes the SHA-256 from uploaded bytes. A browser has no working tree to archive. `src/core/utils/zip.ts`
+may recover the manifest from a walkable ZIP and otherwise leaves it for manual entry. Do not make
+the browser path imitate `runinatorctl functions publish`, which deterministically archives a
+directory.
+
+## Where to Start
+
+- App shell: `src/App.vue`, `src/ui/components/shell/`.
+- API/runtime: `src/core/api/`, bootstrap in `src/bootstrap.ts`.
+- Services and Pinia adapters: `src/core/services/`, `src/ui/adapters/pinia/`.
+- Workflow graph: `src/core/workflow/`, workflow services, and `src/ui/components/workflow/`.
+- Rust/Tauri commands: `src-tauri/src/`.
 
 ## Verification
 
@@ -64,6 +66,7 @@ pnpm --dir runinator-command-center test -- --run
 pnpm --dir runinator-command-center build
 ```
 
-`core/**` is guarded by ESLint `no-restricted-imports` against Vue/Pinia/Vue Flow/CodeMirror/Tauri/ui imports.
-
-For visual changes, verify affected flows on desktop-sized and narrow viewports.
+ESLint guards `src/core/**` imports. For visual changes, verify desktop-sized and narrow viewports.
+Workspace-wide Cargo commands unify features with the desktop agent. Keep its `rfd` feature set
+compatible with `tauri-plugin-dialog`; enabling both Linux `gtk3` and `xdg-portal` backends makes
+the `rfd` build script fail.

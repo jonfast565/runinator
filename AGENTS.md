@@ -1,568 +1,54 @@
 # AGENTS.md
 
-Guidance for agents working in this repository. Keep changes aligned with the existing architecture before adding new abstractions or cross-crate dependencies.
+Repository-wide guidance for Runinator. Keep this file limited to rules that apply across the
+workspace. Before changing a subsystem, read its scoped `AGENTS.md`; the routing table below names
+family guides that also apply to sibling crates outside the guide's directory.
 
-## Versioning
+When adding guidance, put a rule here only if every workspace task needs it. Put ownership,
+implementation invariants, and focused verification in the crate that owns them. Prefer a short
+rule plus a source-of-truth path over implementation history.
 
-Increment the build number for every new feature. For a substantial, multi-phase feature, increment the minor version as well.
+## Development Workflow
 
-## Deployment
+### Versioning and Git
 
-Redeploy the cluster after every change, with two exceptions:
+- Increment the build number for every new feature. Increment the minor version as well for a
+  substantial, multi-phase feature.
+- Commit every change and push it directly to `main`.
+- Preserve unrelated user changes in a dirty worktree and keep generated/runtime artifacts out of
+  commits, especially `build/`, `target/`, and `.runinator-supervisor/`.
 
-- For a documentation-only change, do not deploy.
-- For a UI-only change, deploy only `runinator-command-center`.
-- For changes confined to `runinator-desktop-agent`, do not rebuild or redeploy the cluster. The
-  desktop agent runs locally; deploy the cluster only when its shared runtime dependencies or a
-  cluster-owned artifact changed.
+### Deployment
 
-All agent-driven Kubernetes mutations must go through `cargo run -p xtask -- k8s ...`. Do not call
-`kubectl`, Helm, or `scripts/deploy-k8s.sh` directly for a deployment. Every mutating `xtask k8s`
-command holds the cluster-backed deployment Lease across image build/push, apply, and rollout, so
-separate worktrees and local agent processes cannot deploy concurrently.
+Redeploy the cluster after every change except:
 
-## Local Cluster Debugging
+- Documentation-only changes: do not deploy.
+- UI-only changes: deploy only `runinator-command-center`.
+- Changes confined to `runinator-desktop-agent`: do not rebuild or redeploy the cluster unless a
+  shared runtime dependency or cluster-owned artifact also changed.
 
-When debugging a Kubernetes cluster with a locally running Command Center or `runinatorctl`, first
-port-forward `runinator-ws` with `scripts/port-forward-ws.sh`. Point the local client at that exact
-forwarded port: set the Command Center service URL to it, or pass the same port to
-`scripts/start-runinatorctl.sh --port`. The CLI launcher does not create the port-forward itself.
+All agent-driven Kubernetes mutations must go through `cargo run -p xtask -- k8s ...`. Never call
+`kubectl`, Helm, or `scripts/deploy-k8s.sh` directly for deployment. Mutating `xtask k8s` commands
+hold the cluster-backed deployment Lease across build, push, apply, and rollout; do not create a
+second deployment path that bypasses that serialization.
 
-Cluster debugging uses the development-only bootstrap account `admin` / `admin`. It is never a
-production credential; production deployments must provide their own secrets.
+### Local Cluster Debugging
 
-## Git Workflow
+Before debugging the cluster with a locally running Command Center or `runinatorctl`, start
+`scripts/port-forward-ws.sh` and point the client at that exact forwarded port. The CLI launcher
+does not create the port-forward. The development-only bootstrap account is `admin` / `admin`;
+production deployments must provide their own credentials.
 
-Commit every change and push it directly to `main`.
+### Verification Cycle
 
-## Development Cycle Verification
+- Read nearby code before editing and mirror its naming, async style, and error conventions.
+- Run compilation, Clippy, and tests at the end of a development cycle rather than after each edit.
+- Start with the narrowest relevant check, then use workspace checks for shared contracts.
+- Default workspace tests build default features only. Changes to optional broker/provisioner or
+  deployed feature sets must compile the affected exact features with `--all-targets`.
+- On macOS, run `cargo clean` only after all final compilation, Clippy, and test commands finish.
 
-Run compilations, Clippy, and tests only at the end of a development cycle, rather than after individual edits.
-
-On macOS, run `cargo clean` after the final compilation, Clippy, and test verification has completed
-and before finishing the task. This prevents Rust test binaries and other build artifacts from
-accumulating in `target/`; do not clean earlier when another verification command still needs the
-build outputs.
-
-## API Design
-
-When an operation needs several related inputs, prefer one purpose-named context or request object
-over a long positional parameter list. This keeps call sites self-documenting and lets the context
-grow without repeatedly changing every caller; do not retain a large parameter list merely to avoid
-introducing the small domain type that represents that operation.
-
-## Project Shape
-
-Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime using a resumable state-machine orchestrator.
-
-Primary runtime flow:
-
-1. `runinator-ws` owns the HTTP API, authentication/authorization, WebSockets, and transport adapters. It embeds `runinator-engine` by default, but does not own graph-runtime or repository implementation code. The surface is spread over six crates — `runinator-ws` itself only assembles them; see "The web service crates" below.
-2. `runinator-engine` owns the background loops that consume broker ingress/results, fire triggers, publish wakes/actions, and reconcile durable work. It drives the continuation-based graph interpreter in `runinator-runtime`. The engine can run inside `runinator-ws` or in the standalone `runinator-engine-worker`; do not fork those execution paths.
-3. `runinator-waker` is a small, horizontally scalable, broker-only timer/relay: it consumes the `wake` channel, sleeps until each wake is due, then publishes the settle it carries on the `ingress` channel. It is the timer backend for the workflow VM — every effect that completes at a known future instant (`Timer`, `TimerDelay`, an approval expiry, a manual/external gate deadline, a `debounce`) is armed as a wake by the engine's infrastructure effect host rather than slept on in-process. It has no database, no HTTP client to the web service, and shares no channel with the worker.
-4. `runinator-worker` polls the broker effect channel, resolves a provider/plugin, executes the effect, and publishes results on the broker effect-result channel. It self-publishes its built-in provider metadata to the web service on startup.
-5. `runinator-desktop-agent` is the standalone, exclusive desktop worker. It reuses `runinator-worker`'s runtime, exposes built-in providers plus the sandboxed local-files provider, and can relay broker traffic through `runinator-ws`. It is a separate tray application, not a Tauri sidecar or command-center service.
-6. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.rrx` source or directory **client-side**, zips the compiled artifacts (`workflows.json` + optional versioned `settings.json` + optional `pipelines.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Readers accept legacy `secrets.json` for one compatibility release, but writers emit only `settings.json`. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-pack-wire`; the entry-name layout is the wire contract shared by ctl/api/command-center (writers) and ws (reader). `.rrx` is the only authored pack-file extension: its REXRAP container may carry workflow, pipeline, settings, package-manifest, and test blocks.
-
-   `runinatorctl console` is the terminal console. Its `:` lines are parsed by the **same clap
-   parser** the process uses (`commands/repl.rs` → `commands::run_command`), so every command-line
-   verb is reachable from the repl the day it is added — never add a second table of verbs. The
-   console is a full-screen ratatui interface (`src/tui/`) with a **scrollable output pane**: a
-   status line, everything commands have printed, the input, the completion menu, and a key legend.
-   The command modules still print with plain `println!` — `tui/capture.rs` redirects the process's
-   own descriptors 1 and 2 into a pipe and a reader thread appends to `tui/transcript.rs`, so output
-   from anywhere in the process (or a dependency) is scrollable without threading a writer through
-   two dozen modules. Three invariants follow from that and must not be weakened: the ratatui
-   backend draws on a **duplicate of the original stdout** (`Capture::install` hands it back), since
-   drawing through `io::stdout()` would paint the interface into the log it is displaying; nothing on
-   the reader thread may print, and it must not stop early, because closing the read end turns the
-   next `println!` into a broken-pipe panic; and the transcript is **replayed to the terminal on
-   exit**, so quitting leaves the session's output in the shell's scrollback as it was before the
-   console owned the screen. Startup avoids `Terminal::clear` and anything else that waits on a
-   cursor-position reply — a terminal slow to answer would drop the console to the plain prompt for
-   no reason. Keyboard scrolling (PgUp/PgDn, Shift+arrows/Home/End) is handled in `tui.rs` *before*
-   the editor sees the key, so `tui/editor.rs` stays purely about the line and history recall keeps
-   every key it had; the wheel scrolls whichever pane the pointer is over, hit-tested against
-   `render::bands`, which is why layout arithmetic lives in one function that both drawing and
-   hit-testing read. `--plain` or a non-tty stdout falls back to the reedline prompt.
-
-   The console is **not unix-only**. `tui/capture.rs` holds the shared half — the pipe reader, the
-   transcript — and `capture/unix.rs` and `capture/windows.rs` hold the one part that differs:
-   `dup2` on a descriptor against `SetStdHandle` on a std handle. What makes the windows half
-   possible is that crossterm never uses the std handles: `crossterm_winapi` opens `CONOUT$` and
-   `CONIN$` by name with `CreateFileW`, so the size query, raw mode, the alternate screen, cursor
-   visibility, and the event source cannot see the redirection. Do not "simplify" the windows module
-   to draw on a duplicate of stdout — `CONOUT$` names whichever screen buffer is *active*, which a
-   duplicate taken at startup would stop being. The windows half also sets the console output code
-   page to UTF-8 and restores it, because the interface draws through a handle that carries bytes
-   where rust's own `Stdout` would have converted to utf-16. The command center's Console tab mirrors
-   the same surface over HTTP and renders it with xterm. `runinator-ctl-core` owns the clap tree and
-   portable console language; `runinator-ctl-wasm` compiles its validation, help catalog,
-   completion, and multiline readiness for the browser. Command Center keeps browser-safe execution
-   adapters under `runinator-command-center/src/core/console/commands/`. A command added to clap is
-   visible and validated in both consoles immediately; add a browser adapter when it is meaningful
-   there, or let Command Center report it as native-only. The WASM module is not a PTY and never
-   launches a process.
-
-   `runinatorctl mcp` is the third front end onto that surface: a Model Context Protocol server on
-   stdin/stdout (`src/commands/mcp/`), launched by an mcp client. It advertises **one tool per
-   command**, derived in `mcp/schema.rs` from the clap tree — name from the command path, description
-   from its `about`, properties from its `Arg`s, json types from each argument's `ValueParser`,
-   closed sets and defaults from clap — so a verb added to `Commands` is a correctly-typed tool the
-   day it is added. A call is turned back into argv and dispatched through the same
-   `repl::parse` → `run_command` path as everything else; do not add a second execution path, and do
-   not hand-write a schema. `mcp/exec.rs`'s `BLOCKED` list is the single source for what cannot be
-   run over mcp (verbs that never return or read the terminal), and `schema.rs` filters the
-   advertised tools through it, so the two can never disagree.
-
-   `mcp/capture.rs` points stdout and stderr at a scratch file and hands back a duplicate of the
-   real stdout for the protocol to answer on — the same reason `tui/capture.rs` exists, since a
-   table written into the middle of a json-rpc frame would desynchronise the client. It is a *file*
-   rather than the console's pipe because a tool result needs a sync point: a flush says "this
-   command is finished", with nothing of the next command's output in it.
-
-   Unlike `tui/capture.rs`, this one is **not unix-only**. `println!` on windows does not travel
-   through descriptor 1, but it does call `GetStdHandle(STD_OUTPUT_HANDLE)` on *every* write rather
-   than caching it, so `SetStdHandle` is the exact analogue of `dup2` and moves the whole process's
-   output the same way. Moving the stream is therefore the only per-platform part, and it is the
-   whole of `capture/unix.rs` and `capture/windows.rs`; the scratch file, the read-and-discard, and
-   the rewind are shared and live in `capture.rs`. (The console stays unix-only for its *second*
-   reason — crossterm reads the console handle the redirection would replace — which does not apply
-   to a server that never draws.) The capture assertions are behavioural, not per-syscall, and CI's
-   `cross-platform` job runs `cargo test -p runinator-ctl` on windows for exactly that reason: a
-   compile check would pass just as happily on a redirect that never took effect.
-
-   `:help`, completion, and flag validation are all **derived**, never declared twice.
-   `runinator-ctl-core/src/console/catalog.rs` walks the clap tree into one flat list of
-   `(path, usage, summary)` and reads
-   an argument's possible values, defaults, and help straight off the `Arg`; only the console-local
-   verbs (`META_COMMANDS`) are written down, because they have no clap counterpart. The web console
-   executes the same derivation inside `runinator-ctl-wasm`; do not recreate a TypeScript tokenizer,
-   command registry, usage parser, or completer. Its TypeScript command objects are dispatch adapters
-   only. Native-only functionality (processes, MCP stdio, unrestricted filesystem access) stays in
-   `runinator-ctl`; interactive workflow processes stay on the worker's PTY/ConPTY and stream raw
-   `terminal` chunks to Command Center's xterm surface.
-7. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
-
-There is also a Tauri `runinator-command-center` client. It discovers and calls the web service, compiles/edits packs, and presents runtime state; it never hosts a worker or executes provider actions. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
-
-### Command center layering (`runinator-command-center`)
-
-Layout:
-
-The `Functions`, `Console`, and `Orchestrations` areas follow the per-area layout below. Functions
-owns packages, aliases, and exports; Console owns the terminal surface (`core/console/`) and its
-transcript state (`core/services/console-terminal.ts`); Orchestrations owns correlated pipeline
-instances and adapter operations. Each follows `core/domain/models/<area>/`,
-`core/services/<area>.ts`, `ui/adapters/pinia/<area>.ts`, `ui/views/<Area>View.vue` — plus entries in
-`core/domain/models/index.ts`, `core/api/commandCenterApi.ts`, `core/api/httpRuntime.ts`'s `REGISTRY`,
-`core/services/index.ts`, `core/navigation/app.ts`'s `AppTab`, `core/navigation/nav-config.ts`,
-`App.vue`, and the corresponding Tauri commands in `src-tauri/src/commands/` and `app.rs`'s
-`generate_handler![]`.
-
-The Functions tab can publish as well as read: `PublishFunctionDialog.vue` takes an archive the
-operator already built plus its `runinator-function.json`, addresses the archive by the sha-256 of
-its bytes, and posts it. `runinatorctl functions publish` archives a *directory* deterministically;
-a browser tab has no working tree to archive, which is why the two paths differ and why the digest
-is computed from the uploaded bytes rather than accepted from the caller. `core/utils/zip.ts` reads
-the manifest back out of the archive so it is not asked for twice; a zip it cannot walk simply
-leaves the field to be filled in by hand.
-
-- `src/core/` — portable domain logic: `domain/`, `api/`, `services/`, `realtime/`, `navigation/`, `workflow/`, `utils/`, `platform/`. Must not import Vue, Pinia, Vue Flow, CodeMirror, Tauri, or `ui/`.
-- `src/ui/` — Vue presentation: `views/`, `components/`, `composables/`, `adapters/` (pinia, vue-flow, codemirror, browser, tauri).
-- Bootstrap (`src/bootstrap.ts`) selects the platform adapter and registers the CodeMirror text-editor factory before the app mounts.
-
-Import conventions (Phase 5 — shims removed):
-
-- Pinia stores: `ui/adapters/pinia/*`
-- Wire models: `core/domain/models`
-- Navigation types: `core/navigation/app`
-- Pure helpers: `core/utils/*`
-- CodeMirror adapters: `ui/adapters/codemirror/*`
-- Services (from views/components): `core/services` singletons exported by `core/services/index.ts`
-
-Verification:
-
-```bash
-cd runinator-command-center
-npm test
-npm run build
-npm run lint
-```
-
-## Crate Boundaries
-
-Keep dependency direction boring and predictable, structured with domains in mind:
-
-- `runinator-models`: shared domain and wire structs only. Avoid service logic, database details, HTTP clients, broker behavior, or runtime configuration here.
-- `runinator-comm`: shared communication contracts and gossip/discovery types. It can depend on models, but should not know about concrete services, databases, providers, or broker backends.
-- `runinator-api`: HTTP client facade for talking to the web service. Keep URL discovery behind locator types; do not spread raw web-service endpoint construction through worker or ctl code.
-- `runinator-store`: the persistence **contract** — trait definitions and the plain types they exchange, with no sqlx and no backend. The surface is split two ways:
-  - `roles/` holds one trait per domain (`ArchiveStore`, `AuthStore`, `AutomationStore`, `ConsoleStore`, `DefinitionStore`, `DeliveryStore`, `FileStore`, `FunctionStore`, `IngressStore`, `NotificationStore`, `OrchestrationStore`, `OrgStore`, `RbacStore`, `ReplicaStore`, `RunStore`, `ScheduleStore`, `SettingStore`, `WorkflowVmStore`, `WorkspaceStore`). `DatabaseImpl` composes those roles plus `RuntimeStore` and `PackTransactionStore`, and keeps only `run_init_scripts` of its own.
-  - `RuntimeStore` is a **use-case** persistence trait, cut to exactly what the graph runtime's store-backed host calls. It deliberately spans several domains — keeping it small makes the in-memory runtime fake practical.
-
-  Add a new operation to the role that owns it (or `RuntimeStore` if the runtime host calls it), never to `DatabaseImpl`. Bound as narrowly as the caller allows: `runinator-archiver` bounds on `ArchiveStore`, not `DatabaseImpl`. Because the roles are separate traits, a caller using several must import each — glob `runinator_store::prelude::*` when that list would be long and uninformative.
-- `runinator-database`: the concrete SQLite/Postgres/MariaDB implementation of `runinator-store`'s traits, plus row mapping. Database-specific mapping belongs here, not in `runinator-ws`. Method bodies are written **once**, generically over `SqlBackend`, and implemented on the local `SqlStore<B>` wrapper — the traits are foreign now, so the orphan rule forbids a blanket impl on a bare type parameter. `SqliteDb`/`PostgresDb`/`MariaDb` are aliases for `SqlStore<…Backend>`, so callers name them as before.
-
-  `operations/` mirrors the role split one file per trait, with shared helpers and the SQL-dialect plumbing in `operations/mod.rs`. Each role impl repeats the same thirty-line sqlx `where` block; that is deliberate, not an oversight — a macro would make every type error inside the query bodies point at an expansion instead of a real line. Rust does **not** elaborate trait `where` clauses into implied bounds, so a "bundle the bounds in one trait" shortcut does not compile.
-- `runinator-runtime`: the continuation-driven interpreter of the validated workflow graph. `WorkflowMachine` drives one durable `RunCursor` fiber, uses the compute VM for invocation frames, and delegates persistence bookkeeping through `WorkflowHost`; `StoreWorkflowHost` is backed by `RuntimeStore`. Keep HTTP, concrete broker transports, service hosting, and sqlx out. Prefer its fake-host/store suite over the web service's sqlite-backed suite for graph behavior.
-- `runinator-engine`: durable repository orchestration and background runtime loops shared by the web service and `runinator-engine-worker`.
-- `runinator-ws`: HTTP/WebSocket server and auth/API adapters over `runinator-engine`. It should not grow duplicate graph-runtime, repository, or worker implementations. It is the assembly crate for the five below; see "The web service crates".
-- `runinator-ws-core`: wire payloads (`models`), the json response envelope (`responses`), the ui event bus (`events`), the openapi documentation vocabulary (`openapi::{docs,examples}`), and small json helpers. No routes, no middleware, and no knowledge of any endpoint.
-- `runinator-ws-middleware`: the request-gating layers — `auth` (credential resolution and the gating middleware), `authz` (capabilities and resource grants), `rate_limit`, `overload`. It depends on `runinator-ws-core` for the envelope it replies with and registers no routes.
-- `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`: the handler modules, one `src/handlers/<domain>.rs` per domain. Each owns its handler fns, its `routes()` registrations, and its `DOCS` entries, exactly as before the split.
-- `runinator-broker-core`: the broker **contract** — the `Broker` trait, the per-channel message/delivery types, `BrokerError`, the channel-capability checks, the otel `instrument` wrapper, and the in-memory backend. It depends on no transport and no external system. A crate that only publishes and receives through a `dyn Broker` (the ws handler crates, `runinator-engine`) depends on **this** crate, not `runinator-broker` — that is what keeps the axum/reqwest/kafka/rabbitmq dependency surface confined to the binaries that actually build a backend.
-- `runinator-broker`: the concrete transports and adapters over `runinator-broker-core` — HTTP backend/client/server, tcp, ws, kafka, rabbitmq, and the `factory` that builds one from configuration. It re-exports the core surface at its historical `runinator_broker::…` paths, so a binary that builds a backend needs only this crate. Backend selection stays a feature of the crate that builds the broker (`runinator-ws`, `-worker`, `-waker`, `-engine-worker`); do not add a `kafka`/`rabbitmq` forward to a crate with no `cfg(feature)` code of its own. Channels are `effect` (engine→worker) and `infrastructure_effect` (engine→its own effect host), `effect_result` (worker→engine), `control` (ws→worker, run-scoped), `agent` (ws→agent, replica-scoped), `wake` (engine→waker), `ingress` (waker/worker/agent→engine), and `events` (ws→every ws replica). All channels except `events` are competing-consumer (one delivery per consumer group); `events` is **fan-out** — every subscriber receives every message (rabbitmq fanout exchange, per-replica kafka group, per-consumer in-memory/wire receiver), so ws replicas can fan UI events to all connected WebSocket clients. The `effect`, `control`, and `agent` channels are additionally **target-routed**: commands carry an `ActionTarget` and consumers use the corresponding `receive_*_for` operation with a `ConsumerProfile`, so pinned work, executor cancels, and replica directives reach only a matching runtime (RabbitMQ gives `agent` a per-replica routing key; backends without native routing bounce mismatches via nack). The `effect` channel is additionally split by `EffectExecutor`, so a provider worker can never claim an infrastructure effect. Waker, worker, and web service should talk to the `Broker` trait where practical. A new channel must be implemented across every backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports.
-- `runinator-blob-core`: the object-store **contract** — the `BlobStore` trait, the key/range/metadata types, `BlobError`, the aws signature-v4 implementation, and the local filesystem backend. It depends on no transport. A crate that only reads and writes through an `Arc<dyn BlobStore>` (`runinator-engine`, the ws handler crates) depends on **this** crate, not `runinator-blob` — same rule, and same reason, as the broker split above. Signing and verification live here together on purpose: the client and the server must canonicalize a request identically, and two hand-written copies would drift.
-- `runinator-blob`: the concrete transports over `runinator-blob-core` — an s3-compatible http server, an `S3BlobClient` that implements the same `BlobStore` trait, the `factory` that picks one from configuration, and the `runinator-blob` binary. It re-exports the core surface at its historical paths. The s3 surface is deliberately partial (path-style addressing, sigv4 header + presigned query, object put/get-with-range/head/delete, bucket create/head/delete/list, `ListObjectsV2`, multipart) — enough for the aws cli and sdks, so swapping in real s3 or minio is configuration rather than code. An etag here is a quoted sha-256, not an md5. Do not add virtual-host addressing, versioning, acls, or chunk-signed payloads without a caller that needs them.
-- `runinator-adapter-contract`: the orchestration-adapter **contract** — the file-based ABI symbols, the request/response payloads (`AdapterRequest`/`AdapterResponse`, `AdapterPollRequest`/`AdapterPollResponse`), and the bearer/hmac verification both sides must compute identically. It depends on no transport, the same `-core`/transport split used for broker and blob.
-- `runinator-adapter-sdk`: what an out-of-tree adapter links to implement that contract. `poll` has a default implementation, so a webhook-only adapter stays source-compatible.
-- `runinator-adapter-host`: the process that loads and runs adapter code, over http on **loopback only** — deliberately, because it is the one process executing adapter libraries. Each dynamic invocation runs in a disposable child process. Its built-in GitHub/Jira pollers are the only place in the workspace that talks to those providers for *ingress*; `runinator-provider-*` are the outbound direction and are not interchangeable with it. A container build is statically linked and so has no dynamic loader — the same constraint plugins have — meaning it serves only compiled-in kinds there. It ships as a **sidecar** of `ws` and `engine-worker`, not a Service.
-- `runinator-adapter-client`: the http client over `runinator-adapter-contract` for callers of the host. Both `runinator-ws-authoring` (kind catalog, webhook verification, adapter tests) and `runinator-engine` (durable polling) call the same process, so url discovery, the shared credential, and the request shape live here once. Do not re-derive `RUNINATOR_ADAPTER_HOST_URL`/`_TOKEN` in a caller.
-- `runinator-waker`: broker-only timer/relay. It consumes the `wake` channel, sleeps until due, and publishes the `WsIngressCommand::SettleEffect` its wake carries on the `ingress` channel. It is a **relay, not a decision point**: the `EffectResult` was built by the engine that armed the wake and is forwarded verbatim, which is what lets the waker hold no database, no effect vocabulary, and no opinion about what kind of effect it is settling. It must not execute task providers, must not write to the database, and must not depend on `runinator-api` or the worker.
-- `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
-- `runinator-desktop-agent`: standalone GUI host for an exclusive desktop `WorkerRuntime`. Desktop-only configuration and tray UX live here; reusable execution behavior stays in `runinator-worker`. Never add this lifecycle to `runinator-command-center`.
-- `runinator-compute`: the expression and compute language — `$ref`/`$template` resolution, the declarative condition form, the compute-program interpreter, the `std` intrinsic library, user-defined function tables, and argument-dependent intrinsic result typing. It knows nothing about workflow graphs: no nodes, no transitions, no definition validation. Depend on **this** crate when you only need to evaluate a value; `runinator-rexrap-sema`, `-rexrap-ide`, `-rexrap-codegen`, and `runinator-provider-std` do exactly that rather than linking the graph layer for it.
-
-  The `WORKFLOW` error dictionary lives here, not in `runinator-workflows`, because both crates emit the same `WorkflowValidationError`. This is the same arrangement as the `REXRAP` dictionary in `runinator-rexrap-syntax` — see "Error Dictionaries".
-- `runinator-workflows`: the graph layer over `runinator-compute` — workflow validation, cycle detection, node-kind registry, type checking, and simulation. It re-exports the compute surface at its historical `runinator_workflows::…` paths, so a graph-layer consumer need not name both crates; a consumer that only evaluates values should depend on `runinator-compute` directly instead.
-
-  Per-kind knowledge lives in `node_kinds/`, one `NodeKindSpec` per `WorkflowNodeKind`, in its own
-  file under the kind's catalog category (`terminal`/`task`/`control_flow`/`concurrency`/`io`/
-  `sync`). A spec owns the kind's palette metadata, its `GraphRole`, the node targets its
-  parameters carry (`TargetSlot`), its parameter shape check, and its statically-known output type.
-  `catalog.rs`, `parameters.rs`, `validation.rs`, `typing.rs`, and `simulate.rs` read those facts
-  from `spec_for(kind)` rather than each keeping a parallel `match`. Adding a node kind is a new
-  file, a `mod`/`pub(super) use` pair in the category's `mod.rs`, and one arm in `spec_for`, which
-  is exhaustive.
-
-  Two things deliberately stay outside the registry: `typing.rs`'s per-kind type checks need the
-  private inference context, and `simulate.rs`'s per-kind evaluation needs the simulator's private
-  outcome type and its `&mut dyn SimulationEnv`. Both are single-sited and exhaustively matched, so
-  neither can silently disagree with anything; they read the *facts* they used to re-derive
-  (`GraphRole`, `NodeKindSpec::output_type`) from the registry. Do not widen those private types to
-  move the bodies in — the coupling costs more than the colocation buys.
-
-  A kind's catalog `edge_slots` and its `target_slots` describe the same edges from two angles
-  (where the ui writes a target vs. where the graph walkers read one). `node_kinds/tests.rs` pins
-  them together in both directions; that is what keeps the palette from advertising an edge the
-  runtime ignores.
-- `runinator-rexrap`: the REXRAP surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back). Authored sources always use the unified `.rrx` container: it may carry workflow, pipeline, settings, package-manifest, and test blocks, which are split by `parse_rrx_blocks` before their respective front ends run. It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add REXRAP syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape. Header `trigger cron "..."` declarations and input-field defaults are carried in `definition.metadata.triggers` / the field's `default`; the web service materializes pack-managed triggers (`metadata.managed_by = "rexrap"`) on import. A pipeline block lowers to a portable `PipelineBundle` (members + links by workflow name); on import the web service resolves names to ids, upserts the `Pipeline`, and materializes each link as a managed `chained` trigger carrying `configuration.pipeline_id` (reconciled by pipeline id; header-trigger reconciliation skips triggers that carry a `pipeline_id`). The pipeline itself never runs — its chained triggers are the runtime linkage.
-
-  **RexRap 1.0 surface.** A workflow's runtime statements live in exactly one `do { … }` block; the
-  header declarations sit above it. `let name = …` is the only binding form. A statement's outgoing
-  edges are one attached `routes { … }` section whose arms hand control on with `continue <target>`,
-  where `end` and `fail` are the generated terminals; `join <name> { … }` is a named continuation
-  reachable only by an explicit `continue`. `compute { … }` is the pure in-process block. Every step
-  attribute is written `@name` / `@name(args)` **prefixed** to the statement — there is no fluent
-  `.timeout(...)` postfix chain. `@id`, `@skip`, `@lock`, and `@deadline` describe the graph node;
-  `@timeout`, `@retry`, `@tags`, `@mcp`, `@runner`, `@idempotent`, and `@reentry` describe the step's
-  execution. A `compensate` clause carries its own attributes *between* the keyword and its call —
-  written after the call they would re-parse as the next statement's attributes, which a
-  decompile/recompile round trip would then move.
-
-  **Asyncness is a property of the call site, never of the callee.** A plain call runs inline and
-  binds `T`; `async <call>` schedules the same call as a task and binds `task[T]`, joined by `await`
-  and dropped by `detach`. Nothing declares a color, so no callable ever needs a second version.
-  `task fn name(params) do { … }` is a runtime function: a named region inlined into the graph at
-  each call site (parameters are substituted, labels namespaced by the call-site node id — see
-  `lower/inline.rs`), and callable both ways like anything else. A plain `fn` stays pure, which is
-  what makes it structurally impossible for a `fn` to need an async twin. Consecutive `async`
-  launches — plus any interleaved work that touches none of their handles — are grouped into one
-  `parallel` fan-out whose join is the first statement that consumes a handle
-  (`inline::group_async_launches`); a lone launch stays an ordinary node, since a fan-out of one buys
-  nothing.
-
-  The language core is four crates split by compile stage; see "The REXRAP crates" below. `runinator-rexrap` itself is the assembly crate and the only one consumers link.
-- `runinator-rexrap-syntax`: text ↔ ast. The pest grammar, the ast, comment attachment, the canonical formatter, `file(...)`/include resolution, and `RexRapError`/`Span` with the shared `REXRAP` error dictionary. It depends on no runinator crate but `runinator-models` and knows nothing of diagnostics or the workflow JSON model.
-- `runinator-rexrap-sema`: ast → diagnostics. Namespace resolution, alias desugaring, the callable registry (intrinsics + user `fn`s), purity classification, named-type resolution, and the four semantic passes. `CompileOptions`/`TypePolicy`/`WorkflowSignature` live here because it is the lowest crate that reads them.
-- `runinator-rexrap-codegen`: ast ↔ JSON model. `lower` (ast → `WorkflowDefinition`) and `decompile` (`WorkflowDefinition` → text). They share no code but share the round-trip contract, so they share a crate.
-- A workflow's REXRAP source is **never persisted** — a pack ships compiled definitions, and the editor pane is `decompile` output. Anything that wants to point at "where in the code" must therefore produce text and positions together: `decompile_with_spans` returns the source plus each node's byte range within *that* string, and offsets from one call must never be applied to another rendering. Do not add a source position to the compiled module or to `WorkflowDefinition`; there is no document for it to index.
-- `runinator-rexrap-ide`: the editor surface over the language core — completion and hover. It answers "what can go here" and "what is this" for a cursor in a buffer; it never affects what a compiled workflow means. It reads the core through `parse_document`, `ast`, and the `analysis` seam (`runinator-rexrap/src/analysis.rs`), which is the whole reason `runinator-rexrap-sema`'s `types` and `namespace` modules are public. An editor feature needing a new item from the core gets it added to `analysis` deliberately — do not reach into a core crate to get it. `runinator-lsp`, `runinator-ws`'s `/rexrap/complete` and `/rexrap/hover` handlers, and the command center's Tauri commands depend on this crate; ctl, the worker, and every compile path depend only on the core.
-- `runinator-pack`: client-side pack compilation — `source` turns a `.rrx` source or directory into a `WorkflowBundle`, and `functions` turns a function-package directory into a manifest plus a **deterministic** archive. Determinism there is not a nicety: the archive is content-addressed, so entry order, timestamps, permissions, and the compression method are all fixed, and two machines that zipped one tree into two digests would break both "republishing unchanged code is free" and "this workflow is pinned to these bytes". Never make the archive depend on filesystem state (mtimes, the executable bit, readdir order) — see `functions/archive.rs`.
-  A `functions.<pkg>.<export>(...)` call needs **no grammar change** — `action_stmt` already reads every segment but the last as the provider. Lowering rewrites it to `provider: "functions"`, `function: "invoke"`, the authored args nested under `configuration.input`, and a `FunctionBinding` pinning the resolved version and digest; `apply_function_binding` is called from **both** `lower_action` and `lower_action_object` (the `compensate` path, easy to miss). Decompile renders the call back from the binding alone and never from a catalog, so a definition reads the same after its package is deleted. The synthetic `functions.<pkg>` providers that type these calls are derived from `CompileOptions::functions` by `all_providers()`, and they deliberately **do not count as a provider catalog** for `provider_catalog_present` — counting them would flip an offline pack compile from permissive to strict the moment it gained one packaged function.
-- `runinator-console`: the rexrap console's one decision — can a notebook cell be answered in process, or does it need a workflow run? it holds no database, no http, and no evaluator: the pure route hands off to `runinator-rexrap`'s fragment evaluator and the effectful route to the compiler. classification is conservative by construction, with the workflow fallback last and unconditional, because a cell wrongly treated as pure would execute a provider action inside an http handler — no run to record it, no retry, no timeout, no cancellation. two names that look interchangeable are not: `CELL_SCOPE` (`params`) is what an author *writes*, and `CONTEXT_ROOT` (`input`) is the key the evaluator resolves it under; building the context under the surface name yields an expression that looks right and never resolves.
-- `runinator-sandbox`: running untrusted code in a container, and nothing else. it knows no workflows, providers, or control plane — it takes a `ContainerSpec` and reports what happened. shared by `std.code` and packaged functions, because the reusable thing is *container execution*, not either caller's idea of what it is running. two invariants live here and must not be weakened: the deadline is enforced by the host (a payload that ignores its own timeout is exactly the case this exists for), and both output streams are drained **concurrently on their own threads** — the obvious `try_wait` + `wait_with_output` shape deadlocks on any payload writing more than a pipe buffer. `docker/args.rs` is pure and separately tested so the hardening flags a limit set produces are assertable without docker installed.
-- `runinator-provider-functions`: executing published packaged functions. it advertises exactly one action, `invoke`; per-export names would be rejected by the worker's metadata check, and no static list could enumerate every export ever published, so the export is named by the action's `FunctionBinding`. it makes **no control-plane calls** — the worker stages the code and passes a local path — which is what lets the same provider run on a host worker, the desktop agent, or a future kubernetes-job runtime. `InvocationRuntime` is the seam where that varies; `runinator-sandbox` is where the container work is shared.
-- `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
-- `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.
-- `runinator-observability`: process logging, OpenTelemetry propagation/export, and host-resource telemetry. It has no application-path or secret dependency.
-- `runinator-secrets`: secret encryption, expiry envelopes, and atomic credential-file persistence. Keep plaintext-handling and crypto changes auditable here.
-- `runinator-platform`: application paths, process startup/shutdown, liveness, shell, and FFI support. It may use observability to assemble a binary's startup, but observability must not depend back on it.
-- `runinator-pack-wire`: the compiled-pack ZIP reader/writer and entry-name wire contract shared by pack writers and import readers; it does not compile authored source.
-- `runinator-data-export`: CSV/XLSX table output for providers and future reporting surfaces. Depend on it directly rather than loading export dependencies into unrelated providers.
-
-If a change requires a dependency from a lower-level/shared crate back into a service crate, stop and redesign the boundary.
-
-### The REXRAP crates
-
-The language is four crates, layered by compile stage so nothing depends back up:
-
-```
-runinator-rexrap                    public api and unified `.rrx` container front end,
-                                 `analysis` seam, cross-stage test suite
-  ├── runinator-rexrap-codegen      lower/ (ast -> json), decompile/ (json -> text)
-  │     └── runinator-rexrap-sema
-  ├── runinator-rexrap-sema         namespace, desugar, registry, purity, types,
-  │                              sema/, options
-  │     └── runinator-rexrap-syntax
-  └── runinator-rexrap-syntax       errors, ast, comments, parser, format, includes
-```
-
-Pick a crate by compile stage. Syntax must never name sema; sema must never name codegen. If a
-pass appears to need the reverse direction, the pass is in the wrong crate.
-
-`runinator-rexrap` re-exports `ast`, `comments`, `errors`, `sema`, `CompileOptions`,
-`WorkflowSignature`, and the rest at their historical `runinator_rexrap::…` paths, so a consumer
-should never need to name a core crate directly. Nine crates depend on the facade; only
-`runinator-rexrap-ide` reads a narrower seam, and it does so through `analysis`.
-
-The **round-trip and format-idempotence assertions live in `runinator-rexrap`'s test suite** — it is
-the first crate that can see parse, lower, decompile, and format at once, and those contracts are
-cross-stage by nature. Do not try to pin them from inside one stage.
-
-The **`REXRAP` error dictionary is shared, not per-crate**: all four emit the same `RexRapError`, so
-`DICTIONARY` is defined once in `runinator-rexrap-syntax`'s `errors.rs` and re-exported. This is the
-one documented exception to the per-crate rule in "Error Dictionaries" below.
-
-## Coding Standards
-
-- Favor guard clauses over deep nesting to keep logic flow flat and readable.
-- If a functionality can have different implementations, always use traits to define the interface.
-- Favor comments as appropriate for Rust but make them lower case, single line, with a period at the end.
-- Use RustDoc comments (`///`) where necessary on public methods, but keep them short, succinct, dense, and dispassionate.
-- Do not put all the code for a library in `lib.rs`; break it out into smaller, focused files.
-- Prefer one primary struct and its inherent implementations per file, or one primary trait per file. Keep closely coupled helper types with their owner, but split unrelated domains instead of growing catch-all modules. Treat 500 lines as a review threshold rather than a mechanical limit: a file may remain slightly larger when splitting it would obscure a cohesive implementation or violate a documented architecture boundary.
-- Never put unit tests in the same file as production code. A suite paired with `module.rs` belongs in `module_tests.rs`; a broader unit suite belongs in a `<subject>_tests/` directory whose `mod.rs` holds shared fixtures and the module list. Each child module owns one subject and opens with `use super::*;` plus a `//!` line saying what it covers. Do not create new generic unit-test `tests.rs` files or unit-test `tests/` directories. Cargo integration tests remain under each crate's conventional top-level `tests/` directory. Existing broad suites may be migrated incrementally when touched.
-
-## Runtime Contracts
-
-Preserve the command lifecycle:
-
-- Workflows are executed as state-machines with nodes like `task`, `wait`, `condition`, `approval`, `loop`, and `subflow`.
-- A **packaged function** invoked over http does not get its own execution path: publishing generates one hidden single-node *adapter workflow* per export (`repository/function_adapters.rs`, marked `metadata.managed_by = "functions"` and filtered out of `fetch_workflows`), and `POST /functions/{package}/{export}/invocations` starts a run of it. Retry, timeout, cancellation, logs, artifacts, and tracing are all properties of a run, so a second path would duplicate every one of them and drift. Adapters are generated by **compiling REXRAP**, not by assembling graph json — the compiler is what guarantees the graph is well-formed. The http path resolves its alias at call time while a compiled workflow pinned its version at compile time; that difference is the *only* intended one.
-- A node's `@retry(...)` is applied to its **effect**, not its continuation: `runinator-engine`'s `effect_retry.rs` decides, on a retryable terminal, whether to re-arm the effect (`retry_workflow_effect`) instead of settling it. The parked continuation stays `Waiting` across attempts, so a retry is invisible to the graph — only `workflow_effects.attempt` and a delayed `workflow_effect_dispatches` row (gated by `available_at`) move. Do not add a second retry path in the worker or the VM: an in-process worker retry would be invisible to the run, and a VM-level one would have to resume the continuation, which is exactly what "invisible to the graph" forbids.
-- `runinator-runtime` owns graph interpretation and durable state transitions through its host boundary. `runinator-engine` drives it and publishes `EffectCommand` values through `runinator-broker` by draining the durable `workflow_effect_dispatches` outbox. The engine normally runs in-process with the web service, but may instead run in `runinator-engine-worker`. The waker never publishes `EffectCommand`s.
-- An infrastructure effect that completes at a **known future instant** is armed as a timer wake instead of being waited on in-process. `infrastructure_effect_host.rs` builds the terminal `EffectResult` it would have returned, stamps its timestamp at the due instant, publishes a `WakeCommand` carrying it on the `wake` channel, and acks the effect delivery; the waker sleeps and relays it back as `WsIngressCommand::SettleEffect` on the `ingress` channel; `ingress_consumer.rs` republishes it on the `effect_result` channel, where the ordinary settlement path applies it. Three properties follow and must be preserved: an **already-due** instant settles inline rather than making a pointless round trip; the wake's dedupe key is `effect_id:attempt`, so a redelivered effect re-arms nothing and a retried attempt gets its own timer; and the result is stamped at `due_at`, so a late relay records the settlement at the instant the effect actually completed rather than whenever the wake was serviced. Do not add a second settle path for timers — retry policy, interrupt handling, and run events all live in the effect-result consumer, and a parallel path would have to duplicate every one of them. Effects that *poll* (condition gates, `await_run`, a waiting `ChildRun`, mutex, barrier) are not timers and stay in the host's own tasks.
-- A dispatched provider action's `timeout_seconds` is enforced **twice**: by the worker in its own process, and by an engine-armed deadline wake beside it (`effect_deadline.rs`, armed by the effect dispatcher after publication). The worker's is the primary — the backstop fires `DEADLINE_GRACE_SECONDS` later, so a live worker always reports first and its more precise message is the one that lands. The backstop exists because the worker is the one thing that can vanish: a worker that dies mid-action, or an effect whose `required_labels` match no live worker, would otherwise leave the effect non-terminal and its continuation parked forever, since nothing else reaps an effect. It is safe to arm unconditionally because `settle_workflow_effect` rejects a settle against an already-terminal effect or a later attempt inside its own transaction, so a deadline that loses the race is an exact no-op — `dialect_parity.rs` pins that. Both sides read `DEFAULT_ACTION_TIMEOUT_SECONDS` for an action that declares no timeout, so the two deadlines cannot drift. Arming happens *after* the effect is published, deliberately: a backstop must never be able to stop the work it protects, so a wake-channel failure degrades to "no backstop", never to "no dispatch".
-- The `ingress` channel is the one direction that runs toward the engine, and `run_ingress_consumer` is its sole consumer: a due timer wake from the waker, a control request raised by an executing action (`WsIngressCommand::Control`), and an agent's reply to a durable fleet directive (`WsIngressCommand::AgentDirectiveResult`, which is what moves that directive out of its issued state). A message that can never apply — a reply for an unknown directive — is acked rather than requeued, so it cannot park the channel behind it.
-- A run holds **one cursor per live thread of control**, not one position. `parallel`/`race` fan out a cursor per branch (`run_state::fork_cursors`); `join` satisfies from node runs and retires the early arrivals so exactly one leaves it; loop and try frames live on the cursor, so a loop body resets only its own thread. `workflow_runs.active_node_id` is the *primary* cursor's mirror for single-position consumers — never the run's state. A run reaches a terminal status only when its last real cursor retires, so settle transitions through `run_state::advance_cursor` rather than writing `active_node_id` or a run status directly; code that does the latter moves the mirror without moving the cursor, and the node re-processes until the step limit blocks the run.
-- `workflow_ready_nodes` and `workflow_node_runs` carry a `cursor_id`, which is what scopes the supersede-on-arm: re-arming one branch must not cancel a sibling's pending wake, and two cursors on one node must hold two live rows.
-- The debugger is per cursor. `DebugRuntime` lives on `RunCursor` (the flat `state.debug` frame is the primary's mirror, kept for older clients), `orchestration/debug.rs` gates every step as `Proceed | Park | Shadow`, and a run takes `DebugPaused` only once *every* live cursor is parked — one parked branch of a fan-out leaves the run `Running`. Speculative cursors are debugger "what if" branches: external-effect nodes shadow (replay a recorded output, else stub) unless explicitly armed, and they are excluded from join satisfaction, from race fan-out, and from run-terminal accounting, so they can never make a real branch's decision for it.
-- An **interrupt** suspends one thread of control, runs a handler region on a second cursor in the same run, and hands control back. `InterruptSource` (`runinator-models/src/interrupt.rs`) names what raised it, and `InterruptSource::ALL` is both the exhaustive list and the precedence the graph runtime matches in. Most sources are **drive-matched** — a predicate over the node state the arriving drive finds, one arm each in `orchestration/interrupt.rs::detect`: `wake` (a `wait` deadline elapsed), `timeout` (the effect settled `TimedOut` — note the VM raises this *after* the effect gives up, from the arriving result, not before it as the pre-VM reducer did), `retry` (a failed run is queued for another attempt, before the re-dispatch), `failure` (a run settled `Failed`/`TimedOut`), `resolved` (an endpoint stamped a parked `signal`/`approval`/`input` run — a polled `gate` opens inline and so never produces this), and `child` (a run a `subflow` node is parked on reached a terminal). The remaining two are **requested**: `external` (`POST /workflow_runs/{id}/interrupts`) and `orphan_signal` (a signal delivery nothing was parked on, which stays a plain rejection unless the workflow declared that handler). A requested source is recorded on the run as a `PendingInterrupt` and raised by the next drive of its target thread — never decided in the web service, which would be a second copy of the fail-open rules — and it is **consumed by the drive that decides about it**, raised or refused, so nothing lingers to fire at an arbitrary later point. Adding a source is a variant, an `ALL` entry, an arm in `detect`, and a grammar alternative. `retry` is the one source raised **without** suspending its thread (`start_workflow_interrupt_handler`): the thread is already parked on the effect being re-armed, and suspending it would stop that effect's own settlement from resuming it. Predicates are only evaluated for sources a handler actually declares, which is what confines `child`'s database read to a run that asked for it. A handler cursor gets the same carve-outs as a speculative one: excluded from `joinable_cursors`, never writes `run.status`, and a failing terminal drains only itself — **a handler cannot fail the run**, it can only settle the *interrupted node* via `resume fail` and let the main flow's own `on_failure` edge decide. Everything is fail-open: if an interrupt cannot be serviced (no handler, a non-`handler_safe` kind in the region, a non-`interruptible` node, an already-suspended or handler cursor, an unwinding run, or one already fired at this position) none is raised and the drive proceeds exactly as it would have without the feature. A suspended cursor is never driven and `advance_cursor` refuses to *move* it (retiring is still allowed, and `retire_cursor` cascades to its handler); nothing in flight is cancelled, because a landed action result plus a resume drive already means "continue".
-- A handler's node runs are invisible to the thread it suspended: `context::visible_node_runs` hides any run whose node is in an interrupt region from every non-handler cursor, so nothing a handler does reaches the resumed thread's `steps.*`. Membership is keyed on the **node**, via `interrupt_region_nodes`, not on a live cursor — a handler cursor retires the instant its region ends, so a cursor-keyed test would let the region's output reappear the moment control returned. The same reasoning is why `WorkflowNodeRun::speculative` is persisted rather than inferred, and why the command center resolves timeline provenance from the definition (`core/workflow/interrupt-regions.ts`) rather than from `state.cursors`. The only channel from a handler back to the thread is the decision its `resume` carries; a region reads what raised it under `interrupt.*` (`WorkflowRefSource::Interrupt`).
-- Time spent frozen behind an interrupt is credited back to deadlines measured at that position. `RunCursor::suspended_seconds` accumulates when control returns and is cleared by `move_to`; `timed_out`, `timed_out_since_created`, and `timed_out_since_created_or` all take the cursor and add `suspension_credit()`. Without it a handler slower than a park's remaining window would make the park time out the moment it resumed, failing on a deadline it never actually waited out. `resume restart` resets the credit instead, because it re-enters the node with a fresh node run whose clock starts over. What makes that re-entry *fresh* is the `interrupt_restarted` transition reason it stamps on the run it cancels: `context::is_reentry_stale` reads it back, since unlike a loop back-edge a restart leaves no newer node run behind to say control left and came back. Without it the parking kinds that return early on an unrecognized status (`signal`, `approval`, `gate`, `subflow`) wedge on the canceled run.
-- A handler region is single-entry/single-exit, validated by `interrupt_region` with the same isolation rules as a concurrent `map` body, plus two more: unreachable from `start`, and built only from kinds that opted into `GraphRole::handler_safe` (an allowlist defaulting to **false**, so a kind is unsupported until deliberately supported — parking kinds would pin the suspended thread open, forking kinds have no handler for their cursors). Every path out of a region ends at a `resume` node; the REXRAP lowerer appends one when the block does not.
-- Workflow run states (`queued`, `running`, `waiting`, etc.) are persisted separately from individual task run statuses.
-- Workers acknowledge broker deliveries only after processing and required terminal results/artifacts
-  have been durably recorded, either by the broker or in the local result outbox. Outbox fallback is
-  valid only with fsync-before-ack, drain-before-action-loop startup, and a hard size/count cap that
-  puts the agent into draining state. Chunks remain bounded best-effort logs and are not buffered;
-  `idempotency_key` is the residual protection for failures outside that durability envelope.
-- Worker outputs, logs, artifacts, and node-run status/results are delivered as broker result events consumed by `runinator-engine`; workers must not write directly to the database.
-- Artifact **bytes** live in the object store (`runinator-blob-core`'s `BlobStore`), never on a single replica's filesystem. `runinator-engine`'s `artifact_storage` is the only module that reads or writes them: it writes and reads `blob://<bucket>/<key>` URIs. A worker relocates provider-produced artifacts through `POST /artifacts/content` before publishing the artifact event; that endpoint stores bytes and records **no** row, because the result-event path already records one. Do not add a second endpoint that does both.
-- Broker messages should remain serializable and backend-neutral.
-- Any command or control payload that crosses the broker/waker/worker boundary must use the shared contracts in `runinator-comm` end to end. Do not add broker-local, waker-local, or worker-local duplicates for the same path; extend `EffectCommand`/`EffectResult`, `ControlCommand`/`ControlKind`, `WakeCommand`, `WsIngressCommand`, or `UiEvent` (the fan-out UI event on the `events` channel) and thread that type through every relevant backend and delivery wrapper.
-- Do not add direct waker-to-worker or worker-to-waker channels. Worker-originated control requests travel worker→`ingress`→engine (`WsIngressCommand::Control`), and agent directive replies travel agent→`ingress`→engine (`WsIngressCommand::AgentDirectiveResult`); API-originated run control travels ws→engine→`control`→worker (`ControlCommand`), while durable replica management travels engine→`agent`→agent (`AgentCommand`). The directions use distinct channels so producers never consume their own messages. The authenticated desktop relay allow-list is effect, effect_result, control, and agent, plus payload-gated `PublishIngress` for `AgentDirectiveResult`; never open unrestricted ingress publication to an agent principal.
-- Discovery/gossip types in `runinator-comm` should stay transport-friendly and serde-compatible.
-
-When adding fields to shared structs, check every boundary that serializes, persists, or maps that type:
-
-- `runinator-models`
-- `runinator-comm`
-- `runinator-store` (the trait declaration: `roles/<domain>.rs`, or `runtime_store.rs` if the state machine calls it)
-- `runinator-database/src/mappers.rs`
-- SQLite/Postgres implementations (`operations/<same file name as the role>.rs`)
-- `runinator-runtime/src/test_support.rs`, if the operation lands on `RuntimeStore`
-- `runinator-api`
-- ctl task/pack import (REXRAP compile + `workflows apply` compiled-pack zip)
-- command center models, if the field is user-facing
-
-## Provider And Plugin Guidance
-
-Providers execute task actions; they are not schedulers, API clients, or persistence layers.
-
-- Keep provider resolution in `runinator-worker`.
-- Keep dynamic library loading and FFI safety wrappers in `runinator-plugin`.
-- Treat plugin ABI names (`runinator_marker`, `name`, `call_service`) as public contracts.
-- Dynamic plugins are a **host-only** capability. `deploy/Dockerfile` links statically (`+crt-static`
-  is the musl default), and a static binary has no dynamic loader, so containerized workers cannot
-  `dlopen` a `.so`; they run only the providers compiled into them. Do not add a plugin directory,
-  a `--dll-path` argument, or a plugin-staging init container to the container images or the k8s
-  manifests. `runinator-desktop-agent`, `xtask local up`, and the release bundles are the paths that
-  ship plugins. A new provider that must work in k8s has to be a compiled-in `runinator-provider-*`
-  crate, not a plugin.
-- Provider/action metadata belongs next to the executable provider: built-ins expose it through `Provider::metadata()`, and plugins expose it through the `metadata` ABI function. Do not duplicate provider metadata in workflow or provider packs.
-- For third-party integrations, look for a well-maintained client library before hand-rolling HTTP payloads and API semantics.
-- Always add a new provider as a separate crate: `runinator-provider-<name>`.
-- Keep `action_name`, `action_function`, and `action_configuration` semantics compatible with existing task import and execution paths.
-
-## Database And API Guidance
-
-The database crate owns persistence behavior. The web service owns HTTP behavior.
-
-- Add a new persistence operation to the `runinator-store` role trait that owns its domain (`roles/<domain>.rs`), then write the body in the matching `runinator-database/src/operations/<domain>.rs`. One generic body covers SQLite, Postgres, and MariaDB together. Do not add methods to `DatabaseImpl` itself — it only composes the roles.
-- Keep SQLx row mapping centralized in `runinator-database`, especially `mappers.rs`.
-- Keep repository functions in `runinator-engine/src/repository/` focused on persistence orchestration. HTTP response mapping belongs in a handler crate's `src/handlers/`, and SQL belongs in `runinator-database`.
-- Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.
-
-### When a ws handler may call the store directly
-
-A handler may call `db.*` itself **only** when the endpoint is thin CRUD over a row the runtime does
-not orchestrate: authentication, orgs/memberships, and billing (`runinator-ws-identity`'s
-`handlers/{auth,orgs,billing}.rs`) plus `runinator-ws-authoring`'s `handlers/{credentials,catalog}.rs`.
-Those have no engine counterpart on purpose — routing them through a repository module would add a
-call layer and no behavior. The one other direct call is `runinator-ws-runtime`'s
-`handlers/health.rs` readiness probe, which reads one row to test database connectivity and does not
-care what the row says.
-
-Anything carrying orchestration semantics goes through `runinator-engine/src/repository/`, even
-when the body is a single delegating call: runs, node runs, triggers/firings, action dispatches,
-notifications and their policies, pipelines, replicas. The test is not how short the function is —
-it is whether a future version of the operation would need to touch run state, the dispatch outbox,
-the ready-node queue, or emit an event. Those all belong to the engine, and a handler that reached
-past it would be the place the next rule gets broken. `create_notification` is the worked example:
-it looks like a one-line insert, but it must also resolve the run's owning org so the ui event is
-scoped, so it lives in `repository/notifications.rs` and returns `CreatedNotification`.
-
-When in doubt, put it in the engine — that direction is always safe, and the CRUD exemption above
-is a closed list, not a pattern to extend.
-
-### The web service crates
-
-The http surface is six crates, layered so nothing depends back up:
-
-```
-runinator-ws                    router/server/websocket/openapi assembly, config, binary
-  ├── runinator-ws-identity     handlers/{auth,orgs,billing}
-  ├── runinator-ws-authoring    handlers/{workflows,rexrap,packs,pipelines,credentials,catalog,providers,
-  │                                        functions,console}
-  ├── runinator-ws-runtime      handlers/{runs,node_runs,artifacts,triggers,schedules,
-  │                                       function_invocations,
-  │                                       action_dispatches,replicas,notifications,debug,automation,
-  │                                       observability,health,supervisor,provisioning,
-  │                                       catalog_metadata,webhook}
-  ├── runinator-ws-middleware   auth, authz, rate_limit, overload
-  └── runinator-ws-core         models, responses, events, json, openapi::{docs,examples}
-```
-
-The domain line is what an endpoint *is about*, not its url prefix: `runinator-ws-authoring`
-describes what can run, `runinator-ws-runtime` drives and observes what is running, and
-`runinator-ws-identity` is who may do either. A handler crate depends on core and middleware and on
-nothing else in this list.
-
-`runinator-ws` keeps only assembly and the pieces that need the whole surface at once: `router.rs`,
-`server.rs`, `websocket.rs`, `openapi/`, `config.rs`, `main.rs`, and the behavior test suite (which
-boots a real `SqliteDb` and drives handler + graph runtime + persistence together, so it cannot live in any
-one domain crate). Its `lib.rs` re-exports `handlers`, `models`, `events`, `auth`, `authz`, and the
-engine's `repository`/`stability` at their historical `crate::…` paths, so assembly code and tests
-read the same as before.
-
-### Adding an endpoint
-
-An endpoint lives in exactly one file. Each handler crate's `handlers/<domain>.rs` — plus
-`runinator-ws`'s `websocket.rs` and `openapi/mod.rs`, which serve their own routes — owns three
-things side by side: the handler fns, a `pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> Router`
-holding that domain's `.route()` registrations, and a `pub const DOCS: &[EndpointDoc]` holding its
-openapi entries. Adding an endpoint is one file, three additions.
-
-Pick the file by domain, and if the domain is new, add the module to that crate's `handlers/mod.rs`
-— not a new crate. `router.rs` only merges the fragments and applies the middleware stack;
-`openapi/mod.rs` only concatenates the `DOCS` slices through `DOC_SETS` and enriches the generated
-document. Do not add a `.route()` call or an endpoint doc to either — they hold no per-endpoint
-knowledge, which is what keeps them ~190 and ~400 lines against 166 routes.
-
-The shared doc vocabulary stays central in `runinator-ws-core`'s `openapi/docs.rs`: the
-`EndpointDoc`/`RequestDoc`/`ParamDoc` model, the `endpoint()`/`json_body()` constructors, and the
-reusable query-param consts (`CURSOR`, `WORKFLOW_FILTERS`, …), several of which are used by more than
-one domain. Examples live in `openapi/examples.rs`, one `Example` arm plus one match arm each.
-
-Two source lints guard the layout. Both live in `runinator-ws` because they are the only checks that
-see the merged surface, both read the sibling crates by path, and both are ratchets in each
-direction:
-
-- `openapi/route_parity.rs` diffs the registered routes against the documented ones. Because
-  registration is per-module and the modules are in three crates, it reads `ROUTER_SOURCES` — an
-  `include_str!` list that cannot be globbed and cannot reach a crate by name, so its handler entries
-  are relative paths like `../../../runinator-ws-runtime/src/handlers/runs.rs`.
-  `route_sources_cover_every_module` walks every handler directory and fails if a module with a
-  `routes()` fn is missing from that list; a module left off would silently drop all of its routes
-  out of the parity check.
-- `store_access_tests.rs` keys its allowlist on `<crate>/<file>`, so moving a handler between files
-  *or between crates* means updating its entry.
-
-Both read the crate list from `runinator-ws`'s `HANDLER_CRATES`, so a new handler crate must be added
-there or it is invisible to both guards.
-
-`Router::merge` panics on a duplicate method+path, so the split cannot silently shadow a route.
-Note that path prefix does not imply owning module: `/workflows/{id}/grants` is served and
-documented by `runinator-ws-identity`'s `handlers/auth.rs`, because that is where its handlers are.
-
-## Authorization
-
-Authorization is deny-by-default and hierarchical; see `docs/permissions.md` for the full model.
-
-- Use the typed `Action`, `ScopeRef`, and fixed platform/organization/team roles in
-  `runinator-models::rbac`. Privileged handlers call `require_scope_action`; resource handlers call
-  `AuthzChecker::require_resource` (or a child-to-parent helper). Never add an admin boolean,
-  principal-kind bypass, or a second capability catalog.
-- `is_platform_admin()` is the sole administrative short-circuit. Machine traffic is authorized by
-  an explicit non-assignable `SystemRole`, never merely because a credential is a service key.
-- Workflows, pipelines, function packages, and console sessions use the generic ownership registry
-  and `Permission` ladder (`View < Run < Edit < Own`). Child resources resolve their stored parent
-  before authorization.
-- The command center reads `GET /auth/me`'s `effective_actions` and `/authz/catalog`; UI gating is
-  defense in depth and never replaces backend enforcement.
-
-## Configuration
-
-CLI/config changes usually affect more than one place.
-
-Check these when adding or renaming runtime options:
-
-- the crate's `config.rs` or `cli.rs`
-- `runinator-supervisor.json`
-- `README.md` and crate-specific README files
-- `deploy/k8s/` manifests and overlays
-- Dockerfiles for service binaries
-- the `xtask` crate (`xtask/src/`), which builds/publishes/deploys the workspace
-
-Local development defaults should continue to work with:
-
-```bash
-cargo build --workspace
-cargo run -p runinator-supervisor -- start
-cargo run -p runinator-supervisor -- status
-cargo run -p runinator-supervisor -- stop
-```
-
-`tools/keychain-export` is a packaged, macOS-only generic execution-profile collector command.
-Profile collection is configured centrally and approved by complete configuration digest in the
-desktop agent; never couple this command to Kubernetes synchronization or provider-specific mounts.
-Ordinary scalar secrets continue through `CredentialStore` (`runinator-auth`), `SecretCipher`
-(`runinator-secrets`), and settings-store `secret://` references.
-
-## Error Handling And Async
-
-- Prefer returning `SendableError` where the crate already uses that convention.
-- Preserve structured `RuntimeError` codes where call sites already use them.
-- Do not use `unwrap` or `expect` in runtime paths unless the process truly cannot continue and existing style already does so nearby.
-- Keep blocking provider/plugin execution inside `spawn_blocking` or equivalent isolation.
-- Preserve graceful shutdown with `Notify` and `ctrl_c` patterns in service binaries.
-- Avoid holding locks across `.await`.
-
-### Error Dictionaries
-
-Every error a crate emits carries a stable numbered code from a per-crate dictionary built on `ErrorDescriptor` (`runinator-models::errors`). A descriptor pairs a numbered code, a dotted runtime key (kept for back-compat lookups), and a short summary; it renders as `"CODE - summary: detail"`. Each crate's `errors.rs` keeps an ordered `DICTIONARY: &[ErrorDescriptor]` exposed through a trait: providers implement `ProviderErrors`, every other crate implements `EngineErrors`.
-
-- Prefixes name the domain, like providers (`JIRA`, `SLACK`, …). `RUNI` is the fallback for the engine *runtime* crates that have no self-contained error vocabulary — `runinator-ws`, `-worker`, `-waker`, `-plugin`, `-database`, `-utilities` — partitioned by per-crate number range (ws=`RUNI1xx`, worker=`RUNI2xx`, …). Crates with their own domain vocabulary get a crate-specific prefix instead: `runinator-broker`=`BROKER`, `-blob`=`BLOB`, `-comm`=`COMM`, `-api`=`API`, `-rexrap`=`REXRAP`, `-workflows`=`WORKFLOW`, `-sandbox`=`SANDBOX`, `-provider-functions`=`FUNC`. Two dictionaries are shared across a crate family rather than per-crate, in both cases because the family emits one error type: `REXRAP` is defined once in `runinator-rexrap-syntax`'s `errors.rs` for `runinator-rexrap`, `-rexrap-syntax`, `-rexrap-sema`, and `-rexrap-codegen`, which all emit `RexRapError`; `WORKFLOW` is defined once in `runinator-compute`'s `errors.rs` for it and `runinator-workflows`, which both emit `WorkflowValidationError`. `BROKER` is defined in `runinator-broker-core` and re-exported by `runinator-broker`; `BLOB` is defined in `runinator-blob-core` and re-exported by `runinator-blob`, for the same reason.
-- For ad-hoc errors, build a descriptor and call `.error(detail)` (or `.bare()`); do not hand-roll `RuntimeError::new` with a one-off code string. Add new errors as the next number in that crate's range.
-- For crates whose errors are a `thiserror` enum, keep the enum (matching, `#[from]`/`#[source]` stay intact) and apply the code two ways: prefix each variant's `#[error("CODE - …")]` string, and add a parallel `ErrorDescriptor` `DICTIONARY` + `EngineErrors` impl in the same `errors.rs`. Keep the `#[error]` literal and its dictionary entry in sync.
-- lib crates expose `pub mod errors;` so their bins reference descriptors by path; a bin that owns its `errors.rs` may need `#![allow(dead_code)]` since bins flag unused `pub` items. The desktop `runinator-command-center` is out of scope for this catalog.
-
-## Tests And Verification
-
-Before handing off non-trivial Rust changes, run the narrowest useful checks first:
+Typical final Rust checks are:
 
 ```bash
 cargo fmt --all --check
@@ -570,101 +56,178 @@ cargo test -p <crate>
 cargo test --workspace
 ```
 
-Use `cargo check -p <crate>` when a full test run is slow or when the crate has no tests. If a change touches shared contracts, prefer `cargo test --workspace`.
+Use `cargo check -p <crate>` when the crate has no tests or a full test is unnecessarily slow.
+Scoped guides contain required backend, feature, UI, and cross-platform checks.
 
-For command center changes, use the existing Tauri build path and verify UI behavior separately.
+## Architecture and Task Routing
 
-`.github/workflows/ci.yml` runs the same checks on push/PR: `cargo fmt --all --check` and
-`cargo test --workspace` on linux with postgres/mariadb service containers (so the dialect-parity
-suites actually execute rather than skipping), `runinator-provider-db`'s live connector suite
-against postgres and mariadb:11, the broker-backend suites against
-live kafka and rabbitmq, a compile job over the optional features, a `cargo check --workspace
---all-targets` compile job on macos and windows, and the command center's `pnpm test`/`lint`/`build`.
-`.github/workflows/release-builds.yml` is separate and only runs on dispatch or a published release.
+Runinator is a Rust workspace for authoring, scheduling, and executing workflows through a durable,
+resumable state-machine runtime. `docs/architecture.md` explains the system; `docs/llm-map.md` is
+the detailed routing index.
 
-### Verifying a broker-backend or optional-feature change
+| Change area | Owning crate or family | Required scoped guide |
+| --- | --- | --- |
+| Shared domain and wire models | `runinator-models`, `runinator-comm` | This file |
+| Expressions and graph validation | `runinator-compute`, `runinator-workflows` | `runinator-workflows/AGENTS.md` |
+| REXRAP syntax, semantics, codegen, and IDE seam | `runinator-rexrap*` | `runinator-rexrap/AGENTS.md` |
+| Pack compilation and wire archives | `runinator-pack`, `runinator-pack-wire` | `runinator-pack/AGENTS.md` |
+| Continuation interpreter and graph transitions | `runinator-runtime` | `runinator-runtime/AGENTS.md` |
+| Durable orchestration and repositories | `runinator-engine`, `runinator-engine-worker` | `runinator-engine/AGENTS.md` |
+| HTTP, middleware, and handler crates | `runinator-ws*` | `runinator-ws/AGENTS.md` |
+| Persistence contract and SQL backends | `runinator-store`, `runinator-database` | Both local guides |
+| Broker contract and transports | `runinator-broker-core`, `runinator-broker` | `runinator-broker/AGENTS.md` |
+| Provider execution and desktop worker | `runinator-worker`, `runinator-desktop-agent`, plugins/providers | `runinator-worker/AGENTS.md` |
+| Database action provider | `runinator-provider-db` | `runinator-provider-db/AGENTS.md` |
+| Timer relay | `runinator-waker` | `runinator-waker/AGENTS.md` |
+| Artifact storage | `runinator-blob-core`, `runinator-blob` | `runinator-blob/AGENTS.md` |
+| Inbound orchestration adapters | `runinator-adapter-*` | `runinator-adapter-host/AGENTS.md` |
+| CLI, native console, MCP, and browser command language | `runinator-ctl*` | `runinator-ctl/AGENTS.md` |
+| REXRAP cell classification | `runinator-console` | `runinator-console/AGENTS.md` |
+| Command Center UI | `runinator-command-center` | `runinator-command-center/AGENTS.md` |
+| Sandboxed container execution | `runinator-sandbox` | `runinator-sandbox/AGENTS.md` |
+| Packaged-function execution | `runinator-provider-functions` | `runinator-provider-functions/AGENTS.md` |
 
-A default `cargo test --workspace` builds default features only, which leaves the opt-in broker
-backends and the kubernetes provisioner compiled by nobody — including the exact feature set
-`deploy/Dockerfile` ships. The `optional-features` job compiles those, and it uses `--all-targets`
-deliberately: that is what builds the per-backend integration tests, which is what stops them
-drifting out of sync with a changed `EffectCommand`.
+Crates without a scoped guide follow this file and the ownership boundaries in
+`docs/architecture.md`. If a change requires a dependency from a shared/low-level crate back into a
+service crate, stop and redesign the boundary.
 
-The `broker-backends` job runs the kafka and rabbitmq suites against real brokers. Both are
-`#[ignore]`d and **self-skip into a green run** when their env var is missing, so the job greps the
-output for the skip line and fails on it — a passing exit code alone does not mean a broker was ever
-touched. Keep that guard if you touch the step, and keep `--nocapture`, which is what makes the skip
-visible.
+## Cross-Cutting Boundaries
 
-To run them locally:
+- `runinator-models` contains shared domain and wire structs, not services, database details,
+  transports, or runtime configuration.
+- `runinator-comm` owns broker/discovery contracts. Payloads crossing worker, waker, agent, engine,
+  or web-service boundaries must use these shared types end to end; do not create local duplicates.
+- `runinator-store` owns persistence traits and plain exchange types. `runinator-database` owns SQL,
+  row mapping, migrations, and concrete SQLite/Postgres/MariaDB implementations.
+- `runinator-api` owns web-service URL discovery behind locator types. Do not spread raw endpoint
+  construction through workers or CLI commands.
+- `runinator-runtime` owns graph interpretation through a durable host boundary. It must not gain
+  HTTP, concrete broker transports, service hosting, or SQLx.
+- `runinator-engine` owns durable orchestration, background loops, and repository application
+  behavior. The web service may host it but must not duplicate it.
+- `runinator-ws` and its sibling handler crates own HTTP/WebSocket transport, authentication,
+  authorization, validation, and response mapping; handlers delegate orchestrated work to the
+  engine.
+- `runinator-worker` resolves and executes providers. Workers and providers do not schedule work or
+  write directly to the database.
+- `runinator-waker` is a stateless timer relay. It does not execute providers, decide settlements,
+  call the web service, or write to the database.
+- `runinator-command-center` is a Tauri/Vue control client. It never hosts a worker or executes
+  provider actions; local execution belongs to `runinator-desktop-agent`.
+- Inbound adapter polling/webhooks belong to `runinator-adapter-*`; outbound actions belong to
+  `runinator-provider-*`. Do not combine the two directions.
+- `runinator-platform` owns application paths/process lifecycle and may depend on
+  `runinator-observability`; observability must not depend back on platform, application paths, or
+  secrets. Keep crypto/plaintext persistence auditable inside `runinator-secrets`.
+- Prefer one purpose-named context or request object when an operation needs several related inputs.
+  Do not retain a long positional parameter list merely to avoid introducing a small domain type.
 
-```bash
-docker run -d --name ci-rabbit -p 5672:5672 rabbitmq:4-alpine
-RUNINATOR_RABBITMQ_URI=amqp://guest:guest@127.0.0.1:5672/%2f \
-  cargo test -p runinator-broker --features rabbitmq --test rabbitmq -- --ignored
-```
+## Runtime and Transport Contract
 
-Kafka additionally needs its topics created first (`runinator.actions`, `runinator.control`,
-`runinator.results`); see the `Start Kafka` step in `ci.yml` for the single-node KRaft invocation.
+- The engine drives durable continuations in `runinator-runtime`, drains durable effect dispatches,
+  and publishes provider work through the broker. The same engine implementation runs embedded in
+  the web service or inside `runinator-engine-worker`; never fork those execution paths.
+- Provider effects travel engine -> `effect` -> worker -> `effect_result` -> engine. Timed
+  infrastructure effects travel engine -> `wake` -> waker -> `ingress` -> engine and then use the
+  ordinary effect-result settlement path. Do not add a second retry, timeout, or settlement path.
+- `ingress` is the direction toward the engine. API control uses `control`; durable replica
+  directives use `agent`. Never add direct worker-to-waker or waker-to-worker channels.
+- The authenticated desktop relay permits effect, effect-result, control, and agent operations,
+  plus payload-gated ingress publication for `AgentDirectiveResult`. Never expose unrestricted
+  ingress publication to an agent principal.
+- Broker messages remain serializable and backend-neutral. A channel or shared payload change must
+  be implemented across every relevant backend, wire transport, delivery wrapper, producer, and
+  consumer.
+- Workers acknowledge work only after required durable processing. Worker results, logs, artifacts,
+  and node status return as broker events consumed by the engine.
+- Artifact bytes live in the object store, never on one replica's filesystem. The engine owns
+  artifact storage and database rows; workers upload produced bytes before publishing the event
+  that records the artifact.
 
-MariaDB uses SQLx's MySQL-protocol driver, so `sqlx::MySql*` type names and `mysql://` URLs remain
-implementation details. MariaDB reports `json` as `longtext`/BLOB and reports `boolean` and
-`tinyint(1)` through the same protocol type; `connector/sql/decode.rs` reconciles metadata against
-the decoded value so `kind` never contradicts it. Test connector changes against MariaDB 11.
+## Persistence and API Guidance
 
-DECIMAL/NUMERIC decodes through `BigDecimal` (the sqlx `bigdecimal` feature), because a json number
-is an f64 and both engines allow precisions far past what that holds. `decimal_to_json` emits a
-number only when the value round-trips through f64 unchanged, and the exact digits as a string
-otherwise — so a `numeric(40,8)` never silently rounds. Note that postgres's wire format drops
-trailing zero groups, so a value's *scale* does not survive it; do not write assertions that depend
-on trailing zeros.
+- Add a persistence operation to the owning `runinator-store` role, then implement one generic
+  `SqlStore<B>` body in the matching `runinator-database/src/operations/` module. Do not add domain
+  operations directly to `DatabaseImpl`.
+- Keep SQLx mapping in `runinator-database`, HTTP response mapping in the relevant handler crate,
+  and orchestration behavior in `runinator-engine/src/repository/`.
+- Put public payloads in shared model/API crates when multiple binaries or the command center use
+  them.
 
-A workspace-wide cargo invocation unifies features across every member, including
-`runinator-command-center/src-tauri`. That is why `runinator-desktop-agent` pins `rfd` to the same
-feature set `tauri-plugin-dialog` selects — the two default backends (`xdg-portal` vs `gtk3`) are
-mutually exclusive and rfd's build script panics on linux if unification turns both on. Check for
-this whenever a workspace crate and the tauri crate share a transitive dependency.
+### When a ws handler may call the store directly
 
-### Verifying a schema or persistence change
+A handler may call `db.*` only for the closed thin-CRUD allowlist enforced by
+`runinator-ws/src/store_access_tests.rs`: identity authentication/org/billing handlers, authoring
+credential/catalog handlers, and the runtime health readiness probe. Anything with orchestration
+semantics—including runs, triggers, dispatches, notifications, pipelines, and replicas—goes through
+`runinator-engine/src/repository/`, even when the current body is one call. Update the allowlist only
+when deliberately changing this policy.
 
-A migration or `operations/` change is only half-tested by `cargo test -p runinator-database`: the
-default run has no postgres or mariadb, so the live suites skip themselves. Bring the
-engines up and run it again:
+## Shared Contract Changes
 
-```bash
-docker compose -f runinator-database/tests/docker-compose.yml up -d --wait
-RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55433/runi \
-RUNINATOR_TEST_MARIADB_URL=mysql://root:runi@127.0.0.1:53307/runi \
-  cargo test -p runinator-database --features sqlite,postgres,mariadb
-docker compose -f runinator-database/tests/docker-compose.yml down -v
-```
+When adding or renaming a shared field, inspect every boundary that serializes, persists, or maps it:
 
-The assertions are shared: `src/dialect_parity.rs` holds one lifecycle body that SQLite,
-PostgreSQL and MariaDB both run, so cover a new operation by adding to it rather than to one
-engine's file. `sqlite_lifecycle` runs it unconditionally, which is what keeps the body honest when
-nobody has docker up.
+- `runinator-models` and `runinator-comm`.
+- The owning `runinator-store` role or runtime-store trait.
+- `runinator-database` mappers, generic operations, and all three SQL dialects.
+- `runinator-runtime` host/interpreter tests when a VM store contract changes.
+- `runinator-api`, `runinator-ctl` import/pack paths, and command-center models when user-facing.
+- Broker backends and delivery wrappers when the payload crosses a broker channel.
 
-Adding a migration means adding it to all three directories under `runinator-database/migrations/`.
-`migration_parity_tests.rs` enforces that the version sets match and needs no database, so it fails
-in a plain `cargo test` rather than on someone's first postgres deploy. A migration only one engine
-can have goes in that file's `DIALECT_ONLY` list with a reason.
+## Authorization
 
-## Change Hygiene
+Authorization is deny-by-default and hierarchical; `docs/permissions.md` is the full model.
 
-- Read nearby code before editing; mirror existing naming, async style, and error conventions.
-- Keep edits scoped to the crate that owns the behavior.
-- Do not introduce new workspace dependencies for small conveniences.
-- Do not move shared structs between crates casually; that is a public boundary change.
-- Avoid broad refactors while fixing localized behavior.
-- Keep generated/runtime artifacts out of commits, especially `build/`, `target/`, and `.runinator-supervisor/`.
-- Update docs/config examples in the same change when behavior changes.
+- Use typed `Action`, `ScopeRef`, platform/organization/team roles, `require_scope_action`, and
+  `AuthzChecker::require_resource`. Never add an admin boolean, principal-kind bypass, or second
+  capability catalog.
+- `is_platform_admin()` is the only administrative short-circuit. Machine traffic uses an explicit,
+  non-assignable `SystemRole`, never service-key status alone.
+- Owned resources use the generic ownership registry and `Permission` ladder. Resolve a child to
+  its stored parent before authorization.
+- Command-center gating is defense in depth and never replaces backend enforcement.
 
-## Architecture Checklist
+## Configuration, Errors, and Async
 
-Before adding code, ask:
+- For runtime option changes, inspect the owning `config.rs`/`cli.rs`,
+  `runinator-supervisor.json`, relevant READMEs, Kubernetes manifests/overlays, service Dockerfiles,
+  and `xtask` build/deploy plumbing.
+- Preserve the local supervisor flow: `cargo build --workspace`, then
+  `cargo run -p runinator-supervisor -- start|status|stop`.
+- `tools/keychain-export` is a macOS execution-profile collector approved by complete configuration
+  digest; never couple it to Kubernetes sync or provider mounts. Scalar secrets continue through
+  `CredentialStore`, `SecretCipher`, and settings `secret://` references.
+- Prefer `SendableError` and structured `RuntimeError` where already established. Do not use
+  `unwrap`/`expect` in runtime paths unless the process truly cannot continue and nearby code uses
+  that convention.
+- Every Rust crate error uses a stable numbered `ErrorDescriptor` from the owning crate/family
+  dictionary. Add the next code in that range; do not hand-roll one-off code strings. Keep
+  `thiserror` literals synchronized with their dictionary entries. The command-center TypeScript
+  client is outside this catalog.
+- `REXRAP`, `WORKFLOW`, `BROKER`, and `BLOB` dictionaries are owned by their lowest shared/core
+  crate and re-exported upward; do not create per-wrapper copies.
+- Preserve existing domain prefixes and numeric ranges. `RUNI` is only the partitioned fallback for
+  runtime crates without their own vocabulary; domain crates use their domain prefix.
+- Library crates expose `pub mod errors;` so binaries can name descriptors. A binary-owned
+  dictionary may allow dead code where public descriptors are intentionally unused locally.
+- Keep blocking provider/plugin work behind `spawn_blocking` or equivalent isolation, preserve
+  graceful shutdown, and never hold a lock across `.await`.
 
-- Does this crate own the behavior I am changing?
-- Is the dependency direction still from services toward shared contracts, not the reverse?
-- Are waker, worker, web service, broker, and database responsibilities still distinct?
-- Have all serializers, mappers, API clients, and config files been updated for shared contract changes?
-- Can the local supervisor stack still run after this change?
+## Coding and Change Hygiene
+
+- Favor guard clauses over deep nesting and traits for behavior with multiple implementations.
+- Keep comments lower case, single-line, and punctuated where practical. Keep public RustDoc short,
+  dense, and dispassionate.
+- Split libraries into focused modules. Prefer one primary struct or trait per file; treat 500 lines
+  as a review threshold, not a mechanical limit.
+- Keep unit tests out of production files. Pair `module.rs` with `module_tests.rs`, or use a focused
+  `<subject>_tests/` directory whose child modules start with `use super::*;` and a `//!` subject
+  description. Do not add generic unit-test `tests.rs` files/directories; Cargo integration tests
+  remain in top-level `tests/`.
+- Keep changes scoped to the crate that owns the behavior. Avoid broad refactors and new workspace
+  dependencies for small conveniences; do not move shared structs between crates casually.
+- Update documentation and configuration examples in the same change as behavior.
+
+Before adding code, confirm that the owning crate is correct, dependency direction still points
+toward shared contracts, serializers/mappers/clients/config are updated, and the local supervisor
+stack can still run.

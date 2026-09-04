@@ -1,40 +1,55 @@
 # AGENTS.md
 
-Guidance for agents working in `runinator-database`.
+Guidance for `runinator-database`. Read `runinator-store/AGENTS.md` first when changing a persistence
+contract.
 
 ## Ownership
 
-`runinator-database` owns the concrete SQLite, Postgres, and MariaDB implementations of the
-`runinator-store` contract. Database-specific SQL, schema mapping, row conversion, and durable
-outbox/ready-node storage belong here, not in `runinator-ws`.
+`runinator-database` owns the concrete SQLite, Postgres, and MariaDB implementations of
+`runinator-store`: SQL, migrations, backend plumbing, and row conversion. Persistence traits and
+plain exchange types belong to `runinator-store`; HTTP and orchestration behavior belong elsewhere.
 
-## Where To Start
+## Boundaries and Invariants
 
-- Public persistence contract: `../runinator-store/src/{lib.rs,roles/}`.
-- Shared row/type mapping: `src/mappers.rs`.
-- Shared query text/helpers and generic backend wrapper: `src/queries.rs`, `src/backend.rs`.
-- SQLite backend: `src/sqlite.rs`.
-- Postgres backend: `src/postgres.rs`.
-- MariaDB backend: `src/mariadb.rs` (it uses SQLx's MySQL-compatible wire driver).
-- Mapper and backend tests: `src/mappers_tests.rs`, `src/sqlite_tests/`, `src/postgres_tests.rs`,
-  `src/mariadb_tests.rs`, and `src/dialect_parity.rs`.
+- Add an operation to the owning store role first, then implement the body once on `SqlStore<B>` in
+  the matching `operations/<role>.rs`. `SqliteDb`, `PostgresDb`, and `MariaDb` remain aliases.
+- Keep shared SQLx row mapping in `src/mappers.rs` and shared dialect plumbing in
+  `src/operations/mod.rs`.
+- Each role implementation deliberately repeats the SQLx `where` bounds. Do not hide them in a
+  macro or bundle trait: Rust does not treat a trait's `where` clause as implied bounds, and macro
+  errors would lose useful source locations.
+- Add every migration to the SQLite, Postgres, and MariaDB migration directories.
+  `migration_parity_tests.rs` enforces matching versions; document a genuine dialect-only migration
+  in its `DIALECT_ONLY` list.
+- Add lifecycle coverage to shared `src/dialect_parity.rs`, not one backend's private suite.
+  SQLite runs it unconditionally; live Postgres/MariaDB runs prove parity.
 
-## Boundaries
+MariaDB uses SQLx's MySQL-protocol types and `mysql://` URLs. This crate's three backend
+implementations must nevertheless expose the same persistence behavior. Database action-provider
+decoding, including MariaDB JSON/boolean and exact decimals, is owned by
+`runinator-provider-db/AGENTS.md`, not this persistence crate.
 
-- Add persistence operations to the owning `runinator-store` role first, then implement one
-  generic `SqlStore<B>` body that covers SQLite, Postgres, and MariaDB together.
-- Keep shared model structs in `runinator-models`; do not define database-local duplicates for wire/domain payloads.
-- Keep SQLx row mapping centralized in `mappers.rs` when a mapping is shared or reused.
-- Preserve backend-neutral behavior for ready nodes, action dispatch outbox rows, workflow runs, node runs, artifacts, provider catalog items, and automation records.
-- Do not call broker, HTTP, worker, waker, or provider code from this crate.
+## Where to Start
+
+- Contract roles: `../runinator-store/src/roles/`.
+- Backend wrapper and shared query plumbing: `src/backend.rs`, `src/operations/mod.rs`.
+- Row/type mapping: `src/mappers.rs`.
+- Migrations: `migrations/{sqlite,postgres,mariadb}/`.
+- Shared behavior: `src/dialect_parity.rs` and mapper tests.
 
 ## Verification
-
-Use:
 
 ```bash
 cargo check -p runinator-database
 cargo test -p runinator-database
 ```
 
-If a shared model field or serialized payload changed, also check `runinator-ws`, `runinator-api`, and command-center consumers.
+For schema or operation changes, run all live dialects:
+
+```bash
+docker compose -f runinator-database/tests/docker-compose.yml up -d --wait
+RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55433/runi \
+RUNINATOR_TEST_MARIADB_URL=mysql://root:runi@127.0.0.1:53307/runi \
+  cargo test -p runinator-database --features sqlite,postgres,mariadb
+docker compose -f runinator-database/tests/docker-compose.yml down -v
+```

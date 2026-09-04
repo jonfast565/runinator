@@ -1,85 +1,89 @@
 # AGENTS.md
 
-Guidance for agents working in the `runinator-rexrap` crate family.
+Guidance for the entire `runinator-rexrap*` family. Read this file for changes in the facade,
+syntax, semantic-analysis, codegen, or IDE crates.
 
-## Ownership
+## Ownership and Layering
 
-The REXRAP family owns the author-time workflow language: grammar, parser, semantic diagnostics, lowering to JSON workflow definitions, formatting, desugaring, and decompilation. Durable execution belongs to `runinator-engine` and `runinator-runtime` (hosted by `runinator-ws` by default), validation shared with JSON workflows belongs in `runinator-workflows`, and the editor surface (completion, hover) belongs in `runinator-rexrap-ide`.
+The authoring language is split by compile stage; dependencies never point back upward:
 
-## The Four Crates
-
-The language core is split by compile stage, layered so nothing depends back up:
-
-```
-runinator-rexrap                     public API and unified `.rrx` container front end,
-                                  `analysis` seam, the test suite
-  ├── runinator-rexrap-codegen       lower/  (ast -> json model)
-  │                               decompile/ (json model -> text)
-  │     └── runinator-rexrap-sema
-  ├── runinator-rexrap-sema          namespace, desugar, registry, purity, types,
-  │                               sema/, options
-  │     └── runinator-rexrap-syntax
-  └── runinator-rexrap-syntax        errors, ast, comments, parser, format, includes
+```text
+runinator-rexrap                    public facade, unified .rrx container, analysis seam, tests
+  ├── runinator-rexrap-codegen      ast <-> WorkflowDefinition
+  │     └── runinator-rexrap-sema   namespace, desugar, registry, purity, types, diagnostics
+  │           └── runinator-rexrap-syntax   grammar, ast, comments, parser, format, includes, errors
+  └── runinator-rexrap-ide          completion and hover through the facade's analysis seam
 ```
 
-Pick a crate by compile stage, not by file size:
+- Syntax is text/AST only and may depend on `runinator-models`, not diagnostics or workflow graphs.
+- Sema determines meaning without producing a runtime artifact. `CompileOptions`, `TypePolicy`, and
+  `WorkflowSignature` live here because it is the lowest layer that reads them.
+- Codegen owns both lowering and decompilation so one crate owns their round-trip contract.
+- The facade assembles/re-exports the core. Ordinary consumers should not name a lower crate.
+- IDE features use `runinator-rexrap/src/analysis.rs`; add a deliberate facade seam instead of
+  reaching from the IDE into a core crate.
+- Shared graph validation belongs in `runinator-workflows`. Lower REXRAP crates use
+  `runinator-compute` for expression typing and must not gain a `runinator-workflows` dependency.
 
-- `runinator-rexrap-syntax` is text ↔ ast and nothing else. It knows no diagnostics, no workflow JSON model, and no provider metadata; `runinator-models` is its only runinator dependency. Anything needing a `Diagnostic` or a `WorkflowDefinition` does not belong here.
-- `runinator-rexrap-sema` answers what a program *means* without producing a runtime artifact. `CompileOptions`/`TypePolicy`/`WorkflowSignature` live here because this is the lowest layer that reads them — the type passes need the policy and the pack's signatures, and codegen needs the rest.
-- `runinator-rexrap-codegen` holds both directions of the ast ↔ JSON mapping. `lower` and `decompile` share no code (decompile emits text directly rather than building an ast) but they share a contract: every node kind's parameters must survive a round trip. One crate, one owner for that contract.
-- `runinator-rexrap` assembles them. It is the only crate every consumer links, and it re-exports `ast`, `comments`, `errors`, `sema`, `CompileOptions`, and friends at their historical `runinator_rexrap::…` paths — a consumer should never need to name a core crate directly.
+Items crossing a stage boundary are `pub`; other helpers stay `pub(crate)`. Cross-stage round-trip
+and format-idempotence tests live in `runinator-rexrap`, the first crate that sees all stages. All
+four core crates emit `RexRapError`; the `REXRAP` dictionary is defined once in
+`runinator-rexrap-syntax/src/errors.rs` and re-exported.
 
-The **round-trip and format-idempotence tests live in `runinator-rexrap`**, because it is the first crate that can see parse, lower, decompile, and format at once. That is deliberate: those contracts are cross-stage, so they cannot be pinned from inside any one stage.
+## Language Invariants
 
-Items crossing a crate boundary are `pub`; everything else stays `pub(crate)`. When adding a helper, default to `pub(crate)` and widen only when a higher crate actually needs it — the compiler will say so.
+- `.rrx` is the only authored pack extension. Its container may carry workflow, pipeline,
+  settings, package-manifest, and test blocks; `parse_rrx_blocks` separates their front ends.
+- The grammar describes valid programs, not every malformed JSON graph. Do not add syntax for
+  degenerate structures such as a condition without branches or parallel without a matching join.
+- A workflow has one runtime `do { ... }` block beneath its header declarations. `let` is the only
+  binding form.
+- Outgoing edges use one attached `routes { ... }` section whose arms `continue` to a target.
+  `end` and `fail` are generated terminals; named `join` continuations are reached explicitly.
+- `compute { ... }` is the pure in-process statement block; it never schedules provider work.
+- Step attributes are prefixes. `@id`, `@skip`, `@lock`, and `@deadline` describe the graph node;
+  execution attributes include `@timeout`, `@retry`, `@tags`, `@mcp`, `@runner`, `@idempotent`, and
+  `@reentry`. Do not introduce a fluent postfix form.
+- A compensation clause places its own attributes between `compensate` and its call. Putting them
+  after the call reparses them as the next statement's attributes.
 
-The **error dictionary is not per-crate here**. All four crates emit the same `RexRapError` with the same `REXRAP` prefix, so `DICTIONARY` is defined once in `runinator-rexrap-syntax`'s `errors.rs` and re-exported by `runinator-rexrap`. Add a new numbered code there, not to a per-crate dictionary.
+Asyncness belongs to a call site, never a callee. A plain call binds `T`; `async <call>` binds
+`task[T]`, consumed by `await` or `detach`. `task fn` defines a runtime region that lowering inlines
+with substituted parameters and call-site-namespaced labels; plain `fn` remains pure.
+`group_async_launches` groups consecutive independent
+launches into a parallel fan-out and joins when a handle is first consumed; a single launch remains
+an ordinary node.
 
-## Where To Start
+Header cron triggers and input defaults live in definition metadata. The web-service importer
+materializes REXRAP-managed triggers. Pipeline blocks lower to portable `PipelineBundle` values;
+the importer resolves names, upserts the pipeline, and reconciles managed chained triggers by
+pipeline id. The pipeline itself does not execute.
 
-`runinator-rexrap-syntax`:
+## Source and Round-Trip Contract
 
-- Grammar: `src/rexrap.pest`.
-- AST and parser: `src/ast.rs`, `src/parser.rs`.
-- Comment preservation: `src/comments.rs`. Pest treats `COMMENT` as silent trivia, so comments are lexed separately and attached to ast anchors (as `CommentSet` leading/trailing/dangling) after parsing; the formatter renders them back for lossless round-trips. Anchors include top-level items, workflow headers, body statements (recursively, per branch), and `params`/`type` struct fields (recursively). Attachment keys off reliable anchor *start* positions and the `own_line` flag, not pest `span.end` (which includes trailing trivia); nested-block and struct boundaries are found by matching source braces (`block_close`).
-- Formatting: `src/format.rs`.
-- Errors and spans: `src/errors.rs`.
+Authored REXRAP source is never persisted: packs contain compiled definitions and the editor shows
+decompiled text. `decompile_with_spans` returns source and byte ranges from the same rendering; do
+not store source positions in compiled modules or apply offsets to another rendering.
 
-`runinator-rexrap-sema`:
+Every structurally representable node kind/field must survive parse, lower, format, and decompile.
+Update IDE completion when new surface syntax should be offered to authors. Comment preservation
+keys attachment to reliable anchor starts and `own_line`; nested boundaries come from matching
+source braces, not pest span ends that include trivia.
 
-- Semantic passes: `src/sema/`.
-- Desugaring: `src/desugar.rs`; namespace resolution: `src/namespace.rs`.
-- Callable registry and purity: `src/registry.rs`, `src/purity.rs`.
-- Named-type resolution: `src/types.rs`.
-- Compile options: `src/options.rs`.
+## Where to Start
 
-`runinator-rexrap-codegen`:
-
-- Lowering to workflow JSON: `src/lower/`.
-- Decompilation: `src/decompile/`.
-
-`runinator-rexrap`:
-
-- Public compile/decompile facade: `src/lib.rs`.
-- Editor seam: `src/analysis.rs` — the only items `runinator-rexrap-ide` may reach into `runinator-rexrap-sema` for. Add to it deliberately rather than reaching into a core crate.
-- Unified-container pipeline and settings blocks: `src/pipeline.rs`, `src/secrets.rs`.
-- Regression coverage: `src/tests/`, one file per subject; shared round-trip helpers in `tests/mod.rs`.
-
-## Boundaries
-
-- Keep the grammar a syntax for valid authoring forms, not a serializer for every malformed JSON graph.
-- New node kinds or fields must round-trip through parse, lower, format, and decompile when structurally representable; update `runinator-rexrap-ide` completion when the surface gains something an author would want offered.
-- Use `runinator-workflows` validation after lowering; do not duplicate shared graph invariants here unless they are language-specific diagnostics. Note the asymmetry: only the `runinator-rexrap` facade needs that graph layer. `-rexrap-sema`, `-rexrap-ide`, and `-rexrap-codegen` read the intrinsic catalog and expression typing from **`runinator-compute`** and must not gain a `runinator-workflows` dependency — a semantic pass reaching for graph validation is a sign the check belongs in the facade's lowering path instead.
-- Do not add runtime scheduling, broker, database, worker, or provider behavior to these crates.
-- Do not add a dependency from a lower crate back up (syntax must never name sema; sema must never name codegen). If a pass seems to need one, the pass is in the wrong crate.
+- Grammar/AST/parser/comments/format/errors: `../runinator-rexrap-syntax/src/`.
+- Semantic passes, desugaring, registry, purity, types, options: `../runinator-rexrap-sema/src/`.
+- Lower/decompile: `../runinator-rexrap-codegen/src/`.
+- Public facade/container handling/tests: `src/`.
+- Completion/hover: `../runinator-rexrap-ide/src/` through `src/analysis.rs`.
 
 ## Verification
-
-Use:
 
 ```bash
 cargo test -p runinator-rexrap
 cargo check -p runinator-rexrap-syntax -p runinator-rexrap-sema -p runinator-rexrap-codegen
 ```
 
-`cargo test -p runinator-rexrap` is the one that matters — the cross-stage contracts (round-trip, format idempotence) are all in that suite. For syntax changes, add parser/lowering/decompile tests that cover both terse and explicit forms when applicable.
+The facade test suite is authoritative for cross-stage contracts. Syntax changes need focused
+parser/lowering/decompile coverage, including terse and explicit forms where both exist.

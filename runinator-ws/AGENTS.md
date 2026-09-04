@@ -1,48 +1,97 @@
 # AGENTS.md
 
-Guidance for agents working in `runinator-ws`.
+Guidance for the complete `runinator-ws*` family, including sibling handler, middleware, and core
+crates. Read this file for changes in any of them.
 
 ## Ownership
 
-`runinator-ws` owns HTTP/WebSocket transport, authentication/authorization, discovery, and API response mapping. Background orchestration loops live in `runinator-engine`; the continuation-driven graph interpreter and durable host boundary live in `runinator-runtime`. The web service hosts the engine by default but must not duplicate either implementation. It should not depend on worker, waker, provider, or plugin internals.
+The HTTP surface is layered so dependencies never point back upward:
 
-This crate is the **assembly** layer. The surface itself lives in five sibling crates —
-`runinator-ws-core` (wire types, responses, events, openapi vocabulary), `runinator-ws-middleware`
-(auth, authz, rate limiting, overload), and `runinator-ws-{identity,authoring,runtime}` (the handler
-modules). See the root `AGENTS.md` section "The web service crates" for the layering and for which
-crate a new endpoint belongs in.
+```text
+runinator-ws                    router/server/websocket/openapi assembly, config, binary
+  ├── runinator-ws-identity     auth, organizations, billing
+  ├── runinator-ws-authoring    definitions, packs, pipelines, credentials, providers, functions, console
+  ├── runinator-ws-runtime      runs, effects, triggers, replicas, automation, observability, health
+  ├── runinator-ws-middleware   auth, authz, rate limits, overload
+  └── runinator-ws-core         models, responses, events, json, openapi vocabulary/examples
+```
 
-## Where To Start
+Choose a handler crate by what the endpoint is about: identity is who may act, authoring is what
+can run, and runtime is what is running. Handler crates may depend on core and middleware, not on
+each other. `runinator-ws` assembles the surface and hosts `runinator-engine` by default; it must not
+duplicate engine, graph-runtime, worker, waker, provider, or database behavior.
 
-- Route merging and the middleware stack: `src/router.rs`.
-- Handlers: `../runinator-ws-{identity,authoring,runtime}/src/handlers/`; orchestrating handlers
-  call injected engine application services. The deliberately thin direct-store exceptions are
-  documented and ratcheted by `src/store_access_tests.rs`. `src/lib.rs` re-exports handlers at
-  `crate::handlers::<domain>` for the openapi `paths(...)` table and the test suite.
-- Engine startup/hosting: `src/server.rs`; shared engine implementation: `../runinator-engine/src/`.
-- Graph interpreter and host boundary: `../runinator-runtime/src/{machine,host}.rs`; node behavior: `../runinator-runtime/src/orchestration/`.
-- The two source lints over the merged surface: `src/openapi/route_parity.rs` and
-  `src/store_access_tests.rs`; both read `HANDLER_CRATES` in `src/lib.rs`.
-- Workflow definitions/import/export: `../runinator-engine/src/repository/definitions.rs`.
-- VM driving, effect dispatch, wake publishing, and run queries: `../runinator-engine/src/` (start from `engine.rs`, `effect_consumer.rs`, and `repository/`).
-- Debug and pause/resume/cancel behavior: `../runinator-engine/src/repository/debug.rs`.
-- Broker result application and effect artifacts/logs: `../runinator-engine/src/effect_consumer.rs` and `../runinator-engine/src/repository/`.
+## Endpoint Contract
 
-## Boundaries
+- An endpoint lives in one `handlers/<domain>.rs` file beside its handler function, its
+  `routes<T: DatabaseImpl>(...)` registration, and its `DOCS: &[EndpointDoc]` entry.
+- Add a new domain module to the owning
+  `../runinator-ws-{identity,authoring,runtime}/src/handlers/mod.rs`; do not create another crate for
+  a domain or add per-endpoint knowledge to assembly.
+- `runinator-ws/src/router.rs` only merges route fragments and middleware.
+  `runinator-ws/src/openapi/mod.rs` only concatenates `DOCS` through `DOC_SETS` and enriches the
+  result. Do not add individual routes or endpoint docs to either.
+- Shared OpenAPI types/constructors and reusable parameters live in
+  `runinator-ws-core/src/openapi/docs.rs`; examples live in
+  `runinator-ws-core/src/openapi/examples.rs`.
+- `Router::merge` rejects duplicate method/path pairs. Path prefix does not decide domain ownership.
+- Preserve `runinator-ws/src/lib.rs` historical re-exports for handlers, models, events, auth/authz,
+  and engine repository/stability paths used by assembly code and integration tests.
 
-- Keep SQL and backend-specific persistence in `runinator-database`.
-- Keep HTTP handlers thin: authorize, validate transport payloads, call `runinator-engine`, and map web responses.
-- Keep command payloads crossing broker boundaries in `runinator-comm`.
-- The graph runtime yields durable effect requests through the engine; the waker only relays due wakes to ingress and must never execute providers.
-- Do not add direct worker or waker calls from this crate; use broker channels or shared API/client contracts as appropriate.
+Two source lints protect this layout:
+
+- `src/openapi/route_parity.rs` compares registered and documented routes. Its explicit
+  `ROUTER_SOURCES` list must include every handler module with a `routes()` function.
+- `store_access_tests.rs` enforces the direct-store allowlist by `<crate>/<file>`.
+- Both discover handler crates through `runinator-ws::HANDLER_CRATES`; update it if a handler crate
+  is deliberately added or renamed.
+
+## Persistence Boundary
+
+Handlers authorize, validate transport payloads, call engine application services, and map HTTP
+responses. SQL and mapping stay in `runinator-database`; orchestration stays in
+`runinator-engine/src/repository/`.
+
+A handler may call `db.*` directly only for the closed thin-CRUD allowlist:
+
+- Identity: authentication, organizations/memberships, and billing.
+- Authoring: credentials and catalog.
+- Runtime: the health readiness probe's database-connectivity check.
+
+Runs, node runs, triggers/firings, dispatches, notifications/policies, pipelines, and replicas go
+through the engine even when the current repository function is one delegation. The deciding test
+is whether a future version may touch run state, an outbox, the ready-node queue, or a UI event.
+Update `store_access_tests.rs` only when deliberately changing this policy.
+
+## Authorization
+
+- Authorization is deny-by-default. Use typed `Action`, `ScopeRef`, fixed roles,
+  `require_scope_action`, and `AuthzChecker::require_resource` or a child-to-parent helper.
+- `is_platform_admin()` is the only administrative short-circuit. Service keys receive no implicit
+  bypass; machine traffic uses explicit `SystemRole` authority.
+- Workflows, pipelines, function packages, and console sessions use the generic ownership registry
+  and `Permission` ladder. Resolve children to their stored parent before authorization.
+- The command center's `/auth/me` and `/authz/catalog` gating is defense in depth, never backend
+  enforcement. See `docs/permissions.md`.
+
+## Where to Start
+
+- Assembly and middleware: `src/router.rs`, `src/server.rs`, `src/lib.rs`.
+- Handlers: sibling `runinator-ws-{identity,authoring,runtime}/src/handlers/` directories.
+- Shared payloads/events/docs: `../runinator-ws-core/src/`.
+- Engine application behavior: `../runinator-engine/src/repository/` and its scoped guide.
+- Route/store guards: `src/openapi/route_parity.rs`, `src/store_access_tests.rs`.
 
 ## Verification
 
-Use the narrowest useful check first:
+Use the narrowest useful checks, then include dependent crates for shared payloads:
 
 ```bash
 cargo check -p runinator-ws
 cargo test -p runinator-ws
 ```
 
-If shared contracts or database behavior changed, also run the affected shared crate tests and prefer a workspace test before handoff.
+Endpoint changes must pass route/OpenAPI parity and store-access tests. Shared database or runtime
+contracts also require their owning crate tests and preferably a final workspace test.
+The web-service behavior suite intentionally boots a real SQLite store and crosses handler,
+engine, VM, and persistence boundaries; keep those integration tests in the assembly crate.
