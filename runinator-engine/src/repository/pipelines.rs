@@ -474,6 +474,8 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
         namespace: spec.namespace.clone(),
         description: spec.description.clone(),
         org_id: import_org,
+        // Pack imports reconcile executable definitions, but preserve an operator's live pause.
+        enabled: prior.map(|pipeline| pipeline.enabled).unwrap_or(true),
         graph: PipelineGraph {
             version: PIPELINE_GRAPH_VERSION,
             members: graph_members,
@@ -675,6 +677,9 @@ pub async fn create_manual_pipeline_run<T: DefinitionStore + RuntimeStore + Work
         .fetch_pipeline(pipeline_id)
         .await?
         .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_id))?;
+    if !current.enabled {
+        return Err(crate::errors::PIPELINE_DISABLED.error(pipeline_id));
+    }
     let pipeline = if let Some(revision) = revision {
         if revision < 1 {
             return Err(invalid_pipeline(

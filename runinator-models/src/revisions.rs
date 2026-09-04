@@ -241,6 +241,7 @@ impl PipelineRevision {
             namespace: current.namespace.clone(),
             description: self.description.clone(),
             org_id: current.org_id,
+            enabled: current.enabled,
             graph: self.graph.clone(),
             concurrency: self.concurrency,
             defaults: self.defaults.clone(),

@@ -62,6 +62,7 @@ fn pipeline() -> Pipeline {
         namespace: Some("runinator.tests".into()),
         description: None,
         org_id: None,
+        enabled: true,
         graph: PipelineGraph {
             version: PIPELINE_GRAPH_VERSION,
             ..Default::default()
@@ -107,6 +108,33 @@ async fn save_persists_a_valid_pipeline_through_the_service() {
     assert_eq!(revisions[0].revision, 2);
     assert_ne!(revisions[0].digest, revisions[1].digest);
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn disabled_pipeline_rejects_new_manual_runs() {
+    let (db, path) = test_db().await;
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = PipelineOperations::new(db, broker.clone(), UiEventPublisher::new(broker), None);
+    let saved = service.save(&pipeline()).await.unwrap();
+    let id = saved.id.unwrap();
+
+    let disabled = service.set_enabled(id, false).await.unwrap().unwrap();
+    assert!(!disabled.enabled);
+    let error = service
+        .create_run(
+            id,
+            Value::Object(Default::default()),
+            None,
+            Some("test".into()),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Pipeline is disabled"));
+
+    let enabled = service.set_enabled(id, true).await.unwrap().unwrap();
+    assert!(enabled.enabled);
     let _ = std::fs::remove_file(path);
 }
 

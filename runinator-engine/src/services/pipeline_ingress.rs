@@ -159,6 +159,9 @@ where
             .await
             .map_err(PipelineIngressError::internal)?
             .ok_or_else(|| PipelineIngressError::NotFound("pipeline not found".into()))?;
+        if !pipeline.enabled {
+            return Err(PipelineIngressError::Invalid("pipeline is disabled".into()));
+        }
         let policy: IngressPolicy = serde_json::from_value(
             pipeline
                 .metadata

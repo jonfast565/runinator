@@ -300,6 +300,7 @@ async fn terminal_vm_pipeline_members_are_recoverable_until_the_attempt_settles(
             namespace: None,
             description: None,
             org_id: None,
+            enabled: true,
             graph: PipelineGraph {
                 version: PIPELINE_GRAPH_VERSION,
                 ..Default::default()

@@ -315,6 +315,9 @@ pub struct Pipeline {
     /// active org on create and preserved on update.
     #[serde(default)]
     pub org_id: Option<Uuid>,
+    /// Whether this pipeline may admit new manual, trigger, or ingress runs.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default)]
     pub graph: PipelineGraph,
     #[serde(default)]

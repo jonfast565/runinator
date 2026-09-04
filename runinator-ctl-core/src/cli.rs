@@ -999,6 +999,10 @@ pub enum PipelineCommands {
     },
     /// Delete a pipeline. Its member workflows are untouched.
     Delete { pipeline: String },
+    /// Allow a pipeline to admit manual, trigger, and ingress runs.
+    Enable { pipeline: String },
+    /// Block new manual, trigger, and ingress runs for a pipeline.
+    Disable { pipeline: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1089,6 +1093,10 @@ pub enum OrchestrationAdapterCommands {
     Test { id: Uuid, file: PathBuf },
     /// Delete an adapter that has never admitted a binding.
     Delete { id: Uuid },
+    /// Resume webhook acceptance and polling for an adapter.
+    Enable { id: Uuid },
+    /// Pause webhook acceptance and polling for an adapter.
+    Disable { id: Uuid },
     /// Reload filesystem-installed adapter plugins. Platform admin only.
     Reload,
 }

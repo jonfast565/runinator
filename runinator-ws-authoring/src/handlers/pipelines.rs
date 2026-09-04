@@ -87,6 +87,11 @@ pub struct PipelineRevisionListQuery {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PipelineEnableRequest {
+    pub enabled: bool,
+}
+
 pub async fn get_pipeline_revisions<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
@@ -181,6 +186,29 @@ pub async fn update_pipeline<
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
         Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
         Err(err) => bad_request(err.to_string()),
+    }
+}
+
+/// Changes whether a pipeline may admit new runs without changing its graph.
+pub async fn set_enabled<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_id): Path<Uuid>,
+    Json(request): Json<PipelineEnableRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
+    match service.set_enabled(pipeline_id, request.enabled).await {
+        Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
+        Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
+        Err(error) => bad_request(error.to_string()),
     }
 }
 
@@ -860,6 +888,10 @@ pub fn routes<
                 .patch(update_pipeline::<T>)
                 .delete(delete_pipeline::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/enabled",
+            post(set_enabled::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/pipelines/{id}/revisions",

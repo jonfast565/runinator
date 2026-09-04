@@ -148,6 +148,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
         namespace: trimmedNamespace,
         key: trimmedKey,
         description: description.trim() || null,
+        enabled: true,
         graph: { version: 1, members: [], links: [], joins: {} },
         concurrency: { max_concurrent_runs: 0, on_conflict: "allow" },
         defaults: defaultPipelineDefaults(),
@@ -206,6 +207,10 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
   function savePipelineMetadata(metadata: JsonRecord) {
     return persistSelected((draft) => ({ ...draft, metadata }));
+  }
+
+  function setPipelineEnabled(enabled: boolean) {
+    return persistSelected((draft) => ({ ...draft, enabled }));
   }
 
   function updateJoin(target: string, mode: PipelineJoinMode, parameters: Record<string, unknown>) {
@@ -475,6 +480,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
     savePipelineDefaults,
     savePipelineConcurrency,
     savePipelineMetadata,
+    setPipelineEnabled,
     updateJoin,
     addWorkflowToPipeline,
     removeWorkflowFromPipeline,

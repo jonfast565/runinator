@@ -134,9 +134,17 @@
                       {{ wf.name }}
                     </option>
                   </select>
-                  <button class="btn btn-primary" :disabled="starting" @click="startRun">
+                  <button
+                    class="btn btn-primary"
+                    :disabled="starting || !selectedPipeline.enabled"
+                    @click="startRun"
+                  >
                     <Icon name="runs" />
                     <span>Run</span>
+                  </button>
+                  <button class="btn" @click="togglePipelineEnabled">
+                    <Icon :name="selectedPipeline.enabled ? 'pause' : 'play'" />
+                    <span>{{ selectedPipeline.enabled ? "Disable" : "Enable" }}</span>
                   </button>
                   <button class="btn" @click="openDefaults">
                     <Icon name="settings" />
@@ -783,6 +791,19 @@ async function startRun() {
     app.setError(error instanceof Error ? error.message : String(error));
   } finally {
     starting.value = false;
+  }
+}
+
+async function togglePipelineEnabled() {
+  const current = selectedPipeline.value;
+
+  if (!current) {
+    return;
+  }
+
+  const enabled = !current.enabled;
+  if (await pipeline.setPipelineEnabled(enabled)) {
+    app.setStatus(`${current.name} ${enabled ? "enabled" : "disabled"}`);
   }
 }
 

@@ -132,6 +132,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
             namespace: Some("dialect_parity".into()),
             description: None,
             org_id: None,
+            enabled: true,
             graph: PipelineGraph {
                 version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                 members: vec![PipelineMember {

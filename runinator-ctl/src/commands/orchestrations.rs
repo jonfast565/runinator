@@ -305,6 +305,26 @@ async fn orchestration_adapters(
             println!("{}", result.message);
             Ok(())
         }
+        OrchestrationAdapterCommands::Enable { id }
+        | OrchestrationAdapterCommands::Disable { id } => {
+            let enabled = matches!(command, OrchestrationAdapterCommands::Enable { .. });
+            let adapter = client
+                .set_orchestration_adapter_enabled(*id, enabled)
+                .await?;
+            if json_output {
+                return output::json(&adapter);
+            }
+            println!(
+                "adapter {} {}",
+                adapter.name,
+                if adapter.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
+            Ok(())
+        }
         OrchestrationAdapterCommands::Reload => {
             let result = client.reload_orchestration_adapters().await?;
             output::json(&result)

@@ -433,6 +433,7 @@ mod tests {
             namespace: Some("runinator.tests".into()),
             description: None,
             org_id: None,
+            enabled: true,
             graph: PipelineGraph {
                 version: PIPELINE_GRAPH_VERSION,
                 ..Default::default()

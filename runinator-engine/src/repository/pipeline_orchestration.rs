@@ -31,6 +31,9 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     let Some(pipeline_id) = pipeline.id else {
         return Err(crate::errors::PIPELINE_NOT_FOUND.error("pipeline is missing an id"));
     };
+    if !pipeline.enabled {
+        return Err(crate::errors::PIPELINE_DISABLED.error(pipeline_id));
+    }
     if !pipeline.graph.is_current() {
         return Err(crate::errors::PIPELINE_NOT_FOUND.error(format!(
             "pipeline {pipeline_id} requires source pack reimport"
@@ -145,6 +148,10 @@ pub async fn start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
             .await?
             .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(run.pipeline_id))?,
     };
+    if !pipeline.enabled {
+        db.discard_queued_pipeline_run(run.id).await?;
+        return Ok(PipelineStartOutcome::Skipped);
+    }
     if !pipeline.graph.is_current() {
         db.update_pipeline_run_status(
             run.id,
@@ -1079,6 +1086,9 @@ async fn start_chained_pipeline<T: RuntimeStore + WorkflowVmStore>(
     let Some(pipeline) = db.fetch_pipeline(trigger.pipeline_id).await? else {
         return Ok(());
     };
+    if !pipeline.enabled {
+        return Ok(());
+    }
     let parameters = trigger
         .configuration
         .get("parameters")

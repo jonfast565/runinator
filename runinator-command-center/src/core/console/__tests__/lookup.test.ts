@@ -15,6 +15,7 @@ const pipeline: Pipeline = {
   description: null,
   key: "release_train",
   namespace: "acme.delivery",
+  enabled: true,
   graph: { version: 1, members: [], links: [], joins: {} },
   concurrency: { max_concurrent_runs: 0, on_conflict: "allow" },
   defaults: defaultPipelineDefaults(),

@@ -70,6 +70,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             namespace: Some("tests".into()),
             description: None,
             org_id: None,
+            enabled: true,
             graph: PipelineGraph {
                 version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                 members: vec![PipelineMember {

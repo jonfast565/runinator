@@ -269,6 +269,22 @@ pub(super) async fn pipelines(
             println!("deleted pipeline {}", pipeline.name);
             Ok(())
         }
+        PipelineCommands::Enable { pipeline } | PipelineCommands::Disable { pipeline } => {
+            let pipeline = resolve_pipeline(client, pipeline).await?;
+            let enabled = matches!(command, PipelineCommands::Enable { .. });
+            let saved = client
+                .set_pipeline_enabled(pipeline_id(&pipeline)?, enabled)
+                .await?;
+            if json_output {
+                return output::json(&saved);
+            }
+            println!(
+                "pipeline {} {}",
+                saved.name,
+                if saved.enabled { "enabled" } else { "disabled" }
+            );
+            Ok(())
+        }
     }
 }
 
@@ -337,6 +353,7 @@ fn print_pipelines(pipelines: &[Pipeline]) {
                     .unwrap_or_else(|| "-".into()),
                 pipeline.artifact_path().qualified(),
                 pipeline.name.clone(),
+                pipeline.enabled.to_string(),
                 pipeline.graph.members.len().to_string(),
                 pipeline.description.clone().unwrap_or_default(),
             ]
@@ -344,7 +361,10 @@ fn print_pipelines(pipelines: &[Pipeline]) {
         .collect::<Vec<_>>();
     print!(
         "{}",
-        output::table(&["ID", "PATH", "NAME", "MEMBERS", "DESCRIPTION"], &rows)
+        output::table(
+            &["ID", "PATH", "NAME", "ENABLED", "MEMBERS", "DESCRIPTION"],
+            &rows
+        )
     );
 }
 

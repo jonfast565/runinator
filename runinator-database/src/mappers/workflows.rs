@@ -81,6 +81,7 @@ macro_rules! pipeline_from_row {
             namespace: $row.get("namespace"),
             description: $row.get::<Option<String>, _>("description"),
             org_id: $row.get("org_id"),
+            enabled: $row.get("enabled"),
             graph: serde_json::from_str($row.get::<String, _>("graph").as_str())
                 .unwrap_or_default(),
             concurrency: serde_json::from_str($row.get::<String, _>("concurrency").as_str())

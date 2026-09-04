@@ -148,6 +148,8 @@ pub const PIPELINE_MEMBER_NOT_RETRYABLE: ErrorDescriptor = ErrorDescriptor::new(
     "pipeline.run.member_not_retryable",
     "Pipeline member is not on the retry frontier",
 );
+pub const PIPELINE_DISABLED: ErrorDescriptor =
+    ErrorDescriptor::new("RUNI187", "pipeline.run.disabled", "Pipeline is disabled");
 pub const REPLAY_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI139",
     "workflow.replay.not_found",
@@ -291,6 +293,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     PIPELINE_INQUIRY_MEMBER_MISSING,
     PIPELINE_CONCURRENCY_REJECTED,
     PIPELINE_MEMBER_NOT_RETRYABLE,
+    PIPELINE_DISABLED,
     REPLAY_NOT_FOUND,
     REPLAY_MISSING_STEP,
     REPLAY_CONTROL_FLOW,

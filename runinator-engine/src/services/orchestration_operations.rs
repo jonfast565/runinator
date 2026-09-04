@@ -1119,6 +1119,7 @@ mod tests {
                 namespace: None,
                 description: None,
                 org_id: None,
+                enabled: true,
                 graph: PipelineGraph {
                     version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                     ..Default::default()

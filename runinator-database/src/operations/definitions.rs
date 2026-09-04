@@ -424,6 +424,7 @@ where
             "namespace",
             "description",
             "org_id",
+            "enabled",
             "defaults",
             "metadata",
             "graph",
@@ -438,7 +439,7 @@ where
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO pipelines ({PIPELINE_COLUMNS})
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
             )))
             .bind(pipeline_id)
             .bind(&pipeline.name)
@@ -446,6 +447,7 @@ where
             .bind(&pipeline.namespace)
             .bind(&pipeline.description)
             .bind(pipeline.org_id)
+            .bind(pipeline.enabled)
             .bind(&defaults)
             .bind(pipeline.metadata.to_string())
             .bind(&graph)
@@ -466,7 +468,7 @@ where
         let conflict = self.dialect().on_conflict_update("id", &update_cols);
         let row = sqlx::query(&self.render(&format!(
             "INSERT INTO pipelines ({PIPELINE_COLUMNS})
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
              RETURNING {PIPELINE_COLUMNS}",
         )))
         .bind(pipeline_id)
@@ -475,6 +477,7 @@ where
         .bind(&pipeline.namespace)
         .bind(&pipeline.description)
         .bind(pipeline.org_id)
+        .bind(pipeline.enabled)
         .bind(&defaults)
         .bind(pipeline.metadata.to_string())
         .bind(&graph)

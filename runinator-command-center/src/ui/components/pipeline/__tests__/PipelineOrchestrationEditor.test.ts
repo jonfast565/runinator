@@ -10,6 +10,7 @@ function pipelineWithOmittedPredicates(): Pipeline {
     id: "44ba5859-0be2-4184-b9ae-c760529143d7",
     name: "Ticket-scoped Autonomous Development",
     description: null,
+    enabled: true,
     graph: {
       version: 1,
       members: [

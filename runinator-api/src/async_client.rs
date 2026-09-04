@@ -610,6 +610,24 @@ where
         Ok(response.json().await?)
     }
 
+    pub async fn set_orchestration_adapter_enabled(
+        &self,
+        id: Uuid,
+        enabled: bool,
+    ) -> Result<AdapterDefinition> {
+        let url = self
+            .build_url(&format!("/orchestrations/adapters/{id}/enabled"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "enabled": enabled })),
+            )
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
     pub async fn reload_orchestration_adapters(&self) -> Result<Value> {
         let url = self.build_url("/orchestrations/adapters/reload").await?;
         let response = self
@@ -655,6 +673,20 @@ where
                     .await?
             }
         };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn set_pipeline_enabled(&self, pipeline_id: Uuid, enabled: bool) -> Result<Pipeline> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/enabled"))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&json!({ "enabled": enabled })),
+            )
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Pipeline>().await?)
     }

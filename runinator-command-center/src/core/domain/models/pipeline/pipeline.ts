@@ -71,6 +71,8 @@ export interface Pipeline {
   description: string | null;
   // owning organization (tenant); null = platform-global. server-managed (stamped on create).
   org_id?: string | null;
+  // Disabled pipelines reject manual, trigger, and ingress starts.
+  enabled: boolean;
   graph: PipelineGraph;
   concurrency: PipelineConcurrency;
   defaults: PipelineDefaults;

@@ -136,6 +136,19 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         self.save(&pipeline).await.map(Some)
     }
 
+    /// Sets the admission gate without requiring clients to resubmit the pipeline graph.
+    pub async fn set_enabled(
+        &self,
+        pipeline_id: Uuid,
+        enabled: bool,
+    ) -> Result<Option<Pipeline>, SendableError> {
+        let Some(mut pipeline) = self.fetch(pipeline_id).await? else {
+            return Ok(None);
+        };
+        pipeline.enabled = enabled;
+        self.save(&pipeline).await.map(Some)
+    }
+
     pub async fn delete(
         &self,
         pipeline_id: Uuid,

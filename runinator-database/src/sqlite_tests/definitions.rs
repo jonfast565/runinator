@@ -154,6 +154,7 @@ async fn pipeline_round_trip_create_update_delete() {
             namespace: Some("delivery.production".into()),
             description: Some("ship it".into()),
             org_id: Some(org),
+            enabled: true,
             graph: runinator_models::pipelines::PipelineGraph {
                 version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                 members: vec![runinator_models::pipelines::PipelineMember {
