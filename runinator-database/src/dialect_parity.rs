@@ -60,6 +60,7 @@ use runinator_store::roles::{
 
 fn sample_workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: name.to_string(),
         key: None,
@@ -101,6 +102,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     let id = after.id.expect("the upserted workflow has an id");
 
     assert_revision_history(db, &after).await;
+    assert_contract_publication(db, &after).await;
     assert_trigger_upsert(db, id).await;
     assert_idempotency_keys(db).await;
     assert_ingress_admission_claim(db, id).await;
@@ -1714,6 +1716,7 @@ async fn assert_workflow_upsert<T: DatabaseImpl>(db: &T) {
 async fn assert_revision_history<T: DatabaseImpl>(db: &T, workflow: &WorkflowDefinition) {
     let id = workflow.id.expect("workflow has an id");
     let mut revision = WorkflowRevision {
+        output_type: Default::default(),
         id: Uuid::nil(),
         workflow_id: id,
         revision: 0,
@@ -1781,6 +1784,40 @@ async fn assert_trigger_upsert<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
     let retrigged = db.upsert_workflow_trigger(&retrig).await.unwrap();
     assert_eq!(retrigged.id, Some(trigger_id));
     assert!(!retrigged.enabled);
+}
+
+async fn assert_contract_publication<T: DatabaseImpl>(db: &T, old: &WorkflowDefinition) {
+    let id = old.id.unwrap();
+    let mut next = old.clone();
+    next.output_type = RuninatorType::String;
+    let mut revision = db.fetch_workflow_revisions(id, 1).await.unwrap().remove(0);
+    revision.name = next.name.clone();
+    revision.output_type = next.output_type.clone();
+    revision.digest = WorkflowRevision::contract_digest(
+        next.version,
+        &next.input_type,
+        &next.output_type,
+        &next.definition,
+    );
+    let saved = db.publish_workflow(&next, Some(old), &revision, Some(json!({
+        "actor_kind": "system", "action": "workflow.contract.override", "resource_type": "workflow",
+        "resource_id": id, "outcome": "accepted", "detail": "parity test"
+    }))).await.unwrap();
+    assert_eq!(saved.output_type, RuninatorType::String);
+    let head = db.fetch_workflow_revisions(id, 1).await.unwrap().remove(0);
+    assert_eq!(head.output_type, RuninatorType::String);
+    assert_eq!(head.digest, revision.digest);
+    assert!(
+        db.publish_workflow(&next, Some(old), &revision, None)
+            .await
+            .is_err(),
+        "stale publication must fail"
+    );
+    let rows = db
+        .fetch_audit_log(None, Some("workflow.contract.override".into()), 100)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
 }
 
 /// an enabled trigger on a *disabled* workflow is not due and cannot be claimed. the predicate is a

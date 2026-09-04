@@ -2,9 +2,11 @@
 //! sequence number, and removal with the workflow that owns it.
 
 use super::*;
+use runinator_models::types::RuninatorType;
 
 fn revision_for(saved: &WorkflowDefinition, source: RevisionSource) -> WorkflowRevision {
     WorkflowRevision {
+        output_type: Default::default(),
         id: Uuid::nil(),
         workflow_id: saved.id.unwrap(),
         revision: 0,
@@ -116,6 +118,79 @@ async fn an_unchanged_save_records_no_revision() {
     assert_eq!(recorded.revision, 2);
 
     let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn legacy_output_fallback_does_not_rewrite_digest_or_override_explicit_any() {
+    let (db, _path) = open("output-legacy").await;
+    let mut legacy = workflow("legacy-output");
+    legacy.definition.metadata =
+        runinator_models::json!({ "rexrap": { "output_type": { "type": "string" } } });
+    let saved = db.upsert_workflow(&legacy).await.unwrap();
+    let revision = db
+        .insert_workflow_revision(&revision_for(&saved, RevisionSource::Api))
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("UPDATE workflows SET output_schema = NULL WHERE id = ?")
+        .bind(saved.id.unwrap())
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE workflow_revisions SET output_schema = NULL WHERE id = ?")
+        .bind(revision.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        db.fetch_workflow(saved.id.unwrap())
+            .await
+            .unwrap()
+            .unwrap()
+            .output_type,
+        RuninatorType::String
+    );
+    let historical = db
+        .fetch_workflow_revision(saved.id.unwrap(), revision.revision)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(historical.output_type, RuninatorType::String);
+    assert_eq!(historical.digest, revision.digest);
+    let explicit = db.upsert_workflow(&saved).await.unwrap();
+    assert_eq!(explicit.output_type, RuninatorType::Any);
+}
+
+#[tokio::test]
+async fn failed_override_audit_rolls_back_head_and_revision() {
+    let (db, _path) = open("atomic-publication").await;
+    let old = db
+        .upsert_workflow(&workflow("atomic-contract"))
+        .await
+        .unwrap();
+    db.insert_workflow_revision(&revision_for(&old, RevisionSource::Api))
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER reject_contract_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'test audit failure'); END").execute(db.pool()).await.unwrap();
+    let mut next = old.clone();
+    next.output_type = RuninatorType::String;
+    let revision = revision_for(&next, RevisionSource::Api);
+    assert!(db.publish_workflow(&next, Some(&old), &revision, Some(runinator_models::json!({ "actor_kind": "system", "action": "workflow.contract.override", "outcome": "accepted" }))).await.is_err());
+    assert_eq!(
+        db.fetch_workflow(old.id.unwrap())
+            .await
+            .unwrap()
+            .unwrap()
+            .output_type,
+        RuninatorType::Any
+    );
+    assert_eq!(
+        db.fetch_workflow_revisions(old.id.unwrap(), 50)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]

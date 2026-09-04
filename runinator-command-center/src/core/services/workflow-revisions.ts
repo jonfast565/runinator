@@ -18,18 +18,22 @@ export function createWorkflowRevisionsService(app: AppService) {
     },
     /** one revision including the definition it captured — what a diff reads. */
     get(workflowId: string, revision: number): Promise<WorkflowRevision> {
-      return app.runOperation("Loading revision", () => fetchWorkflowRevision(workflowId, revision), {
-        retryable: true,
-      });
+      return app.runOperation(
+        "Loading revision",
+        () => fetchWorkflowRevision(workflowId, revision),
+        {
+          retryable: true,
+        },
+      );
     },
     /**
      * restore an earlier revision. deliberately not `retryable`: the restore is a write that
      * creates a new revision, so replaying one that failed after it landed would stack a second
      * identical rollback onto the history.
      */
-    restore(workflowId: string, revision: number) {
+    restore(workflowId: string, revision: number, contractOverrideReason?: string) {
       return app.runOperation("Restoring revision", () =>
-        restoreWorkflowRevision(workflowId, revision),
+        restoreWorkflowRevision(workflowId, revision, contractOverrideReason),
       );
     },
   };

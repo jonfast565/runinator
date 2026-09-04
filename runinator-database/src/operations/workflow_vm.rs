@@ -288,6 +288,7 @@ where
         }
 
         let NewWorkflowVmRun {
+            replay_seed,
             workflow_id,
             workflow_snapshot,
             parameters,
@@ -338,6 +339,10 @@ where
             .locals
             .insert("input".into(), parameters.clone());
         continuation.locals.insert("config".into(), config);
+        if let Some(seed) = replay_seed {
+            continuation.locals = seed.locals;
+            continuation.stack = seed.stack;
+        }
         let entry = WorkflowJournalEntry::Entered {
             continuation_id: continuation.id,
             instruction_pointer: continuation.instruction_pointer,

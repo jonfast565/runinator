@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct WorkflowDefinition {
     pub id: Option<Uuid>,
     pub name: String,
@@ -25,12 +26,29 @@ pub struct WorkflowDefinition {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_workflow_type")]
     pub input_type: RuninatorType,
+    /// Published return contract; omitted declarations remain unknown (`Any`).
+    #[serde(default)]
+    pub output_type: RuninatorType,
     #[serde(default)]
     pub definition: WorkflowGraph,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl Serialize for WorkflowDefinition {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Self::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkflowDefinition {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::deserialize(crate::workflow_contracts::with_legacy_output_type(value))
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl WorkflowDefinition {

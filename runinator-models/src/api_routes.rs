@@ -132,6 +132,14 @@ pub fn api_workflow_run_replay(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/replay")
 }
 
+pub fn api_workflow_run_replay_plan(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/replay-plan")
+}
+
+pub fn api_workflow_contract_impact(workflow_id: Uuid) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/contract-impact")
+}
+
 pub fn api_workflow_run_command(workflow_run_id: Uuid, command: &str) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/{command}")
 }

@@ -236,6 +236,7 @@ impl AuthContextExt for AuthContext {
     /// `UI` label. The import path records whether the write came from a pack or a hand edit.
     fn revision_author(&self) -> RevisionAuthor {
         RevisionAuthor {
+            contract_override_reason: None,
             actor_id: self.principal_id,
             actor_kind: self.actor_kind().to_string(),
             source: match self.kind {

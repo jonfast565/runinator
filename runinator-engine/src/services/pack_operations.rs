@@ -33,6 +33,7 @@ pub struct PackOperations<T> {
 }
 
 pub struct PackImportRequest<'a> {
+    pub contract_override_reason: Option<String>,
     pub workflows: WorkflowBundle,
     pub settings: Option<&'a SettingsBundle>,
     pub pipelines: Option<&'a PipelineBundle>,
@@ -265,6 +266,7 @@ impl<
         request: PackImportRequest<'_>,
     ) -> Result<PackImportResult, PackImportError> {
         let PackImportRequest {
+            contract_override_reason,
             mut workflows,
             settings,
             pipelines,
@@ -402,10 +404,31 @@ impl<
                 .await
                 .map_err(|error| PackImportError::internal(error.to_string()))?;
             }
-            let workflows = transactional
-                .import_workflows(workflows, overwrite)
-                .await
-                .map_err(|error| PackImportError::internal(error.to_string()))?;
+            let author = runinator_models::revisions::RevisionAuthor {
+                actor_id: created_by,
+                actor_kind: if created_by.is_some() {
+                    "user"
+                } else {
+                    "service"
+                }
+                .into(),
+                source: runinator_models::revisions::RevisionSource::Pack,
+                contract_override_reason,
+                note: None,
+            };
+            let workflows = repository::import_workflow_bundle_authored(
+                transaction.as_ref(),
+                workflows,
+                overwrite,
+                &author,
+            )
+            .await
+            .map_err(|error| PackImportError {
+                bad_request: runinator_models::errors::extract_error_code(error.as_ref())
+                    .as_deref()
+                    == Some("RUNI172"),
+                message: error.to_string(),
+            })?;
             for workflow in &workflows.workflows {
                 let Some(workflow_id) = workflow.id else {
                     continue;

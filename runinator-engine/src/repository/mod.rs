@@ -47,6 +47,8 @@ pub use triggers::*;
 mod agents;
 mod catalog;
 mod debug;
+mod replay;
+pub use replay::{replay_plan, replay_with_options, validate_plan as validate_replay_plan};
 mod definitions;
 mod execution_profiles;
 mod notification_policies;

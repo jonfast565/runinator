@@ -4,7 +4,6 @@ use uuid::Uuid;
 use axum::{Extension, Json, http::StatusCode};
 use runinator_models::{
     auth::{AuthContext, Permission},
-    types::RuninatorType,
     validation::{Validate, ValidationError, bounded_text, required_text},
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
@@ -371,7 +370,7 @@ async fn workflow_signatures_for_compile<
 
 fn workflow_signatures_from_definition(workflow: &WorkflowDefinition) -> Vec<WorkflowSignature> {
     let input = workflow.input_type.clone();
-    let output = RuninatorType::Any;
+    let output = workflow.output_type.clone();
     let mut signatures = vec![WorkflowSignature {
         name: workflow.name.clone(),
         input: input.clone(),

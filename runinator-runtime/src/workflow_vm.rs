@@ -233,8 +233,27 @@ pub fn step(module: &WorkflowModule, continuation: WorkflowContinuation) -> Work
 /// debugger configuration.
 pub fn step_with_debug(
     module: &WorkflowModule,
+    continuation: WorkflowContinuation,
+    debug: Option<&DebugConfig>,
+) -> WorkflowVmStep {
+    step_until(module, continuation, debug, None)
+}
+
+/// Reconstruct a prefix without executing the checkpoint instruction. The returned `Joined`
+/// boundary named `replay-checkpoint` is local-only and must never be persisted as a join.
+pub fn step_to_replay_checkpoint(
+    module: &WorkflowModule,
+    continuation: WorkflowContinuation,
+    checkpoint: usize,
+) -> WorkflowVmStep {
+    step_until(module, continuation, None, Some(checkpoint))
+}
+
+fn step_until(
+    module: &WorkflowModule,
     mut continuation: WorkflowContinuation,
     debug: Option<&DebugConfig>,
+    checkpoint: Option<usize>,
 ) -> WorkflowVmStep {
     sync_debug_config(&mut continuation, debug);
     if let Err(error) = module.ensure_supported() {
@@ -265,6 +284,13 @@ pub fn step_with_debug(
     }
 
     for _ in 0..MAX_INLINE_INSTRUCTIONS {
+        if checkpoint == Some(continuation.instruction_pointer) {
+            return WorkflowVmStep::Joined {
+                continuation,
+                join_key: "replay-checkpoint".into(),
+                value: Value::Null,
+            };
+        }
         let Some(instruction) = module.instructions.get(continuation.instruction_pointer) else {
             return fail(
                 continuation,
@@ -2804,6 +2830,7 @@ mod tests {
     #[test]
     fn compiled_linear_graph_reaches_the_same_terminal_result() {
         let module = compile_workflow_module(&WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "linear".into(),
             key: None,

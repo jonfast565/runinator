@@ -86,7 +86,7 @@ describe("workflow revisions service", () => {
 
     const restored = await service.restore("workflow-1", 1);
 
-    expect(restoreWorkflowRevision).toHaveBeenCalledWith("workflow-1", 1);
+    expect(restoreWorkflowRevision).toHaveBeenCalledWith("workflow-1", 1, undefined);
     expect(restored.id).toBe("workflow-1");
   });
 

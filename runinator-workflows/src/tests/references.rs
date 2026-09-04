@@ -58,6 +58,7 @@ fn resolves_config_refs() {
 #[test]
 fn accepts_structurally_valid_refs_without_schema_path_validation() {
     let wf = WorkflowDefinition {
+            output_type: Default::default(),
         id: Some(Uuid::now_v7()),
         name: "schema-boundary".into(),
         key: None,

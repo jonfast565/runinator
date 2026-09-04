@@ -1135,6 +1135,7 @@ mod tests {
 
     fn revisioned_workflow(metadata: runinator_models::value::Value) -> WorkflowDefinition {
         WorkflowDefinition {
+            output_type: Default::default(),
             id: None,
             name: "child".into(),
             key: None,
@@ -1162,6 +1163,7 @@ mod tests {
         workflow: &WorkflowDefinition,
     ) -> WorkflowRevision {
         let revision = WorkflowRevision {
+            output_type: Default::default(),
             id: Uuid::nil(),
             workflow_id: workflow.id.unwrap(),
             revision: 0,

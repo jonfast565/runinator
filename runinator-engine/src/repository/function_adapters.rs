@@ -79,6 +79,7 @@ pub async fn sync_adapter_workflows<
             db,
             &definition,
             &runinator_models::revisions::RevisionAuthor {
+                contract_override_reason: None,
                 source: runinator_models::revisions::RevisionSource::Api,
                 actor_id: None,
                 actor_kind: MANAGED_BY.to_string(),

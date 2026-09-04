@@ -76,6 +76,7 @@ fn action(id: &str, next: Option<&str>, input: Value) -> WorkflowNode {
 
 fn definition(name: &str, nodes: Vec<WorkflowNode>, metadata: Value) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: name.into(),
         key: None,

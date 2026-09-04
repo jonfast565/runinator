@@ -84,6 +84,7 @@ pub const RESERVED_PLATFORM_ORGANIZATION: ErrorDescriptor = ErrorDescriptor::new
 );
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
+    WORKFLOW_PUBLICATION_CONFLICT,
     PLATFORM_RECONCILIATION_BLOCKED,
     HUMAN_PLATFORM_ROLE,
     RESERVED_PLATFORM_ORGANIZATION,
@@ -100,6 +101,12 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     FUNCTION_ADAPTER_MISSING,
     WORKFLOW_VM_CORRUPT_STATE,
 ];
+
+pub const WORKFLOW_PUBLICATION_CONFLICT: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI516",
+    "database.workflow.publication_conflict",
+    "Workflow changed during publication; reload and retry",
+);
 
 /// database engine error dictionary.
 pub struct DatabaseErrors;

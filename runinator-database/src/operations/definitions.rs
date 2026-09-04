@@ -37,6 +37,84 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn publish_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+        previous: Option<&WorkflowDefinition>,
+        revision: &WorkflowRevision,
+        audit: Option<Value>,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        let id = revision.workflow_id;
+        let mut tx = self.pool().begin().await?;
+        // acquire the writer lock before reading on every dialect, including sqlite.
+        sqlx::query(&self.render("UPDATE workflows SET id = id WHERE id = ?"))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        let current = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_COLUMNS} FROM workflows WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .as_ref()
+        .map(mappers::row_to_workflow);
+        if serde_json::to_value(&current)? != serde_json::to_value(previous)? {
+            return Err(crate::errors::WORKFLOW_PUBLICATION_CONFLICT.error(id));
+        }
+        let now = Utc::now().timestamp();
+        let input = serde_json::to_string(&workflow.input_type)?;
+        let output = serde_json::to_string(&workflow.output_type)?;
+        let graph = workflow.definition.to_string();
+        if current.is_some() {
+            sqlx::query(&self.render("UPDATE workflows SET name = ?, resource_key = ?, namespace = ?, org_id = ?, version = ?, enabled = ?, input_schema = ?, output_schema = ?, definition = ?, updated_at = ? WHERE id = ?"))
+                .bind(&workflow.name).bind(workflow.artifact_key()).bind(&workflow.namespace)
+                .bind(workflow.org_id).bind(workflow.version.to_string()).bind(workflow.enabled)
+                .bind(&input).bind(&output).bind(&graph).bind(now).bind(id)
+                .execute(&mut *tx).await?;
+        } else {
+            // no upsert here: a concurrent create must fail, never overwrite an unchecked head.
+            sqlx::query(&self.render(&format!("INSERT INTO workflows ({WORKFLOW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")))
+                .bind(id).bind(&workflow.name).bind(workflow.artifact_key()).bind(&workflow.namespace)
+                .bind(workflow.org_id).bind(workflow.version.to_string()).bind(workflow.enabled)
+                .bind(&input).bind(&output).bind(&graph).bind(now).bind(now)
+                .execute(&mut *tx).await?;
+        }
+        let head = sqlx::query(&self.render("SELECT revision, digest, name FROM workflow_revisions WHERE workflow_id = ? ORDER BY revision DESC LIMIT 1"))
+            .bind(id).fetch_optional(&mut *tx).await?;
+        let unchanged = head.as_ref().is_some_and(|row| {
+            row.get::<String, _>("digest") == revision.digest
+                && row.get::<String, _>("name") == revision.name
+        });
+        if !unchanged {
+            let next = head
+                .as_ref()
+                .map_or(1, |row| row.get::<i64, _>("revision") + 1);
+            sqlx::query(&self.render("INSERT INTO workflow_revisions (id, workflow_id, revision, digest, version, name, definition, input_schema, output_schema, source, actor_id, actor_kind, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+                .bind(Uuid::now_v7()).bind(id).bind(next).bind(&revision.digest)
+                .bind(workflow.version.to_string()).bind(&workflow.name).bind(&graph).bind(&input).bind(&output)
+                .bind(revision.source.as_str()).bind(revision.actor_id).bind(&revision.actor_kind).bind(&revision.note).bind(now)
+                .execute(&mut *tx).await?;
+        }
+        if let Some(record) = audit {
+            sqlx::query(&self.render("INSERT INTO audit_log (id, actor_id, actor_kind, action, resource_type, resource_id, outcome, detail, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+                .bind(Uuid::now_v7()).bind(json_opt_uuid(&record, "actor_id")).bind(json_str(&record, "actor_kind"))
+                .bind(json_str(&record, "action")).bind(json_opt_str(&record, "resource_type"))
+                .bind(json_opt_uuid(&record, "resource_id")).bind(json_str(&record, "outcome"))
+                .bind(json_opt_str(&record, "detail")).bind(json_metadata(&record)).bind(now)
+                .execute(&mut *tx).await?;
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_COLUMNS} FROM workflows WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let saved = mappers::row_to_workflow(&row);
+        tx.commit().await?;
+        Ok(saved)
+    }
+
     async fn upsert_workflow(
         &self,
         workflow: &WorkflowDefinition,
@@ -88,6 +166,7 @@ where
                     "version",
                     "enabled",
                     "input_schema",
+                    "output_schema",
                     "definition",
                     "updated_at",
                 ],
@@ -95,7 +174,7 @@ where
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO workflows ({WORKFLOW_COLUMNS})
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
             )))
             .bind(workflow_id)
             .bind(workflow.name.as_str())
@@ -105,6 +184,7 @@ where
             .bind(workflow.version.to_string())
             .bind(workflow.enabled)
             .bind(serde_json::to_string(&workflow.input_type)?)
+            .bind(serde_json::to_string(&workflow.output_type)?)
             .bind(workflow.definition.to_string())
             .bind(now)
             .bind(now)
@@ -120,10 +200,10 @@ where
         }
 
         let row = sqlx::query(&self.render(
-            "INSERT INTO workflows (id, name, resource_key, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET name = excluded.name, resource_key = excluded.resource_key, namespace = excluded.namespace, org_id = excluded.org_id, version = excluded.version, enabled = excluded.enabled, input_schema = excluded.input_schema, definition = excluded.definition, updated_at = excluded.updated_at
-             RETURNING id, name, resource_key, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at",
+            "INSERT INTO workflows (id, name, resource_key, namespace, org_id, version, enabled, input_schema, output_schema, definition, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name, resource_key = excluded.resource_key, namespace = excluded.namespace, org_id = excluded.org_id, version = excluded.version, enabled = excluded.enabled, input_schema = excluded.input_schema, output_schema = excluded.output_schema, definition = excluded.definition, updated_at = excluded.updated_at
+             RETURNING id, name, resource_key, namespace, org_id, version, enabled, input_schema, output_schema, definition, created_at, updated_at",
         ))
         .bind(workflow_id)
         .bind(workflow.name.as_str())
@@ -133,6 +213,7 @@ where
         .bind(workflow.version.to_string())
         .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.input_type)?)
+        .bind(serde_json::to_string(&workflow.output_type)?)
         .bind(workflow.definition.to_string())
         .bind(now)
         .bind(now)
@@ -155,7 +236,7 @@ where
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
                 "INSERT INTO workflows ({WORKFLOW_COLUMNS})
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(workflow.name.as_str())
@@ -165,6 +246,7 @@ where
             .bind(workflow.version.to_string())
             .bind(workflow.enabled)
             .bind(serde_json::to_string(&workflow.input_type)?)
+            .bind(serde_json::to_string(&workflow.output_type)?)
             .bind(workflow.definition.to_string())
             .bind(now)
             .bind(now)
@@ -181,7 +263,7 @@ where
 
         let row = sqlx::query(&self.render(&format!(
             "INSERT INTO workflows ({WORKFLOW_COLUMNS})
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {WORKFLOW_COLUMNS}",
         )))
         .bind(id)
@@ -192,6 +274,7 @@ where
         .bind(workflow.version.to_string())
         .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.input_type)?)
+        .bind(serde_json::to_string(&workflow.output_type)?)
         .bind(workflow.definition.to_string())
         .bind(now)
         .bind(now)
@@ -277,12 +360,14 @@ where
         // serialized exactly as `workflows.definition` is, so the two columns stay comparable.
         let definition = revision.definition.to_string();
         let input_schema = serde_json::to_string(&revision.input_type)?;
+        let output_schema = serde_json::to_string(&revision.output_type)?;
         // The repository normally supplies this digest, but DefinitionStore is public and direct
         // callers must not be able to insert an unpinnable new revision by omitting it.
         let digest = if revision.digest.trim().is_empty() {
-            WorkflowRevision::content_digest(
+            WorkflowRevision::contract_digest(
                 revision.version,
                 &revision.input_type,
+                &revision.output_type,
                 &revision.definition,
             )
         } else {
@@ -294,7 +379,7 @@ where
         // recompute once against the new head instead of surfacing a conflict the caller cannot act on.
         for attempt in 0..2 {
             let head = sqlx::query(&self.render(
-                "SELECT revision, digest, name, version, definition, input_schema FROM workflow_revisions \
+                "SELECT revision, digest, name, version, definition, input_schema, output_schema FROM workflow_revisions \
                  WHERE workflow_id = ? ORDER BY revision DESC LIMIT 1",
             ))
             .bind(revision.workflow_id)
@@ -307,6 +392,8 @@ where
                     // otherwise bury the edits worth seeing under identical rows.
                     let unchanged = row.get::<String, _>("definition") == definition
                         && row.get::<String, _>("input_schema") == input_schema
+                        && row.get::<Option<String>, _>("output_schema").as_deref()
+                            == Some(output_schema.as_str())
                         && row.get::<String, _>("name") == revision.name
                         && row.get::<String, _>("version") == revision.version.to_string();
                     if unchanged {
@@ -321,8 +408,8 @@ where
             let created_at = Utc::now().timestamp();
             let result = sqlx::query(&self.render(
                 "INSERT INTO workflow_revisions \
-                 (id, workflow_id, revision, digest, version, name, definition, input_schema, source, actor_id, actor_kind, note, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (id, workflow_id, revision, digest, version, name, definition, input_schema, output_schema, source, actor_id, actor_kind, note, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(revision.workflow_id)
@@ -332,6 +419,7 @@ where
             .bind(revision.name.as_str())
             .bind(definition.as_str())
             .bind(input_schema.as_str())
+            .bind(output_schema.as_str())
             .bind(revision.source.as_str())
             .bind(revision.actor_id)
             .bind(revision.actor_kind.as_str())
@@ -365,7 +453,7 @@ where
         limit: i64,
     ) -> Result<Vec<WorkflowRevision>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT id, workflow_id, revision, digest, version, name, definition, input_schema, source, \
+            "SELECT id, workflow_id, revision, digest, version, name, definition, input_schema, output_schema, source, \
              actor_id, actor_kind, note, created_at FROM workflow_revisions \
              WHERE workflow_id = ? ORDER BY revision DESC LIMIT ?",
         ))
@@ -382,7 +470,7 @@ where
         revision: i64,
     ) -> Result<Option<WorkflowRevision>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, workflow_id, revision, digest, version, name, definition, input_schema, source, \
+            "SELECT id, workflow_id, revision, digest, version, name, definition, input_schema, output_schema, source, \
              actor_id, actor_kind, note, created_at FROM workflow_revisions \
              WHERE workflow_id = ? AND revision = ?",
         ))

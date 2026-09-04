@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 fn workflow(definition: runinator_models::value::Value) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: Some(Uuid::now_v7()),
         name: "test".into(),
         key: None,

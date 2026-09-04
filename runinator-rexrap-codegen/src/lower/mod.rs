@@ -543,6 +543,12 @@ fn lower_workflow(
 
     Ok((
         WorkflowDefinition {
+            output_type: workflow
+                .output
+                .as_ref()
+                .map(|ty| lowerer.lower_named_type(ty))
+                .transpose()?
+                .unwrap_or_default(),
             id: None,
             name: workflow.name.clone(),
             key: Some(key.clone()),

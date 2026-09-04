@@ -308,6 +308,7 @@ async fn run_scratch_workflow<
         db,
         &definition,
         &RevisionAuthor {
+            contract_override_reason: None,
             source: RevisionSource::Api,
             actor_id: None,
             actor_kind: CONSOLE_MANAGED_BY.to_string(),

@@ -1,4 +1,3 @@
-use super::support;
 use super::*;
 use uuid::Uuid;
 
@@ -357,99 +356,12 @@ pub async fn replay_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     workflow_run_id: Uuid,
     from_step_id: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
-    let Some(source) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(crate::errors::REPLAY_NOT_FOUND.error(workflow_run_id));
-    };
-    let snapshot = match source.workflow_snapshot.clone() {
-        Some(snap) => snap,
-        None => support::fetch_workflow_snapshot(db, source.workflow_id).await?,
-    };
-
-    let mut state = runinator_models::json!({
-        "control": { "pause_requested": false },
-        "debug": {
-            "enabled": true,
-            "paused": false,
-            "step_requested": false,
-            "mode": "breakpoints",
-            "breakpoints": [],
-            "pause_on_failure": false,
-            "one_shot_breakpoint": null
-        },
-        "replay": { "source_run_id": source.id }
-    });
-
-    // phase d: support resuming from a specific step.
-    if let Some(target_node_id) = from_step_id.as_deref() {
-        // Validate the target against the frozen graph. Replay now starts directly at the compiled
-        // source-map boundary; it must never manufacture historical node-run rows.
-        ancestors_in_snapshot(&snapshot, target_node_id)?;
-        if let Some(replay) = state.get_mut("replay").and_then(Value::as_object_mut) {
-            replay.insert(
-                "from_step_id".to_string(),
-                Value::String(target_node_id.into()),
-            );
-        }
-        let new_run = super::runs::create_workflow_vm_run(
-            db,
-            super::runs::WorkflowVmRunRequest {
-                workflow_id: source.workflow_id,
-                workflow_snapshot: snapshot.clone(),
-                parameters: source.parameters.clone(),
-                state,
-                name: source.name.clone(),
-                provenance: runinator_models::replicas::WorkflowRunProvenance {
-                    source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-                    actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-                    actor_replica_id: None,
-                    actor_display_name: Some("replay".into()),
-                    request_host: None,
-                    request_ip: None,
-                    metadata: runinator_models::json!({ "source_run_id": source.id }),
-                },
-                pipeline_run_id: None,
-                start_node_id: Some(target_node_id.to_string()),
-            },
-        )
-        .await?;
-
-        db.update_workflow_run_status(
-            new_run.id,
-            WorkflowStatus::Queued,
-            Some(target_node_id.to_string()),
-            None,
-            Some(format!(
-                "Replayed from run {} starting at step {}",
-                source.id, target_node_id
-            )),
-        )
-        .await?;
-        let Some(refreshed) = db.fetch_workflow_run(new_run.id).await? else {
-            return Err(crate::errors::REPLAY_NOT_FOUND
-                .error(format!("replay run {} disappeared", new_run.id)));
-        };
-        return Ok(refreshed);
-    }
-
-    super::runs::create_workflow_vm_run(
+    super::replay_with_options(
         db,
-        super::runs::WorkflowVmRunRequest {
-            workflow_id: source.workflow_id,
-            workflow_snapshot: snapshot,
-            parameters: source.parameters,
-            state,
-            name: source.name,
-            provenance: runinator_models::replicas::WorkflowRunProvenance {
-                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-                actor_replica_id: None,
-                actor_display_name: Some("replay".into()),
-                request_host: None,
-                request_ip: None,
-                metadata: runinator_models::json!({ "source_run_id": source.id }),
-            },
-            pipeline_run_id: None,
-            start_node_id: None,
+        workflow_run_id,
+        runinator_models::replay::ReplayOptions {
+            from_step_id,
+            ..Default::default()
         },
     )
     .await
@@ -467,10 +379,6 @@ pub fn ancestors_in_snapshot(
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
     let nodes: Vec<WorkflowNode> = snapshot.definition.nodes.clone();
-
-    if nodes.is_empty() {
-        return Ok(Vec::new());
-    }
 
     if !nodes.iter().any(|node| node.id == target_node_id) {
         return Err(crate::errors::REPLAY_MISSING_STEP.error(target_node_id));
@@ -538,9 +446,9 @@ pub fn ancestors_in_snapshot(
             remaining.remove(&node_id);
             order.push(node_id);
         } else {
-            // fallback: cycle detected; fall back to insertion order.
-            order.extend(remaining.iter().cloned());
-            remaining.clear();
+            return Err(
+                crate::errors::REPLAY_CONTROL_FLOW.error("restart ancestry contains a cycle")
+            );
         }
     }
     Ok(order)

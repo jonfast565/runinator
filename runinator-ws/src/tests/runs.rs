@@ -57,6 +57,7 @@ async fn workflow_runs_can_be_named_and_fetched_by_open_name() {
 #[test]
 fn ancestors_in_snapshot_returns_topological_path() {
     let snapshot = WorkflowDefinition {
+            output_type: Default::default(),
         id: Some(Uuid::now_v7()),
         name: "ancestors".into(),
         key: None,
@@ -95,6 +96,7 @@ fn ancestors_in_snapshot_returns_topological_path() {
 #[test]
 fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
     let snapshot = WorkflowDefinition {
+            output_type: Default::default(),
         id: Some(Uuid::now_v7()),
         name: "loop_ancestor".into(),
         key: None,
@@ -131,6 +133,7 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
 #[test]
 fn ancestors_in_snapshot_rejects_missing_step() {
     let snapshot = WorkflowDefinition {
+        output_type: Default::default(),
         id: Some(Uuid::now_v7()),
         name: "missing".into(),
         key: None,

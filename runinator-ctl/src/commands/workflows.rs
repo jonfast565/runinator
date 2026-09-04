@@ -28,9 +28,18 @@ pub(super) async fn workflows(
             }
             println!("workflow {} v{} validates", workflow.name, workflow.version);
         }
-        WorkflowCommands::Apply { file } => {
+        WorkflowCommands::Apply {
+            file,
+            contract_override_reason,
+        } => {
             let resolved = resolve_workflow_apply_path(file.as_deref())?;
-            let summary = apply_workflow_source(client, &resolved, json_output).await?;
+            let summary = apply_workflow_source(
+                client,
+                &resolved,
+                json_output,
+                contract_override_reason.as_deref(),
+            )
+            .await?;
             if !json_output {
                 print_apply_summary(&summary);
             }
@@ -203,6 +212,7 @@ async fn apply_workflow_source(
     client: &Client,
     file: &Path,
     json_output: bool,
+    contract_override_reason: Option<&str>,
 ) -> Result<WorkflowApplySummary> {
     // a .rexrap/.rexrapm/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
@@ -233,7 +243,32 @@ async fn apply_workflow_source(
         // their managed chained triggers after the workflows land.
         let pipelines = pack::load_pack_pipelines(file)?;
         // `workflows apply` is an explicit re-apply: update existing items in place.
-        let result = if function_sources.is_empty() {
+        let result = if contract_override_reason.is_some() {
+            let mut builder = runinator_pack_wire::pack::PackBuilder::new(&bundle)
+                .settings(settings.as_ref())
+                .pipelines(pipelines.as_ref())
+                .functions(
+                    function_sources
+                        .iter()
+                        .map(|source| source.publish_request())
+                        .collect(),
+                );
+            for source in &function_sources {
+                if client
+                    .fetch_function_artifact(&source.archive.digest)
+                    .await?
+                    .is_none()
+                {
+                    builder = builder.function_artifact(
+                        source.archive.digest.clone(),
+                        source.archive.bytes.clone(),
+                    );
+                }
+            }
+            client
+                .import_reviewed_pack_zip(builder.build()?, true, contract_override_reason)
+                .await?
+        } else if function_sources.is_empty() {
             client
                 .import_pack(&bundle, settings.as_ref(), pipelines.as_ref(), true)
                 .await?
@@ -281,7 +316,9 @@ async fn apply_workflow_source(
     }
 
     let workflow: WorkflowDefinition = serde_json::from_value(value.into())?;
-    let workflow = client.upsert_workflow(&workflow).await?;
+    let workflow = client
+        .publish_workflow(&workflow, contract_override_reason)
+        .await?;
     if json_output {
         output::json(&workflow)?;
     }
@@ -353,7 +390,7 @@ async fn workflow_dev(client: &Client, request: WorkflowDevRequest<'_>) -> Resul
                 source_count,
                 if source_count == 1 { "" } else { "s" }
             );
-            match apply_workflow_source(client, file, false).await {
+            match apply_workflow_source(client, file, false, None).await {
                 Ok(summary) => {
                     print_apply_summary(&summary);
                     if let Some(workflow) = run_workflow

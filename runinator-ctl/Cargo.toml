@@ -17,6 +17,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-ctl-core = { path = "../runinator-ctl-core" }
 runinator-models = { path = "../runinator-models" }
 runinator-pack = { path = "../runinator-pack", default-features = false }
+runinator-pack-wire = { path = "../runinator-pack-wire" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-platform = { path = "../runinator-platform" }
 runinator-rexrap = { path = "../runinator-rexrap" }

@@ -4,6 +4,27 @@
 use super::*;
 
 #[test]
+fn declared_returns_are_published_and_survive_without_surface_metadata() {
+    let mut workflow =
+        compile(r#"workflow "Contract" v1 returns string { do { console.run(command: "ok") } }"#);
+    assert_eq!(
+        workflow.output_type,
+        runinator_models::types::RuninatorType::String
+    );
+    workflow.definition.metadata = runinator_models::value::Value::Null;
+    let source = decompile(&workflow).unwrap();
+    assert!(source.contains("returns string"), "{source}");
+    assert_eq!(
+        compile(&source).output_type,
+        runinator_models::types::RuninatorType::String
+    );
+    assert_eq!(
+        compile(r#"workflow "Unknown" v1 { do { console.run(command: "ok") } }"#).output_type,
+        runinator_models::types::RuninatorType::Any
+    );
+}
+
+#[test]
 fn round_trips_named_type_decls() {
     let src = r#"
         workflow "Typed" v1 {

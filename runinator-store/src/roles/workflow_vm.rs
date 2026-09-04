@@ -35,6 +35,8 @@ pub struct WorkflowTimerInterrupt {
 /// Everything needed to freeze a new VM-backed workflow run in one transaction.
 #[derive(Debug, Clone)]
 pub struct NewWorkflowVmRun {
+    /// Verified replay-prefix values, installed atomically into a fresh root identity.
+    pub replay_seed: Option<WorkflowReplaySeed>,
     pub workflow_id: Uuid,
     pub workflow_snapshot: WorkflowDefinition,
     pub parameters: Value,
@@ -52,6 +54,12 @@ pub struct NewWorkflowVmRun {
     pub module: WorkflowModule,
     /// Initial bytecode location. Zero starts normally; replay uses a source-map boundary.
     pub instruction_pointer: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowReplaySeed {
+    pub locals: std::collections::BTreeMap<String, Value>,
+    pub stack: Vec<Value>,
 }
 
 /// Persistence used only by the compiled workflow runtime and its durable host.

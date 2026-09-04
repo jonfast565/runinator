@@ -94,6 +94,13 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
         Ok(saved)
     }
 
+    pub async fn contract_impact(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<runinator_models::workflow_contracts::WorkflowContractImpact, SendableError> {
+        repository::workflow_contract_impact(self.store.as_ref(), workflow).await
+    }
+
     pub async fn validate(
         &self,
         workflow: &WorkflowDefinition,

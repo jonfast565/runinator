@@ -39,6 +39,7 @@ fn test_workflow_state_machine_logic_integration() {
     });
 
     let wf = WorkflowDefinition {
+        output_type: Default::default(),
         id: Some(Uuid::now_v7()),
         name: "integration-test".into(),
         key: None,

@@ -31,6 +31,7 @@ async fn standalone_workflow_run_has_no_orchestration_binding() {
     let workflow_id = snapshot.id.unwrap();
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
@@ -292,6 +293,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .unwrap();
     let workflow_run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            replay_seed: None,
             workflow_id,
             workflow_snapshot: member,
             parameters: Value::Null,

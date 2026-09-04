@@ -28,6 +28,7 @@ use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore};
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct PackImportParams {
+    pub contract_override_reason: Option<String>,
     // when true, an explicit re-apply updates existing items in place instead of skipping ones
     // that are not strictly newer than the stored copy.
     #[serde(default)]
@@ -81,6 +82,11 @@ pub async fn import_pack<
         }
     };
     if let Err(reply) = ctx.require_scope_action(Action::Edit, import_scope) {
+        return reply.into_reply();
+    }
+    if params.contract_override_reason.is_some()
+        && let Err(reply) = ctx.require_scope_action(Action::Own, import_scope)
+    {
         return reply.into_reply();
     }
     let overwrite = params.overwrite;
@@ -144,6 +150,7 @@ pub async fn import_pack<
     }
     let result = match packs
         .import_compiled_pack(PackImportRequest {
+            contract_override_reason: params.contract_override_reason,
             workflows: workflow_bundle,
             settings: secret_bundle.as_ref(),
             pipelines: pipeline_bundle.as_ref(),

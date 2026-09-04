@@ -28,6 +28,7 @@ async fn test_db() -> (Arc<SqliteDb>, PathBuf) {
 
 fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: name.into(),
         key: Some(format!("test.{}", name.replace(' ', "_"))),
@@ -51,6 +52,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
 
 fn subflow_workflow(name: &str, target: &str) -> WorkflowDefinition {
     WorkflowDefinition {
+        output_type: Default::default(),
         id: None,
         name: name.into(),
         key: Some(format!("test.{}", name.replace(' ', "_"))),
@@ -95,6 +97,56 @@ async fn save_persists_an_authored_workflow() {
     assert!(db.fetch_workflow(workflow_id).await.unwrap().is_some());
 
     let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn breaking_contract_requires_major_or_audited_override() {
+    let (db, _path) = test_db().await;
+    let service = WorkflowAuthoring::new(
+        db.clone(),
+        UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
+    );
+    let author = RevisionAuthor::system(RevisionSource::Api);
+    let mut initial = workflow("contract publication");
+    initial.output_type = RuninatorType::String;
+    let old = service.save(&initial, &author).await.unwrap();
+    let mut proposed = old.clone();
+    proposed.output_type = RuninatorType::Any;
+    assert!(service.save(&proposed, &author).await.is_err());
+    assert_eq!(
+        db.fetch_workflow(old.id.unwrap())
+            .await
+            .unwrap()
+            .unwrap()
+            .output_type,
+        RuninatorType::String
+    );
+    let override_author = RevisionAuthor {
+        contract_override_reason: Some("consumer migration is coordinated".into()),
+        ..author.clone()
+    };
+    let saved = service.save(&proposed, &override_author).await.unwrap();
+    assert_eq!(saved.output_type, RuninatorType::Any);
+    let revisions = service.revisions(old.id.unwrap(), 50).await.unwrap();
+    assert_eq!(revisions.len(), 2);
+    assert!(
+        revisions[0]
+            .note
+            .as_ref()
+            .unwrap()
+            .contains("consumer migration")
+    );
+    assert_ne!(revisions[0].digest, revisions[1].digest);
+    use runinator_store::roles::AutomationStore;
+    let audits = db
+        .fetch_audit_log(None, Some("workflow.contract.override".into()), 100)
+        .await
+        .unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(
+        audits[0].get("detail").and_then(Value::as_str),
+        Some("consumer migration is coordinated")
+    );
 }
 
 #[tokio::test]
