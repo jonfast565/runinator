@@ -94,7 +94,7 @@ fn test_claude_code_stub_binary_passes_argv() {
         )
         .unwrap();
     assert_eq!(result.message.as_deref(), Some("Claude Code completed"));
-    let text = result.output_json.unwrap()["text"]
+    let text = result.output_json.unwrap()["response"]["text"]
         .as_str()
         .unwrap()
         .to_string();
@@ -225,7 +225,7 @@ fn test_claude_code_json_output_parsed() {
             runinator_plugin::cancel::CancellationToken::new(),
         )
         .unwrap();
-    let text = result.output_json.unwrap()["text"]
+    let text = result.output_json.unwrap()["response"]["text"]
         .as_str()
         .unwrap()
         .to_string();

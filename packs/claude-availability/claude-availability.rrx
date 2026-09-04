@@ -1,0 +1,136 @@
+language rexrap-1
+
+package {
+  {
+    "name": "Claude Availability Test Pack",
+    "version": 1
+  }
+}
+
+settings {
+  profile "claude" = {
+    description: "Claude Code desktop login for the Claude availability test workflow",
+    credential_scopes: ["claude"],
+    collection: {
+      version: 1,
+      probe: { argv: ["claude", "--version"] },
+      sources: [
+        {
+          type: "file",
+          path: "~/.claude/CLAUDE.md",
+          target: ".claude/CLAUDE.md"
+        },
+        {
+          type: "command",
+          command: {
+            argv: ["keychain-export", "--service", "Claude Code-credentials", "--quiet"]
+          },
+          target: ".claude/.credentials.json"
+        }
+      ]
+    },
+    exposure: {
+      version: 1,
+      home_overlay: true,
+      environment: {}
+    },
+    enabled: true
+  }
+}
+
+namespace runinator.tests.claude {
+
+workflow "Claude Availability" v1 {
+    key claude_availability
+
+    do {
+        @id("claude_probe")
+        @timeout(90s)
+        @retry(1)
+        @runner("desktop")
+        @profile("claude")
+        ai-command.claude_code(
+            prompt: "Check whether the authenticated Claude Code CLI is available. Reply with exactly one lowercase word: yes if you can answer this request now; otherwise no. Do not use tools or add punctuation.",
+            output_format: "text"
+        )
+            routes {
+                on success {
+                    continue answer
+                }
+                on failure {
+                    continue unavailable
+                }
+                on timeout {
+                    continue unavailable
+                }
+            }
+
+        @id("answer")
+        if std.strings.lower(std.strings.trim(claude_probe.response.text)) == "yes" {
+            @id("available")
+            emit ("yes")
+        } else {
+            @id("reported_no")
+            emit ("no")
+            @id("reported_no_failed")
+            assert {
+                "Claude responded no": false
+            }
+        }
+    }
+
+    join unavailable {
+        @id("unavailable_no")
+        emit ("no")
+        @id("unavailable_failed")
+        assert {
+            "Claude is unavailable": false
+        }
+    }
+}
+
+}
+
+tests {
+  {
+    "workflow": "Claude Availability",
+    "tests": [
+      {
+        "name": "a yes response succeeds and returns yes",
+        "mocks": {
+          "claude_probe": { "output": { "response": { "text": "yes\n" } } }
+        },
+        "expect": {
+          "status": "succeeded",
+          "reached": ["claude_probe", "answer", "available"],
+          "not_reached": ["reported_no", "reported_no_failed"],
+          "output": "yes"
+        }
+      },
+      {
+        "name": "a no response fails and returns no",
+        "mocks": {
+          "claude_probe": { "output": { "response": { "text": "no\n" } } }
+        },
+        "expect": {
+          "status": "failed",
+          "reached": ["claude_probe", "answer", "reported_no", "reported_no_failed"],
+          "not_reached": ["available"],
+          "output": "no"
+        }
+      },
+      {
+        "name": "an unavailable Claude invocation fails and returns no",
+        "mocks": {
+          "claude_probe": { "status": "failed" }
+        },
+        "expect": {
+          "status": "failed",
+          "reached": ["claude_probe", "unavailable_no", "unavailable_failed"],
+          "not_reached": ["answer", "available", "reported_no"],
+          "output": "no"
+        }
+      }
+    ]
+  }
+}

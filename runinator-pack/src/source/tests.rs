@@ -71,6 +71,7 @@ fn checked_in_packs_all_compile_and_settings_parse() {
     let manifests = vec![
         packs_dir.join("hello-world"),
         packs_dir.join("autonomous-development"),
+        packs_dir.join("claude-availability"),
     ];
 
     assert!(

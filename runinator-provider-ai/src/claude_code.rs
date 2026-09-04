@@ -74,7 +74,8 @@ pub(crate) fn run_claude_code(
     let parsed = parse_claude_output(&params.output_format, &output.stdout)?;
     Ok(TaskExecutionResult {
         message: Some("Claude Code completed".into()),
-        output_json: Some(parsed),
+        // preserve the advertised `response: any` contract for workflow bindings.
+        output_json: Some(json!({ "response": parsed })),
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })

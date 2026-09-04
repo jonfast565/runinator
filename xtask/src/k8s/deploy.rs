@@ -25,6 +25,13 @@ pub struct DeployOptions<'a> {
     pub expose_direct_ingress: bool,
 }
 
+pub struct PackImportOptions<'a> {
+    pub workspace_root: &'a Path,
+    pub manifest_path: &'a Path,
+    pub kube_context: Option<&'a str>,
+    pub pack_import_timeout_secs: u32,
+}
+
 pub struct GrafanaRedeployOptions<'a> {
     pub workspace_root: &'a Path,
     pub manifest_path: &'a Path,
@@ -353,6 +360,38 @@ pub fn redeploy_grafana(options: GrafanaRedeployOptions) -> Result<()> {
     Ok(())
 }
 
+/// Recreate only the bundled pack-import Job. The Job uses the ctl image paired with the deployed
+/// web service, so callers must deploy a release containing any new pack files before using this.
+pub fn import_packs(options: PackImportOptions) -> Result<()> {
+    exec::require_tool("kubectl")?;
+
+    let resolved_path = if options.manifest_path.is_absolute() {
+        options.manifest_path.to_path_buf()
+    } else {
+        options.workspace_root.join(options.manifest_path)
+    };
+    anyhow::ensure!(
+        resolved_path.exists(),
+        "kubernetes manifest or overlay not found at {}",
+        resolved_path.display()
+    );
+
+    let ctx_args = context_args(options.kube_context);
+    let rendered = render_manifest(
+        options.workspace_root,
+        &ctx_args,
+        &resolved_path,
+        resolved_path.is_dir(),
+    )?;
+    let docs = yaml_docs::parse_documents(&rendered)?;
+    reimport_bundled_packs(
+        options.workspace_root,
+        &ctx_args,
+        &docs,
+        options.pack_import_timeout_secs,
+    )
+}
+
 /// Apply only PostgreSQL's Service and StatefulSet from a rendered overlay. Re-applying the
 /// StatefulSet updates its pod template without deleting its PVC. `from_scratch` instead scales
 /// PostgreSQL down and deletes its sole generated data claim before recreating the StatefulSet.
@@ -517,10 +556,18 @@ fn bootstrap_fresh_database(
         return Ok(());
     }
 
-    // A standalone database reset renders the checked-in overlay directly. Its image declarations
-    // normally still say `:dev`, while the deployed stack may be using a versioned registry image.
-    // Match the bootstrap image that just initialized this database so the Job is available on the
-    // same cluster nodes and imports the packs from the same release.
+    reimport_bundled_packs(workspace_root, ctx_args, docs, pack_import_timeout_secs)
+}
+
+fn reimport_bundled_packs(
+    workspace_root: &Path,
+    ctx_args: &[String],
+    docs: &[Value],
+    pack_import_timeout_secs: u32,
+) -> Result<()> {
+    // Checked-in manifest images normally still say `:dev`, while the deployed stack may use a
+    // versioned registry image. Match the deployed release so the Job is available on the same
+    // cluster nodes and imports packs from that release.
     let pack_import_image = deployed_ctl_image(workspace_root, ctx_args)?;
     let mut pack_import = docs
         .iter()

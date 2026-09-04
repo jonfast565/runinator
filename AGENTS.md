@@ -27,6 +27,14 @@ Redeploy the cluster after every change except:
 - Changes confined to `runinator-desktop-agent`: do not rebuild or redeploy the cluster unless a
   shared runtime dependency or cluster-owned artifact also changed.
 
+### Pack-only changes
+
+- Add workflow packs under `packs/` so they are bundled into the `runinator-ctl` image for the next
+  normal deployment.
+- Once that image is deployed, refresh only the bundled packs with
+  `cargo run -p xtask -- k8s import-packs`; do not redeploy unrelated services merely to rerun the
+  pack-import Job.
+
 All agent-driven Kubernetes mutations must go through `cargo run -p xtask -- k8s ...`. Never call
 `kubectl`, Helm, or `scripts/deploy-k8s.sh` directly for deployment. Mutating `xtask k8s` commands
 hold the cluster-backed deployment Lease across build, push, apply, and rollout; do not create a
