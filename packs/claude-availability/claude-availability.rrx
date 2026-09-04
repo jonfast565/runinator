@@ -51,7 +51,7 @@ workflow "Claude Availability" v1 {
         @profile("claude")
         ai-command.claude_code(
             model: "haiku",
-            prompt: "Check whether the authenticated Claude Code CLI is available. Reply with exactly one lowercase word: yes if you can answer this request now; otherwise no. Do not use tools or add punctuation.",
+            prompt: "Reply with exactly the lowercase word yes. Do not use tools, explain your answer, or add punctuation.",
             output_format: "text"
         )
             routes {

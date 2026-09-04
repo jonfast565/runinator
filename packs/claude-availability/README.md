@@ -5,6 +5,7 @@ This test pack creates the `claude` execution profile and a workflow in the
 to a Kubernetes worker (`runner=kubernetes`), invokes Claude Code with the private
 profile using the Haiku model, and publishes `yes` on success. It publishes `no` and fails when
 Claude says `no`, or when the Claude invocation cannot start or complete.
+The prompt requests the literal `yes`; producing it confirms the authenticated request completed.
 
 The desktop agent only collects and publishes the approved credentials. The Kubernetes worker
 downloads the published profile through the worker API, verifies and stages the bundle in a
