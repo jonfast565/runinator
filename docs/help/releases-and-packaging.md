@@ -32,3 +32,8 @@ scripts/package-macos-backend-apps.sh --release
 The script creates `.app` bundles for broker, web service, waker, headless
 worker, desktop agent, the control CLI (`runinatorctl`), and supervisor under
 `target/macos-apps`.
+
+The macOS release archive places **Runinator Desktop Agent.app** at its top
+level. Launch that bundle rather than its executable under `Contents/MacOS`:
+macOS reads the bundle's `Info.plist` at launch to show **Runinator Desktop
+Agent** in the Dock.

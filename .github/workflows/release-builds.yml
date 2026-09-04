@@ -106,7 +106,6 @@ jobs:
           New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 
           $rustBins = @(
-            "runinator-desktop-agent",
             "runinator-waker",
             "runinator-worker",
             "runinatorctl",
@@ -114,6 +113,12 @@ jobs:
             "runinator-broker",
             "runinator-supervisor"
           )
+
+          # macOS users launch the desktop agent from its .app bundle, whose Info.plist supplies
+          # the user-facing dock name. other platforms keep the standalone executable.
+          if ($env:RUNNER_OS -ne "macOS") {
+            $rustBins += "runinator-desktop-agent"
+          }
 
           foreach ($bin in $rustBins) {
             $fileName = if ($env:RUNNER_OS -eq "Windows") { "$bin.exe" } else { $bin }
@@ -128,11 +133,20 @@ jobs:
           if ($env:RUNNER_OS -eq "macOS") {
             $backendAppsDir = Join-Path $PWD "target/backend-apps"
             if (Test-Path $backendAppsDir) {
+              $desktopAgentApp = Get-ChildItem -Path $backendAppsDir -Filter "Runinator Desktop Agent.app" -Directory -Recurse | Select-Object -First 1
+              if (-not $desktopAgentApp) {
+                throw "Runinator Desktop Agent app bundle was not found under $backendAppsDir"
+              }
+
+              Copy-Item -Path $desktopAgentApp.FullName -Destination (Join-Path $bundleDir $desktopAgentApp.Name) -Recurse -Force
+
               $backendBundleDir = Join-Path $bundleDir "backend-apps"
               New-Item -ItemType Directory -Path $backendBundleDir -Force | Out-Null
 
               Get-ChildItem -Path $backendAppsDir -Filter "*.app" -Directory -Recurse | ForEach-Object {
-                Copy-Item -Path $_.FullName -Destination (Join-Path $backendBundleDir $_.Name) -Recurse -Force
+                if ($_.FullName -ne $desktopAgentApp.FullName) {
+                  Copy-Item -Path $_.FullName -Destination (Join-Path $backendBundleDir $_.Name) -Recurse -Force
+                }
               }
             } else {
               Write-Warning "Backend app bundle directory was not found at $backendAppsDir"
