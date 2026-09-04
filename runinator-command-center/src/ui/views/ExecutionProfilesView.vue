@@ -99,7 +99,7 @@
                   class="btn btn-sm"
                   :disabled="!canManageProfile(profile)"
                   :title="profileActionHint(profile)"
-                  @click="beginEdit(profile)"
+                  @click="editProfile(profile)"
                 >
                   <Icon name="edit" :size="13" /> Edit</button
                 ><button
@@ -300,7 +300,11 @@
           {{ validation.summary }}
         </div>
         <button class="btn" @click="closeEditor">Cancel</button
-        ><button class="btn btn-primary" :disabled="saving || !validation.valid || !canMutate" @click="save">
+        ><button
+          class="btn btn-primary"
+          :disabled="saving || !validation.valid || !canMutate"
+          @click="save"
+        >
           <Icon name="save" /> {{ saving ? "Saving…" : "Save profile" }}
         </button></template
       >
@@ -309,7 +313,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref, toRaw } from "vue";
+import { computed, defineComponent, h, onMounted, reactive, ref, toRaw, watch } from "vue";
 import type {
   ExecutionProfile,
   ExecutionProfileCommand,
@@ -319,6 +323,7 @@ import type {
 import { validateExecutionProfile } from "../../core/domain/models/execution-profile/validation";
 import { formatDate } from "../../core/utils/format";
 import { useAppStore } from "../adapters/pinia/app";
+import { useAuthStore } from "../adapters/pinia/auth";
 import { useExecutionProfilesStore } from "../adapters/pinia/executionProfiles";
 import { useOrgsStore } from "../adapters/pinia/orgs";
 import { storeToRefs } from "pinia";
@@ -337,6 +342,7 @@ interface EnvRow {
   value: string;
 }
 const app = useAppStore(),
+  auth = useAuthStore(),
   profileStore = useExecutionProfilesStore(),
   orgs = useOrgsStore(),
   loading = ref(false),
@@ -351,6 +357,9 @@ const app = useAppStore(),
 const { profiles, filteredProfiles: filtered } = storeToRefs(profileStore);
 const { activeOrgId } = storeToRefs(orgs);
 const canMutate = computed(() => app.can("credentials:manage"));
+const canSwitchToPlatform = computed(
+  () => !auth.required || typeof auth.user?.platform_role === "string",
+);
 const draft = reactive<ExecutionProfileInput>(emptyProfile());
 const tabs: { id: Tab; label: string }[] = [
   { id: "identity", label: "1. Identity" },
@@ -421,8 +430,10 @@ function emptyProfile(): ExecutionProfileInput {
 }
 
 function reset(input: ExecutionProfileInput) {
-  Object.assign(draft, structuredClone(input));
-  environmentRows.value = Object.entries(input.exposure.environment).map(([name, value]) => ({
+  const rawInput = toRaw(input);
+
+  Object.assign(draft, structuredClone(rawInput));
+  environmentRows.value = Object.entries(rawInput.exposure.environment).map(([name, value]) => ({
     id: crypto.randomUUID(),
     name,
     value,
@@ -449,7 +460,11 @@ function isInheritedProfile(profile: ExecutionProfile) {
 }
 
 function canManageProfile(profile: ExecutionProfile) {
-  return canMutate.value && profile.org_id === activeOrgId.value;
+  return (
+    canMutate.value &&
+    (profile.org_id === activeOrgId.value ||
+      (isInheritedProfile(profile) && canSwitchToPlatform.value))
+  );
 }
 
 function profileActionHint(profile: ExecutionProfile) {
@@ -457,9 +472,32 @@ function profileActionHint(profile: ExecutionProfile) {
     return "You do not have permission to manage execution profiles.";
   }
 
+  if (isInheritedProfile(profile) && !canSwitchToPlatform.value) {
+    return "Platform access is required to manage this profile.";
+  }
+
   return isInheritedProfile(profile)
     ? "Switch to Platform scope to manage this profile."
     : undefined;
+}
+
+async function ensureProfileScope(profile: ExecutionProfile): Promise<boolean> {
+  if (isInheritedProfile(profile)) {
+    if (!(await orgs.setActivePlatform())) {
+      error.value = "Could not switch to Platform scope to manage this execution profile.";
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function editProfile(profile: ExecutionProfile) {
+  if (!(await ensureProfileScope(profile))) {
+    return;
+  }
+
+  beginEdit(profile);
 }
 
 function closeEditor() {
@@ -580,7 +618,11 @@ function environmentError(i: number, field: "name" | "value") {
   const row = environmentRows.value[i];
   const rowError = fieldError(`environment-row.${String(i)}.${field}`);
 
-  return rowError ? rowError : row.name ? fieldError(`environment.${row.name}.${field}`) : undefined;
+  return rowError
+    ? rowError
+    : row.name
+      ? fieldError(`environment.${row.name}.${field}`)
+      : undefined;
 }
 
 function errorCount(tab: Tab) {
@@ -612,6 +654,8 @@ async function refresh() {
 }
 
 async function save() {
+  addScope();
+
   if (!validation.value.valid) {
     return;
   }
@@ -635,19 +679,34 @@ async function remove(p: ExecutionProfile) {
       `Delete execution profile “${p.name}”? Its encrypted revisions will also be removed.`,
     )
   ) {
-    await profileStore.remove(p.id);
+    await runProfileAction(p, () => profileStore.remove(p.id));
   }
 }
 
 async function rotate(p: ExecutionProfile) {
-  await profileStore.rotate(p.id);
+  await runProfileAction(p, () => profileStore.rotate(p.id));
 }
 
 async function testProfile(p: ExecutionProfile) {
-  await profileStore.test(p.id);
+  await runProfileAction(p, () => profileStore.test(p.id));
+}
+
+async function runProfileAction(profile: ExecutionProfile, action: () => Promise<void>) {
+  if (!(await ensureProfileScope(profile))) {
+    return;
+  }
+
+  error.value = "";
+
+  try {
+    await action();
+  } catch (reason) {
+    error.value = String(reason);
+  }
 }
 
 onMounted(refresh);
+watch(activeOrgId, () => void refresh());
 </script>
 <style scoped>
 .chips {
