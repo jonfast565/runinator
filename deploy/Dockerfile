@@ -28,7 +28,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.14.641
+ARG RUNINATOR_VERSION=0.14.642
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -120,6 +120,13 @@ ENTRYPOINT ["/usr/local/bin/runinator-waker"]
 
 # ---- worker: built-in providers only; statically linked, so no dynamic plugin loading ----
 FROM runtime-base AS worker
+ARG CLAUDE_CODE_VERSION=2.1.236-r1
+RUN wget -O /etc/apk/keys/claude-code.rsa.pub https://downloads.claude.ai/keys/claude-code.rsa.pub \
+    && echo "https://downloads.claude.ai/claude-code/apk/stable" >> /etc/apk/repositories \
+    && apk add --no-cache bash git ripgrep "claude-code=${CLAUDE_CODE_VERSION}" \
+    && claude --version
+ENV USE_BUILTIN_RIPGREP=0 \
+    DISABLE_AUTOUPDATER=1
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-worker /usr/local/bin/runinator-worker
 VOLUME ["/data"]
 USER runinator

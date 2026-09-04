@@ -3,7 +3,7 @@ language rexrap-1
 package {
   {
     "name": "Claude Availability Test Pack",
-    "version": 1
+    "version": 2
   }
 }
 
@@ -47,9 +47,10 @@ workflow "Claude Availability" v1 {
         @id("claude_probe")
         @timeout(90s)
         @retry(1)
-        @runner("desktop")
+        @runner("kubernetes")
         @profile("claude")
         ai-command.claude_code(
+            model: "haiku",
             prompt: "Check whether the authenticated Claude Code CLI is available. Reply with exactly one lowercase word: yes if you can answer this request now; otherwise no. Do not use tools or add punctuation.",
             output_format: "text"
         )
@@ -72,20 +73,22 @@ workflow "Claude Availability" v1 {
         } else {
             @id("reported_no")
             emit ("no")
-            @id("reported_no_failed")
-            assert {
-                "Claude responded no": false
-            }
+                routes {
+                    on next {
+                        continue fail
+                    }
+                }
         }
     }
 
     join unavailable {
         @id("unavailable_no")
         emit ("no")
-        @id("unavailable_failed")
-        assert {
-            "Claude is unavailable": false
-        }
+            routes {
+                on next {
+                    continue fail
+                }
+            }
     }
 }
 
@@ -103,7 +106,7 @@ tests {
         "expect": {
           "status": "succeeded",
           "reached": ["claude_probe", "answer", "available"],
-          "not_reached": ["reported_no", "reported_no_failed"],
+          "not_reached": ["reported_no", "fail"],
           "output": "yes"
         }
       },
@@ -114,7 +117,7 @@ tests {
         },
         "expect": {
           "status": "failed",
-          "reached": ["claude_probe", "answer", "reported_no", "reported_no_failed"],
+          "reached": ["claude_probe", "answer", "reported_no", "fail"],
           "not_reached": ["available"],
           "output": "no"
         }
@@ -126,7 +129,19 @@ tests {
         },
         "expect": {
           "status": "failed",
-          "reached": ["claude_probe", "unavailable_no", "unavailable_failed"],
+          "reached": ["claude_probe", "unavailable_no", "fail"],
+          "not_reached": ["answer", "available", "reported_no"],
+          "output": "no"
+        }
+      },
+      {
+        "name": "a timed out Claude invocation fails and returns no",
+        "mocks": {
+          "claude_probe": { "status": "timed_out" }
+        },
+        "expect": {
+          "status": "failed",
+          "reached": ["claude_probe", "unavailable_no", "fail"],
           "not_reached": ["answer", "available", "reported_no"],
           "output": "no"
         }

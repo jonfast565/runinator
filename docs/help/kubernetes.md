@@ -74,6 +74,14 @@ which keeps a completed node from failing over an artifact copy.
 
 ### Container images and plugins
 
+The worker image includes Claude Code, pinned by `CLAUDE_CODE_VERSION` in `deploy/Dockerfile`
+and installed from Anthropic's signed Alpine repository. Updates arrive through image rebuilds;
+in-container automatic updates are disabled. See [Anthropic's installation guide](https://code.claude.com/docs/en/installation).
+Kubernetes workers advertise `runner=kubernetes` for workflows that must execute in the cluster.
+The `packs/claude-availability` probe uses this selector and a published execution profile: the
+desktop agent collects credentials, while the cluster worker downloads and stages them only for
+the provider action. No desktop filesystem or credential mount is required in Kubernetes.
+
 Every rust service is one `--target` of the shared `deploy/Dockerfile`, so the
 whole dependency graph compiles once for the entire set:
 

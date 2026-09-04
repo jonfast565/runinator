@@ -47,6 +47,8 @@ spec:
             - secretRef:
                 name: runinator-rabbitmq-secret
           env:
+            - name: RUNINATOR_WORKER_LABELS
+              value: "runner=kubernetes"
             - name: RUNINATOR_API_KEY
               valueFrom:
                 secretKeyRef:

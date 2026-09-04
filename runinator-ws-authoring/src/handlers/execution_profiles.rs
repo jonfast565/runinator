@@ -599,7 +599,7 @@ pub async fn content<T: AuthorizationStore + ExecutionProfileStore>(
     Path((id, revision)): Path<(Uuid, i64)>,
     Query(query): Query<ProfileLookup>,
 ) -> Response {
-    if ctx.system_role != Some(SystemRole::Worker) {
+    if ctx.require_system_role(&[SystemRole::Worker]).is_err() {
         return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
     }
     if !run_admitted_profile(service.as_ref(), query.consumer_run_id, id).await {

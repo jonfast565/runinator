@@ -46,6 +46,11 @@ top-level resources, and a database-backed child resolver for descendants. `is_p
 the sole administrative short-circuit. Service credentials never bypass these checks; data-plane
 routes require an explicit `SystemRole`.
 
+Execution-profile bundle downloads use `require_system_role(Worker)`, including its platform-admin
+override and API-key action ceiling. Every download also requires a consuming run whose stored
+snapshot references the profile, matching organization scope, and the current enabled, unexpired
+revision. Desktop collection/publication authority alone does not grant bundle download access.
+
 The generic administration surface is:
 
 - `/authz/assignments/{scope_kind}/{scope_id}` for scoped assignments;
