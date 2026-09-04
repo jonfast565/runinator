@@ -109,7 +109,7 @@ export type { AuditLogService } from "./audit-log";
 export type { DeadLettersService } from "./dead-letters";
 export type { ReplicaSamplesService, ReplicaSample, ReplicaSampleSeries } from "./replica-samples";
 export type { DevPackService } from "./dev-pack";
-export type { OrgAdminService, OrgMembership, OrgRole, Team, User } from "./org-admin";
+export type { OrgAdminService, OrgMembership, OrgRole, Organization, Team, User } from "./org-admin";
 export type { OrgResourcesService, OrgQuota, OrgResourceGroup, OrgUsage, RateCard } from "./org-resources";
 export type { WorkflowSharingService } from "./workflow-sharing";
 export type { WorkflowRevisionsService } from "./workflow-revisions";

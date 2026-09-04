@@ -2,7 +2,9 @@ import {
   addOrgMember,
   addTeamMember,
   createTeam,
+  deleteOrg,
   deleteTeam,
+  listOrgs,
   listOrgMembers,
   listTeamMembers,
   listTeams,
@@ -12,12 +14,19 @@ import {
   updateOrgMember,
   type OrgMembership,
   type OrgRole,
+  type Organization,
 } from "../api/commandCenterApi";
 import type { Team, User } from "../domain/models";
 import type { AppService } from "./app";
 
 export function createOrgAdminService(app: AppService) {
   return {
+    listOrganizations() {
+      return app.runOperation("Loading all organizations", () => listOrgs());
+    },
+    deleteOrganization(orgId: string) {
+      return app.runOperation("Deleting organization", () => deleteOrg(orgId));
+    },
     listMembers(orgId: string) {
       return app.runOperation("Loading org members", () => listOrgMembers(orgId));
     },
@@ -55,4 +64,4 @@ export function createOrgAdminService(app: AppService) {
 }
 
 export type OrgAdminService = ReturnType<typeof createOrgAdminService>;
-export type { OrgMembership, OrgRole, Team, User };
+export type { OrgMembership, OrgRole, Organization, Team, User };

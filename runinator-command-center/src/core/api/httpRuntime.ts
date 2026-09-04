@@ -1208,6 +1208,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     headers: (args) => ({ "x-org-id": String(arg(args, "orgId")) }),
     body: (args) => ({ name: arg(args, "name") }),
   },
+  delete_org: {
+    method: "DELETE",
+    path: (args) => `orgs/${escape(arg(args, "orgId"))}`,
+    headers: (args) => ({ "x-org-id": String(arg(args, "orgId")) }),
+  },
   switch_org: {
     method: "POST",
     path: () => "auth/switch-org",

@@ -10,6 +10,7 @@ import {
   createApiKey,
   createPersonalApiKey,
   createUser,
+  deleteOrg,
   deleteOrchestrationAlias,
   deliverSignal,
   fetchEnumCatalogs,
@@ -842,6 +843,20 @@ describe("command center permissions API in web mode", () => {
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ name: "Runinator Labs" }),
+        headers: expect.objectContaining({ "x-org-id": orgId }),
+      }),
+    );
+  });
+
+  it("maps organization deletion to its scoped DELETE endpoint", async () => {
+    const orgId = "00000000-0000-0000-0000-000000000001";
+
+    await deleteOrg(orgId);
+
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/orgs/${orgId}`,
+      expect.objectContaining({
+        method: "DELETE",
         headers: expect.objectContaining({ "x-org-id": orgId }),
       }),
     );

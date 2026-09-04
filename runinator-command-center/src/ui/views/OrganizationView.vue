@@ -611,6 +611,55 @@
           </div>
         </section>
       </div>
+
+      <section
+        v-if="canDeleteOrganizations"
+        class="panel shrink-0 gap-3 border border-danger-fg/30 bg-danger-bg/30"
+      >
+        <header>
+          <p class="m-0 text-[11px] font-semibold tracking-[0.08em] text-danger-fg uppercase">
+            Platform administration
+          </p>
+          <h2 class="mt-0.5 text-base font-semibold text-fg">Delete organization</h2>
+          <p class="m-0 mt-1 text-xs text-fg-muted">
+            This permanently deletes an organization and its memberships. Teams and owned resources
+            must be removed or transferred first.
+          </p>
+        </header>
+        <form
+          class="flex flex-wrap items-end gap-2 border-t border-danger-fg/20 pt-3"
+          @submit.prevent="deleteOrganization"
+        >
+          <label class="grid min-w-56 flex-1 gap-1 text-xs text-fg-muted">
+            <span class="font-semibold text-fg">Organization</span>
+            <select
+              v-model="selectedDeletionOrgId"
+              required
+              :disabled="!platformOrganizations.length || deletingOrganization"
+            >
+              <option value="" disabled>
+                {{
+                  platformOrganizations.length
+                    ? "Choose an organization…"
+                    : "No organizations available"
+                }}
+              </option>
+              <option v-for="org in platformOrganizations" :key="org.id" :value="org.id">
+                {{ org.name }} · {{ org.slug }}{{ org.disabled ? " · disabled" : "" }}
+              </option>
+            </select>
+          </label>
+          <button
+            class="btn btn-danger"
+            type="submit"
+            :disabled="!selectedDeletionOrgId || deletingOrganization"
+          >
+            <LoadingSpinner v-if="deletingOrganization" size="sm" label="Deleting organization" />
+            <Icon v-else name="trash" />
+            <span>{{ deletingOrganization ? "Deleting…" : "Delete organization" }}</span>
+          </button>
+        </form>
+      </section>
     </div>
   </section>
 </template>
@@ -626,9 +675,11 @@ import {
   orgAdminService,
   type OrgMembership,
   type OrgRole,
+  type Organization,
   type Team,
   type User,
 } from "../../core/services";
+import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useCan } from "../composables/useCan";
 import { useOperationLoading } from "../composables/useOperationLoading";
@@ -636,9 +687,11 @@ import { useOperationLoading } from "../composables/useOperationLoading";
 type OrganizationSection = "members" | "teams";
 
 const orgs = useOrgsStore();
+const auth = useAuthStore();
 const { can } = useCan();
 const { isLoading: loadingOrgData, loadingMessage: loadingOrgDataMessage } = useOperationLoading([
   "Loading organizations",
+  "Loading all organizations",
   "Loading org members",
   "Loading users",
   "Loading teams",
@@ -647,8 +700,10 @@ const { isLoading: loadingTeamMembers, loadingMessage: loadingTeamMembersMessage
   useOperationLoading("Loading team members");
 const { isLoading: creatingOrg } = useOperationLoading("Creating organization");
 const { isLoading: renamingOrg } = useOperationLoading("Renaming organization");
+const { isLoading: deletingOrganization } = useOperationLoading("Deleting organization");
 
 const members = ref<OrgMembership[]>([]);
+const platformOrganizations = ref<Organization[]>([]);
 const users = ref<User[]>([]);
 const teams = ref<Team[]>([]);
 const teamMembers = ref<User[]>([]);
@@ -665,6 +720,7 @@ const newMemberId = ref("");
 const newMemberRole = ref<OrgRole>("member");
 const newTeamName = ref("");
 const newTeamMemberId = ref("");
+const selectedDeletionOrgId = ref("");
 
 const UUID_PATTERN =
   "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}";
@@ -672,6 +728,9 @@ const UUID_PATTERN =
 const canManageMembers = computed(() => can("members:manage"));
 const canManageTeams = computed(() => can("members:manage"));
 const canRenameOrg = computed(() => can("resource:own"));
+const canDeleteOrganizations = computed(
+  () => auth.user?.platform_role === "admin" && can("resource:own"),
+);
 const validMemberId = computed(() =>
   new RegExp(`^${UUID_PATTERN}$`).test(newMemberId.value.trim()),
 );
@@ -867,8 +926,21 @@ async function removeFromTeam(user: User) {
 
 async function refresh() {
   await orgs.refresh();
-  users.value = await orgAdminService.listUsers().catch(() => []);
-  await refreshActiveOrgDetail();
+  await Promise.all([refreshPlatformOrganizations(), refreshActiveOrgDetail()]);
+}
+
+async function refreshPlatformOrganizations() {
+  if (!canDeleteOrganizations.value) {
+    platformOrganizations.value = [];
+    selectedDeletionOrgId.value = "";
+    return;
+  }
+
+  platformOrganizations.value = await orgAdminService.listOrganizations().catch(() => []);
+
+  if (!platformOrganizations.value.some((org) => org.id === selectedDeletionOrgId.value)) {
+    selectedDeletionOrgId.value = "";
+  }
 }
 
 async function refreshMembers() {
@@ -897,6 +969,7 @@ async function refreshActiveOrgDetail() {
     return;
   }
 
+  users.value = await orgAdminService.listUsers().catch(() => []);
   await Promise.all([refreshMembers(), refreshTeams()]);
 }
 
@@ -941,6 +1014,38 @@ async function renameOrg() {
   if (await orgs.rename(name)) {
     showRenameOrg.value = false;
   }
+}
+
+async function deleteOrganization() {
+  const organization = platformOrganizations.value.find(
+    (org) => org.id === selectedDeletionOrgId.value,
+  );
+
+  if (
+    !organization ||
+    !window.confirm(
+      `Delete organization "${organization.name}"? This permanently removes its memberships.`,
+    )
+  ) {
+    return;
+  }
+
+  const deleted = await orgAdminService.deleteOrganization(organization.id).then(
+    () => true,
+    () => false,
+  );
+
+  if (!deleted) {
+    return;
+  }
+
+  selectedDeletionOrgId.value = "";
+
+  if (orgs.activeOrgId === organization.id) {
+    await orgs.setActivePlatform();
+  }
+
+  await refresh();
 }
 
 async function addMember() {

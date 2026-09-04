@@ -231,3 +231,39 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn platform_admin_can_delete_an_organization_without_membership() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let org_id = db
+        .create_org("Acme".into(), "acme".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let admin = db.create_user("admin".into(), None, None).await.unwrap();
+    let admin_id = admin.id.unwrap();
+    let context = AuthContext {
+        principal_id: Some(admin_id),
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::User,
+        org_id: None,
+    };
+
+    let (status, _) = crate::handlers::orgs::delete_org::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(context),
+        Path(org_id),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(db.fetch_org(org_id).await.unwrap().is_none());
+
+    let _ = std::fs::remove_file(path);
+}

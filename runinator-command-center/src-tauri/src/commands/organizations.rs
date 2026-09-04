@@ -33,6 +33,17 @@ pub async fn update_org(
 }
 
 #[tauri::command]
+pub async fn delete_org(
+    state: State<'_, CommandCenterState>,
+    org_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("orgs/{org_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
 pub async fn switch_org(
     state: State<'_, CommandCenterState>,
     org_id: Uuid,

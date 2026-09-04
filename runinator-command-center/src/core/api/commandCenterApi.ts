@@ -2008,6 +2008,10 @@ export async function updateOrg(orgId: string, name: string) {
   return command<Organization>("update_org", { orgId, name });
 }
 
+export async function deleteOrg(orgId: string) {
+  return command<JsonRecord>("delete_org", { orgId });
+}
+
 export async function switchOrg(orgId: string) {
   return command<OrgContextResponse>("switch_org", { orgId });
 }
