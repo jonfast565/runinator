@@ -177,6 +177,13 @@ pub async fn run_webserver<T: DatabaseImpl>(
         instance.clone(),
         notify.clone(),
     ));
+    background.spawn(runinator_engine::services::run_workspace_storage_cleanup(
+        Arc::new(runinator_engine::services::WorkspaceService::new(
+            pool.clone(),
+            blobs.clone(),
+        )),
+        notify.clone(),
+    ));
     // run the durable orchestration engine in-process unless a standalone engine worker owns it.
     // the engine publishes UI events onto the broker; this replica's event consumer above fans them
     // out to WebSocket clients either way.

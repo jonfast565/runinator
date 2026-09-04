@@ -408,7 +408,7 @@ async fn start_member_run<T: RuntimeStore + WorkflowVmStore>(
     else {
         return Ok(false);
     };
-    let Some(snapshot) = db.fetch_workflow(workflow_id).await? else {
+    let Some(mut snapshot) = db.fetch_workflow(workflow_id).await? else {
         db.update_pipeline_member_attempt(
             attempt.id,
             PipelineMemberAttemptStatus::Failed,
@@ -427,6 +427,25 @@ async fn start_member_run<T: RuntimeStore + WorkflowVmStore>(
         )
         .await?;
         return Ok(true);
+    }
+    let pipeline = pipeline_for_run(db, pipeline_run).await?;
+    if let Some(workspace) = member.workspace.as_ref().or_else(|| {
+        pipeline
+            .as_ref()
+            .and_then(|pipeline| pipeline.defaults.workspace.as_ref())
+    }) {
+        if snapshot.definition.metadata.is_null() {
+            snapshot.definition.metadata = runinator_models::json!({});
+        }
+        let metadata = snapshot
+            .definition
+            .metadata
+            .as_object_mut()
+            .ok_or_else(|| {
+                runinator_models::errors::WORKSPACE_INVALID
+                    .error("workflow metadata must be an object")
+            })?;
+        metadata.insert("workspace".into(), workspace.clone());
     }
     let module = runinator_workflows::compile_workflow_module(&snapshot)
         .map_err(|error| -> SendableError { Box::new(error) })?;
@@ -794,7 +813,28 @@ async fn member_result<T: RuntimeStore + WorkflowVmStore>(
         .await?
         .unwrap_or(Value::Null);
     let mut artifacts = Vec::new();
+    let mut workspaces = Map::new();
     for effect in db.fetch_workflow_effects(run.id).await? {
+        if effect.status == runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded
+            && let Some(reference) = effect
+                .result
+                .as_ref()
+                .and_then(|result| result.get("workspace"))
+            && let Some(key) = reference.get("key").and_then(Value::as_str)
+        {
+            let version = reference
+                .get("version")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let previous = workspaces
+                .get(key)
+                .and_then(|value: &Value| value.get("version"))
+                .and_then(Value::as_i64)
+                .unwrap_or(-1);
+            if version > previous {
+                workspaces.insert(key.to_string(), reference.clone());
+            }
+        }
         for output in db.fetch_workflow_effect_output(effect.id).await? {
             if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } =
                 output.output
@@ -817,7 +857,7 @@ async fn member_result<T: RuntimeStore + WorkflowVmStore>(
         .map(|(started, finished)| (finished - started).num_milliseconds());
     Ok(runinator_models::json!({
         "run_id": run.id, "workflow_id": run.workflow_id, "status": run.status.as_str(), "attempt": attempt,
-        "result": result, "outputs": Value::Object(Map::new()), "artifacts": artifacts,
+        "result": result, "outputs": runinator_models::json!({ "workspaces": workspaces }), "artifacts": artifacts,
         "created_at": run.created_at, "started_at": run.started_at, "finished_at": run.finished_at,
         "duration_ms": duration_ms
     }))

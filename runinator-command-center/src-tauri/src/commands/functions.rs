@@ -451,3 +451,56 @@ pub async fn run_console_cell(
 ) -> CommandResult<Value> {
     post_empty(&state, &format!("console/cells/{cell_id}/run")).await
 }
+
+#[tauri::command]
+pub async fn list_durable_workspaces(
+    state: State<'_, CommandCenterState>,
+    offset: i64,
+) -> CommandResult<Value> {
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .list_durable_workspaces(offset)
+            .await
+            .map_err(api_error)?,
+    )
+}
+#[tauri::command]
+pub async fn workspace_versions(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    offset: i64,
+) -> CommandResult<Value> {
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .workspace_versions(workspace_id, offset)
+            .await
+            .map_err(api_error)?,
+    )
+}
+#[tauri::command]
+pub async fn delete_durable_workspace(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    version: Option<i64>,
+) -> CommandResult<()> {
+    execution_profile_client(&state)
+        .await?
+        .delete_durable_workspace(workspace_id, version)
+        .await
+        .map_err(api_error)
+}
+#[tauri::command]
+pub async fn download_workspace_version(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    version: i64,
+    path: Option<String>,
+) -> CommandResult<Vec<u8>> {
+    execution_profile_client(&state)
+        .await?
+        .download_workspace_version(workspace_id, version, path)
+        .await
+        .map_err(api_error)
+}

@@ -20,6 +20,7 @@ mod runs;
 mod schedules;
 mod users;
 mod validation;
+mod workspaces;
 
 use std::sync::Arc;
 

@@ -250,6 +250,10 @@ pub(super) fn routing_labels(
 ) -> BTreeMap<String, String> {
     let mut labels = configured.clone();
     labels.insert(
+        runinator_models::workspaces::PORTABLE_WORKSPACE_LABEL.into(),
+        "v1".into(),
+    );
+    labels.insert(
         runinator_models::workspaces::WORKSPACE_INSTANCE_LABEL.to_string(),
         instance_id.to_string(),
     );

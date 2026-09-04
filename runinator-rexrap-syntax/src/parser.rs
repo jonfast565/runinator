@@ -83,6 +83,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                 }
                 let (name, version, output, span) = parse_workflow_decl(inner)?;
                 active = Some(Workflow {
+                    workspace: None,
                     name,
                     key: None,
                     version,
@@ -600,6 +601,7 @@ pub fn parse_pipeline_document(src: &str) -> Result<Vec<PipelineDecl>, RexRapErr
 
 fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
     let span = span_of(&pair);
+    let mut workspace = None;
     let mut name = String::new();
     let mut key = None;
     let mut namespace = None;
@@ -623,6 +625,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
                     .next()
                     .ok_or_else(|| RexRapError::syntax(span, "empty pipeline item"))?;
                 match item.as_rule() {
+                    Rule::workspace_decl => workspace = Some(parse_expr(first_inner(item)?)?),
                     Rule::key_decl => {
                         if key.is_some() {
                             return Err(RexRapError::syntax(
@@ -693,6 +696,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
         }
     }
     Ok(PipelineDecl {
+        workspace,
         name,
         key,
         namespace,
@@ -1113,16 +1117,19 @@ fn parse_pipeline_trigger(pair: Pair<Rule>) -> Result<PipelineTriggerDecl, RexRa
 
 fn parse_pipeline_member(pair: Pair<Rule>) -> Result<PipelineMemberDecl, RexRapError> {
     let span = span_of(&pair);
+    let mut workspace = None;
     let mut name = None;
     let mut on_failure = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::expr => workspace = Some(parse_expr(inner)?),
             Rule::string => name = Some(plain_string(inner)?),
             Rule::pipeline_member_failure_mode => on_failure = Some(inner.as_str().to_string()),
             _ => {}
         }
     }
     Ok(PipelineMemberDecl {
+        workspace,
         name: name
             .ok_or_else(|| RexRapError::syntax(span, "a pipeline member needs a workflow name"))?,
         on_failure,
@@ -1197,6 +1204,7 @@ fn parse_namespace_block(pair: Pair<Rule>) -> Result<Vec<Workflow>, RexRapError>
 
 fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflow, RexRapError> {
     let span = span_of(&pair);
+    let mut workspace = None;
     let mut name = String::new();
     let mut key = None;
     let mut version = None;
@@ -1234,6 +1242,15 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
                         RexRapError::syntax(span, "returns declaration is missing a type")
                     })?;
                 output = Some(parse_type_expr(ty)?);
+            }
+            Rule::workspace_decl => {
+                if workspace.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one workspace",
+                    ));
+                }
+                workspace = Some(parse_expr(first_inner(inner)?)?);
             }
             Rule::params_block => input = Some(parse_params_block(inner)?),
             Rule::key_decl => {
@@ -1296,6 +1313,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     }
     reject_duplicate_joins(&joins)?;
     Ok(Workflow {
+        workspace,
         name,
         key,
         version,

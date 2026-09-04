@@ -8,6 +8,9 @@ use crate::value::Value;
 /// A worker runtime may mint a new replica id after restart; its instance id remains stable.
 pub const WORKSPACE_INSTANCE_LABEL: &str = "runinator.instance";
 
+/// Worker capability for restoring portable snapshots.
+pub const PORTABLE_WORKSPACE_LABEL: &str = "runinator.workspace.portable";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceStatus {
@@ -120,3 +123,8 @@ pub struct NewWorkspaceLease {
     pub requirements: Value,
     pub leased_until: DateTime<Utc>,
 }
+
+// durable contents have their own identity and version sequence, independent of local leases.
+#[path = "workspace_contents.rs"]
+mod contents;
+pub use contents::*;

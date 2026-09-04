@@ -16,6 +16,7 @@ export type PipelineFailurePolicy = "halt" | "continue";
 export type PipelineMemberFailureMode = "stop" | "continue" | "silently_continue" | "inquire";
 
 export interface PipelineDefaults {
+  workspace?: JsonRecord | null;
   on_step_failure: PipelineFailurePolicy;
   links_enabled_by_default: boolean;
   default_parameters: JsonRecord;
@@ -28,6 +29,7 @@ export type PipelineJoinMode = "all" | "any" | "first_success";
 export type PipelineLinkSelector = "success" | "failure" | "complete";
 
 export interface PipelineMember {
+  workspace?: JsonRecord | null;
   key: string;
   workflow_id: string;
   failure_mode: PipelineMemberFailureMode;

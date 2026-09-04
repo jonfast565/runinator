@@ -1432,7 +1432,14 @@ pub async fn run_timer_interrupt_scheduler<T: WorkflowVmStore>(
 /// Drain the VM effect outbox. The command was frozen in the same transaction as the suspended
 /// continuation, so this publisher never re-reads graph or node-run state to rebuild a delivery.
 pub async fn run_workflow_effect_dispatcher<
-    T: WorkflowVmStore + WorkspaceStore + OrchestrationStore + DefinitionStore,
+    T: WorkflowVmStore
+        + WorkspaceStore
+        + OrchestrationStore
+        + DefinitionStore
+        + runinator_store::roles::DurableWorkspaceStore
+        + runinator_store::roles::RbacStore
+        + runinator_store::roles::AuthStore
+        + runinator_store::RuntimeStore,
 >(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
@@ -1457,7 +1464,60 @@ pub async fn run_workflow_effect_dispatcher<
             .await
         {
             Ok(dispatches) => {
-                for dispatch in dispatches {
+                for mut dispatch in dispatches {
+                    match crate::repository::durable_workspaces::prepare_dispatch(
+                        db.as_ref(),
+                        &mut dispatch.command,
+                    )
+                    .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let _ = db
+                                .mark_workflow_effect_dispatch_failed(
+                                    dispatch.id,
+                                    "workspace writer is busy".into(),
+                                )
+                                .await;
+                            continue;
+                        }
+                        Err(error) => {
+                            if !error.to_string().contains("WORKSPACE00") {
+                                let _ = db
+                                    .mark_workflow_effect_dispatch_failed(
+                                        dispatch.id,
+                                        error.to_string(),
+                                    )
+                                    .await;
+                                continue;
+                            }
+                            if let Err(settle_error) = db
+                                .settle_workflow_effect(
+                                    dispatch.command.effect_id,
+                                    dispatch.command.attempt,
+                                    WorkflowEffectStatus::Rejected,
+                                    None,
+                                    Some(error.to_string()),
+                                    now,
+                                )
+                                .await
+                            {
+                                warn!(error = %settle_error, "failed to reject workspace dispatch");
+                                let _ = db
+                                    .mark_workflow_effect_dispatch_failed(
+                                        dispatch.id,
+                                        settle_error.to_string(),
+                                    )
+                                    .await;
+                            } else {
+                                let _ = db
+                                    .mark_workflow_effect_dispatch_published(dispatch.id)
+                                    .await;
+                            }
+                            continue;
+                        }
+                    }
+
                     match workspace_affinity_is_current(db.as_ref(), &dispatch.command.request)
                         .await
                     {
@@ -1682,6 +1742,9 @@ async fn workspace_affinity_is_current<T: WorkspaceStore>(
     else {
         return Ok(true);
     };
+    if value.get("key").is_some() {
+        return Ok(true);
+    }
     let affinity: WorkspaceAffinity =
         serde_json::from_value(value.clone().into()).map_err(|error| {
             Box::new(std::io::Error::new(

@@ -905,7 +905,7 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
     ),
 ];
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::*;
     use runinator_comm::ReplicaAvailability;

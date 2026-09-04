@@ -146,6 +146,10 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         events.embedded_engine_signals(),
     ));
     let function_packages = Arc::new(FunctionPackages::new(pool.clone(), blobs.clone()));
+    let workspace_service = Arc::new(runinator_engine::services::WorkspaceService::new(
+        pool.clone(),
+        blobs.clone(),
+    ));
     let workflow_files = Arc::new(WorkflowFiles::new(pool.clone(), blobs.clone()));
     let automation_operations = Arc::new(AutomationOperations::new(pool.clone()));
     let scheduling_operations = Arc::new(SchedulingOperations::new(
@@ -199,6 +203,7 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         .merge(provisioning::routes())
         .merge(artifacts::routes::<T>())
         .merge(files::routes::<T>())
+        .merge(crate::handlers::workspaces::routes::<T>())
         .merge(notifications::routes(pool.clone()))
         .merge(schedules::routes(pool.clone()))
         .merge(debug::routes(pool.clone()))
@@ -230,6 +235,7 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         .layer(Extension(automation_operations))
         .layer(Extension(function_packages))
         .layer(Extension(workflow_files))
+        .layer(Extension(workspace_service))
         .layer(Extension(pipeline_operations))
         .layer(Extension(run_operations))
         .layer(Extension(workflow_authoring))

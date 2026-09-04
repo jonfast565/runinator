@@ -58,6 +58,7 @@ pub trait DatabaseImpl:
     + roles::OrgStore
     + roles::WorkflowVmStore
     + roles::WorkspaceStore
+    + roles::DurableWorkspaceStore
     + roles::OrchestrationStore
 {
     /// Execute initialization scripts for the database.
@@ -80,10 +81,10 @@ pub mod prelude {
     pub use crate::pack_transaction::PackTransactionStore;
     pub use crate::roles::{
         ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DeliveryStore,
-        ExecutionProfileStore, FileStore, FunctionStore, IngressStore, NewWorkflowVmRun,
-        NotificationStore, OrchestrationBindingUpdate, OrchestrationStore, OrgStore, QueueSnapshot,
-        RbacStore, ReplicaStore, RunStore, ScheduleStore, ScheduledWorkflowVm, SettingStore,
-        WorkflowTimerInterrupt, WorkflowVmStore, WorkspaceStore,
+        DurableWorkspaceStore, ExecutionProfileStore, FileStore, FunctionStore, IngressStore,
+        NewWorkflowVmRun, NotificationStore, OrchestrationBindingUpdate, OrchestrationStore,
+        OrgStore, QueueSnapshot, RbacStore, ReplicaStore, RunStore, ScheduleStore,
+        ScheduledWorkflowVm, SettingStore, WorkflowTimerInterrupt, WorkflowVmStore, WorkspaceStore,
     };
     pub use crate::runtime_store::RuntimeStore;
 }

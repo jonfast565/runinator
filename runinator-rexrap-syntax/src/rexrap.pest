@@ -57,7 +57,7 @@ secret_kind      = { "secret" | "config" }
 // the grammar only expresses well-formed pipelines; the lowering rejects empty/danging references.
 pipeline_document       = { SOI ~ pipeline_decl* ~ EOI }
 pipeline_decl           = { "pipeline" ~ string ~ "{" ~ pipeline_item* ~ "}" }
-pipeline_item           = { key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | ingress_decl | orchestration_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
+pipeline_item           = { workspace_decl | key_decl | namespace_decl | pipeline_desc | pipeline_on_failure | pipeline_max_depth | concurrency_decl | ingress_decl | orchestration_decl | pipeline_trigger | pipeline_member | pipeline_join | pipeline_link }
 pipeline_desc           = { "description" ~ string }
 pipeline_on_failure     = { "on_failure" ~ pipeline_failure_policy }
 pipeline_failure_policy = { "halt" | "continue" }
@@ -65,7 +65,7 @@ pipeline_max_depth      = { "max_depth" ~ integer }
 // `on_failure <mode>` on a member overrides the pipeline's default failure mode for that member only
 // (powershell-$erroractionpreference-style: what happens to the *pipeline run* when this workflow
 // fails). absent, it takes the pipeline's default_failure_mode at import.
-pipeline_member               = { "workflow" ~ string ~ ("on_failure" ~ pipeline_member_failure_mode)? }
+pipeline_member               = { "workflow" ~ string ~ ("on_failure" ~ pipeline_member_failure_mode)? ~ ("with_workspace" ~ expr)? }
 pipeline_member_failure_mode  = { "stop" | "silently_continue" | "continue" | "inquire" }
 pipeline_link           = { string ~ "->" ~ string ~ ("on" ~ pipeline_link_selector)? ~ ("with" ~ object)? }
 pipeline_link_selector  = { "success" | "complete" | "failure" }
@@ -120,7 +120,8 @@ join_kw   = @{ "join" ~ !(ASCII_ALPHANUMERIC | "_") }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
 workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ workflow_item* ~ "}" }
-workflow_item = _{ key_decl | import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | ingress_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
+workspace_decl = { "workspace" ~ expr ~ ";"? }
+workflow_item = _{ workspace_decl | key_decl | import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | ingress_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
 returns_decl = { "returns" ~ type_expr }
 
 // the required namespace this workflow's identity lives in. a dotted path qualifying the workflow

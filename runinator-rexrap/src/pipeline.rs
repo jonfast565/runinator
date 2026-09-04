@@ -54,6 +54,11 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         _ => PipelineFailurePolicy::Halt,
     };
     let defaults = PipelineDefaults {
+        workspace: decl
+            .workspace
+            .as_ref()
+            .map(|expr| lower_mapping(Some(expr)))
+            .transpose()?,
         on_step_failure,
         max_chain_depth: decl.max_depth,
         ..PipelineDefaults::default()
@@ -418,6 +423,11 @@ fn lower_member(decl: &PipelineMemberDecl) -> Result<PipelineMemberSpec, RexRapE
         }
     };
     Ok(PipelineMemberSpec {
+        workspace: decl
+            .workspace
+            .as_ref()
+            .map(|expr| lower_mapping(Some(expr)))
+            .transpose()?,
         name: decl.name.clone(),
         failure_mode,
     })
@@ -727,6 +737,13 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
         if let Some(namespace) = &spec.namespace {
             out.push_str(&format!("    namespace {namespace}\n"));
         }
+        if let Some(workspace) = &spec.defaults.workspace {
+            out.push_str(&format!(
+                "    workspace {}\n",
+                runinator_rexrap_codegen::render_expression(workspace)
+                    .unwrap_or_else(|_| "null".into())
+            ));
+        }
         if let Some(description) = &spec.description {
             out.push_str(&format!("    description {}\n", quote(description)));
         }
@@ -810,14 +827,18 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
         if !spec.members.is_empty() {
             out.push('\n');
             for member in &spec.members {
-                match member.failure_mode {
-                    Some(mode) => out.push_str(&format!(
-                        "    workflow {} on_failure {}\n",
-                        quote(&member.name),
-                        mode.as_str()
-                    )),
-                    None => out.push_str(&format!("    workflow {}\n", quote(&member.name))),
+                out.push_str(&format!("    workflow {}", quote(&member.name)));
+                if let Some(mode) = member.failure_mode {
+                    out.push_str(&format!(" on_failure {}", mode.as_str()));
                 }
+                if let Some(workspace) = &member.workspace {
+                    out.push_str(&format!(
+                        " with_workspace {}",
+                        runinator_rexrap_codegen::render_expression(workspace)
+                            .unwrap_or_else(|_| "null".into())
+                    ));
+                }
+                out.push('\n');
             }
         }
         if !spec.links.is_empty() {

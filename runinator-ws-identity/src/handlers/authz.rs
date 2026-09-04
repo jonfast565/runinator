@@ -100,7 +100,7 @@ struct AuthzCatalog {
     platform_roles: [PlatformRole; 4],
     organization_roles: [OrgRole; 4],
     team_roles: [TeamRole; 4],
-    resource_types: [ResourceType; 9],
+    resource_types: [ResourceType; 10],
 }
 
 fn ok<T: Serialize>(value: &T) -> Reply {
@@ -249,6 +249,7 @@ pub async fn catalog(Extension(_ctx): Extension<AuthContext>) -> Reply {
             ResourceType::OrchestrationAdapter,
             ResourceType::LibraryFile,
             ResourceType::NotificationPolicy,
+            ResourceType::Workspace,
         ],
     })
 }

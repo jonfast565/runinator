@@ -108,3 +108,58 @@ fn safe_name(name: &str) -> String {
 #[cfg(test)]
 #[path = "artifact_storage_tests.rs"]
 mod tests;
+
+/// Delete bytes while retaining failures for durable cleanup retries.
+pub async fn delete_artifact_checked(
+    store: &Arc<dyn BlobStore>,
+    uri: &str,
+) -> Result<(), SendableError> {
+    let (bucket, key) =
+        parse_blob_uri(uri).ok_or_else(|| ARTIFACT_UNREADABLE.error("invalid artifact URI"))?;
+    match store.delete(&bucket, &key).await {
+        Ok(()) | Err(BlobError::NotFound(_)) | Err(BlobError::NoSuchBucket(_)) => Ok(()),
+        Err(error) => Err(ARTIFACT_STORE_FAILED.error(error)),
+    }
+}
+
+/// Snapshot uploads are content-addressed within their producing effect.
+pub async fn put_workspace_snapshot(
+    store: &Arc<dyn BlobStore>,
+    effect_id: Uuid,
+    bytes: Vec<u8>,
+) -> Result<String, SendableError> {
+    let digest = runinator_blob_core::sha256_hex(&bytes);
+    let key = ObjectKey::parse(&format!("effects/{effect_id}/{digest}.tar.gz"))
+        .map_err(|error| ARTIFACT_STORE_FAILED.error(error))?;
+    store
+        .put(
+            runinator_blob_core::WORKSPACE_BUCKET,
+            &key,
+            bytes,
+            PutOptions {
+                content_type: Some("application/gzip".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| ARTIFACT_STORE_FAILED.error(error))?;
+    Ok(blob_uri(runinator_blob_core::WORKSPACE_BUCKET, &key))
+}
+
+pub async fn workspace_upload_page(
+    store: &Arc<dyn BlobStore>,
+    cursor: Option<String>,
+) -> Result<runinator_blob_core::ListResponse, SendableError> {
+    store
+        .list(
+            runinator_blob_core::WORKSPACE_BUCKET,
+            &runinator_blob_core::ListRequest {
+                prefix: Some("effects/".into()),
+                continuation_token: cursor,
+                max_keys: Some(1000),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| ARTIFACT_STORE_FAILED.error(error))
+}

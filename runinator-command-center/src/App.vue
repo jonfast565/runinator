@@ -22,6 +22,7 @@
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
     <FunctionsView v-if="app.activeTab === 'Functions'" />
+    <WorkspacesView v-if="app.activeTab === 'Workspaces'" />
     <FilesView v-if="app.activeTab === 'Files'" />
     <ConsoleView v-if="app.activeTab === 'Console'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
@@ -59,6 +60,7 @@ import { usePermissionsStore } from "./ui/adapters/pinia/permissions";
 import { useAdminSettingsStore } from "./ui/adapters/pinia/adminSettings";
 import { useDisplayPreferencesStore } from "./ui/adapters/pinia/displayPreferences";
 import { useConsoleStore } from "./ui/adapters/pinia/console";
+import { useWorkspacesStore } from "./ui/adapters/pinia/workspaces";
 import { useFunctionsStore } from "./ui/adapters/pinia/functions";
 import { useGatesStore } from "./ui/adapters/pinia/gates";
 import { useExecutionProfilesStore } from "./ui/adapters/pinia/executionProfiles";
@@ -83,6 +85,7 @@ const NotificationsView = defineAsyncComponent(() => import("./ui/views/Notifica
 const SchedulesView = defineAsyncComponent(() => import("./ui/views/SchedulesView.vue"));
 const EventsView = defineAsyncComponent(() => import("./ui/views/EventsView.vue"));
 const ExternalItemsView = defineAsyncComponent(() => import("./ui/views/ExternalItemsView.vue"));
+const WorkspacesView = defineAsyncComponent(() => import("./ui/views/WorkspacesView.vue"));
 const FunctionsView = defineAsyncComponent(() => import("./ui/views/FunctionsView.vue"));
 const FilesView = defineAsyncComponent(() => import("./ui/views/FilesView.vue"));
 const ConsoleView = defineAsyncComponent(() => import("./ui/views/ConsoleView.vue"));
@@ -111,6 +114,7 @@ const permissions = usePermissionsStore();
 const adminSettings = useAdminSettingsStore();
 const consoleStore = useConsoleStore();
 const functions = useFunctionsStore();
+const workspaces = useWorkspacesStore();
 const gates = useGatesStore();
 const executionProfiles = useExecutionProfilesStore();
 // instantiate the preference adapter for display controls; bootstrap owns DOM theme application.
@@ -332,6 +336,7 @@ function clearBackendState() {
   secrets.clearSecrets();
   gates.clearGates();
   functions.clearFunctions();
+  workspaces.clear();
   executionProfiles.clear();
   consoleStore.clearConsole();
   adminSettings.clear();
@@ -349,6 +354,7 @@ function clearTenantScopedState() {
   permissions.clearPermissions();
   gates.clearGates();
   functions.clearFunctions();
+  workspaces.clear();
   executionProfiles.clear();
   consoleStore.clearConsole();
   providers.clearProviders();

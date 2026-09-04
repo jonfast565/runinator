@@ -449,6 +449,7 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
     for member in &spec.members {
         let id = resolve_workflow_path(workflows, &member.name, "pipeline member")?;
         graph_members.push(PipelineMember {
+            workspace: member.workspace.clone(),
             key: member.name.clone(),
             workflow_id: id,
             failure_mode: member

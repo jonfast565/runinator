@@ -391,6 +391,9 @@ fn lower_workflow(
     };
     let functions = lowerer.lowered_functions.clone();
     let mut metadata = Map::new();
+    if let Some(workspace) = &workflow.workspace {
+        metadata.insert("workspace".into(), lowerer.lower_expr(workspace)?);
+    }
     if !rexrap.is_empty() {
         metadata.insert("rexrap".into(), Value::Object(rexrap));
     }

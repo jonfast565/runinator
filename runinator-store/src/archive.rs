@@ -303,6 +303,10 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("workflow_vm_modules", ColdArchive),
     table_policy!("workflows", ExplicitLifecycle),
     table_policy!("workspace_leases", ColdArchive),
+    table_policy!("durable_workspaces", ExplicitLifecycle),
+    table_policy!("workspace_snapshots", ExplicitLifecycle),
+    table_policy!("workspace_checkouts", ServiceRetention),
+    table_policy!("workspace_pins", ServiceRetention),
 ];
 
 #[derive(Clone, Debug)]

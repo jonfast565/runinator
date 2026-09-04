@@ -448,6 +448,7 @@ fn effect_command() -> EffectCommand {
 /// a terminal effect result for the wake/ingress payloads exercised above.
 fn wake_result() -> runinator_comm::EffectResult {
     runinator_comm::EffectResult {
+        workspace_commit: None,
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id: Uuid::now_v7(),

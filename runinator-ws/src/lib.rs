@@ -40,12 +40,12 @@ pub(crate) mod handlers {
     pub(crate) use runinator_ws_runtime::handlers::{
         agents, artifacts, automation, catalog_metadata, debug, files, function_invocations,
         health, ingress_control, notifications, observability, provisioning, replicas, runs,
-        schedules, supervisor, triggers, workflow_vm,
+        schedules, supervisor, triggers, workflow_vm, workspaces,
     };
 }
 
 // likewise for the shared foundation and the middleware layers.
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 pub(crate) use runinator_ws_core::responses;
 pub(crate) use runinator_ws_core::{events, models};
 pub(crate) use runinator_ws_middleware::{auth, circuit_breaker, overload, rate_limit};
@@ -57,7 +57,7 @@ pub use runinator_ws_middleware::{
 };
 pub use server::{ReplicaAdvertisement, WebserverRuntime, run_webserver};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 pub(crate) use runinator_ws_authoring::handlers::providers::{
     provider_catalog_item, provider_metadata_from_items,
 };
@@ -85,5 +85,5 @@ pub(crate) fn workspace_root() -> &'static std::path::Path {
 
 #[cfg(test)]
 mod store_access_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests;

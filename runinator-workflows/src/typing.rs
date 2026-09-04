@@ -388,6 +388,9 @@ impl TypeContext {
     }
 
     fn infer_value_type(&self, value: &Value) -> Result<WorkflowType, WorkflowValidationError> {
+        if value.get("$workspace").is_some() {
+            return Ok(WorkflowType::Any);
+        }
         self.infer_expression_type(&parse_expression(value)?)
     }
 
@@ -933,6 +936,16 @@ impl TypeContext {
         expected: &WorkflowType,
         label: &str,
     ) -> Result<(), WorkflowValidationError> {
+        if let Some(pointer) = value.get("$workspace") {
+            if pointer.as_str().is_none()
+                || value.as_object().is_none_or(|object| object.len() != 1)
+            {
+                return Err(WorkflowValidationError::TypeError(
+                    "workspace result reference must contain only a JSON pointer".into(),
+                ));
+            }
+            return Ok(());
+        }
         if is_expression_object(value) {
             let expression = parse_expression(value)?;
             if let WorkflowExpression::Literal(literal) = &expression {

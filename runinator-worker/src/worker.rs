@@ -104,6 +104,13 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         return Ok(());
     }
 
+    let workspace_cleanup_task = tokio::spawn(async {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            crate::durable_workspace::cleanup_expired().await;
+        }
+    });
     let outbox_task = {
         let broker = broker.clone();
         let result_outbox = result_outbox.clone();
@@ -162,10 +169,12 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
     control_task.abort();
     directive_task.abort();
     outbox_task.abort();
+    workspace_cleanup_task.abort();
     for (name, task) in [
         ("control", control_task),
         ("directive", directive_task),
         ("result outbox", outbox_task),
+        ("workspace cleanup", workspace_cleanup_task),
     ] {
         if let Err(error) = task.await
             && !error.is_cancelled()

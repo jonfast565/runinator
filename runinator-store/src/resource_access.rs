@@ -41,6 +41,25 @@ pub async fn owner_can_consume<T: AuthStore + RbacStore>(
     dependency_type: ResourceType,
     dependency_id: Uuid,
 ) -> Result<bool, SendableError> {
+    owner_can_access(
+        db,
+        consumer_owner,
+        consumer_tenant,
+        dependency_type,
+        dependency_id,
+        Permission::Run,
+    )
+    .await
+}
+
+pub async fn owner_can_access<T: AuthStore + RbacStore>(
+    db: &T,
+    consumer_owner: ScopeRef,
+    consumer_tenant: ScopeRef,
+    dependency_type: ResourceType,
+    dependency_id: Uuid,
+    needed: Permission,
+) -> Result<bool, SendableError> {
     let Some(dependency) = db
         .fetch_resource_ownership(dependency_type, dependency_id)
         .await?
@@ -65,7 +84,7 @@ pub async fn owner_can_consume<T: AuthStore + RbacStore>(
         .await?;
     for grant in grants
         .into_iter()
-        .filter(|grant| grant.permission.allows(Permission::Run))
+        .filter(|grant| grant.permission.allows(needed))
     {
         match (consumer_owner.kind, consumer_owner.id, grant.principal_type) {
             (ScopeKind::User, Some(user_id), PrincipalType::User)

@@ -4,6 +4,8 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+tempfile = "3"
+runinator-workspace = { path = "../runinator-workspace" }
 log = "0.4"
 tracing = "0.1"
 clap = { version = "4.5", features = ["derive", "env"] }

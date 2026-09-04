@@ -143,6 +143,9 @@ pub fn decompile_definition(
         decompiler.line(&format!("key {key}"));
         decompiler.out.push('\n');
     }
+    if let Some(workspace) = graph.metadata.get("workspace") {
+        decompiler.line(&format!("workspace {}", decompiler.expr(workspace)?));
+    }
     decompiler.emit_resource_imports();
     decompiler.emit_triggers(metadata.triggers())?;
     decompiler.emit_notifications(metadata.notifications())?;

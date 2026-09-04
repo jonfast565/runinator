@@ -30,6 +30,7 @@ async fn store() -> (
 
 fn effect_result(effect_id: Uuid, attempt: u32) -> runinator_comm::EffectResult {
     runinator_comm::EffectResult {
+        workspace_commit: None,
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id,

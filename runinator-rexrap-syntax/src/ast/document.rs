@@ -77,6 +77,8 @@ pub struct FnParam {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
+    /// Default portable workspace attached to workflow actions and its completion checkpoint.
+    pub workspace: Option<Expr>,
     pub name: String,
     /// Stable logical key, independent of display name and namespace. Parsing retains `None` so
     /// semantic analysis can report a precise missing-key diagnostic; lowering rejects it.

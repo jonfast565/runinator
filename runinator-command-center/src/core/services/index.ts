@@ -113,3 +113,6 @@ export type { OrgAdminService, OrgMembership, OrgRole, Organization, Team, User 
 export type { OrgResourcesService, OrgQuota, OrgResourceGroup, OrgUsage, RateCard } from "./org-resources";
 export type { WorkflowSharingService } from "./workflow-sharing";
 export type { WorkflowRevisionsService } from "./workflow-revisions";
+
+import { createWorkspacesService } from "./workspaces";
+export const workspacesService = createWorkspacesService();

@@ -66,6 +66,7 @@ pub trait BackgroundEngineStore:
     + DefinitionStore
     + IngressStore
     + WorkspaceStore
+    + runinator_store::roles::DurableWorkspaceStore
     + OrchestrationStore
     + SettingStore
     + DeliveryStore
@@ -85,6 +86,7 @@ impl<T> BackgroundEngineStore for T where
         + DefinitionStore
         + IngressStore
         + WorkspaceStore
+        + runinator_store::roles::DurableWorkspaceStore
         + OrchestrationStore
         + SettingStore
         + DeliveryStore

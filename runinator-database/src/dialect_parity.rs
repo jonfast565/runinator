@@ -119,6 +119,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db:
     assert_workflow_vm_readback(db, &after).await;
     assert_workflow_vm_mutex_lifecycle(db, &after).await;
     assert_workflow_effect_retry_lifecycle(db, &after).await;
+    durable_workspace_tests::lifecycle(db, &after).await;
     assert_unreferenced_artifacts(db).await;
 }
 
@@ -507,6 +508,7 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
             graph: PipelineGraph {
                 version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                 members: vec![PipelineMember {
+                    workspace: None,
                     key: "member".into(),
                     workflow_id,
                     failure_mode: PipelineMemberFailureMode::Stop,
@@ -3075,3 +3077,6 @@ async fn assert_workflow_effect_retry_lifecycle<T: DatabaseImpl + WorkflowVmStor
         "the attempt is part of the key, so the worker cannot replay the failed attempt"
     );
 }
+
+#[path = "dialect_parity_workspace_tests.rs"]
+mod durable_workspace_tests;

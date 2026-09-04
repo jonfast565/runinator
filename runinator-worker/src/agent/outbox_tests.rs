@@ -10,6 +10,7 @@ fn effect_result_message() -> EffectResultMessage {
     let event_id = Uuid::now_v7();
     EffectResultMessage {
         result: EffectResult {
+            workspace_commit: None,
             version: 1,
             event_id,
             effect_id: Uuid::now_v7(),

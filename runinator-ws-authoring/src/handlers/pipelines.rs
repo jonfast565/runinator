@@ -30,7 +30,7 @@ use runinator_ws_core::models::{
     PipelineRunResolutionRequest,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 pub async fn get_pipelines<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
@@ -90,6 +90,11 @@ pub struct PipelineRevisionListQuery {
 #[derive(Debug, Deserialize)]
 pub struct PipelineEnableRequest {
     pub enabled: bool,
+}
+impl runinator_models::validation::Validate for PipelineEnableRequest {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        Ok(())
+    }
 }
 
 pub async fn get_pipeline_revisions<
@@ -197,7 +202,7 @@ pub async fn set_enabled<
     Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
-    Json(request): Json<PipelineEnableRequest>,
+    ValidatedJson(request): ValidatedJson<PipelineEnableRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(pipeline_id, Permission::Edit)

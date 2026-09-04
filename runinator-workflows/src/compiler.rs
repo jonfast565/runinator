@@ -116,6 +116,19 @@ struct BasicBlock {
 pub fn compile_workflow_module(
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowModule, WorkflowValidationError> {
+    let mut defaulted = workflow.clone();
+    let workspace_default = workflow.definition.metadata.get("workspace").cloned();
+    if let Some(workspace) = &workspace_default {
+        for node in &mut defaulted.definition.nodes {
+            if let Some(action) = &mut node.action
+                && action.workspace_affinity.is_none()
+            {
+                action.workspace_affinity =
+                    Some(runinator_models::json!({ "$workspace_default": workspace }));
+            }
+        }
+    }
+    let workflow = &defaulted;
     let (start, nodes) = validate_workflow(workflow)?;
     // Handlers are frozen into the module. An unknown or disabled source is dropped here rather
     // than at runtime, so an old binary reading a newer definition simply has fewer handlers
@@ -191,6 +204,20 @@ pub fn compile_workflow_module(
         }
         let mut body = Vec::new();
         lower_node(node, &mut body)?;
+        if node.kind == WorkflowNodeKind::End
+            && let Some(workspace) = &workspace_default
+        {
+            body.insert(0, PendingInstruction::instruction(WorkflowInstruction::Effect {
+                request: WorkflowEffectRequest::Action {
+                    provider: "workspace".into(), function: "checkpoint".into(),
+                    input: runinator_models::json!({"value": {"$ref": {"let": ["__runinator_workspace_return"]}}}),
+                    timeout_seconds: Some(300), retry: Default::default(), tags: vec![], required_labels: Default::default(),
+                    workspace_affinity: Some(runinator_models::json!({"$workspace_default": workspace})), execution_profile: None, idempotency_key: None, function_binding: None,
+                }
+            }));
+            body.insert(1, PendingInstruction::instruction(WorkflowInstruction::Pop));
+        }
+
         let guard = apply_failure_edges(node, &mut body);
         instructions.extend(body);
         let exit_offset = exit_offset(&instructions);

@@ -1,7 +1,7 @@
 -- A global resource belongs to the platform. Individual and team authority over it is expressed
 -- through a grant, never by changing the resource's tenant or owner scope.
 INSERT INTO resource_grants (id, resource_type, resource_id, principal_type, principal_id, permission, created_at)
-SELECT UUID_TO_BIN(UUID()), ownership.resource_type, ownership.resource_id, ownership.owner_scope_kind,
+SELECT UNHEX(REPLACE(UUID(), '-', '')), ownership.resource_type, ownership.resource_id, ownership.owner_scope_kind,
        ownership.owner_scope_id, 'own', ownership.updated_at
 FROM resource_ownership ownership
 WHERE ownership.tenant_scope_kind = 'platform'

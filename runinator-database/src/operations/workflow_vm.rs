@@ -364,6 +364,13 @@ where
         .bind(provenance.metadata.to_string())
         .execute(&mut *tx)
         .await?;
+        self.pin_workspace_inputs(
+            &mut tx,
+            run_id,
+            workflow_snapshot.org_id,
+            &runinator_models::json!({ "parameters": parameters, "module": module }),
+        )
+        .await?;
         execution_state_sql::write(self, &mut *tx, run_id, &state, false).await?;
         if let Some(attempt_id) = pipeline_member_attempt_id {
             if pipeline_run_id.is_none() {
@@ -1649,6 +1656,13 @@ where
             stamp,
         )
         .await?;
+        sqlx::query(&self.render(
+            "UPDATE workspace_checkouts SET leased_until = 0 WHERE effect_id = ? AND attempt = ?",
+        ))
+        .bind(effect_id)
+        .bind(i64::from(attempt))
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(true)
     }
@@ -1662,6 +1676,33 @@ where
         message: Option<String>,
         settled_at: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
+        self.settle_workflow_effect_with_workspace(
+            runinator_store::roles::workflow_vm::WorkspaceEffectSettlement {
+                effect_id,
+                attempt,
+                status,
+                output,
+                message,
+                settled_at,
+                workspace: None,
+            },
+        )
+        .await
+    }
+
+    async fn settle_workflow_effect_with_workspace(
+        &self,
+        settlement: runinator_store::roles::workflow_vm::WorkspaceEffectSettlement,
+    ) -> Result<bool, SendableError> {
+        let runinator_store::roles::workflow_vm::WorkspaceEffectSettlement {
+            effect_id,
+            attempt,
+            status,
+            output,
+            message,
+            settled_at,
+            workspace,
+        } = settlement;
         if !status.is_terminal() {
             return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
                 .error("an effect may only be settled to a terminal status"));
@@ -1681,6 +1722,21 @@ where
         if effect.attempt != attempt || effect.status.is_terminal() {
             tx.commit().await?;
             return Ok(false);
+        }
+        if status == WorkflowEffectStatus::Succeeded
+            && let WorkflowEffectRequest::Action {
+                workspace_affinity: Some(value),
+                ..
+            } = &effect.request
+            && value.get("key").is_some()
+            && value
+                .decode::<runinator_models::workspaces::WorkspaceAttachment>()?
+                .access
+                == runinator_models::workspaces::WorkspaceAccess::Write
+            && workspace.is_none()
+        {
+            return Err(runinator_models::errors::WORKSPACE_CONFLICT
+                .error("successful writer did not supply a snapshot"));
         }
         let continuation_row = sqlx::query(&self.render(&format!(
             "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations WHERE id = ?"
@@ -1713,6 +1769,86 @@ where
             tx.commit().await?;
             return Ok(false);
         }
+        if let Some(commit) = workspace {
+            use runinator_models::{errors::WORKSPACE_CONFLICT, workspaces::*};
+            let checkout = &commit.checkout;
+            let snapshot = &commit.snapshot;
+            if status != WorkflowEffectStatus::Succeeded
+                || checkout.access != WorkspaceAccess::Write
+                || checkout.effect_id != effect_id
+                || checkout.attempt != attempt
+                || checkout.workflow_run_id != effect.workflow_run_id
+                || snapshot.workspace_id != checkout.workspace_id
+                || snapshot.effect_id != effect_id
+                || snapshot.attempt != attempt
+                || snapshot.workflow_run_id != effect.workflow_run_id
+                || snapshot.parent_version != checkout.base_version
+                || snapshot.version != checkout.base_version + 1
+            {
+                return Err(
+                    WORKSPACE_CONFLICT.error("snapshot does not match the successful execution")
+                );
+            }
+            let locked = sqlx::query(&self.render("UPDATE durable_workspaces SET revision = revision + 1 WHERE id = ? AND head_version = ? AND deleted_at IS NULL"))
+                .bind(checkout.workspace_id).bind(checkout.base_version).execute(&mut *tx).await?;
+            if locked.affected() == 0 {
+                return Err(WORKSPACE_CONFLICT.error("workspace head changed"));
+            }
+            // compare against server time, never a worker-controlled result timestamp.
+            let stored: Option<String> = sqlx::query_scalar(&self.render("SELECT checkout_json FROM workspace_checkouts WHERE id = ? AND fence = ? AND leased_until > ?"))
+                .bind(checkout.id).bind(checkout.fence).bind(Utc::now().timestamp()).fetch_optional(&mut *tx).await?;
+            if stored
+                .as_deref()
+                .map(serde_json::from_str::<WorkspaceCheckout>)
+                .transpose()?
+                .as_ref()
+                != Some(checkout)
+            {
+                return Err(WORKSPACE_CONFLICT.error("checkout expired or was replaced"));
+            }
+            sqlx::query(&self.render("INSERT INTO workspace_snapshots (workspace_id, version, effect_id, attempt, archive_uri, snapshot_json, workflow_run_id) VALUES (?, ?, ?, ?, ?, ?, ?)"))
+                .bind(snapshot.workspace_id).bind(snapshot.version).bind(effect_id).bind(i64::from(attempt))
+                .bind(snapshot.archive_uri.as_str()).bind(serde_json::to_string(snapshot)?).bind(snapshot.workflow_run_id).execute(&mut *tx).await?;
+            self.pin_workspace_version(
+                &mut tx,
+                snapshot.workspace_id,
+                snapshot.version,
+                effect.workflow_run_id,
+            )
+            .await?;
+            let row = sqlx::query(
+                &self.render("SELECT metadata_json, revision FROM durable_workspaces WHERE id = ?"),
+            )
+            .bind(checkout.workspace_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let mut identity: DurableWorkspace =
+                serde_json::from_str(row.try_get::<String, _>("metadata_json")?.as_str())?;
+            identity.head_version = snapshot.version;
+            identity.revision = row.try_get("revision")?;
+            identity.updated_at = Utc::now();
+            sqlx::query(&self.render(
+                "UPDATE durable_workspaces SET head_version = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
+            ))
+            .bind(snapshot.version)
+            .bind(serde_json::to_string(&identity)?)
+            .bind(identity.updated_at.timestamp())
+            .bind(identity.id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(&self.render("DELETE FROM workspace_checkouts WHERE id = ? AND fence = ?"))
+                .bind(checkout.id)
+                .bind(checkout.fence)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query(&self.render(
+            "UPDATE workspace_checkouts SET leased_until = 0 WHERE effect_id = ? AND attempt = ?",
+        ))
+        .bind(effect_id)
+        .bind(i64::from(attempt))
+        .execute(&mut *tx)
+        .await?;
         let expected_revision = continuation.revision;
         continuation.status = if continuation.operator_paused {
             runinator_models::workflow_vm::WorkflowContinuationStatus::Paused

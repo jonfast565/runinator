@@ -28,3 +28,5 @@ pub use config::{Config, parse_config, parse_labels};
 pub use events::{ActionOutcome, NoopEventSink, WorkerEvent, WorkerEventSink};
 pub use provider_repository::{ProviderFactory, default_provider_factory, resolve_provider};
 pub use worker::{WorkerRuntime, load_libraries, start_worker_loop};
+
+mod durable_workspace;

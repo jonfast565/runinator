@@ -393,7 +393,18 @@ fn effect_target(request: &WorkflowEffectRequest) -> Result<ActionTarget, Sendab
         return Ok(ActionTarget::Any);
     }
     let mut labels = required_labels.clone();
-    if let Some(value) = workspace_affinity {
+    if workspace_affinity
+        .as_ref()
+        .is_some_and(|value| value.get("key").is_some())
+    {
+        labels.insert(
+            runinator_models::workspaces::PORTABLE_WORKSPACE_LABEL.into(),
+            "v1".into(),
+        );
+    }
+    if let Some(value) = workspace_affinity
+        && value.get("key").is_none()
+    {
         let affinity: WorkspaceAffinity =
             serde_json::from_value(value.clone().into()).map_err(|error| {
                 Box::new(std::io::Error::new(

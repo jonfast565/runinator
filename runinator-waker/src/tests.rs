@@ -74,6 +74,7 @@ fn config_parser_rejects_control_plane_options() {
 /// a terminal effect result carried by a wake, as the infrastructure effect host builds it.
 fn effect_result(due_at: chrono::DateTime<chrono::Utc>) -> runinator_broker::EffectResult {
     runinator_broker::EffectResult {
+        workspace_commit: None,
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: uuid::Uuid::now_v7(),
         effect_id: uuid::Uuid::now_v7(),

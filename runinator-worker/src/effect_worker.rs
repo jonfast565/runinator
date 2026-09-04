@@ -336,7 +336,81 @@ async fn process_provider_effect(
         }
         None => None,
     };
-    let workspace_affinity = expose_workspace_path(workspace_affinity).await?;
+    // take the effect's executor lease before running it. this is best-effort and deliberately not
+    // durable: it is what the replica views and the stale-replica reaper read, and losing it must
+    // never stop the effect from executing or settling.
+    if let Some(replica_id) = executor_replica_id {
+        let mut claim = EffectResult::claimed(&command, replica_id);
+        claim.event_id = stable_event_id(command.effect_id, "claim");
+        if let Err(error) =
+            publish_result(broker.as_ref(), result_outbox.as_ref(), &mut claim, false).await
+        {
+            warn!(effect_id = %command.effect_id, %error, "failed to publish effect executor claim");
+        }
+    }
+    let portable_workspace = if let Some(value) = workspace_affinity
+        .as_ref()
+        .filter(|value| value.get("key").is_some())
+    {
+        let restored = match executor_replica_id {
+            Some(replica_id) => {
+                crate::durable_workspace::ActiveWorkspace::restore(&api_client, value, replica_id)
+                    .await
+            }
+            None => Err(runinator_models::errors::WORKSPACE_INVALID
+                .error("portable workspace requires a registered worker")),
+        };
+        match restored {
+            Ok(workspace) => Some(workspace),
+            Err(error) => {
+                publish_terminal(
+                    broker.as_ref(),
+                    result_outbox.as_ref(),
+                    &command,
+                    WorkflowEffectStatus::Failed,
+                    None,
+                    Some(error.to_string()),
+                )
+                .await?;
+                broker
+                    .ack_effect(&consumer, delivery.delivery_id)
+                    .await
+                    .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+    let workspace_affinity = if let Some(workspace) = &portable_workspace {
+        Some(workspace.exposed()?)
+    } else {
+        expose_workspace_path(workspace_affinity).await?
+    };
+    let input = match runinator_workspace::resolve_results(
+        &input,
+        portable_workspace
+            .as_ref()
+            .map(|workspace| workspace.results()),
+    ) {
+        Ok(input) => input,
+        Err(error) => {
+            publish_terminal(
+                broker.as_ref(),
+                result_outbox.as_ref(),
+                &command,
+                WorkflowEffectStatus::Failed,
+                None,
+                Some(error.to_string()),
+            )
+            .await?;
+            broker
+                .ack_effect(&consumer, delivery.delivery_id)
+                .await
+                .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+            return Ok(());
+        }
+    };
     let configuration = WorkflowObject::from_value(input.clone()).map_err(|message| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -437,19 +511,65 @@ async fn process_provider_effect(
     {
         Ok(IdempotencyClaim::Completed { result }) => {
             let recorded = result.decode::<IdempotentActionResult>()?;
-            publish_terminal(
-                broker.as_ref(),
-                result_outbox.as_ref(),
+            let mut replay = EffectResult::status(
                 &command,
                 if recorded.success {
                     WorkflowEffectStatus::Succeeded
                 } else {
                     WorkflowEffectStatus::Failed
                 },
-                recorded.output_json,
+                recorded.output_json.clone(),
                 recorded.message,
-            )
-            .await?;
+            );
+            if recorded.success
+                && let Some(workspace) = &portable_workspace
+            {
+                let restored = if let Some(commit) = recorded.workspace_commit {
+                    if commit.snapshot.effect_id != command.effect_id {
+                        Err(runinator_models::errors::WORKSPACE_INVALID.error(
+                            "a workspace write requires an idempotency key unique to its effect",
+                        ))
+                    } else {
+                        workspace.rebind_cached_commit(commit).map(Some)
+                    }
+                } else {
+                    workspace
+                        .save(&api_client, recorded.output_json.as_ref())
+                        .await
+                };
+                replay.workspace_commit = match restored {
+                    Ok(commit) => commit.map(Box::new),
+                    Err(error) => {
+                        publish_terminal(
+                            broker.as_ref(),
+                            result_outbox.as_ref(),
+                            &command,
+                            WorkflowEffectStatus::Failed,
+                            None,
+                            Some(error.to_string()),
+                        )
+                        .await?;
+                        broker
+                            .ack_effect(&consumer, delivery.delivery_id)
+                            .await
+                            .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+                        return Ok(());
+                    }
+                };
+                let reference = workspace.reference(replay.workspace_commit.as_deref());
+                let mut output: serde_json::Value = recorded.output_json.unwrap_or_default().into();
+                if !output.is_object() {
+                    output = serde_json::json!({"result": output});
+                }
+                if let Some(object) = output.as_object_mut() {
+                    object.insert("workspace".into(), reference.into());
+                }
+                if let EffectResultKind::Status { output: target, .. } = &mut replay.kind {
+                    *target = Some(Value::from(output));
+                }
+            }
+            replay.event_id = stable_event_id(command.effect_id, "terminal");
+            publish_result(broker.as_ref(), result_outbox.as_ref(), &mut replay, true).await?;
             broker
                 .ack_effect(&consumer, delivery.delivery_id)
                 .await
@@ -523,18 +643,6 @@ async fn process_provider_effect(
         function: function_name.clone(),
         attempt: i64::from(command.attempt),
     });
-    // take the effect's executor lease before running it. this is best-effort and deliberately not
-    // durable: it is what the replica views and the stale-replica reaper read, and losing it must
-    // never stop the effect from executing or settling.
-    if let Some(replica_id) = executor_replica_id {
-        let mut claim = EffectResult::claimed(&command, replica_id);
-        claim.event_id = stable_event_id(command.effect_id, "claim");
-        if let Err(error) =
-            publish_result(broker.as_ref(), result_outbox.as_ref(), &mut claim, false).await
-        {
-            warn!(effect_id = %command.effect_id, %error, "failed to publish effect executor claim");
-        }
-    }
     let _in_flight_metric = crate::metrics::in_flight_guard();
     let output_sink = Arc::new(EffectOutputSink::new(
         command.clone(),
@@ -590,6 +698,7 @@ async fn process_provider_effect(
                 .relocate_effect(&command, &mut artifact)
                 .await;
             let mut event = EffectResult {
+                workspace_commit: None,
                 version: command.version,
                 event_id: stable_event_id(command.effect_id, &format!("artifact:{index}")),
                 effect_id: command.effect_id,
@@ -606,24 +715,43 @@ async fn process_provider_effect(
             publish_result(broker.as_ref(), result_outbox.as_ref(), &mut event, true).await?;
         }
     }
-    let status = match outcome.status {
+    let mut status = match outcome.status {
         RunStatus::Succeeded => WorkflowEffectStatus::Succeeded,
         RunStatus::TimedOut => WorkflowEffectStatus::TimedOut,
         RunStatus::Canceled => WorkflowEffectStatus::Canceled,
         _ => WorkflowEffectStatus::Failed,
     };
-    let event_outcome = match status {
-        WorkflowEffectStatus::Succeeded => crate::events::ActionOutcome::Succeeded,
-        WorkflowEffectStatus::TimedOut => crate::events::ActionOutcome::TimedOut,
-        WorkflowEffectStatus::Canceled => crate::events::ActionOutcome::Canceled,
-        _ => crate::events::ActionOutcome::Failed,
-    };
-    let output = outcome
+    let mut output = outcome
         .execution_result
         .as_ref()
         .and_then(|result| result.output_json.clone());
+    let mut workspace_commit = None;
+    let mut terminal_message = outcome.task_result.message.clone();
+    if let Some(workspace) = &portable_workspace {
+        if status == WorkflowEffectStatus::Succeeded {
+            match workspace.save(&api_client, output.as_ref()).await {
+                Ok(commit) => workspace_commit = commit,
+                Err(error) => {
+                    status = WorkflowEffectStatus::Failed;
+                    terminal_message = Some(error.to_string());
+                }
+            }
+        }
+        if status == WorkflowEffectStatus::Succeeded {
+            let reference = workspace.reference(workspace_commit.as_ref());
+            let mut json: serde_json::Value = output.take().unwrap_or_default().into();
+            if !json.is_object() {
+                json = serde_json::json!({ "result": json });
+            }
+            if let Some(object) = json.as_object_mut() {
+                object.insert("workspace".into(), reference.into());
+            }
+            output = Some(Value::from(json));
+        }
+    }
     if status == WorkflowEffectStatus::Succeeded {
         let recorded = IdempotentActionResult {
+            workspace_commit: workspace_commit.clone(),
             success: true,
             output_json: output.clone(),
             message: outcome.task_result.message.clone(),
@@ -647,15 +775,16 @@ async fn process_provider_effect(
             )
             .await;
     }
-    publish_terminal(
-        broker.as_ref(),
-        result_outbox.as_ref(),
-        &command,
-        status,
-        output,
-        outcome.task_result.message.clone(),
-    )
-    .await?;
+    let event_outcome = match status {
+        WorkflowEffectStatus::Succeeded => crate::events::ActionOutcome::Succeeded,
+        WorkflowEffectStatus::TimedOut => crate::events::ActionOutcome::TimedOut,
+        WorkflowEffectStatus::Canceled => crate::events::ActionOutcome::Canceled,
+        _ => crate::events::ActionOutcome::Failed,
+    };
+    let mut terminal = EffectResult::status(&command, status, output, terminal_message);
+    terminal.workspace_commit = workspace_commit.map(Box::new);
+    terminal.event_id = stable_event_id(command.effect_id, "terminal");
+    publish_result(broker.as_ref(), result_outbox.as_ref(), &mut terminal, true).await?;
     events.handle(crate::events::WorkerEvent::EffectFinished {
         workflow_run_id: command.workflow_run_id,
         effect_id: command.effect_id,
@@ -890,6 +1019,7 @@ impl ProviderEventSink for EffectOutputSink {
                     // cursor sequences or adjacent log lines.
                     let _ordered = publish_order.lock().await;
                     let mut result = EffectResult {
+                        workspace_commit: None,
                         version: command.version,
                         event_id: Uuid::now_v7(),
                         effect_id: command.effect_id,
@@ -925,6 +1055,7 @@ impl ProviderEventSink for EffectOutputSink {
                     };
                     uploader.relocate_effect(&command, &mut artifact).await;
                     let mut result = EffectResult {
+                        workspace_commit: None,
                         version: command.version,
                         event_id: Uuid::now_v7(),
                         effect_id: command.effect_id,
@@ -949,6 +1080,7 @@ impl ProviderEventSink for EffectOutputSink {
                 self.spawn(async move {
                     let _ordered = publish_order.lock().await;
                     let mut result = EffectResult {
+                        workspace_commit: None,
                         version: command.version,
                         event_id: Uuid::now_v7(),
                         effect_id: command.effect_id,

@@ -221,6 +221,7 @@ const resourceTypes: { id: AccessResourceType; label: string }[] = [
   { id: "orchestration_adapter", label: "Adapters" },
   { id: "library_file", label: "Library files" },
   { id: "notification_policy", label: "Standalone notification policies" },
+  { id: "workspace", label: "Workspaces" },
 ];
 const resourceTypeLabel = computed(() => resourceTypes.find((item) => item.id === permissions.selectedResourceType)?.label ?? "Resource");
 const ownerLabel = computed(() => {

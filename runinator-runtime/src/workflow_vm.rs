@@ -1069,7 +1069,19 @@ fn resolve_effect_request(
                 retry,
                 tags,
                 required_labels,
-                workspace_affinity: workspace_affinity.map(resolve).transpose()?,
+                workspace_affinity: workspace_affinity
+                    .map(|value| {
+                        if let Some(default) = value.get("$workspace_default") {
+                            let resolved = resolve(default.clone())?;
+                            let mut attachment: runinator_models::workspaces::WorkspaceAttachment =
+                                resolved.decode().map_err(|error| error.to_string())?;
+                            attachment.follow_run = true;
+                            Value::encode(&attachment).map_err(|error| error.to_string())
+                        } else {
+                            resolve(value)
+                        }
+                    })
+                    .transpose()?,
                 execution_profile,
                 idempotency_key: idempotency_key.map(resolve).transpose()?,
                 function_binding,
@@ -1607,11 +1619,15 @@ fn stable_id(namespace: uuid::Uuid, name: &str) -> uuid::Uuid {
 }
 
 fn local_context(continuation: &WorkflowContinuation) -> Value {
-    let locals = continuation
+    let mut locals = continuation
         .locals
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<runinator_models::value::Map>();
+    locals.insert(
+        "__runinator_workspace_return".into(),
+        continuation.stack.last().cloned().unwrap_or(Value::Null),
+    );
     let mut context = locals.clone();
     let mut steps = context
         .get("steps")

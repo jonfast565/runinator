@@ -70,6 +70,7 @@ describe("visibleNavSections", () => {
       "Workflows",
       "Pipelines",
       "Functions",
+      "Workspaces",
       "Files",
     ]);
     expect(section("Run & review").map((item) => item.tab)).toEqual([

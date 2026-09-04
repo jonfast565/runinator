@@ -63,6 +63,7 @@ pub enum ResourceType {
     Pipeline,
     FunctionPackage,
     ConsoleSession,
+    Workspace,
     Setting,
     ExecutionProfile,
     OrchestrationAdapter,
@@ -77,6 +78,7 @@ impl ResourceType {
             ResourceType::Pipeline => "pipeline",
             ResourceType::FunctionPackage => "function_package",
             ResourceType::ConsoleSession => "console_session",
+            ResourceType::Workspace => "workspace",
             ResourceType::Setting => "setting",
             ResourceType::ExecutionProfile => "execution_profile",
             ResourceType::OrchestrationAdapter => "orchestration_adapter",
@@ -91,6 +93,7 @@ impl ResourceType {
             "pipeline" => Some(Self::Pipeline),
             "function_package" => Some(Self::FunctionPackage),
             "console_session" => Some(Self::ConsoleSession),
+            "workspace" => Some(Self::Workspace),
             "setting" => Some(Self::Setting),
             "execution_profile" => Some(Self::ExecutionProfile),
             "orchestration_adapter" => Some(Self::OrchestrationAdapter),
@@ -340,6 +343,11 @@ pub struct AuthContext {
 }
 
 impl AuthContext {
+    /// The sole administrative authorization override.
+    pub fn is_platform_admin(&self) -> bool {
+        self.platform_role == Some(PlatformRole::Admin)
+    }
+
     /// the synthetic admin used when auth is disabled, so existing behavior is unchanged.
     pub fn disabled_platform_admin() -> Self {
         Self {

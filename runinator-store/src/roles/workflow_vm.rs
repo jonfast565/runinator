@@ -264,6 +264,28 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         settled_at: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Commit portable contents in the same transaction that releases the continuation.
+    fn settle_workflow_effect_with_workspace(
+        &self,
+        settlement: WorkspaceEffectSettlement,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send {
+        async move {
+            if settlement.workspace.is_some() {
+                return Err(runinator_models::errors::WORKSPACE_COMMIT_UNSUPPORTED
+                    .error("store has no workspace transaction"));
+            }
+            self.settle_workflow_effect(
+                settlement.effect_id,
+                settlement.attempt,
+                settlement.status,
+                settlement.output,
+                settlement.message,
+                settlement.settled_at,
+            )
+            .await
+        }
+    }
+
     /// Pause every runnable continuation in a run, without touching continuations waiting on an
     /// external effect. Returns the number of continuations changed.
     fn pause_workflow_vm_run(
@@ -337,4 +359,15 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         dispatch_id: Uuid,
         error: String,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+}
+
+/// An effect completion and its optional portable workspace snapshot.
+pub struct WorkspaceEffectSettlement {
+    pub effect_id: Uuid,
+    pub attempt: u32,
+    pub status: WorkflowEffectStatus,
+    pub output: Option<Value>,
+    pub message: Option<String>,
+    pub settled_at: DateTime<Utc>,
+    pub workspace: Option<runinator_models::workspaces::WorkspaceCommit>,
 }

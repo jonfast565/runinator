@@ -27,6 +27,13 @@ export const navSections: NavSection[] = [
         searchPlaceholder: "Search function packages",
       },
       {
+        tab: "Workspaces",
+        label: "Workspaces",
+        icon: "folder",
+        description: "Inspect saved workspace versions, files, and results shared across workflows.",
+        searchPlaceholder: "Search workspace keys",
+      },
+      {
         tab: "Files",
         label: "Files",
         icon: "folder",

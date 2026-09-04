@@ -41,6 +41,7 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::agents::DOCS,
     handlers::artifacts::DOCS,
     handlers::files::DOCS,
+    runinator_ws_runtime::handlers::workspaces::DOCS,
     handlers::notifications::DOCS,
     handlers::debug::DOCS,
     handlers::supervisor::DOCS,

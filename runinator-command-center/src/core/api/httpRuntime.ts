@@ -775,6 +775,22 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}`,
   },
+  list_durable_workspaces: {
+    method: "GET",
+    path: (args) => `workspaces?limit=50&offset=${String(arg(args, "offset"))}`,
+  },
+  workspace_versions: {
+    method: "GET",
+    path: (args) =>
+      `workspaces/${escape(arg(args, "workspaceId"))}/versions?limit=50&offset=${String(arg(args, "offset"))}`,
+  },
+  delete_durable_workspace: {
+    method: "DELETE",
+    path: (args) => {
+      const base = `workspaces/${escape(arg(args, "workspaceId"))}`;
+      return args?.version == null ? base : `${base}/versions/${String(Number(args.version))}`;
+    },
+  },
   // packaged functions.
   list_function_packages: { method: "GET", path: () => "functions" },
   fetch_function_package: {

@@ -325,6 +325,20 @@ fn complete_transition_targets(
 fn construct_completion_items() -> Vec<RexRapCompletionItem> {
     const CONSTRUCTS: &[(&str, &str, &str, &str, bool)] = &[
         (
+            "workspace",
+            "keyword",
+            "durable files and named results",
+            "workspace { key: \"${key}\", create: true }",
+            true,
+        ),
+        (
+            "with_workspace",
+            "keyword",
+            "pipeline member workspace binding",
+            "with_workspace params.workspace",
+            false,
+        ),
+        (
             "workflow",
             "keyword",
             "workflow scaffold",

@@ -98,6 +98,7 @@ pub struct PipelineTriggerDecl {
 /// (`runinator_models::pipelines`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineMemberDecl {
+    pub workspace: Option<super::Expr>,
     pub name: String,
     pub on_failure: Option<String>,
     pub span: Span,
@@ -107,6 +108,7 @@ pub struct PipelineMemberDecl {
 /// keyword (`halt`/`continue`) or `None`; lowering maps the string fields to the model enums.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineDecl {
+    pub workspace: Option<super::Expr>,
     pub name: String,
     pub key: Option<String>,
     pub namespace: Option<String>,

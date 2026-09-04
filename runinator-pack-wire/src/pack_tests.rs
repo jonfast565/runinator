@@ -47,6 +47,7 @@ fn pack_zip_round_trips() {
             description: Some("demo pipeline".into()),
             defaults: Default::default(),
             members: vec![PipelineMemberSpec {
+                workspace: None,
                 name: "demo".into(),
                 failure_mode: None,
             }],

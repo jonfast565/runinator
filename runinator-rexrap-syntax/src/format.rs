@@ -242,6 +242,9 @@ impl Formatter {
         {
             self.out.push('\n');
         }
+        if let Some(workspace) = &workflow.workspace {
+            self.line(&format!("workspace {}", format_expr(workspace)));
+        }
         // preserve the header `concurrency <n> on_conflict <policy>` cap.
         if let Some(concurrency) = &workflow.concurrency {
             self.emit_leading(&concurrency.comments.leading);

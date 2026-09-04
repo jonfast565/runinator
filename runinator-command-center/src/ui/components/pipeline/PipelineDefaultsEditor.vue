@@ -57,6 +57,16 @@
       <p v-if="parametersError" class="error m-0 text-xs">{{ parametersError }}</p>
     </div>
 
+    <div class="flex flex-col gap-1 text-[13px]">
+      <span>Durable workspace</span>
+      <JsonEditor v-model="workspaceText" title="Workspace binding" />
+      <p class="text-xs text-fg-muted">
+        Use a key and optional version, or a parameter reference. Leave null to use each workflow's
+        default.
+      </p>
+      <p v-if="workspaceError" class="error m-0 text-xs">{{ workspaceError }}</p>
+    </div>
+
     <div class="flex justify-end gap-2">
       <button type="button" class="btn" @click="emit('cancel')">Cancel</button>
       <button type="submit" class="btn btn-primary" :disabled="Boolean(parametersError)">
@@ -90,6 +100,8 @@ const maxChainDepth = ref<string>(
   props.defaults.max_chain_depth != null ? String(props.defaults.max_chain_depth) : "",
 );
 const parametersText = ref<string>(JSON.stringify(props.defaults.default_parameters, null, 2));
+const workspaceText = ref(JSON.stringify(props.defaults.workspace ?? null, null, 2));
+const workspaceError = ref("");
 const parametersError = ref<string | null>(null);
 const maxConcurrentRuns = ref(props.concurrency.max_concurrent_runs);
 const onConflict = ref<PipelineConcurrency["on_conflict"]>(props.concurrency.on_conflict);
@@ -124,12 +136,30 @@ function save() {
     return;
   }
 
+  let workspace: JsonRecord | null;
+
+  try {
+    const value: unknown = JSON.parse(workspaceText.value || "null");
+
+    if (value !== null && (typeof value !== "object" || Array.isArray(value))) {
+      throw new Error("Workspace binding must be a JSON object or null.");
+    }
+
+    workspace = value as JsonRecord | null;
+    workspaceError.value = "";
+  } catch (error) {
+    workspaceError.value = String(error);
+    return;
+  }
+
   const depth = maxChainDepth.value.trim();
   const parsedDepth = depth ? Number.parseInt(depth, 10) : Number.NaN;
 
   emit(
     "save",
     {
+      ...props.defaults,
+      workspace,
       on_step_failure: onStepFailure.value,
       links_enabled_by_default: linksEnabled.value,
       default_parameters: parameters,

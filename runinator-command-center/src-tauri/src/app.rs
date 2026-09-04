@@ -15,6 +15,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::commands::get_service_status,
             crate::commands::list_function_packages,
+            crate::commands::list_durable_workspaces,
+            crate::commands::workspace_versions,
+            crate::commands::delete_durable_workspace,
+            crate::commands::download_workspace_version,
             crate::commands::fetch_function_package,
             crate::commands::fetch_function_catalog,
             crate::commands::delete_function_package,

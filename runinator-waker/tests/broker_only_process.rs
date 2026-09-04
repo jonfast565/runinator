@@ -35,6 +35,7 @@ impl Drop for ChildGuard {
 
 fn due_result(due_at: chrono::DateTime<Utc>) -> EffectResult {
     EffectResult {
+        workspace_commit: None,
         version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id: Uuid::now_v7(),

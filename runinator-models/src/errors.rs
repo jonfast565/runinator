@@ -128,3 +128,25 @@ pub trait EngineErrors {
     /// every error this engine crate can emit, ordered by code.
     fn error_dictionary() -> &'static [ErrorDescriptor];
 }
+
+/// Portable workspace contract errors shared by storage and execution hosts.
+pub const WORKSPACE_COMMIT_UNSUPPORTED: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE001",
+    "workspace.commit.unsupported",
+    "Store does not support atomic workspace commits",
+);
+pub const WORKSPACE_CONFLICT: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE002",
+    "workspace.conflict",
+    "Workspace version or checkout is no longer current",
+);
+pub const WORKSPACE_INVALID: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE003",
+    "workspace.invalid",
+    "Workspace content or reference is invalid",
+);
+pub const WORKSPACE_DICTIONARY: &[ErrorDescriptor] = &[
+    WORKSPACE_COMMIT_UNSUPPORTED,
+    WORKSPACE_CONFLICT,
+    WORKSPACE_INVALID,
+];

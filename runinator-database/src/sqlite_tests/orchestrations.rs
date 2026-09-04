@@ -74,6 +74,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             graph: PipelineGraph {
                 version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                 members: vec![PipelineMember {
+                    workspace: None,
                     key: "member".into(),
                     workflow_id: member.id.unwrap(),
                     failure_mode: PipelineMemberFailureMode::Stop,

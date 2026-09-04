@@ -553,6 +553,7 @@ where
             runinator_models::auth::ResourceType::Pipeline => "pipelines",
             runinator_models::auth::ResourceType::FunctionPackage => "function_packages",
             runinator_models::auth::ResourceType::ConsoleSession => "console_sessions",
+            runinator_models::auth::ResourceType::Workspace => "durable_workspaces",
             runinator_models::auth::ResourceType::Setting => "settings",
             runinator_models::auth::ResourceType::ExecutionProfile => "execution_profiles",
             runinator_models::auth::ResourceType::OrchestrationAdapter => "orchestration_adapters",
@@ -571,6 +572,35 @@ where
             .bind(resource_id)
             .execute(&mut *tx)
             .await?;
+        } else if resource_type == runinator_models::auth::ResourceType::Workspace {
+            sqlx::query(
+                &self.render("UPDATE durable_workspaces SET revision = revision + 1 WHERE id = ?"),
+            )
+            .bind(resource_id)
+            .execute(&mut *tx)
+            .await?;
+            let active: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_checkouts WHERE workspace_id = ? AND leased_until > ?"))
+                .bind(resource_id).bind(now).fetch_one(&mut *tx).await?;
+            let pinned: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_pins p JOIN workflow_runs r ON r.id = p.workflow_run_id LEFT JOIN pipeline_runs pr ON pr.id = r.pipeline_run_id WHERE p.workspace_id = ? AND (r.finished_at IS NULL OR (pr.id IS NOT NULL AND pr.finished_at IS NULL))"))
+                .bind(resource_id).fetch_one(&mut *tx).await?;
+            if active > 0 || pinned > 0 {
+                return Err(invalid_rbac(
+                    "workspace ownership cannot change while in use",
+                ));
+            }
+            let json: String = sqlx::query_scalar(
+                &self.render("SELECT metadata_json FROM durable_workspaces WHERE id = ?"),
+            )
+            .bind(resource_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let mut workspace: runinator_models::workspaces::DurableWorkspace =
+                serde_json::from_str(&json)?;
+            workspace.org_id = org_id;
+            workspace.updated_at = Utc::now();
+            sqlx::query(&self.render("UPDATE durable_workspaces SET org_id = ?, tenant_key = ?, updated_at = ?, metadata_json = ? WHERE id = ?"))
+                .bind(org_id).bind(org_id.map(|id| id.to_string()).unwrap_or_default()).bind(now)
+                .bind(serde_json::to_string(&workspace)?).bind(resource_id).execute(&mut *tx).await?;
         } else {
             sqlx::query(&self.render(&format!(
                 "UPDATE {table} SET org_id = ?, updated_at = ? WHERE id = ?"

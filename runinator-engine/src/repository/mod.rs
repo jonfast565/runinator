@@ -64,3 +64,5 @@ mod runs;
 mod scheduling;
 pub(crate) mod support;
 mod triggers;
+
+pub mod durable_workspaces;

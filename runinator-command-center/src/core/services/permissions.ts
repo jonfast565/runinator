@@ -1,3 +1,4 @@
+import { fetchDurableWorkspaces } from "../api/commandCenterApi";
 import {
   addTeamMember,
   createApiKey,
@@ -56,7 +57,8 @@ export type AccessResourceType =
   | "execution_profile"
   | "orchestration_adapter"
   | "library_file"
-  | "notification_policy";
+  | "notification_policy"
+  | "workspace";
 
 export interface AccessResource {
   id: string;
@@ -663,6 +665,8 @@ export function createPermissionsService(app: AppService) {
             return (await fetchWorkflowFiles())
               .filter((item) => item.scope === "library")
               .map((item) => ({ id: item.descriptor.id, label: item.descriptor.path }));
+          case "workspace":
+            return (await fetchDurableWorkspaces()).map(item => ({ id: item.id, label: item.key }));
           case "notification_policy":
             return (await fetchNotificationPolicies())
               .filter((item) => !item.workflow_id)

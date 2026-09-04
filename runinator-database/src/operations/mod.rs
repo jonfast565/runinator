@@ -1627,3 +1627,5 @@ mod schedules;
 mod settings;
 mod workflow_vm;
 mod workspaces;
+
+mod durable_workspaces;

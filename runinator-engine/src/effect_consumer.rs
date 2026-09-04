@@ -35,7 +35,7 @@ pub async fn run_effect_result_consumer<
 ) {
     info!("workflow VM effect result consumer started");
     loop {
-        let delivery = tokio::select! {
+        let mut delivery = tokio::select! {
             _ = shutdown.notified() => return,
             received = broker.receive_effect_result(EFFECT_RESULT_CONSUMER_ID) => match received {
                 Ok(delivery) => delivery,
@@ -133,6 +133,31 @@ pub async fn run_effect_result_consumer<
             continue;
         }
 
+        if let Some(commit) = &delivery.result.workspace_commit {
+            let expected = format!(
+                "blob://{}/effects/{}/{}.tar.gz",
+                runinator_blob_core::WORKSPACE_BUCKET,
+                delivery.result.effect_id,
+                commit.snapshot.archive_sha256
+            );
+            if commit.snapshot.archive_sha256.len() != 64
+                || !commit
+                    .snapshot
+                    .archive_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || commit.snapshot.archive_uri != expected
+            {
+                let error = runinator_models::errors::WORKSPACE_INVALID
+                    .error("snapshot archive does not belong to the producing effect");
+                delivery.result.kind = EffectResultKind::Status {
+                    status: WorkflowEffectStatus::Rejected,
+                    output: None,
+                    message: Some(error.to_string()),
+                };
+                delivery.result.workspace_commit = None;
+            }
+        }
         let settled = match &delivery.result.kind {
             EffectResultKind::Status {
                 status,
@@ -153,15 +178,38 @@ pub async fn run_effect_result_consumer<
                 {
                     Ok(true) => Ok(true),
                     Ok(false) => {
-                        db.settle_workflow_effect(
-                            delivery.result.effect_id,
-                            delivery.result.attempt,
-                            *status,
-                            output.clone(),
-                            message.clone(),
-                            delivery.result.timestamp,
-                        )
-                        .await
+                        let completed = db
+                            .settle_workflow_effect_with_workspace(
+                                runinator_store::roles::workflow_vm::WorkspaceEffectSettlement {
+                                    effect_id: delivery.result.effect_id,
+                                    attempt: delivery.result.attempt,
+                                    status: *status,
+                                    output: output.clone(),
+                                    message: message.clone(),
+                                    settled_at: delivery.result.timestamp,
+                                    workspace: delivery.result.workspace_commit.as_deref().cloned(),
+                                },
+                            )
+                            .await;
+                        match completed {
+                            Err(error)
+                                if error
+                                    .downcast_ref::<runinator_models::errors::RuntimeError>()
+                                    .and_then(|error| error.numbered_code())
+                                    == Some("WORKSPACE002") =>
+                            {
+                                db.settle_workflow_effect(
+                                    delivery.result.effect_id,
+                                    delivery.result.attempt,
+                                    WorkflowEffectStatus::Rejected,
+                                    None,
+                                    Some(error.to_string()),
+                                    delivery.result.timestamp,
+                                )
+                                .await
+                            }
+                            result => result,
+                        }
                     }
                     Err(err) => Err(err),
                 }

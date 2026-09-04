@@ -69,6 +69,8 @@ impl PipelineMemberFailureMode {
 /// editable pipeline-level defaults applied when authoring links inside a pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<Value>,
     #[serde(default)]
     pub on_step_failure: PipelineFailurePolicy,
     #[serde(default = "default_true")]
@@ -89,6 +91,7 @@ fn default_true() -> bool {
 impl Default for PipelineDefaults {
     fn default() -> Self {
         PipelineDefaults {
+            workspace: None,
             on_step_failure: PipelineFailurePolicy::default(),
             links_enabled_by_default: true,
             default_parameters: Value::default(),
@@ -193,6 +196,8 @@ pub struct PipelineSpec {
 /// [`PipelineDefaults::default_failure_mode`] at import.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineMemberSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<Value>,
     pub name: String,
     #[serde(default)]
     pub failure_mode: Option<PipelineMemberFailureMode>,
@@ -202,6 +207,7 @@ pub struct PipelineMemberSpec {
 impl From<&str> for PipelineMemberSpec {
     fn from(name: &str) -> Self {
         PipelineMemberSpec {
+            workspace: None,
             name: name.to_string(),
             failure_mode: None,
         }
@@ -211,6 +217,7 @@ impl From<&str> for PipelineMemberSpec {
 impl From<String> for PipelineMemberSpec {
     fn from(name: String) -> Self {
         PipelineMemberSpec {
+            workspace: None,
             name,
             failure_mode: None,
         }
@@ -233,7 +240,8 @@ pub struct PipelineTriggerSpec {
 // pipelinedefaults derives clone but not partialeq; pipelinespec's partialeq needs it.
 impl PartialEq for PipelineDefaults {
     fn eq(&self, other: &Self) -> bool {
-        self.on_step_failure == other.on_step_failure
+        self.workspace == other.workspace
+            && self.on_step_failure == other.on_step_failure
             && self.links_enabled_by_default == other.links_enabled_by_default
             && self.default_parameters == other.default_parameters
             && self.max_chain_depth == other.max_chain_depth
@@ -252,6 +260,8 @@ pub const PIPELINE_GRAPH_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineMember {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<Value>,
     /// stable pipeline-local identity and expression key: the authored canonical workflow path.
     pub key: String,
     pub workflow_id: Uuid,

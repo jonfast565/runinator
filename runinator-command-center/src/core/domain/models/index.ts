@@ -322,3 +322,5 @@ export {
   isSpeculative,
 } from "./workflow-state";
 export { CURSOR_PALETTE } from "./workflow-state";
+
+export * from "./workspaces";

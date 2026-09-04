@@ -61,3 +61,6 @@ pub use schedules::{ScheduleStore, ScheduledWorkflowVm};
 pub use settings::SettingStore;
 pub use workflow_vm::{NewWorkflowVmRun, WorkflowTimerInterrupt, WorkflowVmStore};
 pub use workspaces::WorkspaceStore;
+
+pub mod durable_workspaces;
+pub use durable_workspaces::DurableWorkspaceStore;

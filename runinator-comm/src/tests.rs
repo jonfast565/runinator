@@ -15,6 +15,7 @@ fn wake_command_round_trips_with_json_and_carries_its_effect_result() {
     let command = WakeCommand::new(
         due_at,
         EffectResult {
+            workspace_commit: None,
             version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
             event_id: Uuid::now_v7(),
             effect_id,
@@ -52,6 +53,7 @@ fn ws_ingress_command_round_trips_and_dedupes_per_kind() {
     let workflow_run_id = Uuid::now_v7();
     let effect_id = Uuid::now_v7();
     let result = EffectResult {
+        workspace_commit: None,
         version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id,
@@ -87,6 +89,7 @@ fn wake_command_dedupes_per_effect_attempt_and_carries_its_result() {
     let effect_id = Uuid::now_v7();
     let due_at = chrono::Utc::now() + chrono::Duration::seconds(30);
     let result = EffectResult {
+        workspace_commit: None,
         version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id,
@@ -231,6 +234,7 @@ fn effect_results_round_trip_with_json() {
 #[test]
 fn terminal_interaction_results_round_trip_with_json() {
     let result = EffectResult {
+        workspace_commit: None,
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id: Uuid::now_v7(),

@@ -33,6 +33,7 @@ pub fn built_in_providers() -> Vec<StaticProvider> {
         // with no container runtime fails the invocation with a clear reason rather than the
         // dispatch failing to resolve a provider at all.
         Box::new(FunctionsProvider::new()) as StaticProvider,
+        Box::new(runinator_provider_workspace::WorkspaceProvider) as StaticProvider,
     ]
 }
 

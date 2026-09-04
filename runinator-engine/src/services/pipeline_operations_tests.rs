@@ -165,6 +165,7 @@ async fn save_requires_pipeline_identity_and_canonical_member_keys() {
     let mut bare_member = pipeline();
     bare_member.key = Some("bare_member".into());
     bare_member.graph.members.push(PipelineMember {
+        workspace: None,
         key: "display name".into(),
         workflow_id: uuid::Uuid::now_v7(),
         failure_mode: Default::default(),
@@ -392,6 +393,7 @@ async fn a_pinned_pipeline_start_snapshots_the_requested_revision() {
     let service = PipelineOperations::new(db, broker.clone(), UiEventPublisher::new(broker), None);
     let mut first = pipeline();
     first.graph.members.push(PipelineMember {
+        workspace: None,
         key: "runinator.tests.pipeline_member".into(),
         workflow_id,
         failure_mode: Default::default(),

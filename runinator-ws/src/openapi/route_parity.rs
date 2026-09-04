@@ -34,6 +34,10 @@ use crate::{HANDLER_CRATES, workspace_root};
 /// written out as relative paths into the sibling crates; `route_sources_cover_every_module` checks
 /// the list against those directories rather than trusting it.
 const ROUTER_SOURCES: &[(&str, &str)] = &[
+    (
+        "runinator-ws-runtime/handlers/workspaces",
+        include_str!("../../../runinator-ws-runtime/src/handlers/workspaces.rs"),
+    ),
     ("websocket", include_str!("../websocket.rs")),
     ("openapi", include_str!("mod.rs")),
     (

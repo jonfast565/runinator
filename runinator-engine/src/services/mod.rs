@@ -70,3 +70,6 @@ mod run_operations_tests;
 #[cfg(test)]
 #[path = "workflow_authoring_tests.rs"]
 mod workflow_authoring_tests;
+
+mod durable_workspaces;
+pub use durable_workspaces::{WorkspaceContent, WorkspaceService, run_workspace_storage_cleanup};

@@ -213,6 +213,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
         .unwrap();
 
     let result = EffectResult {
+        workspace_commit: None,
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         event_id: Uuid::now_v7(),
         effect_id: provider.effect_id,

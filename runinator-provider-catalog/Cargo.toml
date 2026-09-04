@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+runinator-provider-workspace = { path = "../runinator-provider-workspace" }
 runinator-models = { path = "../runinator-models" }
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-provider-ai = { path = "../runinator-provider-ai" }

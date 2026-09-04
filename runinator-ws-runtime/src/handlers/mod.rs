@@ -16,3 +16,5 @@ pub mod schedules;
 pub mod supervisor;
 pub mod triggers;
 pub mod workflow_vm;
+
+pub mod workspaces;

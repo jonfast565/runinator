@@ -402,7 +402,8 @@ export async function transferResourceOwner(
     | "execution_profile"
     | "orchestration_adapter"
     | "library_file"
-    | "notification_policy",
+    | "notification_policy"
+    | "workspace",
   resourceId: string,
   scopeKind: "platform" | "organization" | "team" | "user",
   scopeId: string | null,
@@ -2443,4 +2444,39 @@ export async function cancelConsoleCell(cellId: string) {
 
 export async function replayConsoleCell(cellId: string) {
   return command<ConsoleCell>("replay_console_cell", { cellId });
+}
+
+export function fetchDurableWorkspaces(offset = 0) {
+  return command<import("../domain/models/workspaces").DurableWorkspace[]>(
+    "list_durable_workspaces",
+    { offset },
+  );
+}
+
+export function fetchWorkspaceVersions(workspaceId: string, offset = 0) {
+  return command<import("../domain/models/workspaces").WorkspaceSnapshot[]>("workspace_versions", {
+    workspaceId,
+    offset,
+  });
+}
+
+export function deleteDurableWorkspace(workspaceId: string, version: number | null = null) {
+  return command<null>("delete_durable_workspace", { workspaceId, version });
+}
+
+export function downloadWorkspaceVersion(
+  workspaceId: string,
+  version: number,
+  path: string | null = null,
+) {
+  if (isTauriRuntime()) {
+    return command<number[]>("download_workspace_version", { workspaceId, version, path }).then(
+      (bytes) => new Blob([new Uint8Array(bytes)]),
+    );
+  }
+
+  const query = path === null ? "" : `?path=${encodeURIComponent(path)}`;
+  return downloadBinary(
+    `workspaces/${encodeURIComponent(workspaceId)}/versions/${String(version)}/content${query}`,
+  );
 }

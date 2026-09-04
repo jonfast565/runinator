@@ -168,6 +168,8 @@ impl EffectCommand {
 /// A worker or infrastructure host's terminal or streaming report for one VM effect.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EffectResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_commit: Option<Box<runinator_models::workspaces::WorkspaceCommit>>,
     pub version: u32,
     pub event_id: Uuid,
     pub effect_id: Uuid,
@@ -230,6 +232,7 @@ impl EffectResult {
         message: Option<String>,
     ) -> Self {
         Self {
+            workspace_commit: None,
             version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
             event_id: Uuid::now_v7(),
             effect_id: command.effect_id,
@@ -250,6 +253,7 @@ impl EffectResult {
     /// Announce that `executor_replica_id` has taken this attempt.
     pub fn claimed(command: &EffectCommand, executor_replica_id: Uuid) -> Self {
         Self {
+            workspace_commit: None,
             version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
             event_id: Uuid::now_v7(),
             effect_id: command.effect_id,
@@ -549,6 +553,7 @@ impl WakeCommand {
         Self {
             due_at,
             result: EffectResult {
+                workspace_commit: None,
                 version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
                 event_id: Uuid::now_v7(),
                 effect_id: Uuid::now_v7(),
@@ -585,6 +590,7 @@ impl WakeCommand {
         Self {
             due_at,
             result: EffectResult {
+                workspace_commit: None,
                 version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
                 event_id: Uuid::now_v7(),
                 effect_id: Uuid::nil(),

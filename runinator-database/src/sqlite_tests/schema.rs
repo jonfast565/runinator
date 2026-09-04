@@ -33,7 +33,7 @@ async fn consolidated_schema_keeps_the_bcnf_table_budget() {
     let schema_tables = tables(&db).await;
     assert_eq!(
         schema_tables.len(),
-        90,
+        94,
         "the greenfield schema table budget changed"
     );
     for removed in [

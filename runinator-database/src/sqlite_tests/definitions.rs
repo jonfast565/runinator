@@ -158,6 +158,7 @@ async fn pipeline_round_trip_create_update_delete() {
             graph: runinator_models::pipelines::PipelineGraph {
                 version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
                 members: vec![runinator_models::pipelines::PipelineMember {
+                    workspace: None,
                     key: "member".into(),
                     workflow_id: member,
                     failure_mode: PipelineMemberFailureMode::SilentlyContinue,
@@ -167,6 +168,7 @@ async fn pipeline_round_trip_create_update_delete() {
             },
             concurrency: Default::default(),
             defaults: PipelineDefaults {
+                workspace: None,
                 on_step_failure: PipelineFailurePolicy::Continue,
                 links_enabled_by_default: false,
                 default_parameters: runinator_models::json!({ "env": "prod" }),
