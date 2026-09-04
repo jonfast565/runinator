@@ -42,6 +42,6 @@ pub use runinator_blob_core::{
     blob_uri, errors, key, listing, meta, multipart, parse_blob_uri, range, sha256_hex, sigv4,
     store, BlobCredential, BlobError, BlobStore, ByteRange, CredentialStore, FsBlobStore,
     ListRequest, ListResponse, ObjectBytes, ObjectKey, ObjectMeta, ObjectReader, ObjectSummary,
-    PutOptions, ResolvedRange, BLOB_URI_SCHEME, FUNCTION_ARTIFACT_BUCKET, RUN_ARTIFACT_BUCKET,
-    WORKFLOW_FILE_BUCKET,
+    PutOptions, ResolvedRange, BLOB_URI_SCHEME, EXECUTION_PROFILE_BUCKET, FUNCTION_ARTIFACT_BUCKET,
+    REQUIRED_BUCKETS, RUN_ARTIFACT_BUCKET, WORKFLOW_FILE_BUCKET,
 };

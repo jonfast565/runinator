@@ -43,6 +43,14 @@ pub const WORKFLOW_FILE_BUCKET: &str = "runinator-workflow-files";
 /// Encrypted, immutable execution-profile publications.
 pub const EXECUTION_PROFILE_BUCKET: &str = "runinator-execution-profiles";
 
+/// buckets the runinator services create before accepting work.
+pub const REQUIRED_BUCKETS: [&str; 4] = [
+    FUNCTION_ARTIFACT_BUCKET,
+    RUN_ARTIFACT_BUCKET,
+    WORKFLOW_FILE_BUCKET,
+    EXECUTION_PROFILE_BUCKET,
+];
+
 /// URI scheme stored for an artifact whose bytes are in a blob store.
 /// Older rows contain a local filesystem path instead.
 pub const BLOB_URI_SCHEME: &str = "blob";

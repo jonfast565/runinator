@@ -45,6 +45,13 @@ use uuid::Uuid;
 
 const MAX_BUNDLE_BYTES: usize = 10 * 1024 * 1024;
 
+async fn ensure_execution_profile_bucket(blobs: &dyn BlobStore) -> runinator_blob_core::Result<()> {
+    if !blobs.bucket_exists(EXECUTION_PROFILE_BUCKET).await? {
+        blobs.create_bucket(EXECUTION_PROFILE_BUCKET).await?;
+    }
+    Ok(())
+}
+
 async fn audit<T: AuthorizationStore>(
     db: &T,
     ctx: &AuthContext,
@@ -503,6 +510,9 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
             Ok(None) => api_error("current execution profile revision is missing"),
             Err(error) => api_error(error.to_string()),
         };
+    }
+    if let Err(error) = ensure_execution_profile_bucket(blobs.as_ref()).await {
+        return api_error(error.to_string());
     }
     let revision_number = profile.current_revision.unwrap_or(0) + 1;
     let ciphertext = SecretCipher::from_env().encrypt(&body);
@@ -1219,3 +1229,7 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::None,
     ),
 ];
+
+#[cfg(test)]
+#[path = "execution_profiles_tests.rs"]
+mod tests;

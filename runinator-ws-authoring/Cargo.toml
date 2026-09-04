@@ -33,6 +33,9 @@ runinator-workflows = { path = "../runinator-workflows" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
 [features]
 db-sqlite = ["runinator-provider-catalog/db-sqlite"]
 db-postgres = ["runinator-provider-catalog/db-postgres"]

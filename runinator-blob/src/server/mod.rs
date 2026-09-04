@@ -123,11 +123,7 @@ pub async fn run_server(
     let store = FsBlobStore::open(&config.data_dir).await?;
     // the buckets runinator itself relies on exist from the first boot, so no deployment step has to
     // remember to create them.
-    for bucket in [
-        runinator_blob_core::FUNCTION_ARTIFACT_BUCKET,
-        runinator_blob_core::RUN_ARTIFACT_BUCKET,
-        runinator_blob_core::WORKFLOW_FILE_BUCKET,
-    ] {
+    for bucket in runinator_blob_core::REQUIRED_BUCKETS {
         store.create_bucket(bucket).await?;
     }
     let addr: SocketAddr = config

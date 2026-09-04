@@ -24,13 +24,14 @@ fn main() {
     }
     println!("cargo:rerun-if-env-changed=RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY");
 
-    run(&tool_dir, "swift", ["build", "-c", "release"]);
     let source = tool_dir.join(".build/release/keychain-export");
     if !source.is_file() {
-        panic!("Swift did not produce {}", source.display());
+        run(&tool_dir, "swift", ["build", "-c", "release"]);
+        if !source.is_file() {
+            panic!("Swift did not produce {}", source.display());
+        }
+        sign_if_configured(&tool_dir, &source);
     }
-
-    sign_if_configured(&tool_dir, &source);
 
     let staged = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("keychain-export");
     fs::copy(&source, &staged).unwrap_or_else(|error| {

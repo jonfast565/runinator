@@ -31,15 +31,13 @@ pub async fn from_env() -> Result<Arc<dyn BlobStore>, BlobError> {
     }
 }
 
-/// ensure the buckets runinator writes to exist. safe to call on every boot: bucket creation is
-/// idempotent, and doing it here means no deployment has a "remember to create the bucket" step.
+/// ensure the buckets runinator writes to exist. safe to call on every boot: checking and creating
+/// a missing bucket here means no deployment has a "remember to create the bucket" step.
 pub async fn ensure_buckets(store: &Arc<dyn BlobStore>) -> Result<(), BlobError> {
-    for bucket in [
-        runinator_blob_core::FUNCTION_ARTIFACT_BUCKET,
-        runinator_blob_core::RUN_ARTIFACT_BUCKET,
-        runinator_blob_core::WORKFLOW_FILE_BUCKET,
-    ] {
-        store.create_bucket(bucket).await?;
+    for bucket in runinator_blob_core::REQUIRED_BUCKETS {
+        if !store.bucket_exists(bucket).await? {
+            store.create_bucket(bucket).await?;
+        }
     }
     Ok(())
 }
@@ -57,3 +55,7 @@ fn local_data_dir() -> String {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| DEFAULT_DATA_DIR.to_string())
 }
+
+#[cfg(test)]
+#[path = "factory_tests.rs"]
+mod tests;

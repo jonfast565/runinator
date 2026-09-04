@@ -33,18 +33,23 @@
         description='Start with an editable template, approve it on a desktop agent, then bind an action with @profile("name").'
       />
       <div v-else class="table-scroll min-h-0 flex-1">
-        <DataTable bare table-class="entity-banner-table table-resize-disabled"
-          ><thead>
+        <DataTable
+          bare
+          table-class="entity-banner-table execution-profiles-table table-resize-disabled"
+        >
+          <thead>
             <tr>
-              <th>Profile</th>
-              <th>Status</th>
-              <th>Publication</th>
-              <th />
+              <th class="profile-name-column">Profile</th>
+              <th class="profile-status-column">Desktop collection</th>
+              <th class="profile-publication-column">Publication</th>
+              <th class="entity-banner-actions profile-actions-column">
+                <span class="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="profile in filtered" :key="profile.id">
-              <td>
+              <td :title="profile.description || profile.name">
                 <div class="entity-banner-content">
                   <span class="entity-banner-title">{{ profile.name }}</span
                   ><span class="entity-banner-meta">{{
@@ -60,7 +65,7 @@
                   </div>
                 </div>
               </td>
-              <td>
+              <td class="profile-status-cell">
                 <div class="profile-collection-health">
                   <span
                     class="profile-health-dot"
@@ -68,7 +73,10 @@
                     :title="collectionHealth(profile).label"
                   />
                   <div class="min-w-0">
-                    <strong>{{ collectionHealth(profile).label }}</strong>
+                    <div class="profile-health-heading">
+                      <strong>{{ collectionHealth(profile).label }}</strong>
+                      <span>Config v{{ profile.config_version }}</span>
+                    </div>
                     <p class="m-0 text-xs text-fg-muted">
                       {{ collectionHealth(profile).detail }}
                     </p>
@@ -77,7 +85,6 @@
                 <p v-if="collectionError(profile)" class="mt-1 text-xs text-danger">
                   {{ collectionError(profile) }}
                 </p>
-                <span class="entity-banner-meta">Config v{{ profile.config_version }}</span>
                 <details v-if="collectionStatus(profile)" class="collection-status-details">
                   <summary>Desktop details</summary>
                   <div class="collection-status-grid">
@@ -108,53 +115,72 @@
                   </div>
                 </details>
               </td>
-              <td>
-                <span class="badge" :class="`publication-${publicationHealth(profile)}`">
-                  {{ publicationLabel(profile) }}
-                </span>
-                <div v-if="publicationStatus(profile).current_revision" class="mt-1">
-                  <span
-                    >Revision {{ publicationStatus(profile).current_revision }} ·
-                    {{ formatDate(publicationStatus(profile).published_at) }}</span
-                  >
-                  <div class="entity-banner-meta">{{ profile.current_digest?.slice(0, 12) }}</div>
+              <td class="profile-publication-cell">
+                <div class="publication-card">
+                  <span class="badge" :class="`publication-${publicationHealth(profile)}`">
+                    {{ publicationLabel(profile) }}
+                  </span>
+                  <template v-if="publicationStatus(profile).current_revision">
+                    <span class="publication-revision"
+                      >Revision {{ publicationStatus(profile).current_revision }}</span
+                    >
+                    <span class="entity-banner-meta">
+                      {{ formatDate(publicationStatus(profile).published_at) }}
+                    </span>
+                    <code v-if="profile.current_digest" class="publication-digest">
+                      {{ profile.current_digest.slice(0, 12) }}
+                    </code>
+                  </template>
+                  <span v-else class="text-fg-muted">No active desktop publication</span>
                 </div>
-                <span v-else class="text-fg-muted">No active desktop publication</span>
               </td>
-              <td class="entity-banner-actions whitespace-nowrap">
-                <button
-                  class="btn btn-sm"
-                  :disabled="!profile.enabled || !canManageProfile(profile)"
-                  :title="profileActionHint(profile)"
-                  @click="testProfile(profile)"
-                >
-                  <Icon name="check" :size="13" /> Dry run</button
-                ><button
-                  class="btn btn-sm"
-                  :disabled="!profile.enabled || !canManageProfile(profile)"
-                  :title="profileActionHint(profile)"
-                  @click="rotate(profile)"
-                >
-                  <Icon name="refresh" :size="13" /> Rotate</button
-                ><button
-                  class="btn btn-sm"
-                  :disabled="!canManageProfile(profile)"
-                  :title="profileActionHint(profile)"
-                  @click="editProfile(profile)"
-                >
-                  <Icon name="edit" :size="13" /> Edit</button
-                ><button
-                  class="btn btn-sm btn-danger"
-                  :disabled="!canManageProfile(profile)"
-                  :aria-label="`Delete ${profile.name}`"
-                  :title="profileActionHint(profile)"
-                  @click="remove(profile)"
-                >
-                  <Icon name="trash" :size="13" />
-                </button>
+              <td class="entity-banner-actions profile-actions">
+                <div class="profile-action-group">
+                  <button
+                    class="btn btn-sm profile-action"
+                    type="button"
+                    :disabled="!profile.enabled || !canManageProfile(profile)"
+                    :title="profileActionTitle(profile, 'Dry run collection')"
+                    aria-label="Dry run collection"
+                    @click="testProfile(profile)"
+                  >
+                    <Icon name="check" :size="13" />
+                  </button>
+                  <button
+                    class="btn btn-sm profile-action"
+                    type="button"
+                    :disabled="!profile.enabled || !canManageProfile(profile)"
+                    :title="profileActionTitle(profile, 'Request rotation')"
+                    aria-label="Request rotation"
+                    @click="rotate(profile)"
+                  >
+                    <Icon name="refresh" :size="13" />
+                  </button>
+                  <button
+                    class="btn btn-sm profile-action"
+                    type="button"
+                    :disabled="!canManageProfile(profile)"
+                    :title="profileActionTitle(profile, 'Edit profile')"
+                    aria-label="Edit profile"
+                    @click="editProfile(profile)"
+                  >
+                    <Icon name="edit" :size="13" />
+                  </button>
+                  <button
+                    class="btn btn-sm btn-danger profile-action"
+                    type="button"
+                    :disabled="!canManageProfile(profile)"
+                    :aria-label="`Delete ${profile.name}`"
+                    :title="profileActionTitle(profile, `Delete ${profile.name}`)"
+                    @click="remove(profile)"
+                  >
+                    <Icon name="trash" :size="13" />
+                  </button>
+                </div>
               </td>
-            </tr></tbody
-        ></DataTable>
+            </tr>
+          </tbody>
+        </DataTable>
       </div>
     </div>
 
@@ -531,6 +557,10 @@ function profileActionHint(profile: ExecutionProfile) {
   return isInheritedProfile(profile)
     ? "Switch to Platform scope to manage this profile."
     : undefined;
+}
+
+function profileActionTitle(profile: ExecutionProfile, action: string) {
+  return profileActionHint(profile) ?? action;
 }
 
 type CollectionTone = "healthy" | "warning" | "error" | "muted";
@@ -948,6 +978,7 @@ watch(activeOrgId, () => void refresh());
 .chips {
   display: flex;
   gap: 0.25rem;
+  flex-wrap: wrap;
   margin-top: 0.25rem;
 }
 .chip {
@@ -957,7 +988,24 @@ watch(activeOrgId, () => void refresh());
   border: 1px solid var(--color-border-subtle);
   border-radius: 999px;
   padding: 0.12rem 0.45rem;
+  background: var(--color-surface-subtle);
   font-size: 0.72rem;
+}
+:deep(.execution-profiles-table) {
+  min-width: 54rem;
+}
+:deep(.execution-profiles-table .profile-name-column) {
+  width: 34%;
+}
+:deep(.execution-profiles-table .profile-status-column) {
+  width: 35%;
+}
+:deep(.execution-profiles-table .profile-publication-column) {
+  width: 18%;
+}
+:deep(.execution-profiles-table .profile-actions-column),
+:deep(.execution-profiles-table .profile-actions) {
+  width: 8.5rem;
 }
 .profile-collection-health {
   display: flex;
@@ -970,6 +1018,15 @@ watch(activeOrgId, () => void refresh());
   flex: 0 0 auto;
   margin-top: 0.3rem;
   border-radius: 50%;
+}
+.profile-health-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+.profile-health-heading span {
+  color: var(--color-fg-muted);
+  font-size: 0.7rem;
 }
 .profile-health-dot.is-healthy {
   background: var(--color-success-fg);
@@ -1006,6 +1063,12 @@ watch(activeOrgId, () => void refresh());
   display: grid;
   gap: 0.1rem;
 }
+.collection-status-grid > div {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.4rem;
+  padding: 0.4rem;
+  background: var(--color-surface-subtle);
+}
 .collection-status-grid span,
 .collection-agents span {
   color: var(--color-fg-muted);
@@ -1021,6 +1084,42 @@ watch(activeOrgId, () => void refresh());
   margin-top: 0.5rem;
   border-top: 1px solid var(--color-border-subtle);
   padding-top: 0.5rem;
+}
+.collection-agents > div {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.4rem;
+  padding: 0.4rem;
+  background: var(--color-surface-subtle);
+}
+.publication-card {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 0.25rem;
+}
+.publication-revision {
+  color: var(--color-fg);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.publication-digest {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-fg-muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-action-group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+.profile-action {
+  display: inline-flex;
+  min-width: 0;
+  justify-content: center;
+  padding: 0.35rem;
 }
 .publication-ready {
   color: var(--color-success-fg);
