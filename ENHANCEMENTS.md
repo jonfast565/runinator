@@ -12,7 +12,7 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
-**Last reprioritized:** 2026-08-24, after the product-expansion survey (9.1–9.8).
+**Last reprioritized:** 2026-09-04, after the systems-inspired product review (11.1–11.3).
 
 ---
 
@@ -35,14 +35,17 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 9.4 | Durable outbound event subscriptions | **P2** | models, engine, ws-runtime, command-center |
 | 9.5 | Dead-letter remediation | **P2** | store/database, engine, ws-runtime, command-center |
 | 9.6 | Editor-first workflow tests | **P2** | workflows, REXRAP, ctl, command-center |
+| 11.1 | Named outputs and lifecycle disposition | **P2** | models, blob, engine, REXRAP, command-center |
+| 11.2 | Structured execution outcomes | **P2** | models/comm, workflows, engine, worker, REXRAP |
 | 8.6 | Split the utilities catch-all | **shipped 2026-08-22** | observability, secrets, platform, pack-wire, data-export |
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
 | 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
 | 9.7 | Pack provenance and signing | **P3** | pack, pack-wire, ctl, ws-authoring, database |
 | 9.8 | End-to-end trace propagation | **P3** | observability, comm, engine, worker, ws |
+| 11.3 | Single-resource atomic action batches | **P3** | provider-db, provider catalog, worker, REXRAP |
 | 7.1–7.8 | Loop / iteration semantics | **shipped 2026-08-13** | models, reducer, workflows, REXRAP, command-center |
-| 6.6 | Action priority / fairness | **P4** | comm, broker (all backends), engine, worker |
+| 6.6 | Workload classes, priority, and fairness | **P4** | models, store/database, engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
 | 1.2 / 2.2 / 2.3 / 2.1 | Continuous quality track | parallel | varies |
 
@@ -154,6 +157,20 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Approach:** Add a readable REXRAP test DSL and an editor panel for cases, input/config fixtures, mocked action/park outcomes, branch/output expectations, failures, and coverage-by-node. Let CI request JUnit/JSON output and let pack policy require a green suite before import; retain the existing JSON syntax as a compatibility input.
 - **Boundary note:** Tests must remain atop `SimulationEnv` and may never publish provider effects, acquire credentials, or reach a live worker. Unsupported concurrency constructs should remain explicit failures until the simulator can model them faithfully.
 
+### 11.1 Named outputs and lifecycle disposition
+- **Owning crates:** `runinator-models`, `runinator-blob-core`/`runinator-blob`, `runinator-engine`, `runinator-rexrap-*`, `runinator-command-center`, `runinator-archiver`.
+- **Problem:** Artifacts are durable once recorded, but an author cannot declare the role or lifecycle of an output. Downstream consumers must discover opaque artifact IDs, while retention is a service-wide concern rather than part of the published workflow contract. Failed attempts and successful runs also need different retention behavior without provider-specific cleanup code.
+- **Approach:** Let a workflow publish a small set of typed, named outputs backed by immutable artifact identities, with disposition policies such as retain for a duration, retain on failure, expire after successful handoff, or promote to a stable alias. Resolve aliases to immutable versions so a consumer never observes bytes changing in place. Record producer run, node, checksum, media type, schema, and disposition decision as provenance; expose the names through subflow outputs and the command center.
+- **Boundary note:** This borrows the useful part of batch data disposition without introducing devices, record formats, or a mainframe dataset catalog. The engine owns metadata and lifecycle transitions; bytes remain in the object store, and providers never delete shared objects directly. Recoverable staged uploads and reconciliation are prerequisites: user-authored retention policy cannot safely build on an upload lifecycle that can orphan bytes or metadata.
+- **Acceptance shape:** A downstream workflow can bind `outputs.report` without copying an object ID; success/failure/cancel paths apply deterministic, audited disposition; replay cannot silently retarget a stable alias; archives either preserve referenced bytes or materialize an explicit tombstone.
+
+### 11.2 Structured execution outcomes
+- **Owning crates:** `runinator-models`, `runinator-comm`, `runinator-workflows`, `runinator-runtime`, `runinator-engine`, `runinator-worker`, provider crates, `runinator-rexrap-*`.
+- **Problem:** The VM correctly distinguishes success, failure, rejection, timeout, and cancellation, but provider-specific failure details remain largely unstructured. Authors cannot portably route on an external process exit code, termination signal, retry hint, or stable provider reason without parsing messages or designing a custom output convention for every action.
+- **Approach:** Add a shared `ExecutionOutcome` envelope containing the existing terminal class plus optional stable reason code, process exit code or signal, retryability hint, provider details, and a redacted human diagnostic. Preserve the terminal class as the engine's settlement authority; additional fields explain the outcome and support typed REXRAP route predicates such as a declared reason-code set or exit-code range. Provider catalogs declare which outcome details an action may emit so the editor and semantic analyzer can validate routes.
+- **Boundary note:** Do not import JCL condition-code conventions or collapse transport/runtime failures into an integer. The envelope crosses every effect-result transport and must round-trip through all broker backends and database mappers. Retry remains an engine policy evaluated from the frozen action definition and trusted classification, never an unchecked provider request to retry forever.
+- **Acceptance shape:** Shell and foreign-code actions preserve exit status without turning stderr into an API; HTTP/database providers can expose stable domain reasons; secrets are redacted before persistence; old providers that return only a terminal class remain wire-compatible through optional fields.
+
 ---
 
 ## P3 — AI, lifecycle, and dependency cleanup
@@ -194,15 +211,23 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Approach:** Capture the active trace context when creating an effect, preserve it across retry/result/wake paths, and re-parent consumer spans in the engine and waker. Persist a safe trace identifier on run/effect records and let the command center link to a configured trace explorer. Add process-level tests spanning engine → broker → worker and engine → wake → ingress.
 - **Boundary note:** Keep the carrier to standard trace propagation fields and treat it as observability metadata, never a place for credentials, arbitrary baggage, or tenant data. Every broker backend must round-trip it unchanged.
 
+### 11.3 Single-resource atomic action batches
+- **Owning crates:** `runinator-provider-db`, `runinator-provider-catalog`, `runinator-worker`, `runinator-models`, `runinator-rexrap-*`.
+- **Problem:** Saga compensation is the correct default across remote systems, but several calls against one transactional resource sometimes need all-or-nothing behavior. Expressing those calls as separate workflow effects creates externally visible intermediate states and cannot be repaired by making the surrounding continuation commit transactionally.
+- **Approach:** Introduce an opt-in provider capability for an atomic batch executed as one worker effect. Start with the database provider: a batch contains parameterized operations and local data dependencies, and the provider owns begin, commit, rollback, isolation selection from an administrator-approved set, timeout, and result assembly. REXRAP may add `atomic using <binding> { ... }` sugar only after the provider contract exists; lowering must produce one effect rather than several parked continuations.
+- **Boundary note:** This is deliberately not a distributed transaction manager. A batch may name one provider instance and cannot contain waits, approvals, subflows, parallel branches, arbitrary provider calls, or code whose effects escape that resource. Providers advertise support and exact limits through catalog metadata; the compiler rejects unsupported blocks instead of degrading them into a saga.
+- **Acceptance shape:** A crash before commit leaves no partial resource update; a committed result uses the ordinary durable effect-settlement path; retry and idempotency behavior are explicit; cancellation is best-effort while executing but rollback is attempted before the provider reports cancellation.
+
 ---
 
 ## P4 — when scale or customer data makes them urgent
 
-### 6.6 Action priority / fairness
-- **Owning crates:** `runinator-comm` (action contract), `runinator-broker` (all backends), `runinator-engine` (dispatch outbox), `runinator-worker`.
-- **Problem:** `ActionCommand` has no priority — the only `priority` in the models is edge-selection ordering (`runinator-models/src/workflows.rs:884`). One `map` fan-out of 5,000 items can starve an interactive run behind it on a shared consumer group.
-- **Approach:** A priority lane, or weighted fair queueing per org/workflow, pairing with the quota machinery already in `runinator-models/src/billing.rs`.
-- **Boundary note:** the most invasive item in the roadmap — priority must be honored by **every** broker backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports, or ordering silently differs per deployment. Do not start this before **6.5** gives you the numbers to show queue starvation is real.
+### 6.6 Workload classes, priority, and fairness
+- **Owning crates:** `runinator-models`, `runinator-store`/`runinator-database`, `runinator-engine`, `runinator-worker`, `runinator-command-center`.
+- **Problem:** One `map` fan-out of 5,000 items can starve an interactive run behind it on a shared consumer group. A raw per-action priority would replace that accident with a different one: noisy tenants could label everything urgent, low-priority work could starve forever, and broker-specific priority support would make behavior vary by deployment.
+- **Approach:** Define a small administrator-controlled set of workload classes such as interactive, standard, batch, and background. Each class supplies a bounded share, admission limit, and optional worker-label requirements. The engine selects durable, unpublished effect dispatches with weighted fairness across organization and class, including age-based promotion; the broker transports work only after admission. Per-workflow policy selects from classes allowed by the organization rather than assigning an arbitrary numeric priority.
+- **Boundary note:** Keep scheduling before publication so Kafka, RabbitMQ, TCP, HTTP, and the in-memory broker do not need equivalent priority semantics. Once admitted, an effect retains ordinary delivery, lease, retry, timeout, and settlement behavior. Organization quota is a hard ceiling; workload class changes ordering and reserved capacity, not entitlement. Use **6.5** analytics to validate weights and expose queue age, admission delay, and starvation counters before enabling custom policies.
+- **Acceptance shape:** Interactive work remains bounded-latency during a large batch; every continuously queued class makes measurable progress; one organization cannot consume another's reserved share; failover reconstructs the same admission state from durable dispatch rows rather than broker ordering.
 
 ### 6.7 Retention & redaction policy
 - **Owning crates:** `runinator-archiver`, `runinator-database`, `runinator-models`.
