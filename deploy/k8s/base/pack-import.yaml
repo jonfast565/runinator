@@ -23,14 +23,16 @@ spec:
           image: runinator-ctl:dev
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-lc"]
-          # apply every baked-in pack directory. the `.rrx` compiler discovers the workflows,
-          # settings, and pipelines under each directory. a new pack dropped into packs/ is picked
-          # up automatically on the next image
-          # build — no job edit needed. apply is force-overwrite, so re-deploys refresh definitions.
+          # apply each bundled workflow pack except the demonstration and autonomous-development
+          # packs. advanced-engine-tests remains imported so its definitions can be exercised, but
+          # it is paused by default through the pipeline admission control.
           args:
             - >
               set -e;
               for pack in /home/runinator/.runinator/workflows/packs/*; do
+                case "$(basename "$pack")" in
+                  autonomous-development|hello-world) continue ;;
+                esac;
                 if [ -d "$pack" ] && find "$pack" -type f -name '*.rrx' -print -quit | grep -q .; then
                   echo "applying $pack";
                   runinatorctl --api-base-url "$WS_API_BASE_URL" workflows apply "$pack";
