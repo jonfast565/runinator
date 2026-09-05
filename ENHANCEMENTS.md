@@ -12,6 +12,8 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
+**Latest source audit:** 2026-09-04; items 10.1–10.20 below.
+
 **Last reprioritized:** 2026-09-04, after the systems-inspired product review (11.1–11.4).
 
 ---
@@ -20,6 +22,9 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 | # | Item | Band | Owning crates |
 |---|------|------|---------------|
+| 10.1–10.7 | Audit: durability and execution correctness | **P1** | archiver, broker, worker, engine, database |
+| 10.8–10.19 | Audit: scale, availability, and listing correctness | **P2** | runtime, ws, worker, broker, engine, deploy |
+| 10.20 | Audit: waker contract documentation | **P3** | waker, docs |
 | 8.1 | Narrow persistence contracts | **shipped 2026-08-22** | store, engine, ws-* |
 | 8.2 | Application-service boundary for HTTP | **shipped 2026-08-22** | engine, ws-* |
 | 8.3 | Restore broker-only waker | **shipped 2026-08-22** | waker, service-bootstrap |
@@ -49,6 +54,289 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 6.6 | Workload classes, priority, and fairness | **P4** | models, store/database, engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
 | 1.2 / 2.2 / 2.3 / 2.1 | Continuous quality track | parallel | varies |
+
+---
+
+## 2026-09-04 codebase audit — items 10.1–10.20
+
+Source audit dated 2026-09-04. These are open findings from static inspection, not reproduced
+incidents or benchmark results. The review sampled orchestration, persistence, broker transports,
+worker execution, authorization, API listing, artifact lifecycle, and deployment configuration;
+it is not an exhaustive security or correctness audit. No builds, tests, or deployments were run.
+
+Priorities within this audit: **P1** = possible data loss, duplicate side effects, or stranded execution;
+**P2** = scalability, availability, or user-visible correctness; **P3** = contract/documentation drift.
+The acceptance checks below describe future implementation work, not checks performed during this audit.
+These findings supplement the historical items; shipped entries are not being reopened wholesale.
+
+### Durability and execution correctness
+
+#### 10.1 — P1 — Make archive files durable before deleting source rows
+
+- [ ] Fix archive finalization in [runinator-archiver/src/main.rs](runinator-archiver/src/main.rs),
+  `write_archive_jsonl_files` and `archive_one_batch`.
+
+`GzEncoder::finish()` returns a `BufWriter<File>`, but that writer is immediately dropped. Errors
+flushing its final buffered bytes are therefore not propagated. The temporary file is renamed and
+the corresponding database rows are deleted without explicitly syncing the file or directory.
+A final write failure or host crash can leave an incomplete/missing archive after source deletion.
+Explicitly flush and check the returned writer, sync the file, rename, and sync the directory before
+allowing deletion. Add fault-injection coverage for final-buffer write errors and interrupted
+finalization; database rows must remain recoverable whenever durable archive completion is uncertain.
+
+#### 10.2 — P1 — Track contiguous Kafka acknowledgements per partition
+
+- [ ] Replace individual offset commits in
+  [runinator-broker/src/adapters/kafka.rs](runinator-broker/src/adapters/kafka.rs), `ack_pending`.
+
+Every acknowledgement commits that message's `offset + 1`, although the
+[worker](runinator-worker/src/effect_worker.rs) and [waker](runinator-waker/src/lib.rs) process multiple
+deliveries concurrently. If offset 11 finishes before offset 10, committing 12 also skips unfinished
+offset 10 after a crash/rebalance. `take_pending` additionally removes retry information before the
+commit succeeds, and `nack_pending` seeks a consumer that may have other deliveries in flight.
+Track completion gaps per assigned partition, commit only the contiguous completed prefix, and
+preserve pending state across failed commits. Verify out-of-order completion, commit failure,
+nack with concurrent work, and rebalance/restart against a real Kafka backend.
+
+#### 10.3 — P1 — Route Kafka targeted work independently of partition ownership
+
+- [ ] Reconcile target routing with Kafka consumer groups in
+  [kafka.rs](runinator-broker/src/adapters/kafka.rs), `KafkaChannel::build_consumer` and `nack_pending`,
+  and [the Broker defaults](runinator-broker-core/src/lib.rs), `receive_effect_for`/`receive_agent_for`.
+
+Agents share `runinator.agents`; Kafka workers normally share `runinator-workers`
+([worker config](runinator-worker/src/config.rs)). A target mismatch is handled by seeking the
+same partition back to the same offset. That does not transfer the partition to the matching
+replica. A partition assigned to an incompatible worker/agent can repeatedly redeliver the same
+command while its intended recipient remains idle. Introduce routing that accounts for consumer
+capabilities/replica identity, or explicitly reject unsupported targeted configurations. Verify
+two differently labeled workers and two targeted agents while partition assignments remain stable.
+
+#### 10.4 — P1 — Separate execution ownership from the logical effect identity
+
+- [ ] Strengthen reservations across [effect_worker.rs](runinator-worker/src/effect_worker.rs),
+  `process_provider_effect`, and
+  [delivery.rs](runinator-database/src/operations/delivery.rs), `claim_idempotency_key`.
+
+Workers pass `command.effect_id` as the reservation owner. The SQL claim treats an unfinished
+reservation already owned by that ID as acquired, so two replicas processing the same effect both
+qualify. The `in_flight` duplicate guard is process-local. This is reachable during a slow action:
+the [in-memory broker](runinator-broker-core/src/in_memory.rs) reclaims deliveries after 30 seconds
+and the broker contract has no lease-renewal operation. Reservation API errors also deliberately
+fall through to provider execution; provider-native idempotency is not universally guaranteed.
+Use a distinct execution-attempt lease owner/fencing token, maintain it during execution, and
+define when execution may proceed without a reservation. Verify two workers receiving the same
+effect during a long action and an API outage; duplicate settlement protection alone is insufficient.
+
+#### 10.5 — P1 — Persist and retry deadline-wake publication
+
+- [ ] Make deadline publication recoverable in
+  [effect_deadline.rs](runinator-engine/src/effect_deadline.rs), `arm_with_grace`, and
+  [loops.rs](runinator-engine/src/loops.rs), `run_workflow_effect_dispatcher`.
+
+A failed `publish_wake` is logged and swallowed; the dispatcher then marks the effect dispatch
+published. A crash after effect publication but before deadline publication has the same gap.
+If the worker dies or no worker matches, the effect can remain waiting without its promised
+backstop. Persist the deadline intent alongside the durable effect/dispatch and retry it through a
+separate durable publication state, preserving the requirement that wake failure must not suppress
+provider dispatch. Verify wake-channel failure and crashes between each publication/marking step.
+
+#### 10.6 — P1 — Prevent future wakes from starving already-due wakes
+
+- [ ] Correct scheduling fairness between [waker_loop/handle_wake](runinator-waker/src/lib.rs) and
+  [InMemoryBroker::nack_wake](runinator-broker-core/src/in_memory.rs).
+
+The waker reserves one of 32 default slots before receiving, sleeps up to 20 seconds for a future
+wake, then nacks it. The in-memory backend puts that wake at the **front** of the queue. If all slots
+hold distant-future wakes, each released slot can immediately receive the same future work while
+due wakes behind it remain blocked. This contradicts the stated guarantee that concurrency avoids
+head-of-line blocking. Add due-time-aware delivery or a fair delayed queue, and bound timer churn
+on other backends too. Verify more than the concurrency limit of far-future wakes followed by an
+already-due wake; its latency must not depend on the distant deadlines.
+
+#### 10.7 — P1 — Fence dispatch completion and keep batch leases valid
+
+- [ ] Rework batch dispatch in [loops.rs](runinator-engine/src/loops.rs),
+  `run_workflow_effect_dispatcher`/`run_correlated_orchestration_reducer`, and dispatch marking in
+  [workflow_vm.rs](runinator-database/src/operations/workflow_vm.rs).
+
+Loops lease an entire batch and process it serially. Defaults allow 100 claims with 60-second
+dispatch/reducer leases ([server settings](runinator-models/src/server_settings.rs)); slow broker or
+database calls can exhaust later items' leases before processing begins. Dispatch success/failure
+updates match only the dispatch ID, not the current lease owner, so a stale publisher can clear a
+new owner's claim. The effect dispatcher also reuses the batch's original `now` when constructing
+expiry times. Claim close to execution, renew bounded in-flight leases, and fence updates with an
+owner/token. Verify a slow first item with two publishers, including failed publication after takeover.
+
+### Scale and availability
+
+#### 10.8 — P2 — Isolate failures within a claimed VM batch
+
+- [ ] Change [WorkflowVmHost::drive_runnable](runinator-runtime/src/workflow_vm_host.rs) to return
+  per-continuation outcomes and release or otherwise recover unprocessed claims promptly.
+
+The host claims a batch for a fixed 30 seconds, then uses `drive_claimed(...).await?` in a serial loop.
+One bad continuation aborts the batch, discards already accumulated outcomes, and leaves later
+claims untouched until expiry. Slow batches also outlive their leases. Continuation revision CAS
+helps protect persistence but does not prevent wasted work or latency. Add independent error
+handling and a bounded execution/lease policy. Verify a failing first/middle continuation does not
+block healthy neighbors or suppress handling of outcomes already committed.
+
+#### 10.9 — P2 — Apply bounded pagination to every workflow-run query
+
+- [ ] Unify listing in [get_workflow_runs](runinator-ws-runtime/src/handlers/runs.rs) and the
+  [run](runinator-database/src/operations/runs.rs)/[runtime](runinator-database/src/operations/runtime.rs)
+  store queries.
+
+Only the unfiltered recent-run branch applies the 200 default/1,000 maximum limit. Supplying
+`status`, `name`, or `workflow_id` returns before that logic and loads all matching rows.
+`fetch_workflow_runs_for_workflow` also loads execution state separately for every returned run.
+Opening a long-lived workflow can therefore create a large response and an additional query per
+historical run. Add cursor pagination and consistent limit validation to all branches, with compact
+list projections and detail fetched separately. Verify all filter combinations against large histories.
+
+#### 10.10 — P2 — Apply authorization before the recent-run limit
+
+- [ ] Move visibility into the bounded query used by
+  [get_workflow_runs](runinator-ws-runtime/src/handlers/runs.rs) and
+  [fetch_recent_workflow_runs](runinator-database/src/operations/runs.rs).
+
+The handler fetches the newest runs globally and only then calls `filter_runs`. If other tenants
+own the newest 200 rows, a user receives an empty list despite having visible history. Increasing
+the limit only moves the cutoff; there is no cursor to reach omitted records. Filter by authorized
+resources before ordering/limiting, through the owning store contract. Verify interleaved tenant
+history returns a full page of the caller's visible runs without exposing unauthorized records.
+
+#### 10.11 — P2 — Replace catalog-wide authorization scans with scoped queries
+
+- [ ] Optimize [AuthzChecker::visible_resource_ids/resource_permission](runinator-ws-middleware/src/authz.rs)
+  and the corresponding RBAC store contract.
+
+For each non-admin listing, `visible_resource_ids` loads every ownership row for a resource type,
+then serially calls `resource_permission`. That refetches ownership and, for eligible resources,
+effective grants. Even a tenant with a handful of workflows pays for the global catalog on every
+request; workflow-run listing does this before selecting its query branch. Add tenant/principal-scoped
+visibility queries or bulk permission evaluation while preserving ownership, role, and token-ceiling
+semantics. Measure query counts as unrelated tenants grow and verify equivalent deny-by-default results.
+
+#### 10.12 — P2 — Make the function cache safe for concurrent invocations
+
+- [ ] Add coordinated publication and usage leases to
+  [FunctionCache::stage/evict_to_fit/unpack_with_limits](runinator-worker/src/function_cache.rs).
+
+The shared cache has no per-digest staging lock: concurrent misses both download/unpack, and each
+publisher removes the existing target before renaming its staging directory. Eviction recursively
+deletes entries without checking active users or excluding other staging directories. A returned
+path can disappear before invocation mounts it, and deleting files is not made safe merely by an
+existing directory mount. Capacity admission also counts compressed incoming bytes against expanded
+on-disk usage. Coordinate duplicate downloads, publish without deleting a live winner, pin entries
+through invocation, and account for expanded size. Verify concurrent same-digest misses and eviction
+while an invocation is starting/running.
+
+#### 10.13 — P2 — Move function-cache disk and decompression work off async threads
+
+- [ ] Isolate blocking work in
+  [FunctionCache::stage](runinator-worker/src/function_cache.rs).
+
+After its async download, `stage` synchronously hashes the archive, scans directory trees, deletes
+cache entries, decompresses ZIP files, and writes the ready marker. Supported limits reach 256 MiB
+compressed and 512 MiB expanded per archive. Concurrent cache misses can occupy Tokio executor
+threads needed for cancellation, broker handling, and other work. Put the blocking phase behind a
+bounded `spawn_blocking` boundary and coordinate it with cache admission. Verify large cold-cache
+invocations leave async heartbeat/cancellation latency bounded.
+
+#### 10.14 — P2 — Bound and coalesce UI-event publishing
+
+- [ ] Replace one detached task per event in
+  [UiEventPublisher::emit](runinator-broker-core/src/ui_events.rs) with a bounded publisher queue.
+
+Every state change spawns an independent broker publication task with no shared concurrency limit,
+coalescing, or shutdown drain. When publication slows, pending tasks and cloned event payloads can
+grow with the mutation rate despite the events being best-effort refresh hints. Use a bounded queue,
+coalesce repeated resource changes, and define overflow/resync behavior and metrics. Verify a stalled
+broker does not cause unbounded publisher memory/task growth and reconnect still refreshes clients.
+
+#### 10.15 — P2 — Bound the built-in broker and make its durability limits explicit
+
+- [ ] Define capacity/backpressure and recovery guarantees for
+  [InMemoryBroker](runinator-broker-core/src/in_memory.rs) and its
+  [standalone TCP/HTTP server](runinator-broker/src/bin/main.rs).
+
+The standalone server always constructs `InMemoryBroker`; changing transport does not add durable
+storage. Work queues/in-flight maps have no configured capacity, share one state mutex, and are
+lost on process restart. A successful publish can already have caused a durable dispatch to be
+marked published, or a worker to acknowledge after publishing its result, before that loss.
+Treat this as an explicit local/development tradeoff rather than equivalent durability to an
+external broker. Add bounded admission and document/enforce topology requirements; durable use
+requires persistence or reconciliation of accepted-but-lost messages. Verify queue saturation and
+restart behavior, including infrastructure wakes and completed provider results.
+
+#### 10.16 — P2 — Reject rate-limit values that cannot construct a valid quota
+
+- [ ] Align [RateLimitConfig::validate/quota_for](runinator-ws-middleware/src/rate_limit.rs).
+
+Validation says RPS must be greater than zero but accepts `0.0` through the inclusive range
+`0.0..=1_000_000_000.0`. `quota_for` then computes `Duration::from_secs_f64(1.0 / rps)`, which cannot
+represent infinity. Extremely small positive RPS can also produce an unrepresentable duration.
+The [router](runinator-ws/src/router.rs) constructs the limiter even when it is disabled. Validate
+strict positivity and representable refill intervals, returning a configuration error instead of
+panicking. Cover zero, negative zero, subnormal positive values, and disabled configurations.
+
+#### 10.17 — P2 — Keep rate-limit maintenance off the per-request hot path
+
+- [ ] Bound maintenance in [RateLimiter::check](runinator-ws-middleware/src/rate_limit.rs).
+
+Once the keyed store exceeds 10,000 entries, every request calls `retain_recent()`. With more than
+10,000 active/non-evictable keys, each request continues to trigger maintenance; this threshold
+does not impose a hard memory cap. The same code serves the always-on login/enrollment throttle.
+Schedule maintenance at a bounded cadence and define admission/overflow behavior for key churn
+without resetting active clients' limits. Verify sustained traffic above the threshold has bounded
+maintenance frequency and preserves throttle enforcement.
+
+#### 10.18 — P2 — Scale execution services using backlog and latency signals
+
+- [ ] Extend [deploy/k8s/base/autoscaling.yaml](deploy/k8s/base/autoscaling.yaml) beyond CPU-only
+  autoscaling for workers and wakers.
+
+Both HPAs target 70% CPU, but worker concurrency can be exhausted by waiting on external services
+and waker slots by sleeping on timers. Their queues can grow while CPU remains low, so adding an
+HPA does not by itself scale these bottlenecks. Expose and use ready backlog/oldest-work age,
+in-flight saturation, and overdue-wake lag, retaining explicit replica limits. Verify an I/O-bound
+worker backlog and overdue wakes trigger scaling without needing artificial CPU load; distinguish
+future timers from work that is actually due.
+
+#### 10.19 — P2 — Give uploaded blobs a recoverable lifecycle
+
+- [ ] Add lifecycle tracking and reconciliation across
+  [artifact_storage.rs](runinator-engine/src/artifact_storage.rs),
+  [WorkflowFiles::store_file](runinator-engine/src/services/workflow_files.rs),
+  [artifact uploads](runinator-ws-runtime/src/handlers/artifacts.rs), and
+  [the archiver](runinator-archiver/src/main.rs).
+
+Artifact upload creates a fresh UUID object before the worker reports metadata; a lost response,
+failed result publication, or retry can leave unreferenced objects. Workflow-file upload similarly
+puts bytes before `insert_file`, with no cleanup if insertion fails. Archive processing removes
+output/file rows while retaining their JSON, but does not define a corresponding byte-retention
+transition. `delete_artifact_bytes` has no production caller in the reviewed tree. Introduce durable
+upload identities, staged-object expiry, and retryable deletion/reconciliation. Explicitly preserve
+bytes referenced by retained archives. Verify upload/metadata failure windows and retention without
+either orphan growth or broken archive references.
+
+### Contract consistency
+
+#### 10.20 — P3 — Update the documented waker contract to match its actual payloads
+
+- [ ] Reconcile [runinator-waker/AGENTS.md](runinator-waker/AGENTS.md),
+  [docs/architecture.md](docs/architecture.md), and waker module/function documentation with
+  [settle](runinator-waker/src/lib.rs).
+
+The guides describe a waker that always relays a prebuilt `WsIngressCommand::SettleEffect` verbatim.
+The implementation also recognizes `orchestration_intent` and `timer_interrupt` payloads and builds
+their corresponding ingress commands. This is still a broker-only relay, but its documented
+contract is narrower than the implemented protocol and can mislead future transport/consumer
+changes. Describe all supported wake variants, their dedupe/timestamp behavior, and the boundary
+between relaying an engine decision and making one. Review the docs against the shared `WakeCommand`
+and ingress variants without adding another timer-settlement path.
 
 ---
 

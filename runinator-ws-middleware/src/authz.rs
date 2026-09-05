@@ -152,7 +152,7 @@ pub trait AuthContextExt {
 
 impl AuthContextExt for AuthContext {
     fn is_platform_admin(&self) -> bool {
-        self.platform_role == Some(PlatformRole::Admin)
+        AuthContext::is_platform_admin(self)
     }
 
     fn selected_scope(&self) -> ScopeRef {
