@@ -68,6 +68,67 @@ pipeline member they can continue the same pipeline run's saved version. Explici
 attachments remain pinned to the supplied version. A workflow completion checkpoint saves its
 final result using the ordinary provider-effect settlement path.
 
+## Passing a workspace name through a pipeline
+
+A workspace name is its key. Pass it as a string pipeline parameter, for example
+`{ "workspace_name": "monthly-report-2026-09" }`. Each member receives the pipeline parameters;
+links with no parameter mapping preserve them. Every consuming workflow must declare the
+parameter in its `params` block, before `key` and other header declarations:
+
+```rexrap
+namespace acme.reports
+workflow "Generate report" v1 {
+    params { workspace_name: string }
+    key generate
+    workspace { key: params.workspace_name, create: true }
+    do {
+        let generated = console.run(command: "echo report > report.txt")
+    }
+}
+
+workflow "Read report" v1 {
+    params { workspace_name: string }
+    key read
+    workspace { key: params.workspace_name, access: "read" }
+    do {
+        let report = console.run(command: "cat report.txt")
+    }
+}
+
+pipeline "Named report workspace" {
+    workflow "acme.reports.generate"
+    workflow "acme.reports.read"
+    "acme.reports.generate" -> "acme.reports.read" on success
+}
+```
+
+Start this pipeline with `workspace_name` in its run parameters. The first workflow creates a
+missing workspace and saves its files; the second restores the same pipeline run's saved version.
+The name is supplied at run time, so these workflows can be reused with different workspace names.
+
+A pipeline can also supply the binding for a workflow that has no workspace header:
+
+```rexrap
+workflow "acme.reports.transform" with_workspace { key: params.workspace_name }
+```
+
+Or set `workspace { key: params.workspace_name, create: true }` as the pipeline default to bind
+all members. A member override takes precedence over that default, and both take precedence over
+the workflow's own workspace header. Keep `access: "read"` on a member override when that member
+should only inspect the shared workspace.
+
+To explicitly forward or rename the parameter on an edge, use a parameter mapping:
+
+```rexrap
+"acme.reports.generate" -> "acme.reports.read" on success
+    with { workspace_name: params.workspace_name }
+```
+
+The string belongs in the binding's `key` field; `workspace params.workspace_name` expects a
+complete binding object and is not the string form. Sequential members can share a name; use
+different names for independent parallel writers. Pass a `{ key, version }` reference instead
+when the consumer must use a particular immutable version.
+
 ## Versions, retries, and storage
 
 Only one writing checkout is active per workspace. Other writers wait; readers can restore any
