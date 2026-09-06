@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod authz;
 pub mod circuit_breaker;
+pub mod errors;
 pub mod overload;
 pub mod rate_limit;
 

@@ -5,6 +5,13 @@ currently eligible rows in bounded batches, writes them to compressed JSONL, and
 source rows. A retention value can be set to `off`, `none`, or `disabled`, but the defaults below
 keep every runtime growth path bounded.
 
+Archive completion checks the gzip trailer and final buffered writes, syncs the file, then renames
+it into place. On Unix it also syncs directory entries, including newly created archive directories,
+before deleting source rows. Any failure leaves source rows available for retry; a retry after
+publication can produce duplicate archive records, identified by their source table and primary key.
+Platforms without Unix directory syncing retain the file-sync guarantee but cannot guarantee rename
+durability across power loss.
+
 | Data | Default | Eligibility |
 | --- | ---: | --- |
 | workflow runs, continuations, effects, journal/output/firing history | 90 days | terminal workflow; dependency rows are archived leaf-first |

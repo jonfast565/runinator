@@ -73,7 +73,7 @@ These findings supplement the historical items; shipped entries are not being re
 
 #### 10.1 — P1 — Make archive files durable before deleting source rows
 
-- [ ] Fix archive finalization in [runinator-archiver/src/main.rs](runinator-archiver/src/main.rs),
+- [x] Fix archive finalization in [runinator-archiver/src/archive_writer.rs](runinator-archiver/src/archive_writer.rs),
   `write_archive_jsonl_files` and `archive_one_batch`.
 
 `GzEncoder::finish()` returns a `BufWriter<File>`, but that writer is immediately dropped. Errors
@@ -83,6 +83,11 @@ A final write failure or host crash can leave an incomplete/missing archive afte
 Explicitly flush and check the returned writer, sync the file, rename, and sync the directory before
 allowing deletion. Add fault-injection coverage for final-buffer write errors and interrupted
 finalization; database rows must remain recoverable whenever durable archive completion is uncertain.
+
+Implemented 2026-09-06: final buffered writes and flushes are checked, files are synced before
+rename, and Unix directory entries are synced before deletion. Writer failure injection and a
+SQLite failure/retry regression cover error propagation and source retention. Power-loss testing
+has not been performed; non-Unix directory durability is documented in `runinator-archiver/RETENTION.md`.
 
 #### 10.2 — P1 — Track contiguous Kafka acknowledgements per partition
 
@@ -273,14 +278,19 @@ restart behavior, including infrastructure wakes and completed provider results.
 
 #### 10.16 — P2 — Reject rate-limit values that cannot construct a valid quota
 
-- [ ] Align [RateLimitConfig::validate/quota_for](runinator-ws-middleware/src/rate_limit.rs).
+- [x] Align [RateLimitConfig::validate/quota](runinator-ws-middleware/src/rate_limit.rs).
 
 Validation says RPS must be greater than zero but accepts `0.0` through the inclusive range
 `0.0..=1_000_000_000.0`. `quota_for` then computes `Duration::from_secs_f64(1.0 / rps)`, which cannot
 represent infinity. Extremely small positive RPS can also produce an unrepresentable duration.
+
 The [router](runinator-ws/src/router.rs) constructs the limiter even when it is disabled. Validate
 strict positivity and representable refill intervals, returning a configuration error instead of
 panicking. Cover zero, negative zero, subnormal positive values, and disabled configurations.
+
+Implemented 2026-09-06: validation and construction share one quota conversion. It rejects zero,
+non-finite values, unrepresentable intervals, and burst refill durations that overflow Governor's
+nanosecond representation. Regression tests cover invalid inputs and valid fractional/boundary quotas.
 
 #### 10.17 — P2 — Keep rate-limit maintenance off the per-request hot path
 

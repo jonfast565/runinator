@@ -11,6 +11,7 @@
 **/target
 **/dist
 **/node_modules
+**/.pnpm-store
 
 # VCS and local tooling
 .git

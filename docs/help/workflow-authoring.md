@@ -298,6 +298,11 @@ are tracked per notification and readable at `GET /notifications/{id}/deliveries
 
 #### Schedule policy: concurrency, catch-up, and freeze windows
 
+Calendar schedules advance strictly past their previous occurrence, including RRULE schedules.
+Freeze and exclusion intervals include their start and exclude their end. Overlapping intervals
+remain active while any interval contains the current instant. Invalid durations or windows outside
+the supported date range return a schedule error.
+
 A cron trigger fires without asking whether the last run finished. Two REXRAP header
 clauses change that, and both are evaluated at the claim point — the loop declines to
 create the run rather than creating one that immediately parks:

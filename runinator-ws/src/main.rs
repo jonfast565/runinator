@@ -104,9 +104,7 @@ async fn run_process() -> Result<(), SendableError> {
         requests_per_second: rate_limit_rps,
         burst: rate_limit_burst,
     };
-    rate_limit_options
-        .validate()
-        .map_err(|error| -> SendableError { error.into() })?;
+    rate_limit_options.validate()?;
     let circuit_breaker_options = CircuitBreakerConfig {
         enabled: circuit_breaker_enabled,
         failure_rate_threshold: circuit_breaker_failure_rate_threshold,

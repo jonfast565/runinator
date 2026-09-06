@@ -1,4 +1,5 @@
 use runinator_models::errors::{EngineErrors, ErrorDescriptor};
+pub use runinator_ws_middleware::errors::{RATE_LIMIT_BURST, RATE_LIMIT_QUOTA, RATE_LIMIT_RPS};
 
 // numbered error dictionary for the web service HTTP surface (RUNI17x). the pack-import, debug,
 // control, and replay descriptors (RUNI12x-14x) moved to runinator-engine with the repository code
@@ -74,6 +75,9 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     RELAY_UNKNOWN_REPLICA,
     RELAY_REPLICA_LOOKUP,
     RELAY_BUSY,
+    RATE_LIMIT_RPS,
+    RATE_LIMIT_BURST,
+    RATE_LIMIT_QUOTA,
 ];
 
 /// web service engine error dictionary.

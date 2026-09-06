@@ -23,6 +23,9 @@ use governor::{
     clock::{Clock, DefaultClock},
 };
 use runinator_models::auth::AuthContext;
+use runinator_models::errors::SendableError;
+
+use crate::errors;
 
 // prune the bucket map when it grows past this many keys to bound memory under ip churn.
 const PRUNE_THRESHOLD: usize = 10_000;
@@ -53,16 +56,34 @@ impl Default for RateLimitConfig {
 
 impl RateLimitConfig {
     /// Validate the user-facing floating-point flags before converting them to Governor's quota.
-    pub fn validate(&self) -> Result<(), &'static str> {
+    pub fn validate(&self) -> Result<(), SendableError> {
+        self.quota().map(|_| ())
+    }
+
+    fn quota(&self) -> Result<Quota, SendableError> {
         if !self.requests_per_second.is_finite()
-            || !(0.0..=1_000_000_000.0).contains(&self.requests_per_second)
+            || self.requests_per_second <= 0.0
+            || self.requests_per_second > 1_000_000_000.0
         {
-            return Err("rate-limit RPS must be greater than zero and at most one billion");
+            return Err(
+                errors::RATE_LIMIT_RPS.error("must be greater than zero and at most one billion")
+            );
         }
         if !self.burst.is_finite() || !(1.0..=(u32::MAX as f64)).contains(&self.burst) {
-            return Err("rate-limit burst must be between one and 4294967295");
+            return Err(errors::RATE_LIMIT_BURST.error("must be between one and 4294967295"));
         }
-        Ok(())
+        let burst = self.burst.ceil() as u32;
+        let period = Duration::try_from_secs_f64(1.0 / self.requests_per_second)
+            .map_err(|error| errors::RATE_LIMIT_QUOTA.error(error))?;
+        // governor represents both the interval and burst tolerance in u64 nanoseconds.
+        if period.as_nanos() * u128::from(burst) > u128::from(u64::MAX) {
+            return Err(
+                errors::RATE_LIMIT_QUOTA.error("burst refill duration exceeds the supported range")
+            );
+        }
+        Ok(Quota::with_period(period)
+            .ok_or_else(|| errors::RATE_LIMIT_QUOTA.error("must be at least one nanosecond"))?
+            .allow_burst(NonZeroU32::new(burst).ok_or_else(|| errors::RATE_LIMIT_BURST.bare())?))
     }
 }
 
@@ -75,7 +96,9 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(config: RateLimitConfig) -> Self {
-        let quota = quota_for(config);
+        let quota = config
+            .quota()
+            .expect("rate-limit configuration was validated at startup");
         Self {
             config,
             limiter: DefaultKeyedRateLimiter::keyed(quota),
@@ -98,19 +121,6 @@ impl RateLimiter {
             .map(|_| ())
             .map_err(|not_until| not_until.wait_time_from(self.clock.now()).as_secs_f64())
     }
-}
-
-/// Convert the historical floating-point flags into Governor's integral burst plus monotonic
-/// refill interval. Startup validates these values before construction.
-fn quota_for(config: RateLimitConfig) -> Quota {
-    config
-        .validate()
-        .expect("rate-limit configuration was validated at startup");
-    let burst = config.burst.ceil() as u32;
-    let period = Duration::from_secs_f64(1.0 / config.requests_per_second);
-    Quota::with_period(period)
-        .expect("positive Governor refill period")
-        .allow_burst(NonZeroU32::new(burst).expect("positive Governor burst"))
 }
 
 /// strict, always-on throttle for the unauthenticated auth endpoints, keyed by client ip. it runs

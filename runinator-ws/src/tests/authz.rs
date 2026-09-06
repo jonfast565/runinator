@@ -32,6 +32,79 @@ async fn register_workflow_ownership(db: &SqliteDb, workflow_id: Uuid, org_id: O
 }
 
 #[tokio::test]
+async fn restricted_admin_keys_cannot_bypass_child_resource_checks() {
+    let (db, path) = test_db().await;
+    let mut admin = auth_ctx(true, None);
+    admin.action_ceiling = vec![Action::View];
+    let checker = AuthzChecker::new(&db, &admin);
+    let id = Uuid::now_v7();
+    for denied in [
+        checker.require_run_workflow(id, Permission::Edit).await,
+        checker.require_trigger_workflow(id, Permission::Edit).await,
+        checker.require_pipeline_trigger(id, Permission::Edit).await,
+        checker.require_pipeline_run(id, Permission::Edit).await,
+        checker.require_gate_workflow(id, Permission::Edit).await,
+        checker
+            .require_automation_record_workflow("approvals", id, Permission::Edit)
+            .await,
+    ] {
+        assert_eq!(
+            denied.expect_err("the key only permits viewing").0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert!(
+        checker
+            .require_run_workflow(id, Permission::View)
+            .await
+            .is_ok()
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn resource_lists_honor_admin_and_non_admin_key_ceilings() {
+    let (db, path) = test_db().await;
+    let workflow_id = save_workflow(&db, &workflow(None, "restricted-list"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    register_workflow_ownership(&db, workflow_id, None).await;
+    let user_id = db
+        .create_user("restricted-list-user".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    db.create_grant(grant(
+        workflow_id,
+        PrincipalType::User,
+        user_id,
+        Permission::Own,
+    ))
+    .await
+    .unwrap();
+    for mut ctx in [auth_ctx(true, None), user_ctx(user_id)] {
+        ctx.action_ceiling = vec![Action::Run];
+        let ids = AuthzChecker::new(&db, &ctx)
+            .visible_workflow_ids()
+            .await
+            .map_err(|reply| reply.0)
+            .unwrap();
+        assert_eq!(ids, Some(std::collections::HashSet::new()));
+        ctx.action_ceiling = vec![Action::View];
+        let ids = AuthzChecker::new(&db, &ctx)
+            .visible_workflow_ids()
+            .await
+            .map_err(|reply| reply.0)
+            .unwrap();
+        assert!(ids.is_none_or(|ids| ids.contains(&workflow_id)));
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn breaking_contract_override_requires_own_and_is_audited() {
     use crate::handlers::workflows::{WorkflowPublishOptions, upsert_workflow};
     use axum::extract::Query;

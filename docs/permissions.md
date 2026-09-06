@@ -9,6 +9,11 @@ organization and team roles are `Member < Operator < Admin < Owner`. A platform 
 superuser. Machine principals use explicit `Engine`, `Worker`, `Waker`, `Agent`, or `Replica` system
 roles and may also have an action ceiling.
 
+Permissions from platform and local assignments are combined per action. API-key ceilings still
+restrict platform administrators, including resource listings and checks on stored children. A
+machine key must permit the action for its own assigned system role; another role accepted by the
+same endpoint cannot supply that permission.
+
 The canonical vocabulary lives in `runinator-models/src/rbac.rs` and is returned by
 `GET /authz/catalog`. `GET /auth/me` returns the selected scope, current assignments, and effective
 actions. Middleware reloads the enabled principal, session, assignments, and API-key restrictions on

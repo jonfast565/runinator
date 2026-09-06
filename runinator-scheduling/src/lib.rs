@@ -1,34 +1,44 @@
 //! Pure calendar evaluation shared by durable trigger and freeze-window schedulers.
 
-use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveTime, TimeZone, Timelike, Utc,
+};
 use chrono_tz::Tz;
 use croner::Cron;
 use rrule::{RRule, RRuleSet, Unvalidated};
 use runinator_models::schedules::{ScheduleRecurrence, ScheduleSpec, ScheduleWeekday};
 use thiserror::Error;
 
+pub mod errors;
 pub mod ical;
 
 const SEARCH_DAYS: i64 = 14;
 
 #[derive(Debug, Error)]
 pub enum ScheduleError {
-    #[error("unknown IANA timezone '{0}'")]
+    #[error("SCHEDULE001 - Unknown IANA timezone: {0}")]
     Timezone(String),
-    #[error("invalid cron expression: {0}")]
+    #[error("SCHEDULE002 - Invalid cron expression: {0}")]
     Cron(String),
-    #[error("invalid RRULE: {0}")]
+    #[error("SCHEDULE003 - Invalid RRULE: {0}")]
     Rrule(String),
-    #[error("schedule has no future occurrence")]
+    #[error("SCHEDULE004 - Schedule has no future occurrence")]
     Exhausted,
-    #[error("invalid weekday wall-clock time")]
+    #[error("SCHEDULE005 - Invalid weekday wall-clock time")]
     WeekdayTime,
+    #[error("SCHEDULE006 - Invalid schedule duration")]
+    Duration,
+    #[error("SCHEDULE007 - Schedule window exceeds the supported date range")]
+    DateRange,
 }
 
 pub type Result<T> = std::result::Result<T, ScheduleError>;
 
 /// Validate both the portable shape and the recurrence parser/timezone used at runtime.
 pub fn validate(spec: &ScheduleSpec) -> Result<()> {
+    if spec.duration_seconds < 0 || Duration::try_seconds(spec.duration_seconds).is_none() {
+        return Err(ScheduleError::Duration);
+    }
     let _ = timezone(spec)?;
     match &spec.recurrence {
         ScheduleRecurrence::Once { .. } => Ok(()),
@@ -65,7 +75,11 @@ pub fn next_after(spec: &ScheduleSpec, after: DateTime<Utc>) -> Result<DateTime<
         }
         ScheduleRecurrence::Cron { expression } => {
             let zone = timezone(spec)?;
-            let local_after = after.with_timezone(&zone);
+            // cron occurrences have second precision; croner otherwise carries the cursor's nanos.
+            let local_after = after
+                .with_timezone(&zone)
+                .with_nanosecond(0)
+                .ok_or(ScheduleError::DateRange)?;
             expression
                 .parse::<Cron>()
                 .map_err(|error| ScheduleError::Cron(error.to_string()))?
@@ -82,7 +96,11 @@ pub fn next_after(spec: &ScheduleSpec, after: DateTime<Utc>) -> Result<DateTime<
         ScheduleRecurrence::Rrule { rule, dtstart } => {
             let set = rrule_set(rule, *dtstart, spec)?;
             let zone: rrule::Tz = timezone(spec)?.into();
-            set.after(after.with_timezone(&zone))
+            // rrule's `after` filter is inclusive; our public cursor is strictly exclusive.
+            let start = after
+                .checked_add_signed(Duration::nanoseconds(1))
+                .ok_or(ScheduleError::Exhausted)?;
+            set.after(start.with_timezone(&zone))
                 .all(1)
                 .dates
                 .into_iter()
@@ -125,19 +143,18 @@ pub fn current_or_next_window(
     now: DateTime<Utc>,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
     if spec.duration_seconds <= 0 {
-        return Err(ScheduleError::WeekdayTime);
+        return Err(ScheduleError::Duration);
     }
-    let duration = Duration::seconds(spec.duration_seconds);
-    // Looking from one duration before now is sufficient: an occurrence older than that cannot
-    // still own a half-open interval containing now.
-    let threshold = now - duration - Duration::seconds(1);
-    let candidate = next_after(spec, threshold)?;
-    let start = if candidate + duration > now {
-        candidate
-    } else {
-        next_after(spec, now)?
-    };
-    Ok((start, start + duration))
+    let duration = Duration::try_seconds(spec.duration_seconds).ok_or(ScheduleError::Duration)?;
+    // the exclusive lower bound skips expired intervals without skipping overlapping active ones.
+    let threshold = now
+        .checked_sub_signed(duration)
+        .ok_or(ScheduleError::DateRange)?;
+    let start = next_after(spec, threshold)?;
+    let end = start
+        .checked_add_signed(duration)
+        .ok_or(ScheduleError::DateRange)?;
+    Ok((start, end))
 }
 
 /// Whether `instant` belongs to any half-open scheduled interval.
@@ -145,13 +162,12 @@ pub fn is_excluded(spec: &ScheduleSpec, instant: DateTime<Utc>) -> Result<bool> 
     if spec.duration_seconds <= 0 {
         return Ok(false);
     }
-    let duration = Duration::seconds(spec.duration_seconds);
-    let candidate = match next_after(spec, instant - duration - Duration::seconds(1)) {
-        Ok(candidate) => candidate,
+    let (start, end) = match current_or_next_window(spec, instant) {
+        Ok(window) => window,
         Err(ScheduleError::Exhausted) => return Ok(false),
         Err(error) => return Err(error),
     };
-    Ok(candidate <= instant && instant < candidate + duration)
+    Ok(start <= instant && instant < end)
 }
 
 fn timezone(spec: &ScheduleSpec) -> Result<Tz> {
@@ -216,47 +232,5 @@ fn rrule_set(rule: &str, dtstart: DateTime<Utc>, spec: &ScheduleSpec) -> Result<
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::TimeZone;
-
-    fn at(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(year, month, day, hour, 0, 0).unwrap()
-    }
-
-    #[test]
-    fn weekdays_keep_local_wall_time_across_dst() {
-        let spec = ScheduleSpec {
-            recurrence: ScheduleRecurrence::Weekdays {
-                days: vec![ScheduleWeekday::Tuesday, ScheduleWeekday::Wednesday],
-                hour: 3,
-                minute: 0,
-                second: 0,
-            },
-            timezone: "America/New_York".into(),
-            duration_seconds: 7_200,
-        };
-        assert_eq!(
-            next_after(&spec, at(2026, 3, 8, 8)).unwrap(),
-            at(2026, 3, 10, 7)
-        );
-        assert!(is_excluded(&spec, at(2026, 3, 10, 8)).unwrap());
-        assert!(!is_excluded(&spec, at(2026, 3, 10, 9)).unwrap());
-    }
-
-    #[test]
-    fn rrule_supports_byday() {
-        let spec = ScheduleSpec {
-            recurrence: ScheduleRecurrence::Rrule {
-                rule: "FREQ=WEEKLY;BYDAY=TU,WE".into(),
-                dtstart: at(2026, 9, 1, 7),
-            },
-            timezone: "America/New_York".into(),
-            duration_seconds: 7_200,
-        };
-        assert_eq!(
-            next_after(&spec, at(2026, 9, 1, 8)).unwrap(),
-            at(2026, 9, 2, 7)
-        );
-    }
-}
+#[path = "schedule_tests.rs"]
+mod tests;

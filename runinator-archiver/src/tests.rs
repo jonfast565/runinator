@@ -6,14 +6,19 @@ use std::{
 use chrono::{TimeZone, Utc};
 use flate2::read::GzDecoder;
 use runinator_models::json;
+#[cfg(feature = "sqlite")]
 use runinator_models::server_settings::ArchiverSettings;
+#[cfg(feature = "sqlite")]
 use runinator_store::DatabaseImpl;
 use runinator_store::archive::{ArchiveRow, ArchiveTable};
+#[cfg(feature = "sqlite")]
 use runinator_store::roles::{ArchiveStore, DeliveryStore};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{ARCHIVE_FILE_EXTENSION, archive_one_batch, write_archive_jsonl_files};
+#[cfg(feature = "sqlite")]
+use super::archive_one_batch;
+use super::{ARCHIVE_FILE_EXTENSION, write_archive_jsonl_files};
 
 #[test]
 fn archive_writer_exports_gzipped_jsonl() {
@@ -68,6 +73,7 @@ fn archive_writer_exports_gzipped_jsonl() {
     fs::remove_dir_all(&root).ok();
 }
 
+#[cfg(feature = "sqlite")]
 #[tokio::test]
 async fn archive_pass_writes_cold_storage_before_deleting_source_rows() {
     let database_path =
@@ -105,6 +111,14 @@ async fn archive_pass_writes_cold_storage_before_deleting_source_rows() {
     .unwrap();
 
     let policy = ArchiverSettings::default();
+    let blocked_root = archive_root.join("blocked");
+    fs::write(&blocked_root, b"not a directory").unwrap();
+    assert!(
+        archive_one_batch(&db, &blocked_root, &policy, "archiver-test")
+            .await
+            .is_err()
+    );
+    assert_eq!(db.fetch_dead_letters(None, 10).await.unwrap().len(), 1);
     archive_one_batch(&db, &archive_root, &policy, "archiver-test")
         .await
         .unwrap();

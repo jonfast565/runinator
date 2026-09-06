@@ -1,24 +1,16 @@
+mod archive_writer;
 mod config;
 mod errors;
 mod service;
 #[cfg(test)]
 mod tests;
 
-use std::{
-    collections::BTreeMap,
-    fs::{self, File},
-    io::{BufWriter, Write},
-    path::{Path, PathBuf},
-    process::ExitCode,
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, process::ExitCode, sync::Arc, time::Duration};
 
 use tokio::sync::Notify;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
-use flate2::{Compression, write::GzEncoder};
 use runinator_broker::{
     Broker, BrokerClientConfig, BrokerConnectionMode, BrokerConsumerProfile, IngressMessage,
     select_broker_connection,
@@ -31,17 +23,18 @@ use runinator_observability::resource_telemetry::{
     TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
 };
 use runinator_store::{
-    archive::{ArchiveRow, ArchiveTable},
+    archive::ArchiveTable,
     roles::{ArchiveStore, SettingStore},
 };
-use serde_json::json;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::{Cli, Config};
 use service::ArchiverService;
 
-const ARCHIVE_FILE_EXTENSION: &str = "jsonl.gz";
+#[cfg(test)]
+use archive_writer::ARCHIVE_FILE_EXTENSION;
+use archive_writer::write_archive_jsonl_files;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -124,7 +117,7 @@ async fn run_loop<T: ArchiveStore + SettingStore>(
     broker_backend: String,
     broker_connection: String,
 ) -> Result<(), SendableError> {
-    fs::create_dir_all(&config.archive_dir)?;
+    archive_writer::create_archive_directory(&config.archive_dir)?;
     let archiver_id = format!("runinator-archiver-{}", Uuid::new_v4());
     info!(archiver_id = %archiver_id, "archiver started");
     let shutdown = Arc::new(Notify::new());
@@ -577,51 +570,6 @@ async fn prune_housekeeping<T: ArchiveStore>(
 
 fn retention(seconds: u64) -> Option<Duration> {
     (seconds > 0).then(|| Duration::from_secs(seconds))
-}
-
-fn write_archive_jsonl_files(root: &Path, rows: &[ArchiveRow]) -> Result<(), SendableError> {
-    let mut groups = BTreeMap::<(String, ArchiveTable), Vec<&ArchiveRow>>::new();
-    for row in rows {
-        groups
-            .entry((row.created_at.format("%F").to_string(), row.table))
-            .or_default()
-            .push(row);
-    }
-    for ((day, table), rows) in groups {
-        let dir = root.join(&day);
-        fs::create_dir_all(&dir)?;
-        let final_path = dir.join(format!(
-            "{table}-{}.{}",
-            Uuid::new_v4(),
-            ARCHIVE_FILE_EXTENSION
-        ));
-        let tmp_path = temp_path(&final_path);
-        let file = File::create(&tmp_path)?;
-        let mut encoder = GzEncoder::new(BufWriter::new(file), Compression::default());
-        let archived_at = Utc::now().to_rfc3339();
-        for row in rows {
-            let line = json!({
-                "schema_version": 1,
-                "archived_at": archived_at,
-                "source_table": row.table.as_str(),
-                "primary_key": { "id": row.primary_key.to_string() },
-                "created_at": row.created_at.timestamp(),
-                "row": row.row,
-            });
-            serde_json::to_writer(&mut encoder, &line)?;
-            encoder.write_all(b"\n")?;
-        }
-        encoder.finish()?;
-        fs::rename(&tmp_path, &final_path)?;
-        info!(path = %final_path.display(), table = %table, "wrote archive file");
-    }
-    Ok(())
-}
-
-fn temp_path(path: &Path) -> PathBuf {
-    let mut value = path.as_os_str().to_os_string();
-    value.push(".tmp");
-    PathBuf::from(value)
 }
 
 fn chrono_from_std(duration: std::time::Duration) -> Result<ChronoDuration, SendableError> {

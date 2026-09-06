@@ -183,7 +183,10 @@ without invalidating live tokens or stranding stored secrets:
   authenticated principal (falling back to the connection IP). Tune it with
   `RUNINATOR_RATE_LIMIT_RPS` (sustained requests per second, default `50`) and
   `RUNINATOR_RATE_LIMIT_BURST` (bucket size, default `100`). Each ws replica limits
-  independently; `/health`, `/ready`, and `/metrics` are exempt. Over-limit
+  independently. RPS must be positive and at most one billion; burst must be between one and
+  4,294,967,295 and is rounded up. Startup rejects combinations whose full burst refill time
+  exceeds the limiter's supported duration, even when general rate limiting is disabled.
+  `/health`, `/ready`, and `/metrics` are exempt. Over-limit
   requests get `429` with a `Retry-After` header. Independently, the unauthenticated
   `/auth/login` endpoint carries an always-on per-IP brute-force throttle (a small
   burst, then ~1 attempt every 5s) that cannot be disabled.
