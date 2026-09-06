@@ -111,6 +111,28 @@ export const usePipelineStore = defineStore("pipeline", () => {
     }
   }
 
+  // refresh the saved definitions without changing the pipeline canvas selection. other control
+  // surfaces, such as orchestration authoring, need the catalog but do not own the canvas state.
+  async function refreshCatalog() {
+    loading.value = true;
+    error.value = null;
+
+    try {
+      pipelines.value = await fetchPipelines();
+
+      if (
+        selectedPipelineId.value &&
+        !pipelines.value.some((pipeline) => pipeline.id === selectedPipelineId.value)
+      ) {
+        selectedPipelineId.value = null;
+      }
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading.value = false;
+    }
+  }
+
   async function selectPipeline(id: string | null) {
     selectedPipelineId.value = id;
     selectedEdgeId.value = null;
@@ -207,6 +229,32 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
   function savePipelineMetadata(metadata: JsonRecord) {
     return persistSelected((draft) => ({ ...draft, metadata }));
+  }
+
+  // persist metadata for a caller-selected pipeline without making it the active canvas.
+  async function savePipelineMetadataFor(id: string, metadata: JsonRecord): Promise<boolean> {
+    const current = pipelines.value.find((pipeline) => pipeline.id === id);
+
+    if (!current) {
+      error.value = "Selected pipeline no longer exists.";
+      return false;
+    }
+
+    try {
+      const saved = await savePipeline({ ...current, metadata });
+      pipelines.value = pipelines.value.map((pipeline) =>
+        pipeline.id === saved.id ? saved : pipeline,
+      );
+
+      if (selectedPipelineId.value === saved.id) {
+        await refreshGraph();
+      }
+
+      return true;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+      return false;
+    }
   }
 
   function setPipelineEnabled(enabled: boolean) {
@@ -474,12 +522,14 @@ export const usePipelineStore = defineStore("pipeline", () => {
     loading,
     error,
     refresh,
+    refreshCatalog,
     selectPipeline,
     createPipeline,
     renamePipeline,
     savePipelineDefaults,
     savePipelineConcurrency,
     savePipelineMetadata,
+    savePipelineMetadataFor,
     setPipelineEnabled,
     updateJoin,
     addWorkflowToPipeline,

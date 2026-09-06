@@ -28,7 +28,25 @@
         {{ store.error }}
       </p>
 
-      <div v-if="mode === 'Instances'" class="orchestration-toolbar">
+      <div v-if="mode === 'Definitions'" class="orchestration-definition-toolbar">
+        <div>
+          <p class="adapter-eyebrow">Authoring</p>
+          <h2>Orchestration definitions</h2>
+          <p>
+            Select the pipeline that owns this policy. Saving creates its next immutable pipeline
+            revision.
+          </p>
+        </div>
+        <div class="btn-row">
+          <button class="btn" :disabled="definitionLoading" @click="refreshDefinitions">
+            <LoadingSpinner v-if="definitionLoading" size="sm" label="Refreshing pipelines" />
+            <Icon v-else name="refresh" />
+            <span>Refresh pipelines</span>
+          </button>
+        </div>
+      </div>
+
+      <div v-else-if="mode === 'Instances'" class="orchestration-toolbar">
         <div class="orchestration-filters">
           <label class="orchestration-filter orchestration-filter-primary"
             ><span>Find an orchestration</span>
@@ -120,7 +138,48 @@
       </div>
     </div>
 
-    <template v-if="mode === 'Instances'">
+    <template v-if="mode === 'Definitions'">
+      <section class="panel orchestration-definition-panel overflow-auto">
+        <div class="orchestration-definition-picker">
+          <label class="orchestration-filter orchestration-definition-select">
+            <span>Associated pipeline</span>
+            <select v-model="definitionPipelineId" :disabled="definitionLoading">
+              <option
+                v-for="item in definitionPipelines"
+                :key="item.id ?? item.name"
+                :value="item.id"
+              >
+                {{ pipelineDefinitionLabel(item) }}
+              </option>
+            </select>
+          </label>
+          <p>
+            The pipeline supplies the executable phases; this policy decides how adapter events
+            admit, control, and reconcile those phases.
+          </p>
+        </div>
+
+        <p v-if="definitionError" class="orchestration-definition-error">
+          {{ definitionError }}
+        </p>
+
+        <PipelineOrchestrationEditor
+          v-if="definitionPipeline"
+          :key="definitionPipeline.id ?? definitionPipeline.name"
+          :pipeline="definitionPipeline"
+          :adapter-kinds="store.adapterKinds"
+          @cancel="mode = 'Instances'"
+          @save="saveDefinition"
+        />
+
+        <EmptyState v-else-if="!definitionLoading" icon="workflow" title="Select a pipeline">
+          Create a pipeline with at least one workflow, then return here to define its
+          orchestration.
+        </EmptyState>
+      </section>
+    </template>
+
+    <template v-else-if="mode === 'Instances'">
       <SplitPane
         class="min-h-0 flex-1"
         storage-key="command-center.orchestrations.instances.split"
@@ -1647,6 +1706,8 @@ import type {
   JsonValue,
   OrchestrationCorrelationAlias,
   OrchestrationEvidence,
+  JsonRecord,
+  Pipeline,
   PipelineRunDetail,
   RuninatorType,
   WorkspaceLease,
@@ -1659,10 +1720,12 @@ import {
 } from "../../core/services/orchestrations";
 import { useAppStore } from "../adapters/pinia/app";
 import { useOrchestrationsStore } from "../adapters/pinia/orchestrations";
+import { usePipelineStore } from "../adapters/pinia/pipeline";
 import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useSecretsStore } from "../adapters/pinia/secrets";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
+import PipelineOrchestrationEditor from "../components/pipeline/PipelineOrchestrationEditor.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -1678,12 +1741,16 @@ import { downloadTextFile } from "../adapters/browser/files";
 
 const store = useOrchestrationsStore();
 const app = useAppStore();
+const pipelines = usePipelineStore();
 const pipelineRuns = usePipelineRunsStore();
 const secrets = useSecretsStore();
 const workflows = useWorkflowsStore();
-const modes = ["Instances", "Adapters"] as const;
+const modes = ["Definitions", "Instances", "Adapters"] as const;
 type Mode = (typeof modes)[number];
-const mode = ref<Mode>("Instances");
+const mode = ref<Mode>("Definitions");
+const definitionPipelineId = ref<string | null>(null);
+const definitionLoading = ref(false);
+const definitionError = ref<string | null>(null);
 const statuses = [
   "pending",
   "running",
@@ -1718,6 +1785,22 @@ const filters = reactive({
   pipeline_id: "",
   adapter_id: "",
 });
+
+const definitionPipelines = computed(() =>
+  [...pipelines.pipelines]
+    .filter((pipeline) => Boolean(pipeline.id))
+    .sort((left, right) => left.name.localeCompare(right.name)),
+);
+const definitionPipeline = computed(
+  () =>
+    definitionPipelines.value.find((pipeline) => pipeline.id === definitionPipelineId.value) ??
+    null,
+);
+
+function pipelineDefinitionLabel(pipeline: Pipeline): string {
+  const identity = [pipeline.namespace, pipeline.key].filter(Boolean).join("/");
+  return identity ? `${pipeline.name} · ${identity}` : pipeline.name;
+}
 
 function openBinding(id: string) {
   showInstanceList.value = false;
@@ -2122,10 +2205,61 @@ async function refreshAdapters(): Promise<void> {
   adapterCatalog.value = catalog;
 }
 
+async function refreshDefinitions(): Promise<void> {
+  definitionLoading.value = true;
+  definitionError.value = null;
+
+  try {
+    await Promise.all([pipelines.refreshCatalog(), store.refreshAdapters()]);
+    const selectedExists = definitionPipelines.value.some(
+      (pipeline) => pipeline.id === definitionPipelineId.value,
+    );
+
+    if (!selectedExists) {
+      const canvasSelection = pipelines.selectedPipelineId;
+      definitionPipelineId.value = definitionPipelines.value.some(
+        (pipeline) => pipeline.id === canvasSelection,
+      )
+        ? canvasSelection
+        : (definitionPipelines.value.at(0)?.id ?? null);
+    }
+
+    if (pipelines.error || store.error) {
+      definitionError.value = pipelines.error ?? store.error;
+    }
+  } catch (cause) {
+    definitionError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    definitionLoading.value = false;
+  }
+}
+
+async function saveDefinition(metadata: JsonRecord): Promise<void> {
+  const id = definitionPipelineId.value;
+
+  if (!id) {
+    return;
+  }
+
+  definitionError.value = null;
+  const saved = await pipelines.savePipelineMetadataFor(id, metadata);
+
+  if (!saved) {
+    definitionError.value = pipelines.error ?? "Could not save the orchestration definition.";
+    return;
+  }
+
+  app.setStatus(
+    `Saved orchestration definition for ${definitionPipeline.value?.name ?? "pipeline"}`,
+  );
+}
+
 function switchMode(next: Mode): void {
   mode.value = next;
 
-  if (next === "Instances") {
+  if (next === "Definitions") {
+    void refreshDefinitions();
+  } else if (next === "Instances") {
     refreshInstances();
   } else {
     void refreshAdapters();
@@ -2459,7 +2593,7 @@ watch(
   { immediate: true },
 );
 
-onMounted(refreshInstances);
+onMounted(() => void refreshDefinitions());
 </script>
 
 <style scoped>
@@ -2496,6 +2630,66 @@ onMounted(refreshInstances);
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
   gap: var(--space-2) var(--space-3);
+}
+
+.orchestration-definition-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.orchestration-definition-toolbar h2 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.orchestration-definition-toolbar p:not(.adapter-eyebrow) {
+  max-width: 680px;
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.orchestration-definition-panel {
+  display: grid;
+  min-height: 0;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.orchestration-definition-picker {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
+}
+
+.orchestration-definition-select {
+  min-width: min(440px, 100%);
+}
+
+.orchestration-definition-picker p {
+  max-width: 560px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.orchestration-definition-error {
+  margin: 0;
+  border: 1px solid var(--danger-fg);
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  padding: var(--space-3);
+  color: var(--danger-fg);
+  font-size: 13px;
 }
 
 .orchestration-filters {
@@ -4009,6 +4203,16 @@ onMounted(refreshInstances);
 }
 
 @media (max-width: 840px) {
+  .orchestration-definition-toolbar,
+  .orchestration-definition-picker {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .orchestration-definition-select {
+    width: 100%;
+  }
+
   .orchestration-toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
   }

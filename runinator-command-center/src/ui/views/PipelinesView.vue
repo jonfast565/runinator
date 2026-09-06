@@ -150,10 +150,6 @@
                     <Icon name="settings" />
                     <span>Defaults</span>
                   </button>
-                  <button class="btn" @click="openOrchestration">
-                    <Icon name="branch" />
-                    <span>Orchestration</span>
-                  </button>
                   <button class="btn" @click="openRename">
                     <Icon name="edit" />
                     <span>Settings</span>
@@ -430,26 +426,11 @@
         @save="submitDefaults"
       />
     </Modal>
-
-    <Modal
-      v-if="orchestrationModalOpen && selectedPipeline"
-      title="Pipeline orchestration"
-      description="Configure how correlated external events observe, pause, restart, or signal pipeline runs."
-      width="min(1100px, 96vw)"
-      @close="orchestrationModalOpen = false"
-    >
-      <PipelineOrchestrationEditor
-        :pipeline="selectedPipeline"
-        :adapter-kinds="adapterKinds"
-        @cancel="orchestrationModalOpen = false"
-        @save="submitOrchestration"
-      />
-    </Modal>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePipelineStore } from "../adapters/pinia/pipeline";
 import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
@@ -461,8 +442,6 @@ import type {
   PipelineConcurrency,
   PipelineJoinMode,
   PipelineMemberFailureMode,
-  AdapterKindMetadata,
-  JsonRecord,
 } from "../../core/domain/models";
 import {
   artifactIdentityError,
@@ -470,7 +449,6 @@ import {
   pipelinePath,
   REXRAP_IDENTIFIER_PATTERN,
 } from "../../core/domain/models";
-import { fetchAdapterKinds } from "../../core/services/orchestrations";
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
 import SplitPane from "../components/shared/SplitPane.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -483,7 +461,6 @@ import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineDefaultsEditor from "../components/pipeline/PipelineDefaultsEditor.vue";
-import PipelineOrchestrationEditor from "../components/pipeline/PipelineOrchestrationEditor.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 
 const pipeline = usePipelineStore();
@@ -668,8 +645,6 @@ const pipelineIdentityError = computed(() => {
 });
 const validPipelineIdentity = computed(() => !pipelineIdentityError.value);
 const defaultsModalOpen = ref(false);
-const orchestrationModalOpen = ref(false);
-const adapterKinds = shallowRef<AdapterKindMetadata[]>([]);
 const starting = ref(false);
 
 function choosePipeline(item: Pipeline) {
@@ -812,28 +787,10 @@ function openDefaults() {
   defaultsModalOpen.value = true;
 }
 
-async function openOrchestration() {
-  try {
-    adapterKinds.value = (await fetchAdapterKinds())
-      .filter((entry) => entry.healthy && !entry.error)
-      .map((entry) => entry.metadata);
-  } catch (error) {
-    adapterKinds.value = [];
-    app.setError(error instanceof Error ? error.message : String(error));
-  }
-
-  orchestrationModalOpen.value = true;
-}
-
 async function submitDefaults(defaults: PipelineDefaults, concurrency: PipelineConcurrency) {
   await pipeline.savePipelineDefaults(defaults);
   await pipeline.savePipelineConcurrency(concurrency);
   defaultsModalOpen.value = false;
-}
-
-async function submitOrchestration(metadata: JsonRecord) {
-  await pipeline.savePipelineMetadata(metadata);
-  orchestrationModalOpen.value = false;
 }
 
 async function confirmDelete() {
