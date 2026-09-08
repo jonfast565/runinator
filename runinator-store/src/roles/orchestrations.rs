@@ -7,11 +7,11 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     errors::SendableError,
     orchestration::{
-        AdapterDefinition, AdapterPollStatus, AdapterRevision, AdapterTransport, ExternalOperation,
-        ExternalOperationStatus, NewOrchestrationBinding, OrchestrationBinding,
-        OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
-        OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
-        OrchestrationStatus,
+        AdapterAuthentication, AdapterDefinition, AdapterPollStatus, AdapterRevision,
+        AdapterTransport, ExternalOperation, ExternalOperationStatus, NewOrchestrationBinding,
+        OrchestrationBinding, OrchestrationCommand, OrchestrationCorrelationAlias,
+        OrchestrationEpoch, OrchestrationEventReduction, OrchestrationEvidence,
+        OrchestrationPendingIntent, OrchestrationStatus,
     },
     value::Value,
 };
@@ -74,7 +74,7 @@ pub struct NewAdapterDefinition {
     pub transport: AdapterTransport,
     pub endpoint_identity: String,
     pub configuration: Value,
-    pub secret_bindings: BTreeMap<String, Uuid>,
+    pub authentication: AdapterAuthentication,
     pub identity_configuration: Value,
     pub actor_id: Option<Uuid>,
 }
@@ -87,9 +87,22 @@ pub struct NewAdapterRevision {
     pub kind_version: String,
     pub transport: AdapterTransport,
     pub configuration: Value,
-    pub secret_bindings: BTreeMap<String, Uuid>,
+    pub authentication: AdapterAuthentication,
     pub identity_configuration: Value,
     pub actor_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdapterPollDispatch {
+    pub id: Uuid,
+    pub adapter_id: Uuid,
+    pub adapter_revision: i64,
+    pub profile_id: Uuid,
+    pub claim_owner: String,
+    pub command: runinator_comm::EffectCommand,
+    pub state: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -376,6 +389,23 @@ pub trait OrchestrationStore: Send + Sync + 'static {
         &self,
         adapter_id: Uuid,
     ) -> impl Future<Output = Result<Option<AdapterPollStatus>, SendableError>> + Send;
+
+    fn insert_orchestration_adapter_poll_dispatch(
+        &self,
+        dispatch: AdapterPollDispatch,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn fetch_orchestration_adapter_poll_dispatch(
+        &self,
+        dispatch_id: Uuid,
+    ) -> impl Future<Output = Result<Option<AdapterPollDispatch>, SendableError>> + Send;
+
+    fn update_orchestration_adapter_poll_dispatch_state(
+        &self,
+        dispatch_id: Uuid,
+        state: String,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     fn complete_orchestration_adapter_poll(
         &self,

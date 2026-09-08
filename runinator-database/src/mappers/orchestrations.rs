@@ -153,10 +153,18 @@ fallible_row_mapper!(row_to_orchestration_adapter(row) -> AdapterDefinition {
 });
 
 fallible_row_mapper!(row_to_orchestration_adapter_revision(row) -> AdapterRevision {
+    let mut authentication: runinator_models::orchestration::AdapterAuthentication =
+        serde_json::from_str(&row.get::<String, _>("authentication"))?;
+    if matches!(&authentication, runinator_models::orchestration::AdapterAuthentication::Secrets { secret_bindings } if secret_bindings.is_empty()) {
+        let legacy: BTreeMap<String, Uuid> = serde_json::from_str(&row.get::<String, _>("secret_bindings"))?;
+        if !legacy.is_empty() {
+            authentication = runinator_models::orchestration::AdapterAuthentication::Secrets { secret_bindings: legacy };
+        }
+    }
     Ok(AdapterRevision {
         id: row.get("id"), adapter_id: row.get("adapter_id"), revision: row.get("revision"),
         kind_version: row.get("kind_version"), transport: serde_json::from_value(serde_json::Value::String(row.get("transport"))).unwrap_or_default(), configuration: parse_json(row.get("configuration")),
-        secret_bindings: serde_json::from_str(&row.get::<String, _>("secret_bindings"))?,
+        authentication,
         identity_configuration: parse_json(row.get("identity_configuration")),
         created_at: timestamp(row.get("created_at")), actor_id: row.get("actor_id"),
     })

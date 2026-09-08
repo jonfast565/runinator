@@ -15,7 +15,7 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, ExecutionProfileStore},
+    roles::{DefinitionStore, ExecutionProfileStore, OrchestrationStore},
 };
 use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
@@ -368,6 +368,39 @@ impl<T: DefinitionStore + ExecutionProfileStore> ExecutionProfileOperations<T> {
     }
 }
 
+impl<T: OrchestrationStore> ExecutionProfileOperations<T> {
+    /// Return active adapters whose current revision binds this profile. Durable UUID bindings and
+    /// unresolved authored aliases are both included so deletion cannot strand adapter polling.
+    pub async fn dependent_adapter_names(
+        &self,
+        id: Uuid,
+        org_id: Option<Uuid>,
+        name: &str,
+    ) -> Result<Vec<String>, SendableError> {
+        let mut dependents = Vec::new();
+        for adapter in self.store.fetch_orchestration_adapters(org_id).await? {
+            let Some(revision) = self
+                .store
+                .fetch_orchestration_adapter_revision(adapter.id, adapter.current_revision)
+                .await?
+            else {
+                continue;
+            };
+            if revision
+                .authentication
+                .execution_profile()
+                .is_some_and(|binding| {
+                    binding.id() == id || (binding.id().is_nil() && binding.name() == name)
+                })
+            {
+                dependents.push(adapter.name);
+            }
+        }
+        dependents.sort();
+        Ok(dependents)
+    }
+}
+
 fn invalid_profile(message: impl Into<String>) -> SendableError {
     Box::new(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
@@ -483,10 +516,13 @@ fn normalize_command(
 mod tests {
     use super::*;
     use runinator_database::sqlite::SqliteDb;
-    use runinator_models::execution_profiles::{
-        ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
+    use runinator_models::{
+        execution_profiles::{
+            ExecutionProfileBinding, ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
+        },
+        orchestration::{AdapterAuthentication, AdapterTransport},
     };
-    use runinator_store::DatabaseImpl;
+    use runinator_store::{DatabaseImpl, roles::NewAdapterDefinition};
 
     fn request() -> ExecutionProfilePutRequest {
         ExecutionProfilePutRequest {
@@ -634,6 +670,52 @@ mod tests {
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0].name, "organization-profile");
         assert_eq!(profiles[1].name, "platform-profile");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn adapter_dependencies_are_reported_for_profile_deletion() {
+        let path = std::env::temp_dir().join(format!("runinator-profile-{}.db", Uuid::now_v7()));
+        let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+        let service = ExecutionProfileOperations::new(db.clone());
+        let org_id = Uuid::now_v7();
+        let profile_id = Uuid::now_v7();
+        let profile = service
+            .configure(profile_id, Some(org_id), request(), Some(Utc::now()), true)
+            .await
+            .unwrap();
+
+        db.create_orchestration_adapter(
+            NewAdapterDefinition {
+                id: Uuid::now_v7(),
+                org_id,
+                name: "github-poller".into(),
+                kind: "github".into(),
+                kind_version: "1".into(),
+                transport: AdapterTransport::Polling,
+                endpoint_identity: Uuid::now_v7().to_string(),
+                configuration: runinator_models::json!({}),
+                authentication: AdapterAuthentication::ExecutionProfile {
+                    profile: ExecutionProfileBinding::resolved(profile_id, &profile.name),
+                    required_labels: BTreeMap::new(),
+                },
+                identity_configuration: runinator_models::json!({}),
+                actor_id: None,
+            },
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            service
+                .dependent_adapter_names(profile_id, Some(org_id), &profile.name)
+                .await
+                .unwrap(),
+            ["github-poller"]
+        );
 
         let _ = std::fs::remove_file(path);
     }

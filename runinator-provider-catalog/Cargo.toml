@@ -15,6 +15,7 @@ runinator-provider-email = { path = "../runinator-provider-email" }
 runinator-provider-functions = { path = "../runinator-provider-functions" }
 runinator-provider-git = { path = "../runinator-provider-git" }
 runinator-provider-github = { path = "../runinator-provider-github" }
+runinator-provider-github-cli = { path = "../runinator-provider-github-cli" }
 runinator-provider-jira = { path = "../runinator-provider-jira" }
 runinator-provider-slack = { path = "../runinator-provider-slack" }
 runinator-provider-db = { path = "../runinator-provider-db", default-features = false }

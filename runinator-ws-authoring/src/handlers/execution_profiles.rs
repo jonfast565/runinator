@@ -30,7 +30,7 @@ use runinator_models::{
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
     RuntimeStore,
-    roles::{DefinitionStore, ExecutionProfileStore},
+    roles::{DefinitionStore, ExecutionProfileStore, OrchestrationStore},
 };
 use runinator_ws_core::{
     ValidatedJson,
@@ -79,20 +79,34 @@ pub struct ProfileLookup {
     pub name: Option<String>,
     #[serde(default)]
     pub consumer_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub consumer_adapter_dispatch_id: Option<Uuid>,
 }
 
-async fn run_admitted_profile<T: RuntimeStore>(
+async fn consumer_admitted_profile<T: RuntimeStore + OrchestrationStore>(
     service: &ExecutionProfileOperations<T>,
-    run_id: Option<Uuid>,
+    store: &T,
+    query: &ProfileLookup,
     profile_id: Uuid,
 ) -> bool {
-    let Some(run_id) = run_id else {
+    if let Some(run_id) = query.consumer_run_id {
+        return service
+            .run_admitted_profile(run_id, profile_id)
+            .await
+            .unwrap_or(false);
+    }
+    let Some(dispatch_id) = query.consumer_adapter_dispatch_id else {
         return false;
     };
-    service
-        .run_admitted_profile(run_id, profile_id)
+    store
+        .fetch_orchestration_adapter_poll_dispatch(dispatch_id)
         .await
-        .unwrap_or(false)
+        .ok()
+        .flatten()
+        .is_some_and(|dispatch| {
+            dispatch.profile_id == profile_id
+                && matches!(dispatch.state.as_str(), "queued" | "published" | "running")
+        })
 }
 
 fn effective_health(mut profile: ExecutionProfile) -> ExecutionProfile {
@@ -326,7 +340,9 @@ pub async fn complete_operation<T: AuthorizationStore + ExecutionProfileStore>(
     }
 }
 
-pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
+pub async fn get_profile<
+    T: AuthorizationStore + ExecutionProfileStore + RuntimeStore + OrchestrationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
@@ -351,7 +367,7 @@ pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
         return reply.into_reply();
     }
     if ctx.system_role == Some(SystemRole::Worker)
-        && !run_admitted_profile(service.as_ref(), query.consumer_run_id, id).await
+        && !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, id).await
     {
         return not_found("execution profile not found");
     }
@@ -365,7 +381,9 @@ pub async fn get_profile<T: AuthorizationStore + ExecutionProfileStore>(
     }
 }
 
-pub async fn resolve<T: AuthorizationStore + ExecutionProfileStore>(
+pub async fn resolve<
+    T: AuthorizationStore + ExecutionProfileStore + RuntimeStore + OrchestrationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
@@ -381,13 +399,13 @@ pub async fn resolve<T: AuthorizationStore + ExecutionProfileStore>(
     {
         return reply.into_reply();
     }
-    let Some(name) = query.name else {
+    let Some(ref name) = query.name else {
         return bad_request("profile name is required");
     };
-    match service.fetch_by_name(ctx.org_id, &name).await {
+    match service.fetch_by_name(ctx.org_id, name).await {
         Ok(Some(value)) => {
             if ctx.system_role == Some(SystemRole::Worker)
-                && !run_admitted_profile(service.as_ref(), query.consumer_run_id, value.id).await
+                && !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, value.id).await
             {
                 return not_found("execution profile not found");
             }
@@ -591,7 +609,9 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
     }
 }
 
-pub async fn content<T: AuthorizationStore + ExecutionProfileStore>(
+pub async fn content<
+    T: AuthorizationStore + ExecutionProfileStore + RuntimeStore + OrchestrationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
@@ -602,7 +622,7 @@ pub async fn content<T: AuthorizationStore + ExecutionProfileStore>(
     if ctx.require_system_role(&[SystemRole::Worker]).is_err() {
         return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
     }
-    if !run_admitted_profile(service.as_ref(), query.consumer_run_id, id).await {
+    if !consumer_admitted_profile(service.as_ref(), db.as_ref(), &query, id).await {
         return (StatusCode::NOT_FOUND, "execution profile bundle not found").into_response();
     }
     let profile = match service.fetch(id).await {
@@ -675,7 +695,9 @@ pub async fn content<T: AuthorizationStore + ExecutionProfileStore>(
         .unwrap()
 }
 
-pub async fn remove<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>(
+pub async fn remove<
+    T: AuthorizationStore + DefinitionStore + ExecutionProfileStore + OrchestrationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(service): Extension<Arc<ExecutionProfileOperations<T>>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
@@ -707,6 +729,19 @@ pub async fn remove<T: AuthorizationStore + DefinitionStore + ExecutionProfileSt
         return bad_request(format!(
             "execution profile {id} is referenced by {}",
             inbound.join(", ")
+        ));
+    }
+    let adapters = match service
+        .dependent_adapter_names(id, ctx.org_id, &profile.name)
+        .await
+    {
+        Ok(adapters) => adapters,
+        Err(error) => return api_error(error.to_string()),
+    };
+    if !adapters.is_empty() {
+        return bad_request(format!(
+            "execution profile {id} is referenced by adapters {}",
+            adapters.join(", ")
         ));
     }
     match service.remove(id, ctx.org_id).await {
@@ -953,7 +988,13 @@ pub async fn report_status<T: AuthorizationStore + ExecutionProfileStore>(
     }
 }
 
-pub fn routes<T: AuthorizationStore + DefinitionStore + ExecutionProfileStore>(
+pub fn routes<
+    T: AuthorizationStore
+        + DefinitionStore
+        + ExecutionProfileStore
+        + RuntimeStore
+        + OrchestrationStore,
+>(
     pool: Arc<T>,
 ) -> axum::Router {
     use axum::routing::{get, post};

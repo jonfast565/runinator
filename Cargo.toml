@@ -46,6 +46,7 @@ members = [
     "runinator-provider-email",
     "runinator-provider-git",
     "runinator-provider-github",
+    "runinator-provider-github-cli",
     "runinator-provider-jira",
     "runinator-provider-local-files",
     "runinator-provider-catalog",
@@ -79,4 +80,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.16.653"
+version = "0.17.654"

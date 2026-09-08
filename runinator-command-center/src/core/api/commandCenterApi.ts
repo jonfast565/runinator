@@ -953,7 +953,7 @@ export interface AdapterApplyInput {
   kind_version: string;
   transport: "webhook" | "polling";
   configuration: unknown;
-  secret_bindings: Record<string, string>;
+  authentication: import("../domain/models").AdapterAuthentication;
   identity_configuration: unknown;
   expected_revision?: number;
 }

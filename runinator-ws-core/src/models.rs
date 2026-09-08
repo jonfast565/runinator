@@ -292,6 +292,9 @@ pub struct AdapterApplyRequest {
     #[serde(default)]
     pub configuration: Value,
     #[serde(default)]
+    pub authentication: runinator_models::orchestration::AdapterAuthentication,
+    /// Deprecated compatibility field. New clients send `authentication`.
+    #[serde(default)]
     pub secret_bindings: BTreeMap<String, Uuid>,
     #[serde(default)]
     pub identity_configuration: Value,
@@ -312,6 +315,9 @@ pub struct AdapterTestRequest {
     pub body_base64: String,
     #[serde(default)]
     pub configuration: Option<Value>,
+    #[serde(default)]
+    pub authentication: Option<runinator_models::orchestration::AdapterAuthentication>,
+    /// Deprecated compatibility field. New clients send `authentication`.
     #[serde(default)]
     pub secret_bindings: Option<BTreeMap<String, Uuid>>,
 }
@@ -726,6 +732,30 @@ impl Validate for AdapterApplyRequest {
         for key in self.secret_bindings.keys() {
             identifier(&format!("secret_bindings.{key}"), key)?;
         }
+        match &self.authentication {
+            runinator_models::orchestration::AdapterAuthentication::Secrets { secret_bindings } => {
+                if secret_bindings.len() > 128 {
+                    return Err(ValidationError::new(
+                        "authentication.secret_bindings",
+                        "must contain at most 128 entries",
+                    ));
+                }
+                for key in secret_bindings.keys() {
+                    identifier(&format!("authentication.secret_bindings.{key}"), key)?;
+                }
+            }
+            runinator_models::orchestration::AdapterAuthentication::ExecutionProfile {
+                required_labels,
+                ..
+            } => {
+                if required_labels.is_empty() {
+                    return Err(ValidationError::new(
+                        "authentication.required_labels",
+                        "must select at least one worker label",
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -753,6 +783,16 @@ impl Validate for AdapterTestRequest {
                 ));
             }
             bounded_text(&format!("headers.{name}"), value, 8 * 1024)?;
+        }
+        if self
+            .secret_bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.len() > 128)
+        {
+            return Err(ValidationError::new(
+                "secret_bindings",
+                "must contain at most 128 entries",
+            ));
         }
         bounded_text("body_base64", &self.body_base64, 16 * 1024 * 1024)
     }

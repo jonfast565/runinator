@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use runinator_adapter_contract::AdapterPollResponse;
 use runinator_broker_core::Broker;
 use runinator_comm::EffectResultKind;
 use runinator_models::interrupt::InterruptSource;
@@ -14,10 +15,7 @@ use runinator_models::{
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_runtime::workflow_vm::interrupt_handler_continuation;
-use runinator_store::{
-    RuntimeStore,
-    roles::{ExternalOperationUpdate, NotificationStore, OrchestrationStore, WorkflowVmStore},
-};
+use runinator_store::roles::{ExternalOperationUpdate, OrchestrationStore, WorkflowVmStore};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -25,9 +23,7 @@ const EFFECT_RESULT_CONSUMER_ID: &str = "runinator-ws-effects";
 
 /// Consume effect results independently of the legacy node-run result channel. A stale attempt is
 /// harmless: `settle_workflow_effect` returns `false`, after which this delivery is acknowledged.
-pub async fn run_effect_result_consumer<
-    T: WorkflowVmStore + NotificationStore + RuntimeStore + OrchestrationStore,
->(
+pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     publisher: crate::events::EventSender,
@@ -86,6 +82,50 @@ pub async fn run_effect_result_consumer<
                         .await
                     {
                         warn!(error = %err, "failed to requeue notification effect result");
+                    }
+                }
+            }
+            continue;
+        }
+
+        let adapter_dispatch = match db
+            .fetch_orchestration_adapter_poll_dispatch(delivery.result.effect_id)
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                error!(error = %err, effect_id = %delivery.result.effect_id, "failed to classify adapter poll result");
+                let _ = broker
+                    .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                    .await;
+                continue;
+            }
+        };
+        if let Some(dispatch) = adapter_dispatch {
+            let settled = settle_adapter_poll_result(
+                db.clone(),
+                broker.clone(),
+                publisher.clone(),
+                &dispatch,
+                &delivery.result.kind,
+            )
+            .await;
+            match settled {
+                Ok(()) => {
+                    if let Err(err) = broker
+                        .ack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to ack adapter poll result");
+                    }
+                }
+                Err(err) => {
+                    error!(error = %err, effect_id = %delivery.result.effect_id, "failed to settle adapter poll result");
+                    if let Err(err) = broker
+                        .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to requeue adapter poll result");
                     }
                 }
             }
@@ -317,6 +357,82 @@ pub async fn run_effect_result_consumer<
             }
         }
     }
+}
+
+async fn settle_adapter_poll_result<T: crate::engine::BackgroundEngineStore>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    publisher: crate::events::EventSender,
+    dispatch: &runinator_store::roles::AdapterPollDispatch,
+    kind: &EffectResultKind,
+) -> Result<(), String> {
+    if matches!(dispatch.state.as_str(), "succeeded" | "failed") {
+        return Ok(());
+    }
+    if matches!(kind, EffectResultKind::Claimed { .. }) {
+        db.update_orchestration_adapter_poll_dispatch_state(
+            dispatch.id,
+            "running".into(),
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let EffectResultKind::Status {
+        status,
+        output,
+        message,
+    } = kind
+    else {
+        return Ok(());
+    };
+    let failure = if *status == WorkflowEffectStatus::Succeeded {
+        let value: serde_json::Value = output.clone().unwrap_or_default().into();
+        match serde_json::from_value::<AdapterPollResponse>(value) {
+            Ok(response) => {
+                let pipelines =
+                    crate::services::PipelineOperations::new(db.clone(), broker, publisher, None);
+                crate::adapter_polling::settle_dispatched_poll(
+                    db.clone(),
+                    &pipelines,
+                    dispatch,
+                    response,
+                )
+                .await
+                .err()
+            }
+            Err(error) => Some(format!(
+                "adapter worker returned an invalid response: {error}"
+            )),
+        }
+    } else {
+        Some(
+            message
+                .clone()
+                .unwrap_or_else(|| format!("adapter worker returned {status:?}")),
+        )
+    };
+    let now = chrono::Utc::now();
+    if let Some(error) = failure {
+        db.fail_orchestration_adapter_poll(
+            dispatch.adapter_id,
+            dispatch.claim_owner.clone(),
+            now + chrono::TimeDelta::seconds(60),
+            error,
+            now,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        db.update_orchestration_adapter_poll_dispatch_state(dispatch.id, "failed".into(), now)
+            .await
+            .map_err(|error| error.to_string())?;
+    } else {
+        db.update_orchestration_adapter_poll_dispatch_state(dispatch.id, "succeeded".into(), now)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 async fn hold_ambiguous_at_least_once<T: OrchestrationStore>(

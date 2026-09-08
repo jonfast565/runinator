@@ -9,8 +9,8 @@ use runinator_models::{
     errors::SendableError,
     orchestration::DeliverySemantics,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata, RuninatorType,
+        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -259,17 +259,39 @@ impl Provider for GitHubProvider {
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["github".into()],
                 contract: None,
-                execution_profile: Default::default(),
+                execution_profile: ExecutionProfileSupport::Subprocess,
             },
         }
     }
 
     fn execute_service(
         &self,
-        request: ProviderExecutionRequest,
+        mut request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
         _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
+        let supplied_token = request
+            .parameters
+            .get("token")
+            .and_then(runinator_models::value::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        match (supplied_token, request.execution_profile.as_ref()) {
+            (true, Some(_)) => return Err(errors::CONFLICTING_AUTHENTICATION.bare()),
+            (false, None) => return Err(errors::MISSING_AUTHENTICATION.bare()),
+            (false, Some(profile)) => {
+                let token = runinator_provider_github_cli::resolve_auth_token(
+                    profile,
+                    Duration::from_secs(request.timeout_secs.max(1) as u64),
+                )?;
+                let mut parameters = serde_json::to_value(&request.parameters)?;
+                let object = parameters.as_object_mut().ok_or_else(|| {
+                    errors::INVALID_PARAMS.error("github parameters must be an object")
+                })?;
+                object.insert("token".into(), Value::String(token));
+                request.parameters = serde_json::from_value(parameters)?;
+            }
+            (true, None) => {}
+        }
         let function = request.action_function.as_str();
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(request.timeout_secs.max(1) as u64))

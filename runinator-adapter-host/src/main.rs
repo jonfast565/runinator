@@ -20,8 +20,8 @@ use runinator_adapter_contract::{
 };
 use runinator_models::{
     orchestration::{
-        AdapterConfigurationField, AdapterKindCatalogEntry, AdapterKindMetadata,
-        NormalizedAdapterEvent,
+        AdapterAuthenticationKind, AdapterConfigurationField, AdapterKindCatalogEntry,
+        AdapterKindMetadata, NormalizedAdapterEvent,
     },
     types::RuninatorType,
 };
@@ -127,6 +127,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Path::new(required_arg(&args, 4)?),
         );
     }
+    if args.get(1).map(String::as_str) == Some("--poll-once") {
+        return poll_once(
+            required_arg(&args, 2)?,
+            Path::new(required_arg(&args, 3)?),
+            Path::new(required_arg(&args, 4)?),
+        )
+        .await;
+    }
 
     let token = std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN")
         .map_err(|_| "RUNINATOR_ADAPTER_HOST_TOKEN is required")?;
@@ -161,6 +169,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(DefaultBodyLimit::max(host_request_limit))
         .with_state(state);
     axum::serve(listener, router).await?;
+    Ok(())
+}
+
+async fn poll_once(
+    kind: &str,
+    request_path: &Path,
+    response_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let request: AdapterPollRequest = serde_json::from_slice(&std::fs::read(request_path)?)?;
+    let response = if builtin_catalog().contains_key(kind) {
+        builtin_poll(kind, request).await
+    } else {
+        let paths = std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
+            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let limits = HostLimits::from_env();
+        let mut selected = None;
+        for directory in paths {
+            let Ok(entries) = std::fs::read_dir(directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if is_library(&path)
+                    && dynamic_metadata(&path, limits)
+                        .await
+                        .is_ok_and(|metadata| metadata.kind == kind)
+                {
+                    selected = Some(path);
+                    break;
+                }
+            }
+        }
+        match selected {
+            Some(path) => invoke_dynamic_poll(&path, &request, limits)
+                .await
+                .unwrap_or_else(|error| AdapterPollResponse {
+                    events: Vec::new(),
+                    checkpoint: request.checkpoint,
+                    retry_after_seconds: None,
+                    error: Some(error),
+                }),
+            None => AdapterPollResponse {
+                events: Vec::new(),
+                checkpoint: request.checkpoint,
+                retry_after_seconds: None,
+                error: Some(format!(
+                    "adapter kind '{kind}' is not installed on this worker"
+                )),
+            },
+        }
+    };
+    std::fs::write(response_path, serde_json::to_vec(&response)?)?;
     Ok(())
 }
 
@@ -581,6 +642,8 @@ fn placeholder_metadata(path: &Path) -> AdapterKindMetadata {
         event_names: vec![],
         canonical_pointers: vec![],
         capabilities: vec![],
+        polling_authentication: vec![],
+        execution_profile_scopes: vec![],
         setup_instructions: vec![],
     }
 }
@@ -699,6 +762,8 @@ fn generic_metadata() -> AdapterKindMetadata {
             "/event_type".into(),
         ],
         capabilities: vec!["hmac_sha256".into(), "bearer".into()],
+        polling_authentication: vec![],
+        execution_profile_scopes: vec![],
         setup_instructions: vec![
             "Configure the sender to POST the original JSON bytes to the webhook URL above.".into(),
             "For HMAC-SHA256, send sha256=<hex digest> in X-Runinator-Signature; for bearer authentication, send Authorization: Bearer <token>.".into(),
@@ -739,6 +804,8 @@ fn jira_metadata() -> AdapterKindMetadata {
             "/provenance".into(),
         ],
         capabilities: vec!["bearer".into(), "polling".into()],
+        polling_authentication: vec![AdapterAuthenticationKind::Secrets],
+        execution_profile_scopes: vec![],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
             "For webhooks, configure Jira automation to POST issue and comment deliveries and send the selected Secret as a bearer token.".into(),
@@ -774,10 +841,12 @@ fn github_metadata() -> AdapterKindMetadata {
             "/provenance".into(),
         ],
         capabilities: vec!["hmac_sha256".into(), "polling".into()],
+        polling_authentication: vec![AdapterAuthenticationKind::ExecutionProfile],
+        execution_profile_scopes: vec!["github".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
             "For webhooks, use the displayed URL with application/json, select a matching webhook Secret, and subscribe to the required pull request, check run, and workflow run events.".into(),
-            "For polling, select an access-token Secret, list repositories as owner/name, and configure the cadence.".into(),
+            "For polling, select a GitHub execution profile, list repositories as owner/name, and configure the cadence.".into(),
         ],
     }
 }
@@ -889,8 +958,8 @@ fn retry_after_header(response: &reqwest::Response) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
-/// The `Link: <url>; rel="next"` cursor GitHub returns on every paginated collection. Kept pure so
-/// the header grammar is assertable without standing up a response.
+/// The `Link: <url>; rel="next"` cursor GitHub returns on every paginated collection.
+#[cfg(test)]
 fn parse_next_link(header: &str) -> Option<String> {
     header.split(',').find_map(|part| {
         let (url, rel) = part.split_once(';')?;
@@ -903,70 +972,60 @@ fn parse_next_link(header: &str) -> Option<String> {
     })
 }
 
-fn github_next_link(response: &reqwest::Response) -> Option<String> {
-    parse_next_link(response.headers().get("link")?.to_str().ok()?)
-}
-
-/// GitHub reports exhausted quota two ways: 429, and 403 with a zeroed remaining counter. Treating
-/// only the former as a rate limit turns the common case into a generic failure with the wrong
-/// retry delay, so both are recognized here rather than at each call site.
-fn github_rate_limited(response: &reqwest::Response) -> Option<RateLimited> {
-    let exhausted = response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
-        || (response.status() == reqwest::StatusCode::FORBIDDEN
-            && response
-                .headers()
-                .get("x-ratelimit-remaining")
-                .and_then(|value| value.to_str().ok())
-                == Some("0"));
-    exhausted.then(|| RateLimited {
-        retry_after_seconds: retry_after_header(response),
-    })
-}
-
-async fn github_get(
-    client: &reqwest::Client,
-    token: &str,
-    url: &str,
-) -> Result<(Value, Option<String>), PollError> {
-    let response = client
-        .get(url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "runinator-adapter-host")
-        .send()
-        .await
-        .map_err(|error| PollError::Failed(error.to_string()))?;
-    if let Some(limited) = github_rate_limited(&response) {
-        return Err(PollError::RateLimited(limited));
+async fn github_get(url: &str) -> Result<Value, PollError> {
+    let output = timeout(
+        Duration::from_secs(30),
+        Command::new("gh")
+            .args([
+                "api",
+                "--method",
+                "GET",
+                "--header",
+                "Accept: application/vnd.github+json",
+                "--header",
+                "X-GitHub-Api-Version: 2022-11-28",
+                url,
+            ])
+            .env_remove("GH_TOKEN")
+            .env_remove("GITHUB_TOKEN")
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("GH_PAGER", "cat")
+            .env("NO_COLOR", "1")
+            .output(),
+    )
+    .await
+    .map_err(|_| PollError::Failed("gh api timed out".into()))?
+    .map_err(|error| PollError::Failed(format!("gh api could not start: {error}")))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if error.to_ascii_lowercase().contains("rate limit") {
+            return Err(PollError::RateLimited(RateLimited {
+                retry_after_seconds: None,
+            }));
+        }
+        return Err(PollError::Failed(format!("gh api failed: {error}")));
     }
-    let next = github_next_link(&response);
-    let response = response
-        .error_for_status()
-        .map_err(|error| PollError::Failed(error.to_string()))?;
-    let body = response
-        .json::<Value>()
-        .await
-        .map_err(|error| PollError::Failed(error.to_string()))?;
-    Ok((body, next))
+    if output.stdout.len() > DEFAULT_OUTPUT_LIMIT * 4 {
+        return Err(PollError::Failed("gh api response exceeds 4 MiB".into()));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| PollError::Failed(format!("gh api returned invalid JSON: {error}")))
 }
 
 /// Walk a GitHub collection newest-first, stopping at the first page whose items are all older
 /// than `since`. Without this a repository with more than one page of activity silently dropped
 /// everything past the first hundred items the moment the watermark moved past them.
 async fn github_collect(
-    client: &reqwest::Client,
-    token: &str,
     first_url: String,
     array_key: Option<&str>,
     since: Option<&str>,
     timestamp_of: impl Fn(&Value) -> String,
 ) -> Result<Vec<Value>, PollError> {
-    let mut url = Some(first_url);
     let mut collected = Vec::new();
-    for _ in 0..GITHUB_MAX_PAGES {
-        let Some(current) = url.take() else { break };
-        let (body, next) = github_get(client, token, &current).await?;
+    for page in 1..=GITHUB_MAX_PAGES {
+        let separator = if first_url.contains('?') { '&' } else { '?' };
+        let current = format!("{first_url}{separator}page={page}");
+        let body = github_get(&current).await?;
         let values = array_key
             .and_then(|key| body.get(key))
             .and_then(Value::as_array)
@@ -982,11 +1041,14 @@ async fn github_collect(
                 !stamp.is_empty() && stamp.as_str() < since
             })
         });
+        let page_len = values.len();
         collected.extend(values);
         if exhausted {
             break;
         }
-        url = next;
+        if page_len < 100 {
+            break;
+        }
     }
     Ok(collected)
 }
@@ -1061,23 +1123,17 @@ async fn poll_github(request: AdapterPollRequest) -> AdapterPollResponse {
 }
 
 async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollResponse, PollError> {
-    let token = poll_secret(request, "access_token")?;
     let repositories = request
         .configuration
         .get("repositories")
         .and_then(Value::as_array)
         .ok_or_else(|| "GitHub polling requires configuration.repositories".to_string())?;
-    let client = reqwest::Client::new();
     let mut marks = existing_streams(&request.checkpoint);
     let mut events = Vec::new();
 
     for repository in repositories.iter().filter_map(Value::as_str) {
-        let (repository_info, _) = github_get(
-            &client,
-            token,
-            &format!("https://api.github.com/repos/{repository}"),
-        )
-        .await?;
+        let repository_info =
+            github_get(&format!("https://api.github.com/repos/{repository}")).await?;
         let repository_id = github_repository_id(repository, &repository_info)?;
 
         for (url, event_type, array_key) in [
@@ -1096,15 +1152,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         ] {
             let stream = format!("{repository_id}:{event_type}");
             let since = stream_checkpoint(&request.checkpoint, &stream);
-            for value in github_collect(
-                &client,
-                token,
-                url,
-                array_key,
-                since.as_deref(),
-                github_updated_at,
-            )
-            .await?
+            for value in github_collect(url, array_key, since.as_deref(), github_updated_at).await?
             {
                 let updated = github_updated_at(&value);
                 if since
@@ -1149,7 +1197,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             commits_url.push_str("&since=");
             commits_url.push_str(&urlencoding::encode(since));
         }
-        let (commits, _) = github_get(&client, token, &commits_url).await?;
+        let commits = github_get(&commits_url).await?;
         // one check-runs request per commit is the expensive part of this poll. bounding it keeps a
         // busy repository from spending the hourly quota in a single pass; `since` above is what
         // keeps the steady-state list short in the first place.
@@ -1164,8 +1212,6 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                 continue;
             };
             let checks = github_collect(
-                &client,
-                token,
                 format!(
                     "https://api.github.com/repos/{repository}/commits/{sha}/check-runs?per_page=100"
                 ),
@@ -2081,7 +2127,18 @@ mod tests {
             RuninatorType::Enum(vec!["hmac_sha256".into(), "bearer".into()])
         );
         assert!(!generic.setup_instructions.is_empty());
-        assert!(!jira_metadata().setup_instructions.is_empty());
-        assert!(!github_metadata().setup_instructions.is_empty());
+        let jira = jira_metadata();
+        assert!(!jira.setup_instructions.is_empty());
+        assert_eq!(
+            jira.polling_authentication,
+            vec![AdapterAuthenticationKind::Secrets]
+        );
+        let github = github_metadata();
+        assert!(!github.setup_instructions.is_empty());
+        assert_eq!(
+            github.polling_authentication,
+            vec![AdapterAuthenticationKind::ExecutionProfile]
+        );
+        assert_eq!(github.execution_profile_scopes, vec!["github"]);
     }
 }

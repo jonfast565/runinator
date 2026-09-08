@@ -237,10 +237,19 @@ interchangeable.
 GitHub and Jira adapters accept `"transport": "webhook"` (the default) or
 `"transport": "polling"`. A polling revision is scheduled durably by the engine, so embedded and
 standalone engine deployments use the same claim/checkpoint path and multiple replicas do not poll
-the same revision concurrently. GitHub polling requires `configuration.repositories` plus an
-`access_token` Secret binding. Jira polling requires `instance_id`, `base_url`, `email`, and `jql`
-plus an `api_token` Secret binding. Both accept `poll_interval_seconds` from 30 through 3600,
-defaulting to 60.
+the same revision concurrently. GitHub polling requires `configuration.repositories` plus a
+published execution profile with the `github` credential scope. It is dispatched to a matching
+worker (the command center defaults to `runner=desktop`) and uses the authenticated GitHub CLI
+session collected in that profile; authored API tokens are not accepted. Jira polling remains a
+server-side HTTP poller and requires `instance_id`, `base_url`, `email`, and `jql` plus an
+`api_token` Secret binding. Both accept `poll_interval_seconds` from 30 through 3600, defaulting to
+60.
+
+Outbound workflows can use `github_cli.api`, `github_cli.graphql`, or the allowlisted
+`github_cli.run` command families (`pr`, `issue`, `run`, `workflow`, `release`, `repo`, and
+`search`). These actions require a `github` execution profile and invoke `gh` directly without a
+shell. Existing typed `github.*` actions can also use that profile; they obtain a short-lived token
+from `gh auth token` inside the worker process and retain their typed HTTP contracts.
 
 The first successful poll establishes a high-water checkpoint without admitting historical events.
 Later polls normalize events through the same pipeline-ingress service as webhooks.

@@ -329,6 +329,16 @@ pub struct ExecutionProfileBinding {
 }
 
 impl ExecutionProfileBinding {
+    pub fn resolved(id: Uuid, name: impl Into<String>) -> Self {
+        Self {
+            reference: ArtifactRef::current(
+                ArtifactKind::ExecutionProfile,
+                id,
+                Some(ArtifactPath::new(None, name)),
+            ),
+        }
+    }
+
     pub fn unresolved(name: impl Into<String>) -> Self {
         let name = name.into();
         Self {

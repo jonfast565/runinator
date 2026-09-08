@@ -9,8 +9,9 @@ use runinator_models::orchestration::{
     OrchestrationStatus,
 };
 use runinator_store::roles::{
-    ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
-    NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingUpdate,
+    AdapterPollDispatch, ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision,
+    NewOrchestrationCommand, NewOrchestrationCorrelationAlias, NewOrchestrationEpoch,
+    OrchestrationBindingUpdate,
 };
 
 const BINDING_COLUMNS: &str = "b.id, b.admission_id, a.org_scope AS org_scope, a.scope AS scope, a.correlation_key AS correlation_key, b.generation, a.pipeline_id AS pipeline_id, b.pipeline_revision, b.pipeline_digest, b.adapter_id, b.adapter_revision, b.policy, b.status, b.current_phase, b.current_attempt, b.current_epoch, b.restart_member, b.resume_existing_epoch, b.subject_revision, b.resources, b.budgets, b.last_reduced_sequence, b.version, b.reducer_lease_owner, b.reducer_leased_until, b.created_at, b.updated_at, b.finished_at";
@@ -22,7 +23,7 @@ const COMMAND_COLUMNS: &str = "id, binding_id, epoch, command_type, operation_ke
 const EVIDENCE_COLUMNS: &str =
     "id, binding_id, epoch, kind, subject_revision, payload, source_event_id, created_at";
 const ADAPTER_COLUMNS: &str = "id, org_id, name, kind, current_revision, enabled, endpoint_identity, has_admitted_binding, created_at, updated_at";
-const ADAPTER_REVISION_COLUMNS: &str = "id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, identity_configuration, created_at, actor_id";
+const ADAPTER_REVISION_COLUMNS: &str = "id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, authentication, identity_configuration, created_at, actor_id";
 const EXTERNAL_OPERATION_COLUMNS: &str = "id, binding_id, epoch, workflow_run_id, effect_id, operation_key, provider, action, semantics, attempt, status, ambiguous, provenance, receipt, created_at, updated_at";
 
 fn external_status(value: ExternalOperationStatus) -> &'static str {
@@ -709,9 +710,15 @@ where
             .bind(adapter.id).bind(adapter.org_id).bind(adapter.name).bind(adapter.kind)
             .bind(true).bind(adapter.endpoint_identity).bind(false).bind(now.timestamp()).bind(now.timestamp())
             .execute(&mut *tx).await?;
-        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, identity_configuration, created_at, actor_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)"))
+        let legacy_bindings = adapter
+            .authentication
+            .secret_bindings()
+            .cloned()
+            .unwrap_or_default();
+        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, authentication, identity_configuration, created_at, actor_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)"))
             .bind(Uuid::now_v7()).bind(adapter.id).bind(adapter.kind_version).bind(adapter.transport.as_str())
-            .bind(adapter.configuration.to_string()).bind(serde_json::to_string(&adapter.secret_bindings)?)
+            .bind(adapter.configuration.to_string()).bind(serde_json::to_string(&legacy_bindings)?)
+            .bind(serde_json::to_string(&adapter.authentication)?)
             .bind(adapter.identity_configuration.to_string()).bind(now.timestamp()).bind(adapter.actor_id)
             .execute(&mut *tx).await?;
         if adapter.transport == AdapterTransport::Polling {
@@ -845,9 +852,15 @@ where
             tx.rollback().await?;
             return Ok(None);
         }
-        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, identity_configuration, created_at, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+        let legacy_bindings = revision
+            .authentication
+            .secret_bindings()
+            .cloned()
+            .unwrap_or_default();
+        sqlx::query(&self.render("INSERT INTO orchestration_adapter_revisions (id, adapter_id, revision, kind_version, transport, configuration, secret_bindings, authentication, identity_configuration, created_at, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
             .bind(revision.id).bind(revision.adapter_id).bind(next).bind(revision.kind_version).bind(revision.transport.as_str())
-            .bind(revision.configuration.to_string()).bind(serde_json::to_string(&revision.secret_bindings)?)
+            .bind(revision.configuration.to_string()).bind(serde_json::to_string(&legacy_bindings)?)
+            .bind(serde_json::to_string(&revision.authentication)?)
             .bind(revision.identity_configuration.to_string()).bind(now.timestamp()).bind(revision.actor_id)
             .execute(&mut *tx).await?;
         if revision.transport == AdapterTransport::Polling {
@@ -1085,6 +1098,74 @@ where
                 last_error: row.get("last_error"),
             }
         }))
+    }
+
+    async fn insert_orchestration_adapter_poll_dispatch(
+        &self,
+        dispatch: AdapterPollDispatch,
+    ) -> Result<(), SendableError> {
+        let mut transaction = self.pool().begin().await?;
+        sqlx::query(
+            &self.render("DELETE FROM orchestration_adapter_poll_dispatches WHERE adapter_id = ?"),
+        )
+        .bind(dispatch.adapter_id)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(&self.render("INSERT INTO orchestration_adapter_poll_dispatches (id, adapter_id, adapter_revision, profile_id, claim_owner, command, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+            .bind(dispatch.id)
+            .bind(dispatch.adapter_id)
+            .bind(dispatch.adapter_revision)
+            .bind(dispatch.profile_id)
+            .bind(dispatch.claim_owner)
+            .bind(serde_json::to_string(&dispatch.command)?)
+            .bind(dispatch.state)
+            .bind(dispatch.created_at.timestamp())
+            .bind(dispatch.updated_at.timestamp())
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    async fn fetch_orchestration_adapter_poll_dispatch(
+        &self,
+        dispatch_id: Uuid,
+    ) -> Result<Option<AdapterPollDispatch>, SendableError> {
+        let row = sqlx::query(&self.render("SELECT id, adapter_id, adapter_revision, profile_id, claim_owner, command, state, created_at, updated_at FROM orchestration_adapter_poll_dispatches WHERE id = ?"))
+            .bind(dispatch_id)
+            .fetch_optional(self.pool())
+            .await?;
+        row.map(|row| {
+            let timestamp =
+                |value: i64| DateTime::<Utc>::from_timestamp(value, 0).unwrap_or_else(Utc::now);
+            Ok(AdapterPollDispatch {
+                id: row.get("id"),
+                adapter_id: row.get("adapter_id"),
+                adapter_revision: row.get("adapter_revision"),
+                profile_id: row.get("profile_id"),
+                claim_owner: row.get("claim_owner"),
+                command: serde_json::from_str(&row.get::<String, _>("command"))?,
+                state: row.get("state"),
+                created_at: timestamp(row.get("created_at")),
+                updated_at: timestamp(row.get("updated_at")),
+            })
+        })
+        .transpose()
+    }
+
+    async fn update_orchestration_adapter_poll_dispatch_state(
+        &self,
+        dispatch_id: Uuid,
+        state: String,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("UPDATE orchestration_adapter_poll_dispatches SET state = ?, updated_at = ? WHERE id = ?"))
+            .bind(state)
+            .bind(now.timestamp())
+            .bind(dispatch_id)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() != 0)
     }
 
     async fn complete_orchestration_adapter_poll(

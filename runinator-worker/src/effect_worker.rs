@@ -65,6 +65,84 @@ struct ProviderEffectContext {
     events: Arc<dyn crate::events::WorkerEventSink>,
 }
 
+async fn execute_adapter_poll(
+    input: &Value,
+    profile: &runinator_models::execution_profiles::MaterializedExecutionProfile,
+    timeout_seconds: Option<i64>,
+) -> Result<Value, String> {
+    let kind = input
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "adapter poll kind is missing".to_string())?;
+    let request = input
+        .get("request")
+        .ok_or_else(|| "adapter poll request is missing".to_string())?;
+    let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let request_path = directory.path().join("request.json");
+    let response_path = directory.path().join("response.json");
+    tokio::fs::write(
+        &request_path,
+        serde_json::to_vec(request).map_err(|error| error.to_string())?,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let executable = std::env::var_os("RUNINATOR_ADAPTER_RUNNER_PATH")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| {
+                    path.parent()
+                        .map(|parent| parent.join("runinator-adapter-host"))
+                })
+                .filter(|path| path.is_file())
+        })
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| {
+                    path.parent()?
+                        .parent()
+                        .map(|contents| contents.join("Resources").join("runinator-adapter-host"))
+                })
+                .filter(|path| path.is_file())
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("runinator-adapter-host"));
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .arg("--poll-once")
+        .arg(kind)
+        .arg(&request_path)
+        .arg(&response_path)
+        .kill_on_drop(true)
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_PAGER", "cat")
+        .env("NO_COLOR", "1")
+        .envs(&profile.environment);
+    if let Some(home) = &profile.home {
+        command.env("HOME", home);
+    }
+    let timeout = Duration::from_secs(timeout_seconds.unwrap_or(120).clamp(1, 600) as u64);
+    let output = tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| format!("adapter poll timed out after {} seconds", timeout.as_secs()))?
+        .map_err(|error| format!("failed to start adapter runner: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("adapter runner failed: {}", stderr.trim()));
+    }
+    let bytes = tokio::fs::read(response_path)
+        .await
+        .map_err(|error| format!("adapter runner produced no response: {error}"))?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("adapter runner response exceeds 1 MiB".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|error| format!("invalid adapter response: {error}"))
+}
+
 pub(crate) async fn run_provider_effect_loop(
     runtime: ProviderEffectRuntime,
 ) -> Result<(), SendableError> {
@@ -307,14 +385,23 @@ async fn process_provider_effect(
     .await?;
     let profile_lease = match execution_profile.as_ref() {
         Some(binding) => {
-            match crate::execution_profiles::materialize(
-                &api_client,
-                command.effect_id,
-                command.workflow_run_id,
-                binding,
-            )
-            .await
-            {
+            let materialized = if provider == "__runinator_adapter" {
+                crate::execution_profiles::materialize_for_adapter(
+                    &api_client,
+                    command.effect_id,
+                    binding,
+                )
+                .await
+            } else {
+                crate::execution_profiles::materialize(
+                    &api_client,
+                    command.effect_id,
+                    command.workflow_run_id,
+                    binding,
+                )
+                .await
+            };
+            match materialized {
                 Ok(lease) => Some(lease),
                 Err(error) => {
                     publish_terminal(
@@ -336,6 +423,49 @@ async fn process_provider_effect(
         }
         None => None,
     };
+    if provider == "__runinator_adapter" {
+        let result = match profile_lease.as_ref() {
+            Some(lease)
+                if lease
+                    .credential_scopes
+                    .iter()
+                    .any(|scope| scope == "github") =>
+            {
+                execute_adapter_poll(&input, &lease.context, timeout_seconds).await
+            }
+            Some(_) => Err("execution profile is missing the github credential scope".into()),
+            None => Err("adapter poll requires an execution profile".into()),
+        };
+        match result {
+            Ok(output) => {
+                publish_terminal(
+                    broker.as_ref(),
+                    result_outbox.as_ref(),
+                    &command,
+                    WorkflowEffectStatus::Succeeded,
+                    Some(output),
+                    None,
+                )
+                .await?;
+            }
+            Err(error) => {
+                publish_terminal(
+                    broker.as_ref(),
+                    result_outbox.as_ref(),
+                    &command,
+                    WorkflowEffectStatus::Failed,
+                    None,
+                    Some(error),
+                )
+                .await?;
+            }
+        }
+        broker
+            .ack_effect(&consumer, delivery.delivery_id)
+            .await
+            .map_err(|error| crate::broker::broker_error("ack_effect", error))?;
+        return Ok(());
+    }
     // take the effect's executor lease before running it. this is best-effort and deliberately not
     // durable: it is what the replica views and the stale-replica reaper read, and losing it must
     // never stop the effect from executing or settling.

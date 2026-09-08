@@ -103,6 +103,7 @@ if [[ "$skip_build" -eq 0 ]]; then
     -p runinator-ws \
     -p runinator-waker \
     -p runinator-worker \
+    -p runinator-adapter-host \
     -p runinator-desktop-agent \
     -p runinator-ctl \
     -p runinator-supervisor
@@ -155,7 +156,7 @@ for app in "${apps[@]}"; do
   cat > "$config_path" <<EOF
 name = "$binary"
 product-name = "$product_name"
-version = "${RUNINATOR_VERSION:-0.16.653}"
+version = "${RUNINATOR_VERSION:-0.17.654}"
 identifier = "$identifier"
 description = "$description"
 formats = ["app"]
@@ -182,5 +183,6 @@ EOF
     fi
     mkdir -p "$app_path/Contents/Resources"
     install -m 755 "$keychain_export" "$app_path/Contents/Resources/keychain-export"
+    install -m 755 "$target_dir/runinator-adapter-host" "$app_path/Contents/Resources/runinator-adapter-host"
   fi
 done

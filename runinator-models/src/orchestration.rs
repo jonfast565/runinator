@@ -767,6 +767,12 @@ pub struct AdapterKindMetadata {
     pub canonical_pointers: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Authentication modes accepted when this kind is configured for durable polling.
+    #[serde(default)]
+    pub polling_authentication: Vec<AdapterAuthenticationKind>,
+    /// Credential scopes required from a selected execution profile.
+    #[serde(default)]
+    pub execution_profile_scopes: Vec<String>,
     /// Human-readable provider setup steps. The command center renders these verbatim so dynamic
     /// adapter kinds can explain their installation without frontend-specific branching.
     #[serde(default)]
@@ -809,12 +815,63 @@ pub struct AdapterRevision {
     #[serde(default)]
     pub configuration: Value,
     #[serde(default)]
-    pub secret_bindings: BTreeMap<String, Uuid>,
+    pub authentication: AdapterAuthentication,
     #[serde(default)]
     pub identity_configuration: Value,
     pub created_at: DateTime<Utc>,
     #[serde(default)]
     pub actor_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterAuthenticationKind {
+    Secrets,
+    ExecutionProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AdapterAuthentication {
+    Secrets {
+        #[serde(default)]
+        secret_bindings: BTreeMap<String, Uuid>,
+    },
+    ExecutionProfile {
+        profile: crate::execution_profiles::ExecutionProfileBinding,
+        required_labels: BTreeMap<String, String>,
+    },
+}
+
+impl Default for AdapterAuthentication {
+    fn default() -> Self {
+        Self::Secrets {
+            secret_bindings: BTreeMap::new(),
+        }
+    }
+}
+
+impl AdapterAuthentication {
+    pub fn kind(&self) -> AdapterAuthenticationKind {
+        match self {
+            Self::Secrets { .. } => AdapterAuthenticationKind::Secrets,
+            Self::ExecutionProfile { .. } => AdapterAuthenticationKind::ExecutionProfile,
+        }
+    }
+
+    pub fn secret_bindings(&self) -> Option<&BTreeMap<String, Uuid>> {
+        match self {
+            Self::Secrets { secret_bindings } => Some(secret_bindings),
+            Self::ExecutionProfile { .. } => None,
+        }
+    }
+
+    pub fn execution_profile(&self) -> Option<&crate::execution_profiles::ExecutionProfileBinding> {
+        match self {
+            Self::ExecutionProfile { profile, .. } => Some(profile),
+            Self::Secrets { .. } => None,
+        }
+    }
 }
 
 /// How an orchestration adapter obtains external events.

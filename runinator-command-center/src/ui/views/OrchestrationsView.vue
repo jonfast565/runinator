@@ -1145,9 +1145,7 @@
                           >{{ Object.keys(jsonObject(revision.configuration)).length }} connection
                           settings</span
                         >
-                        <span
-                          >{{ Object.keys(revision.secret_bindings).length }} secret bindings</span
-                        >
+                        <span>{{ revision.authentication.kind.replace("_", " ") }}</span>
                         <span>{{ revision.actor_id || "System" }}</span>
                       </div>
                       <details class="adapter-raw-details">
@@ -1559,14 +1557,20 @@
                   />
                 </label>
               </template>
-              <label class="adapter-form-field">
-                <span>{{ adapterForm.kind === "github" ? "Access token" : "API token" }}</span>
+              <label v-if="adapterForm.kind === 'github'" class="adapter-form-field">
+                <span>GitHub execution profile</span>
+                <select v-model="adapterForm.profile_id" required>
+                  <option value="">Choose a GitHub CLI profile</option>
+                  <option v-for="profile in githubProfiles" :key="profile.id" :value="profile.id">
+                    {{ profile.name }}
+                  </option>
+                </select>
+                <small>Polling runs on a desktop worker using its authenticated <code>gh</code> session.</small>
+              </label>
+              <label v-else class="adapter-form-field">
+                <span>API token</span>
                 <select
-                  v-model="
-                    adapterForm.secret_bindings[
-                      adapterForm.kind === 'github' ? 'access_token' : 'api_token'
-                    ]
-                  "
+                  v-model="adapterForm.secret_bindings.api_token"
                   required
                 >
                   <option value="">Choose a stored secret</option>
@@ -1698,10 +1702,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import type {
+  AdapterAuthentication,
   AdapterDefinition,
   AdapterKindCatalogEntry,
   AdapterKindMetadata,
   AdapterRevision,
+  ExecutionProfile,
   ExternalOperation,
   JsonValue,
   OrchestrationCorrelationAlias,
@@ -1712,6 +1718,7 @@ import type {
   RuninatorType,
   WorkspaceLease,
 } from "../../core/domain/models";
+import { fetchExecutionProfiles } from "../../core/api/commandCenterApi";
 import type { IconName } from "../../core/domain/icons";
 import {
   fetchAdapterHealth,
@@ -1873,6 +1880,7 @@ interface AdapterFormState {
   transport: "webhook" | "polling";
   configuration: Record<string, JsonValue>;
   secret_bindings: Record<string, string>;
+  profile_id: string;
 }
 const adapterForm = reactive<AdapterFormState>({
   name: "",
@@ -1880,7 +1888,9 @@ const adapterForm = reactive<AdapterFormState>({
   transport: "webhook",
   configuration: {},
   secret_bindings: {},
+  profile_id: "",
 });
+const executionProfiles = shallowRef<ExecutionProfile[]>([]);
 
 const selectedKind = computed<AdapterKindMetadata | undefined>(() =>
   store.adapterKinds.find((kind) => kind.kind === store.selectedAdapter?.kind),
@@ -1904,6 +1914,14 @@ const identityHasValues = computed(() => identityEntryCount.value > 0);
 const selectableSecrets = computed(() =>
   secrets.secretEntries.filter((secret) => Boolean(secret.id)),
 );
+const githubProfiles = computed(() =>
+  executionProfiles.value.filter(
+    (profile) =>
+      profile.enabled &&
+      ["ready", "expiring"].includes(profile.health) &&
+      profile.credential_scopes.includes("github"),
+  ),
+);
 const currentAdapterRevision = computed<AdapterRevision | undefined>(
   () =>
     store.adapterRevisions.find(
@@ -1921,7 +1939,11 @@ const currentIdentityEntries = computed(() =>
   Object.entries(jsonObject(currentAdapterRevision.value?.identity_configuration)),
 );
 const currentSecretBindingEntries = computed(() =>
-  Object.entries(currentAdapterRevision.value?.secret_bindings ?? {}),
+  Object.entries(
+    currentAdapterRevision.value?.authentication.kind === "secrets"
+      ? currentAdapterRevision.value.authentication.secret_bindings
+      : {},
+  ),
 );
 const webhookPath = computed(() =>
   store.selectedAdapter ? `/webhooks/orchestration/${store.selectedAdapter.endpoint_identity}` : "",
@@ -2477,6 +2499,7 @@ async function runTest(): Promise<void> {
 function initializeKind(): void {
   adapterForm.configuration = {};
   adapterForm.secret_bindings = {};
+  adapterForm.profile_id = "";
   adapterIdentity.value = {};
 
   if (adapterForm.kind !== "github" && adapterForm.kind !== "jira") {
@@ -2528,7 +2551,11 @@ function openAdapterForm(adapter?: AdapterDefinition, clone = false): void {
   adapterForm.kind = adapter ? adapter.kind : firstKind ? firstKind.kind : "";
   adapterForm.transport = revision?.transport ?? "webhook";
   adapterForm.configuration = revision ? jsonObject(revision.configuration) : {};
-  adapterForm.secret_bindings = revision ? { ...revision.secret_bindings } : {};
+  adapterForm.secret_bindings =
+    revision?.authentication.kind === "secrets"
+      ? { ...revision.authentication.secret_bindings }
+      : {};
+  adapterForm.profile_id = revision ? authenticationProfileId(revision.authentication) : "";
   adapterIdentity.value = revision?.identity_configuration ?? {};
   adapterFormError.value = null;
 
@@ -2555,6 +2582,15 @@ async function saveAdapter(): Promise<void> {
   const bindings = Object.fromEntries(
     Object.entries(adapterForm.secret_bindings).filter(([, value]) => value),
   );
+  const profile = executionProfiles.value.find((value) => value.id === adapterForm.profile_id);
+  const authentication: AdapterAuthentication =
+    adapterForm.transport === "polling" && adapterForm.kind === "github"
+      ? {
+          kind: "execution_profile",
+          profile: { id: adapterForm.profile_id, name: profile?.name ?? "github-cli" },
+          required_labels: { runner: "desktop" },
+        }
+      : { kind: "secrets", secret_bindings: bindings };
 
   adapterFormSaving.value = true;
   adapterFormError.value = null;
@@ -2567,7 +2603,7 @@ async function saveAdapter(): Promise<void> {
         kind_version: kind.version,
         transport: adapterForm.transport,
         configuration,
-        secret_bindings: bindings,
+        authentication,
         identity_configuration: adapterIdentity.value,
         ...(editingAdapterId.value && store.selectedAdapter
           ? { expected_revision: store.selectedAdapter.current_revision }
@@ -2583,6 +2619,15 @@ async function saveAdapter(): Promise<void> {
   }
 }
 
+function authenticationProfileId(authentication: AdapterAuthentication): string {
+  if (authentication.kind !== "execution_profile") {
+    return "";
+  }
+  return "id" in authentication.profile
+    ? authentication.profile.id
+    : authentication.profile.reference.id;
+}
+
 watch(
   currentEpochRunId,
   (id) => {
@@ -2593,7 +2638,14 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => void refreshDefinitions());
+onMounted(() => {
+  void refreshDefinitions();
+  void fetchExecutionProfiles().then((profiles) => {
+    executionProfiles.value = profiles;
+  }).catch(() => {
+    executionProfiles.value = [];
+  });
+});
 </script>
 
 <style scoped>

@@ -253,6 +253,7 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("notification_receipts", CascadeWithParent),
     table_policy!("notifications", ColdArchive),
     table_policy!("orchestration_adapter_polls", BoundedState),
+    table_policy!("orchestration_adapter_poll_dispatches", BoundedState),
     table_policy!("orchestration_adapter_revisions", ExplicitLifecycle),
     table_policy!("orchestration_adapters", ExplicitLifecycle),
     table_policy!("orchestration_bindings", ColdArchive),

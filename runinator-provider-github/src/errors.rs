@@ -36,6 +36,16 @@ pub(crate) const REVISION_MISMATCH: ErrorDescriptor = ErrorDescriptor::new(
     "github.revision_mismatch",
     "GitHub returned a check run for a different revision",
 );
+pub(crate) const MISSING_AUTHENTICATION: ErrorDescriptor = ErrorDescriptor::new(
+    "GITHUB008",
+    "github.missing_authentication",
+    "A token or GitHub execution profile is required",
+);
+pub(crate) const CONFLICTING_AUTHENTICATION: ErrorDescriptor = ErrorDescriptor::new(
+    "GITHUB009",
+    "github.conflicting_authentication",
+    "Token and execution-profile authentication cannot be combined",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -45,6 +55,8 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_REVIEWERS,
     MISSING_OPERATION_KEY,
     REVISION_MISMATCH,
+    MISSING_AUTHENTICATION,
+    CONFLICTING_AUTHENTICATION,
 ];
 
 impl ProviderErrors for GitHubProvider {

@@ -193,6 +193,7 @@ async fn profile_download_honors_worker_authority_and_run_admission() {
             Query(crate::handlers::execution_profiles::ProfileLookup {
                 name: None,
                 consumer_run_id: admitted.then_some(run.id),
+                consumer_adapter_dispatch_id: None,
             }),
         )
         .await;

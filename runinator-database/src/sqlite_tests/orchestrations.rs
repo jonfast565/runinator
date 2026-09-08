@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use runinator_comm::{ActionTarget, EffectCommand, EffectExecutor};
 use runinator_models::{
     orchestration::{
         ControlEffect, DeliverySemantics, ExternalOperation, ExternalOperationStatus,
@@ -12,11 +13,15 @@ use runinator_models::{
         Pipeline, PipelineExecutionContext, PipelineGraph, PipelineMember,
         PipelineMemberFailureMode,
     },
-    workflow_vm::{WorkflowInstruction, WorkflowModule},
+    workflow_vm::{
+        WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest, WorkflowInstruction,
+        WorkflowModule,
+    },
+    workflows::WorkflowRetry,
 };
 use runinator_store::roles::{
-    ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
-    NewOrchestrationEpoch, NewWorkflowVmRun, OrchestrationBindingUpdate,
+    AdapterPollDispatch, ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision,
+    NewOrchestrationCommand, NewOrchestrationEpoch, NewWorkflowVmRun, OrchestrationBindingUpdate,
 };
 
 #[tokio::test]
@@ -105,7 +110,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
                 transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 endpoint_identity: "endpoint-token".into(),
                 configuration: runinator_models::json!({ "authentication": "bearer" }),
-                secret_bindings: BTreeMap::new(),
+                authentication: runinator_models::orchestration::AdapterAuthentication::default(),
                 identity_configuration: runinator_models::json!({ "correlation": "/id" }),
                 actor_id: None,
             },
@@ -526,7 +531,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
                 kind_version: "1".into(),
                 transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 configuration: Value::Null,
-                secret_bindings: BTreeMap::new(),
+                authentication: runinator_models::orchestration::AdapterAuthentication::default(),
                 identity_configuration: runinator_models::json!({ "correlation": "/other" }),
                 actor_id: None,
             },
@@ -604,7 +609,7 @@ async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
             transport: AdapterTransport::Polling,
             endpoint_identity: "poll-endpoint".into(),
             configuration: runinator_models::json!({"repositories": ["acme/repo"]}),
-            secret_bindings: BTreeMap::new(),
+            authentication: runinator_models::orchestration::AdapterAuthentication::default(),
             identity_configuration: Value::Null,
             actor_id: None,
         },
@@ -629,6 +634,60 @@ async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
         .await
         .unwrap();
     assert_eq!(claims.len(), 1);
+    let dispatch_id = Uuid::now_v7();
+    let profile_id = Uuid::now_v7();
+    let command = EffectCommand {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: dispatch_id,
+        workflow_run_id: adapter_id,
+        continuation_id: Uuid::nil(),
+        attempt: 1,
+        request: WorkflowEffectRequest::Action {
+            provider: "__runinator_adapter".into(),
+            function: "poll".into(),
+            input: Value::Null,
+            timeout_seconds: Some(120),
+            retry: WorkflowRetry::default(),
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            workspace_affinity: None,
+            execution_profile: None,
+            idempotency_key: None,
+            function_binding: None,
+        },
+        executor: EffectExecutor::Provider,
+        target: ActionTarget::Any,
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: format!("adapter-poll:{dispatch_id}"),
+        notification_delivery_id: None,
+    };
+    db.insert_orchestration_adapter_poll_dispatch(AdapterPollDispatch {
+        id: dispatch_id,
+        adapter_id,
+        adapter_revision: 1,
+        profile_id,
+        claim_owner: "engine-a".into(),
+        command: command.clone(),
+        state: "published".into(),
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    let dispatch = db
+        .fetch_orchestration_adapter_poll_dispatch(dispatch_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(dispatch.profile_id, profile_id);
+    assert_eq!(dispatch.command.effect_id, command.effect_id);
+    assert!(
+        db.update_orchestration_adapter_poll_dispatch_state(dispatch_id, "running".into(), now)
+            .await
+            .unwrap()
+    );
     assert!(
         db.claim_due_orchestration_adapter_polls(
             "engine-b".into(),
@@ -673,7 +732,7 @@ async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
             kind_version: "1".into(),
             transport: AdapterTransport::Webhook,
             configuration: Value::Null,
-            secret_bindings: BTreeMap::new(),
+            authentication: runinator_models::orchestration::AdapterAuthentication::default(),
             identity_configuration: Value::Null,
             actor_id: None,
         },

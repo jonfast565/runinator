@@ -4,9 +4,17 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::{TimeDelta, Utc};
-use runinator_adapter_contract::AdapterPollRequest;
-use runinator_broker_core::{Broker, EmbeddedEngineSignals};
-use runinator_models::{auth::ResourceType, orchestration::AdapterTransport};
+use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse};
+use runinator_broker_core::{ActionTarget, Broker, EffectMessage, EmbeddedEngineSignals};
+use runinator_comm::{EffectCommand, EffectExecutor};
+use runinator_models::{
+    auth::ResourceType,
+    orchestration::{AdapterAuthentication, AdapterTransport},
+    value::Value,
+    workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest},
+    workflows::WorkflowRetry,
+};
+use runinator_store::roles::AdapterPollDispatch;
 use tokio::sync::Notify;
 use tracing::{debug, error, warn};
 
@@ -96,6 +104,7 @@ struct BatchSummary {
 
 async fn poll_one<T: BackgroundEngineStore>(
     store: Arc<T>,
+    broker: &Arc<dyn Broker>,
     pipelines: &PipelineOperations<T>,
     instance: &str,
     status: runinator_models::orchestration::AdapterPollStatus,
@@ -119,7 +128,104 @@ async fn poll_one<T: BackgroundEngineStore>(
             .to_string()
             .into());
     }
-    for setting_id in revision.secret_bindings.values().copied() {
+    if let AdapterAuthentication::ExecutionProfile {
+        profile,
+        required_labels,
+    } = &revision.authentication
+    {
+        let profile_id = profile.id();
+        if !runinator_store::resource_access::resource_can_consume(
+            store.as_ref(),
+            ResourceType::OrchestrationAdapter,
+            adapter.id,
+            ResourceType::ExecutionProfile,
+            profile_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "adapter {} is not permitted to use execution profile {profile_id}",
+                adapter.id
+            )
+            .into());
+        }
+        let dispatch_id = uuid::Uuid::now_v7();
+        let now = Utc::now();
+        let command = EffectCommand {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            command_id: uuid::Uuid::now_v7(),
+            effect_id: dispatch_id,
+            workflow_run_id: adapter.id,
+            continuation_id: uuid::Uuid::nil(),
+            attempt: 1,
+            request: WorkflowEffectRequest::Action {
+                provider: "__runinator_adapter".into(),
+                function: "poll".into(),
+                input: Value::from(serde_json::json!({
+                    "kind": adapter.kind,
+                    "request": AdapterPollRequest {
+                        configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
+                        secrets: serde_json::Value::Null,
+                        checkpoint: serde_json::to_value(status.checkpoint.clone()).unwrap_or_default(),
+                        initialize: status.checkpoint.is_null(),
+                    },
+                })),
+                timeout_seconds: Some(120),
+                retry: WorkflowRetry::default(),
+                tags: Vec::new(),
+                required_labels: required_labels.clone(),
+                workspace_affinity: None,
+                execution_profile: Some(profile.clone()),
+                idempotency_key: None,
+                function_binding: None,
+            },
+            executor: EffectExecutor::Provider,
+            target: ActionTarget::labels(required_labels.clone()),
+            trace_id: uuid::Uuid::now_v7(),
+            trace_context: Default::default(),
+            idempotency_key: format!("adapter-poll:{dispatch_id}"),
+            notification_delivery_id: None,
+        };
+        store
+            .insert_orchestration_adapter_poll_dispatch(AdapterPollDispatch {
+                id: dispatch_id,
+                adapter_id: adapter.id,
+                adapter_revision: revision.revision,
+                profile_id,
+                claim_owner: instance.into(),
+                command: command.clone(),
+                state: "queued".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        broker
+            .publish_effect(EffectMessage {
+                dedupe_key: Some(format!("adapter-poll:{dispatch_id}")),
+                command,
+                enqueued_at: now,
+                expires_at: Some(now + TimeDelta::seconds(LEASE_SECONDS)),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        store
+            .update_orchestration_adapter_poll_dispatch_state(
+                dispatch_id,
+                "published".into(),
+                Utc::now(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok(BatchSummary::default());
+    }
+    let secret_bindings = revision
+        .authentication
+        .secret_bindings()
+        .cloned()
+        .unwrap_or_default();
+    for setting_id in secret_bindings.values().copied() {
         if !runinator_store::resource_access::resource_can_consume(
             store.as_ref(),
             ResourceType::OrchestrationAdapter,
@@ -138,7 +244,7 @@ async fn poll_one<T: BackgroundEngineStore>(
         }
     }
     let secrets = adapters
-        .resolve_secrets(adapter.org_id, &revision.secret_bindings)
+        .resolve_secrets(adapter.org_id, &secret_bindings)
         .await?;
     let initialize = status.checkpoint.is_null();
     let response = runinator_adapter_client::poll(
@@ -151,6 +257,54 @@ async fn poll_one<T: BackgroundEngineStore>(
         },
     )
     .await?;
+    finish_poll_response(store, pipelines, adapter, revision, instance, response).await
+}
+
+pub(crate) async fn settle_dispatched_poll<T: BackgroundEngineStore>(
+    store: Arc<T>,
+    pipelines: &PipelineOperations<T>,
+    dispatch: &AdapterPollDispatch,
+    response: AdapterPollResponse,
+) -> Result<(), String> {
+    let adapters = AdapterOperations::new(store.clone());
+    let adapter = adapters
+        .fetch(dispatch.adapter_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "polling adapter no longer exists".to_string())?;
+    let revision = adapters
+        .current_revision(&adapter)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "polling adapter current revision is missing".to_string())?;
+    if !adapter.enabled
+        || revision.transport != AdapterTransport::Polling
+        || revision.revision != dispatch.adapter_revision
+    {
+        return Err("poll dispatch no longer matches an enabled polling revision".into());
+    }
+    finish_poll_response(
+        store,
+        pipelines,
+        adapter,
+        revision,
+        &dispatch.claim_owner,
+        response,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|failure| failure.message)
+}
+
+async fn finish_poll_response<T: BackgroundEngineStore>(
+    store: Arc<T>,
+    pipelines: &PipelineOperations<T>,
+    adapter: runinator_models::orchestration::AdapterDefinition,
+    revision: runinator_models::orchestration::AdapterRevision,
+    instance: &str,
+    response: AdapterPollResponse,
+) -> Result<BatchSummary, PollFailure> {
+    let adapters = AdapterOperations::new(store.clone());
     if let Some(error) = response.error {
         return Err(PollFailure {
             message: error,
@@ -277,7 +431,7 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
     instance: String,
     shutdown: Arc<Notify>,
 ) {
-    let pipelines = PipelineOperations::new(store.clone(), broker, events, Some(signals));
+    let pipelines = PipelineOperations::new(store.clone(), broker.clone(), events, Some(signals));
     loop {
         // one claim at a time: the lease has to start when the poll starts, not when the head of a
         // batch was claimed, or a slow adapter early in the batch expires the leases behind it.
@@ -299,7 +453,7 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
                 }
             };
             let Some(claim) = claim else { break };
-            match poll_one(store.clone(), &pipelines, &instance, claim.clone()).await {
+            match poll_one(store.clone(), &broker, &pipelines, &instance, claim.clone()).await {
                 Ok(summary) => debug!(
                     adapter_id = %claim.adapter_id,
                     "adapter poll accepted {} events and skipped {}",

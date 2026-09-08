@@ -1796,6 +1796,21 @@ where
         Ok(response.json::<ExecutionProfile>().await?)
     }
 
+    pub async fn fetch_execution_profile_for_adapter_dispatch(
+        &self,
+        id: Uuid,
+        dispatch_id: Uuid,
+    ) -> Result<ExecutionProfile> {
+        let mut url = self
+            .build_url(&format!("{API_EXECUTION_PROFILES}/{id}"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_adapter_dispatch_id", &dispatch_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ExecutionProfile>().await?)
+    }
+
     /// List the execution-profile definitions assigned to this agent's organization.
     pub async fn list_execution_profiles(&self) -> Result<Vec<ExecutionProfile>> {
         self.get_json_path(API_EXECUTION_PROFILES).await
@@ -1975,6 +1990,24 @@ where
             .await?;
         url.query_pairs_mut()
             .append_pair("consumer_run_id", &run_id.to_string());
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    pub async fn download_execution_profile_for_adapter_dispatch(
+        &self,
+        id: Uuid,
+        revision: i64,
+        dispatch_id: Uuid,
+    ) -> Result<Vec<u8>> {
+        let mut url = self
+            .build_url(&format!(
+                "{API_EXECUTION_PROFILES}/{id}/revisions/{revision}/content"
+            ))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("consumer_adapter_dispatch_id", &dispatch_id.to_string());
         let response = self.send(self.http_get(url.clone())).await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.bytes().await?.to_vec())

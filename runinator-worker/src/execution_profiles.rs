@@ -43,14 +43,44 @@ pub async fn materialize(
     workflow_run_id: uuid::Uuid,
     binding: &ExecutionProfileBinding,
 ) -> Result<ProfileLease, SendableError> {
+    materialize_for_consumer(client, effect_id, binding, Some(workflow_run_id), None).await
+}
+
+pub async fn materialize_for_adapter(
+    client: &AsyncApiClient<StaticLocator>,
+    dispatch_id: uuid::Uuid,
+    binding: &ExecutionProfileBinding,
+) -> Result<ProfileLease, SendableError> {
+    materialize_for_consumer(client, dispatch_id, binding, None, Some(dispatch_id)).await
+}
+
+async fn materialize_for_consumer(
+    client: &AsyncApiClient<StaticLocator>,
+    effect_id: uuid::Uuid,
+    binding: &ExecutionProfileBinding,
+    workflow_run_id: Option<uuid::Uuid>,
+    adapter_dispatch_id: Option<uuid::Uuid>,
+) -> Result<ProfileLease, SendableError> {
     let profile = if binding.id().is_nil() {
+        let Some(run_id) = workflow_run_id else {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "adapter execution profiles must use a stable id binding",
+            )));
+        };
         client
-            .resolve_execution_profile_for_run(binding.name(), workflow_run_id)
+            .resolve_execution_profile_for_run(binding.name(), run_id)
+            .await?
+    } else if let Some(run_id) = workflow_run_id {
+        client
+            .fetch_execution_profile_for_run(binding.id(), run_id)
+            .await?
+    } else if let Some(dispatch_id) = adapter_dispatch_id {
+        client
+            .fetch_execution_profile_for_adapter_dispatch(binding.id(), dispatch_id)
             .await?
     } else {
-        client
-            .fetch_execution_profile_for_run(binding.id(), workflow_run_id)
-            .await?
+        unreachable!("an execution profile consumer is required")
     };
     if !profile.enabled {
         return Err(Box::new(std::io::Error::new(
@@ -95,9 +125,17 @@ pub async fn materialize(
             "execution profile has no current digest",
         )) as SendableError
     })?;
-    let bytes = client
-        .download_execution_profile_for_run(profile.id, revision, workflow_run_id)
-        .await?;
+    let bytes = if let Some(run_id) = workflow_run_id {
+        client
+            .download_execution_profile_for_run(profile.id, revision, run_id)
+            .await?
+    } else if let Some(dispatch_id) = adapter_dispatch_id {
+        client
+            .download_execution_profile_for_adapter_dispatch(profile.id, revision, dispatch_id)
+            .await?
+    } else {
+        unreachable!("an execution profile consumer was validated above")
+    };
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

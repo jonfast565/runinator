@@ -213,7 +213,19 @@ export interface AdapterKindMetadata {
   canonical_pointers: string[];
   capabilities: string[];
   setup_instructions?: string[];
+  polling_authentication: ("secrets" | "execution_profile")[];
+  execution_profile_scopes: string[];
 }
+
+export type AdapterAuthentication =
+  | { kind: "secrets"; secret_bindings: Record<string, string> }
+  | {
+      kind: "execution_profile";
+      profile:
+        | { id: string; name: string }
+        | { reference: { id: string; kind: "execution_profile"; path?: unknown } };
+      required_labels: Record<string, string>;
+    };
 
 export interface AdapterKindCatalogEntry {
   metadata: AdapterKindMetadata;
@@ -242,7 +254,7 @@ export interface AdapterRevision {
   kind_version: string;
   transport: "webhook" | "polling";
   configuration: JsonValue;
-  secret_bindings: Record<string, string>;
+  authentication: AdapterAuthentication;
   identity_configuration: JsonValue;
   created_at: string;
   actor_id?: string | null;

@@ -152,6 +152,7 @@ export type { PipelineTrigger } from "./pipeline/pipeline-trigger";
 export type { PipelineRun } from "./pipeline/pipeline-run";
 export type {
   AdapterConfigurationField,
+  AdapterAuthentication,
   AdapterDefinition,
   AdapterKindCatalogEntry,
   AdapterKindMetadata,

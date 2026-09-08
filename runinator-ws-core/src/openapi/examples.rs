@@ -373,7 +373,8 @@ pub fn example_value(example: Example) -> Option<Value> {
                 "kind": "generic-webhook", "version": "1", "display_name": "Generic webhook",
                 "fields": [{ "name": "delivery_id_pointer", "value_type": "string", "required": true, "secret": false, "default": null }],
                 "event_names": ["created", "updated"], "canonical_pointers": ["/subject/id"],
-                "capabilities": ["hmac_sha256", "bearer"]
+                "capabilities": ["hmac_sha256", "bearer"],
+                "polling_authentication": [], "execution_profile_scopes": []
             },
             "origin": "builtin", "healthy": true, "error": null
         }]),
@@ -382,7 +383,7 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::AdapterRevisionList => json!([{
             "id": UUID_EXAMPLE, "adapter_id": UUID_EXAMPLE, "revision": 1,
             "kind_version": "1", "transport": "webhook", "configuration": { "delivery_id_pointer": "/delivery_id" },
-            "secret_bindings": { "signing_secret": UUID_EXAMPLE },
+            "authentication": { "kind": "secrets", "secret_bindings": { "signing_secret": UUID_EXAMPLE } },
             "identity_configuration": {}, "created_at": TIMESTAMP_EXAMPLE, "actor_id": UUID_EXAMPLE
         }]),
         Example::AdapterPollStatus => json!({
@@ -399,7 +400,7 @@ pub fn example_value(example: Example) -> Option<Value> {
                 "delivery_id_pointer": "/delivery_id", "scope_pointer": "/scope",
                 "correlation_pointer": "/subject/id", "event_pointer": "/event"
             },
-            "secret_bindings": { "signing_secret": UUID_EXAMPLE },
+            "authentication": { "kind": "secrets", "secret_bindings": { "signing_secret": UUID_EXAMPLE } },
             "identity_configuration": {}, "expected_revision": 1
         }),
         Example::AdapterEnable => json!({ "enabled": true }),

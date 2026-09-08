@@ -170,7 +170,7 @@ pub(crate) fn json_response(
 }
 
 pub(crate) fn auth_param() -> ParameterMetadata {
-    ParameterMetadata::required("token", RuninatorType::String).secret()
+    ParameterMetadata::optional("token", RuninatorType::String).secret()
 }
 
 pub(crate) fn repo_owner_param() -> ParameterMetadata {

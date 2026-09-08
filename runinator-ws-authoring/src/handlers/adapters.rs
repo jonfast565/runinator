@@ -12,18 +12,23 @@ use axum::{
 use chrono::Utc;
 use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
-use runinator_engine::services::{AdapterOperations, PipelineOperations};
+use runinator_engine::services::{
+    AdapterOperations, ExecutionProfileOperations, PipelineOperations,
+};
 use runinator_models::{
     auth::{AuthContext, Permission, PrincipalKind, ResourceType},
-    orchestration::{AdapterDefinition, AdapterKindMetadata, AdapterTransport},
+    orchestration::{
+        AdapterAuthentication, AdapterDefinition, AdapterKindMetadata, AdapterTransport,
+    },
     rbac::{Action, ScopeKind, ScopeRef},
     web::TaskResponse,
 };
 use runinator_store::{
     RuntimeStore,
     roles::{
-        DefinitionStore, IngressStore, NewAdapterDefinition, NewAdapterRevision,
-        OrchestrationStore, RbacStore, ScheduleStore, SettingStore, WorkflowVmStore,
+        DefinitionStore, ExecutionProfileStore, IngressStore, NewAdapterDefinition,
+        NewAdapterRevision, OrchestrationStore, RbacStore, ScheduleStore, SettingStore,
+        WorkflowVmStore,
     },
 };
 use runinator_ws_core::{
@@ -156,6 +161,97 @@ async fn validate_adapter_secret_access<T: AuthorizationStore>(
     Ok(())
 }
 
+async fn validate_adapter_auth_access<T: AuthorizationStore + ExecutionProfileStore>(
+    db: &Arc<T>,
+    ctx: Option<&AuthContext>,
+    adapter_id: Option<Uuid>,
+    org_id: Uuid,
+    authentication: &AdapterAuthentication,
+    required_scopes: &[String],
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    match authentication {
+        AdapterAuthentication::Secrets { secret_bindings } => {
+            validate_adapter_secret_access(db.as_ref(), ctx, adapter_id, org_id, secret_bindings)
+                .await
+        }
+        AdapterAuthentication::ExecutionProfile {
+            profile,
+            required_labels,
+        } => {
+            if required_labels.is_empty() {
+                return Err(bad_request("profile-backed polling requires worker labels"));
+            }
+            if let Some(ctx) = ctx {
+                AuthzChecker::new(db.as_ref(), ctx)
+                    .require_resource(
+                        ResourceType::ExecutionProfile,
+                        profile.id(),
+                        Permission::Run,
+                    )
+                    .await?;
+            }
+            let service = ExecutionProfileOperations::new(db.clone());
+            let Some(resolved) = service
+                .fetch(profile.id())
+                .await
+                .map_err(|error| api_error(error.to_string()))?
+                .filter(|value| value.org_id == Some(org_id))
+            else {
+                return Err(bad_request(
+                    "execution profile was not found in this organization",
+                ));
+            };
+            let missing = required_scopes
+                .iter()
+                .filter(|scope| !resolved.credential_scopes.contains(scope))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Err(bad_request(format!(
+                    "execution profile is missing required scopes: {}",
+                    missing.join(", ")
+                )));
+            }
+            let tenant = ScopeRef::new(ScopeKind::Organization, Some(org_id)).unwrap();
+            let prospective_owner = ctx
+                .and_then(|ctx| match (ctx.kind, ctx.principal_id) {
+                    (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)),
+                    _ => None,
+                })
+                .unwrap_or(tenant);
+            let allowed = match adapter_id {
+                Some(adapter_id) => {
+                    runinator_store::resource_access::resource_can_consume(
+                        db.as_ref(),
+                        ResourceType::OrchestrationAdapter,
+                        adapter_id,
+                        ResourceType::ExecutionProfile,
+                        profile.id(),
+                    )
+                    .await
+                }
+                None => {
+                    runinator_store::resource_access::owner_can_consume(
+                        db.as_ref(),
+                        prospective_owner,
+                        tenant,
+                        ResourceType::ExecutionProfile,
+                        profile.id(),
+                    )
+                    .await
+                }
+            }
+            .map_err(|error| api_error(error.to_string()))?;
+            if !allowed {
+                return Err(bad_request(
+                    "adapter is not permitted to use this execution profile",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 async fn current_revision<T: OrchestrationStore>(
     operations: &AdapterOperations<T>,
     adapter: &AdapterDefinition,
@@ -189,6 +285,7 @@ fn validate_definition(
     request: &AdapterApplyRequest,
     kind: &AdapterKindMetadata,
 ) -> Result<(), String> {
+    let authentication = effective_authentication(request);
     if request.name.trim().is_empty() {
         return Err("adapter name is required".into());
     }
@@ -213,17 +310,27 @@ fn validate_definition(
                 }
             }
         }
+        if !kind.polling_authentication.contains(&authentication.kind()) {
+            return Err(format!(
+                "adapter kind '{}' does not support the selected polling authentication mode",
+                request.kind
+            ));
+        }
         match request.kind.as_str() {
-            "github" if valid_github_repositories(&request.configuration) && request.secret_bindings.contains_key("access_token") => return Ok(()),
-            "jira" if ["instance_id", "base_url", "email", "jql"].iter().all(|field| request.configuration.get(*field).and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty())) && request.secret_bindings.contains_key("api_token") => return Ok(()),
-            "github" => return Err("GitHub polling requires repositories and access_token secret binding".into()),
+            "github" if valid_github_repositories(&request.configuration) && matches!(authentication, AdapterAuthentication::ExecutionProfile { .. }) => return Ok(()),
+            "jira" if ["instance_id", "base_url", "email", "jql"].iter().all(|field| request.configuration.get(*field).and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty())) && matches!(&authentication, AdapterAuthentication::Secrets { secret_bindings } if secret_bindings.contains_key("api_token")) => return Ok(()),
+            "github" => return Err("GitHub polling requires repositories and a GitHub execution profile".into()),
             "jira" => return Err("Jira polling requires instance_id, base_url, email, jql, and api_token secret binding".into()),
             _ => return Err("only GitHub and Jira adapters support polling".into()),
         }
     }
+    let secret_bindings = authentication
+        .secret_bindings()
+        .cloned()
+        .unwrap_or_default();
     for field in &kind.fields {
         if field.secret {
-            if field.required && !request.secret_bindings.contains_key(&field.name) {
+            if field.required && !secret_bindings.contains_key(&field.name) {
                 return Err(format!("secret binding '{}' is required", field.name));
             }
             continue;
@@ -251,6 +358,19 @@ fn validate_definition(
         }
     }
     Ok(())
+}
+
+fn effective_authentication(request: &AdapterApplyRequest) -> AdapterAuthentication {
+    match &request.authentication {
+        AdapterAuthentication::Secrets { secret_bindings }
+            if secret_bindings.is_empty() && !request.secret_bindings.is_empty() =>
+        {
+            AdapterAuthentication::Secrets {
+                secret_bindings: request.secret_bindings.clone(),
+            }
+        }
+        authentication => authentication.clone(),
+    }
 }
 
 fn identity_projection(
@@ -409,7 +529,7 @@ pub async fn poll_status<T: OrchestrationStore + AuthorizationStore>(
     }
 }
 
-pub async fn create<T: OrchestrationStore + AuthorizationStore>(
+pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfileStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -433,12 +553,14 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
     }
-    if let Err(reply) = validate_adapter_secret_access(
-        db.as_ref(),
+    let authentication = effective_authentication(&request);
+    if let Err(reply) = validate_adapter_auth_access(
+        &db,
         Some(&ctx),
         None,
         org_id,
-        &request.secret_bindings,
+        &authentication,
+        &kind.execution_profile_scopes,
     )
     .await
     {
@@ -458,7 +580,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
                 transport: request.transport,
                 endpoint_identity: Uuid::new_v4().to_string(),
                 configuration: request.configuration,
-                secret_bindings: request.secret_bindings,
+                authentication,
                 identity_configuration: request.identity_configuration,
                 actor_id: ctx.principal_id,
             },
@@ -483,7 +605,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore>(
     }
 }
 
-pub async fn update<T: OrchestrationStore + AuthorizationStore>(
+pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfileStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -512,12 +634,14 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore>(
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
     }
-    if let Err(reply) = validate_adapter_secret_access(
-        db.as_ref(),
+    let authentication = effective_authentication(&request);
+    if let Err(reply) = validate_adapter_auth_access(
+        &db,
         Some(&ctx),
         Some(id),
         adapter.org_id,
-        &request.secret_bindings,
+        &authentication,
+        &kind.execution_profile_scopes,
     )
     .await
     {
@@ -553,7 +677,7 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore>(
                 kind_version: request.kind_version,
                 transport: request.transport,
                 configuration: request.configuration,
-                secret_bindings: request.secret_bindings,
+                authentication,
                 identity_configuration: request.identity_configuration,
                 actor_id: ctx.principal_id,
             },
@@ -661,7 +785,19 @@ pub async fn test<
         Ok(value) => value,
         Err(reply) => return reply.into_reply(),
     };
-    let bindings = request.secret_bindings.unwrap_or(revision.secret_bindings);
+    let authentication = request
+        .authentication
+        .or_else(|| {
+            request
+                .secret_bindings
+                .map(|secret_bindings| AdapterAuthentication::Secrets { secret_bindings })
+        })
+        .unwrap_or_else(|| revision.authentication.clone());
+    let Some(bindings) = authentication.secret_bindings().cloned() else {
+        return bad_request(
+            "execution-profile adapter tests run asynchronously on a matching worker",
+        );
+    };
     if let Err(reply) =
         validate_adapter_secret_access(db.as_ref(), Some(&ctx), Some(id), adapter.org_id, &bindings)
             .await
@@ -795,7 +931,8 @@ pub async fn webhook<
         + IngressStore
         + runinator_store::roles::RbacStore
         + ScheduleStore
-        + WorkflowVmStore,
+        + WorkflowVmStore
+        + ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(pipelines): Extension<Arc<PipelineOperations<T>>>,
@@ -832,19 +969,22 @@ pub async fn webhook<
     if revision.transport != AdapterTransport::Webhook {
         return not_found("adapter is configured for polling, not webhook delivery");
     }
+    let Some(secret_bindings) = revision.authentication.secret_bindings() else {
+        return bad_request("webhook adapters require secret authentication");
+    };
     if let Err(reply) = validate_adapter_secret_access(
         db.as_ref(),
         None,
         Some(adapter.id),
         adapter.org_id,
-        &revision.secret_bindings,
+        secret_bindings,
     )
     .await
     {
         return reply.into_reply();
     }
     let secrets = match operations
-        .resolve_secrets(adapter.org_id, &revision.secret_bindings)
+        .resolve_secrets(adapter.org_id, secret_bindings)
         .await
     {
         Ok(value) => value,
@@ -953,7 +1093,8 @@ where
         + DefinitionStore
         + IngressStore
         + ScheduleStore
-        + WorkflowVmStore,
+        + WorkflowVmStore
+        + ExecutionProfileStore,
 {
     axum::Router::new()
         .route("/orchestrations/adapters/kinds", get(kinds::<T>))
@@ -1171,7 +1312,10 @@ mod tests {
     use super::{identity_projection, validate_definition};
     use runinator_models::{
         json,
-        orchestration::{AdapterConfigurationField, AdapterKindMetadata, AdapterTransport},
+        orchestration::{
+            AdapterAuthentication, AdapterAuthenticationKind, AdapterConfigurationField,
+            AdapterKindMetadata, AdapterTransport,
+        },
         types::RuninatorType,
         value::Value,
     };
@@ -1244,6 +1388,8 @@ mod tests {
             canonical_pointers: vec![],
             capabilities: vec![],
             setup_instructions: vec![],
+            polling_authentication: vec![AdapterAuthenticationKind::Secrets],
+            execution_profile_scopes: vec![],
         };
         let request = AdapterApplyRequest {
             name: "adapter".into(),
@@ -1251,6 +1397,7 @@ mod tests {
             kind_version: "1".into(),
             transport: AdapterTransport::Webhook,
             configuration: json!({ "pointer": 42 }),
+            authentication: AdapterAuthentication::default(),
             secret_bindings: BTreeMap::new(),
             identity_configuration: Value::Null,
             expected_revision: None,
@@ -1274,6 +1421,8 @@ mod tests {
             canonical_pointers: vec![],
             capabilities: vec![],
             setup_instructions: vec![],
+            polling_authentication: vec![AdapterAuthenticationKind::ExecutionProfile],
+            execution_profile_scopes: vec!["github".into()],
         };
         let github = AdapterApplyRequest {
             name: "GitHub poller".into(),
@@ -1284,18 +1433,25 @@ mod tests {
                 "repositories": ["octo/example"],
                 "poll_interval_seconds": 60
             }),
-            secret_bindings: BTreeMap::from([("access_token".into(), Uuid::new_v4())]),
+            authentication: AdapterAuthentication::ExecutionProfile {
+                profile: runinator_models::execution_profiles::ExecutionProfileBinding::resolved(
+                    Uuid::new_v4(),
+                    "github-cli",
+                ),
+                required_labels: BTreeMap::from([("runner".into(), "desktop".into())]),
+            },
+            secret_bindings: BTreeMap::new(),
             identity_configuration: Value::Null,
             expected_revision: None,
         };
         assert!(validate_definition(&github, &metadata).is_ok());
 
         let mut missing_token = github;
-        missing_token.secret_bindings.clear();
+        missing_token.authentication = AdapterAuthentication::default();
         assert!(
             validate_definition(&missing_token, &metadata)
                 .unwrap_err()
-                .contains("access_token")
+                .contains("authentication mode")
         );
 
         let unsupported = AdapterApplyRequest {
@@ -1304,6 +1460,7 @@ mod tests {
             kind_version: "1".into(),
             transport: AdapterTransport::Polling,
             configuration: json!({ "poll_interval_seconds": 60 }),
+            authentication: AdapterAuthentication::default(),
             secret_bindings: BTreeMap::new(),
             identity_configuration: Value::Null,
             expected_revision: None,
@@ -1311,7 +1468,7 @@ mod tests {
         assert!(
             validate_definition(&unsupported, &metadata)
                 .unwrap_err()
-                .contains("only GitHub and Jira")
+                .contains("authentication mode")
         );
     }
 }

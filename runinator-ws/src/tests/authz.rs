@@ -2,7 +2,6 @@
 //! capability set each principal kind resolves to.
 
 use super::*;
-use std::collections::BTreeMap;
 
 use runinator_broker::UiEventPublisher;
 use runinator_engine::services::WorkflowAuthoring;
@@ -460,7 +459,7 @@ async fn platform_admin_can_view_orchestration_adapters_without_an_org() {
                 transport: AdapterTransport::Webhook,
                 endpoint_identity: Uuid::now_v7().to_string(),
                 configuration: json!({}),
-                secret_bindings: BTreeMap::new(),
+                authentication: runinator_models::orchestration::AdapterAuthentication::default(),
                 identity_configuration: Value::Null,
                 actor_id: None,
             },
