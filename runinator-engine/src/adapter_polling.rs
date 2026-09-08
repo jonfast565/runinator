@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{TimeDelta, Utc};
 use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse};
-use runinator_broker_core::{ActionTarget, Broker, EffectMessage, EmbeddedEngineSignals};
+use runinator_broker_core::{ActionTarget, Broker, EmbeddedEngineSignals};
 use runinator_comm::{EffectCommand, EffectExecutor};
 use runinator_models::{
     auth::ResourceType,
@@ -21,9 +21,7 @@ use tracing::{debug, error, warn};
 use crate::{
     engine::BackgroundEngineStore,
     events::EventSender,
-    services::{
-        AdapterOperations, PipelineIngressError, PipelineIngressRequest, PipelineOperations,
-    },
+    services::{AdapterOperations, PipelineOperations},
 };
 
 /// A claim must outlive the worst case for the poll it covers: the adapter-host request budget
@@ -77,25 +75,6 @@ fn interval_seconds(configuration: &runinator_models::value::Value) -> i64 {
         .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
 }
 
-/// Whether a per-event outcome describes the event rather than the adapter.
-///
-/// A polling adapter enumerates everything upstream has, so a batch routinely contains events no
-/// pipeline admits — an unrelated workflow run, an issue outside any admission. Those are ordinary
-/// and must not fail the poll: failing would leave the checkpoint unadvanced, replay the identical
-/// batch on the next tick, and stall the adapter permanently on its first unroutable event. Only a
-/// fault that would recur for *every* event (the host being down, the store being unreachable)
-/// justifies abandoning the batch.
-fn is_event_scoped(error: &PipelineIngressError) -> bool {
-    matches!(
-        error,
-        PipelineIngressError::NotFound(_)
-            | PipelineIngressError::Invalid(_)
-            | PipelineIngressError::Conflict(_)
-            | PipelineIngressError::Held(_)
-            | PipelineIngressError::Full
-    )
-}
-
 #[derive(Default)]
 struct BatchSummary {
     accepted: usize,
@@ -104,7 +83,7 @@ struct BatchSummary {
 
 async fn poll_one<T: BackgroundEngineStore>(
     store: Arc<T>,
-    broker: &Arc<dyn Broker>,
+    _broker: &Arc<dyn Broker>,
     pipelines: &PipelineOperations<T>,
     instance: &str,
     status: runinator_models::orchestration::AdapterPollStatus,
@@ -128,98 +107,28 @@ async fn poll_one<T: BackgroundEngineStore>(
             .to_string()
             .into());
     }
-    if let AdapterAuthentication::ExecutionProfile {
-        profile,
-        required_labels,
-        required_scopes,
-    } = &revision.authentication
-    {
-        let profile_id = profile.id();
-        if !runinator_store::resource_access::resource_can_consume(
-            store.as_ref(),
-            ResourceType::OrchestrationAdapter,
-            adapter.id,
-            ResourceType::ExecutionProfile,
-            profile_id,
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        {
-            return Err(format!(
-                "adapter {} is not permitted to use execution profile {profile_id}",
-                adapter.id
-            )
-            .into());
-        }
-        let dispatch_id = uuid::Uuid::now_v7();
-        let now = Utc::now();
-        let command = EffectCommand {
-            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
-            command_id: uuid::Uuid::now_v7(),
-            effect_id: dispatch_id,
-            workflow_run_id: adapter.id,
-            continuation_id: uuid::Uuid::nil(),
-            attempt: 1,
-            request: WorkflowEffectRequest::Action {
-                provider: "__runinator_adapter".into(),
-                function: "poll".into(),
-                input: Value::from(serde_json::json!({
-                    "kind": adapter.kind,
-                    "required_scopes": required_scopes,
-                    "request": AdapterPollRequest {
-                        configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
-                        secrets: serde_json::Value::Null,
-                        checkpoint: serde_json::to_value(status.checkpoint.clone()).unwrap_or_default(),
-                        initialize: status.checkpoint.is_null(),
-                    },
-                })),
-                timeout_seconds: Some(120),
-                retry: WorkflowRetry::default(),
-                tags: Vec::new(),
-                required_labels: required_labels.clone(),
-                workspace_affinity: None,
-                execution_profile: Some(profile.clone()),
-                idempotency_key: None,
-                function_binding: None,
-            },
-            executor: EffectExecutor::Provider,
-            target: ActionTarget::labels(required_labels.clone()),
-            trace_id: uuid::Uuid::now_v7(),
-            trace_context: Default::default(),
-            idempotency_key: format!("adapter-poll:{dispatch_id}"),
-            notification_delivery_id: None,
-        };
-        store
-            .insert_orchestration_adapter_poll_dispatch(AdapterPollDispatch {
-                id: dispatch_id,
-                adapter_id: adapter.id,
-                adapter_revision: revision.revision,
-                profile_id,
-                claim_owner: instance.into(),
-                command: command.clone(),
-                state: "queued".into(),
-                created_at: now,
-                updated_at: now,
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-        broker
-            .publish_effect(EffectMessage {
-                dedupe_key: Some(format!("adapter-poll:{dispatch_id}")),
-                command,
-                enqueued_at: now,
-                expires_at: Some(now + TimeDelta::seconds(LEASE_SECONDS)),
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-        store
-            .update_orchestration_adapter_poll_dispatch_state(
-                dispatch_id,
-                "published".into(),
-                Utc::now(),
-            )
-            .await
-            .map_err(|error| error.to_string())?;
+    let poll_request = AdapterPollRequest {
+        configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
+        secrets: serde_json::Value::Null,
+        checkpoint: serde_json::to_value(status.checkpoint.clone()).unwrap_or_default(),
+        initialize: status.checkpoint.is_null(),
+    };
+    let attempt_id = create_poll_attempt(
+        store.clone(),
+        PollAttemptRequest {
+            adapter: &adapter,
+            revision: &revision,
+            request: poll_request,
+            claim_owner: instance.into(),
+            dry_run: false,
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    if matches!(
+        revision.authentication,
+        AdapterAuthentication::ExecutionProfile { .. }
+    ) {
         return Ok(BatchSummary::default());
     }
     let secret_bindings = revision
@@ -258,8 +167,42 @@ async fn poll_one<T: BackgroundEngineStore>(
             initialize,
         },
     )
-    .await?;
-    finish_poll_response(store, pipelines, adapter, revision, instance, response).await
+    .await;
+    let outcome = match response {
+        Ok(response) => {
+            finish_poll_response(
+                store.clone(),
+                pipelines,
+                adapter,
+                revision,
+                instance,
+                attempt_id,
+                response,
+            )
+            .await
+        }
+        Err(error) => Err(error.into()),
+    };
+    let error = outcome
+        .as_ref()
+        .err()
+        .map(|failure| failure.message.clone());
+    store
+        .finish_adapter_poll_attempt(
+            attempt_id,
+            if error.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            }
+            .into(),
+            Value::Null,
+            error,
+            Utc::now(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    outcome
 }
 
 pub(crate) async fn settle_dispatched_poll<T: BackgroundEngineStore>(
@@ -291,6 +234,7 @@ pub(crate) async fn settle_dispatched_poll<T: BackgroundEngineStore>(
         adapter,
         revision,
         &dispatch.claim_owner,
+        dispatch.id,
         response,
     )
     .await
@@ -300,10 +244,11 @@ pub(crate) async fn settle_dispatched_poll<T: BackgroundEngineStore>(
 
 async fn finish_poll_response<T: BackgroundEngineStore>(
     store: Arc<T>,
-    pipelines: &PipelineOperations<T>,
+    _pipelines: &PipelineOperations<T>,
     adapter: runinator_models::orchestration::AdapterDefinition,
     revision: runinator_models::orchestration::AdapterRevision,
     instance: &str,
+    attempt_id: uuid::Uuid,
     response: AdapterPollResponse,
 ) -> Result<BatchSummary, PollFailure> {
     let adapters = AdapterOperations::new(store.clone());
@@ -318,88 +263,21 @@ async fn finish_poll_response<T: BackgroundEngineStore>(
         });
     }
     let mut summary = BatchSummary::default();
-    for mut event in response.events {
-        if let Err(error) = event.validate_identity() {
-            warn!(
-                adapter_id = %adapter.id,
-                "skipping polled event with an invalid identity: {error}"
-            );
-            summary.skipped += 1;
-            continue;
-        }
-        if let Err(error) = adapters
-            .resolve_correlation_alias(adapter.org_id, &mut event)
-            .await
-        {
-            warn!(
-                adapter_id = %adapter.id, delivery_id = %event.delivery_id,
-                "skipping polled event whose correlation alias could not be resolved: {error}"
-            );
-            summary.skipped += 1;
-            continue;
-        }
-        if let Some(payload) = event.payload.as_object_mut() {
-            if let Some(subject_revision) = event.subject_revision.clone() {
-                payload.insert("subject_revision".into(), subject_revision.into());
-            }
-            if !event.provenance.is_null() {
-                payload.insert("provenance".into(), event.provenance.clone());
-            }
-        }
-        let pipeline_id = match adapters.pipeline_for_event(&adapter, &event).await {
-            Ok(value) => value,
-            Err(error) => {
-                debug!(
-                    adapter_id = %adapter.id, delivery_id = %event.delivery_id,
-                    "polled event matched no pipeline admission route: {error}"
-                );
-                summary.skipped += 1;
-                continue;
-            }
-        };
-        if !runinator_store::resource_access::resource_can_consume(
-            store.as_ref(),
-            ResourceType::Pipeline,
-            pipeline_id,
-            ResourceType::OrchestrationAdapter,
-            adapter.id,
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        {
-            return Err(format!(
-                "pipeline {pipeline_id} is not permitted to use adapter {}",
-                adapter.id
-            )
-            .into());
-        }
-        let outcome = pipelines
-            .process_ingress(
-                pipeline_id,
-                Some(adapter.org_id),
-                PipelineIngressRequest {
-                    source: format!("adapter:{}:{}", adapter.id, event.source),
-                    event_id: event.delivery_id.clone(),
-                    event_type: event.event_type,
-                    correlation_key: event.correlation_key,
-                    payload: event.payload,
-                    provenance: event.provenance,
-                    occurred_at: event.occurred_at,
+    for event in response.events {
+        adapters
+            .capture_delivery(
+                runinator_models::adapter_control::AdapterOrigin {
+                    adapter_id: adapter.id,
+                    revision: revision.revision,
+                    delivery_record_id: None,
                 },
-                Some((adapter.id, revision.revision)),
+                Some(attempt_id),
+                Some(event),
+                None,
             )
-            .await;
-        match outcome {
-            Ok(_) => summary.accepted += 1,
-            Err(error) if is_event_scoped(&error) => {
-                debug!(
-                    adapter_id = %adapter.id, delivery_id = %event.delivery_id,
-                    "polled event was not admitted: {error:?}"
-                );
-                summary.skipped += 1;
-            }
-            Err(error) => return Err(format!("{error:?}").into()),
-        }
+            .await
+            .map_err(|error| error.to_string())?;
+        summary.accepted += 1;
     }
     let next = Utc::now() + TimeDelta::seconds(interval_seconds(&revision.configuration));
     let committed = store
@@ -430,7 +308,7 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
     broker: Arc<dyn Broker>,
     events: EventSender,
     signals: EmbeddedEngineSignals,
-    instance: String,
+    _instance: String,
     shutdown: Arc<Notify>,
 ) {
     let pipelines = PipelineOperations::new(store.clone(), broker.clone(), events, Some(signals));
@@ -439,9 +317,10 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
         // batch was claimed, or a slow adapter early in the batch expires the leases behind it.
         for _ in 0..MAX_ADAPTERS_PER_PASS {
             let now = Utc::now();
+            let claim_owner = uuid::Uuid::now_v7().to_string();
             let claim = match store
                 .claim_due_orchestration_adapter_polls(
-                    instance.clone(),
+                    claim_owner.clone(),
                     now,
                     now + TimeDelta::seconds(LEASE_SECONDS),
                     1,
@@ -455,7 +334,15 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
                 }
             };
             let Some(claim) = claim else { break };
-            match poll_one(store.clone(), &broker, &pipelines, &instance, claim.clone()).await {
+            match poll_one(
+                store.clone(),
+                &broker,
+                &pipelines,
+                &claim_owner,
+                claim.clone(),
+            )
+            .await
+            {
                 Ok(summary) => debug!(
                     adapter_id = %claim.adapter_id,
                     "adapter poll accepted {} events and skipped {}",
@@ -466,7 +353,7 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
                     let _ = store
                         .fail_orchestration_adapter_poll(
                             claim.adapter_id,
-                            instance.clone(),
+                            claim_owner.clone(),
                             Utc::now() + TimeDelta::seconds(failure.retry_after_seconds),
                             failure.message,
                             Utc::now(),
@@ -477,4 +364,112 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
         }
         tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(Duration::from_secs(1)) => {} }
     }
+}
+
+pub struct PollAttemptRequest<'a> {
+    pub adapter: &'a runinator_models::orchestration::AdapterDefinition,
+    pub revision: &'a runinator_models::orchestration::AdapterRevision,
+    pub request: AdapterPollRequest,
+    pub claim_owner: String,
+    pub dry_run: bool,
+}
+
+pub async fn create_poll_attempt<
+    T: runinator_store::roles::OrchestrationStore
+        + runinator_store::roles::RbacStore
+        + runinator_store::roles::AuthStore,
+>(
+    store: Arc<T>,
+    input: PollAttemptRequest<'_>,
+) -> Result<uuid::Uuid, runinator_models::errors::SendableError> {
+    let PollAttemptRequest {
+        adapter,
+        revision,
+        mut request,
+        claim_owner,
+        dry_run,
+    } = input;
+    let (profile, required_labels, required_scopes) = match &revision.authentication {
+        AdapterAuthentication::ExecutionProfile {
+            profile,
+            required_labels,
+            required_scopes,
+        } => (
+            Some(profile.clone()),
+            required_labels.clone(),
+            required_scopes.clone(),
+        ),
+        _ => (None, Default::default(), Vec::new()),
+    };
+    if let Some(profile) = &profile
+        && !runinator_store::resource_access::resource_can_consume(
+            store.as_ref(),
+            ResourceType::OrchestrationAdapter,
+            adapter.id,
+            ResourceType::ExecutionProfile,
+            profile.id(),
+        )
+        .await?
+    {
+        return Err(
+            crate::errors::ADAPTER_EVENT_REJECTED.error("adapter cannot consume execution profile")
+        );
+    }
+    request.secrets = serde_json::Value::Null;
+    let id = uuid::Uuid::now_v7();
+    let now = Utc::now();
+    let state = if profile.is_some() {
+        "queued"
+    } else {
+        "running"
+    };
+    let profile_id = profile
+        .as_ref()
+        .map(|profile| profile.id())
+        .unwrap_or_else(uuid::Uuid::nil);
+    let command = EffectCommand {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: uuid::Uuid::now_v7(),
+        effect_id: id,
+        workflow_run_id: adapter.id,
+        continuation_id: uuid::Uuid::nil(),
+        attempt: 1,
+        request: WorkflowEffectRequest::Action {
+            provider: "__runinator_adapter".into(),
+            function: "poll".into(),
+            input: Value::from(
+                serde_json::json!({"kind":adapter.kind,"required_scopes":required_scopes,"request":request}),
+            ),
+            timeout_seconds: Some(120),
+            retry: WorkflowRetry::default(),
+            tags: Vec::new(),
+            required_labels: required_labels.clone(),
+            workspace_affinity: None,
+            execution_profile: profile,
+            idempotency_key: None,
+            function_binding: None,
+        },
+        executor: EffectExecutor::Provider,
+        target: ActionTarget::labels(required_labels),
+        trace_id: id,
+        trace_context: Default::default(),
+        idempotency_key: format!("adapter-poll:{id}"),
+        notification_delivery_id: None,
+    };
+    store
+        .insert_orchestration_adapter_poll_dispatch(AdapterPollDispatch {
+            id,
+            adapter_id: adapter.id,
+            adapter_revision: revision.revision,
+            profile_id,
+            claim_owner,
+            command,
+            state: state.into(),
+            dry_run,
+            deadline_at: now + TimeDelta::seconds(LEASE_SECONDS),
+            created_at: now,
+            updated_at: now,
+        })
+        .await?;
+    Ok(id)
 }

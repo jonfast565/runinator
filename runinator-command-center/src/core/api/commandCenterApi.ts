@@ -525,6 +525,7 @@ export async function listDeadLetters(channel?: string, limit?: number) {
 }
 
 export interface BrokerMessageFilter extends Record<string, unknown> {
+  adapterId?: string;
   workflowRunId?: string;
   pipelineRunId?: string;
   channel?: string;
@@ -532,6 +533,14 @@ export interface BrokerMessageFilter extends Record<string, unknown> {
 }
 
 export async function listBrokerMessages(filter: BrokerMessageFilter = {}) {
+  if (filter.adapterId) {
+    const query = new URLSearchParams({
+      adapter_id: filter.adapterId,
+      limit: String(filter.limit ?? 250),
+    });
+    return fetchIngressJson<JsonRecord[]>(`broker_messages?${query}`);
+  }
+
   return command<JsonRecord[]>("list_broker_messages", filter);
 }
 
@@ -2511,4 +2520,53 @@ export function downloadWorkspaceVersion(
   return downloadBinary(
     `workspaces/${encodeURIComponent(workspaceId)}/versions/${String(version)}/content${query}`,
   );
+}
+
+export function fetchAdapterDeliveries(adapterId: string) {
+  return fetchIngressJson<
+    import("../domain/models/orchestration/orchestration").AdapterDeliveryRecord[]
+  >(`orchestrations/adapters/${encodeURIComponent(adapterId)}/deliveries`);
+}
+
+export function fetchAdapterAttempts(adapterId: string) {
+  return fetchIngressJson<
+    import("../domain/models/orchestration/orchestration").AdapterPollAttempt[]
+  >(`orchestrations/adapters/${encodeURIComponent(adapterId)}/attempts`);
+}
+
+export function fetchAdapterInspection(adapterId: string) {
+  return fetchIngressJson<{ mode: "disabled" | "paused" | "review" }>(
+    `orchestrations/adapters/${encodeURIComponent(adapterId)}/inspection`,
+  );
+}
+
+export function setAdapterInspection(adapterId: string, mode: "disabled" | "paused" | "review") {
+  return fetchIngressJson(`orchestrations/adapters/${encodeURIComponent(adapterId)}/inspection`, {
+    method: "PUT",
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export function decideAdapterDelivery(
+  adapterId: string,
+  deliveryId: string,
+  decision: "approve" | "retry" | "drop",
+) {
+  return fetchIngressJson(
+    `orchestrations/adapters/${encodeURIComponent(adapterId)}/deliveries/${encodeURIComponent(deliveryId)}/${decision}`,
+    { method: "POST" },
+  );
+}
+
+export function fetchOrchestrationDebugControl(pipelineId: string) {
+  return fetchIngressJson<{ paused: boolean; steps: number }>(
+    `pipelines/${encodeURIComponent(pipelineId)}/orchestration-debug`,
+  );
+}
+
+export function setOrchestrationDebugControl(pipelineId: string, paused: boolean, steps = 0) {
+  return fetchIngressJson(`pipelines/${encodeURIComponent(pipelineId)}/orchestration-debug`, {
+    method: "PUT",
+    body: JSON.stringify({ paused, steps }),
+  });
 }

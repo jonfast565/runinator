@@ -1,3 +1,4 @@
+pub mod adapter_control;
 pub mod api_routes;
 pub mod artifacts;
 pub mod auth;

@@ -228,6 +228,7 @@ async fn execute_orchestration_command<
                 None,
                 Some(format!("orchestration:{}:{}", binding.id, command.epoch)),
                 PipelineExecutionContext {
+                    requested_run_id: None,
                     orchestration_binding_id: Some(binding.id),
                     execution_epoch: Some(command.epoch),
                     start_member: epoch.start_member.clone(),

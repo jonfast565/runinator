@@ -28,6 +28,14 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     provenance: WorkflowRunProvenance,
     execution: PipelineExecutionContext,
 ) -> Result<PipelineRun, SendableError> {
+    if let Some(id) = execution.requested_run_id
+        && let Some(run) = db.fetch_pipeline_run(id).await?
+    {
+        if run.status == WorkflowStatus::Queued {
+            start_pipeline_run(db, &run).await?;
+        }
+        return Ok(run);
+    }
     let Some(pipeline_id) = pipeline.id else {
         return Err(crate::errors::PIPELINE_NOT_FOUND.error("pipeline is missing an id"));
     };
@@ -451,6 +459,7 @@ async fn start_member_run<T: RuntimeStore + WorkflowVmStore>(
         .map_err(|error| -> SendableError { Box::new(error) })?;
     let config = runinator_runtime::config::config_tree_for_workflow(db, &snapshot).await;
     db.create_workflow_vm_run(NewWorkflowVmRun {
+        requested_run_id: None,
         replay_seed: None,
         workflow_id,
         workflow_snapshot: snapshot,

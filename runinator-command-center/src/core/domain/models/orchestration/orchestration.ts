@@ -288,3 +288,34 @@ export interface ExternalOperation {
   created_at: string;
   updated_at: string;
 }
+
+export interface AdapterDeliveryRecord {
+  id: string;
+  origin: { adapter_id: string; revision: number; delivery_record_id?: string | null };
+  attempt_id?: string | null;
+  event?: {
+    delivery_id: string;
+    event_type: string;
+    scope: string;
+    correlation_key: string;
+    payload: unknown;
+  } | null;
+  state: string;
+  error?: string | null;
+  preview: Record<string, unknown>;
+  outcome: Record<string, unknown> | null;
+  received_at: string;
+  updated_at: string;
+}
+export interface AdapterPollAttempt {
+  id: string;
+  adapter_id: string;
+  adapter_revision: number;
+  dry_run: boolean;
+  state: string;
+  result: unknown;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+  deadline_at: string;
+}

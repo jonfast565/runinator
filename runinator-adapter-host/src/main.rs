@@ -1077,8 +1077,25 @@ async fn github_collect(
         if page_len < 100 {
             break;
         }
+        require_complete_page(page == GITHUB_MAX_PAGES)?;
     }
     Ok(collected)
+}
+
+fn require_complete_page(incomplete: bool) -> Result<(), PollError> {
+    if incomplete {
+        return Err(PollError::Failed(
+            "GitHub scan exceeded its budget before reaching the checkpoint; checkpoint retained"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn operation_provenance(payload: &Value) -> Value {
+    extract_runinator_operation_key(payload)
+        .map(|operation_key| json!({ "operation_key": operation_key }))
+        .unwrap_or(Value::Null)
 }
 
 fn github_repository_id(repository: &str, value: &Value) -> Result<String, String> {
@@ -1171,6 +1188,14 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         )
         .await?;
         let repository_id = github_repository_id(repository, &repository_info)?;
+        if request.initialize {
+            // initialization deliberately establishes the boundary without scanning old history.
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            for kind in ["pull_request", "workflow_run", "check_run"] {
+                advance(&mut marks, &format!("{repository_id}:{kind}"), &now);
+            }
+            continue;
+        }
 
         for (url, event_type, array_key) in [
             (
@@ -1226,8 +1251,8 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                         .and_then(Value::as_str)
                         .map(str::to_owned),
                     occurred_at: parse_occurred_at(&Value::String(updated)).ok(),
+                    provenance: operation_provenance(&payload).into(),
                     payload: payload.into(),
-                    provenance: Value::Null.into(),
                 });
             }
         }
@@ -1244,13 +1269,9 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         // one check-runs request per commit is the expensive part of this poll. bounding it keeps a
         // busy repository from spending the hourly quota in a single pass; `since` above is what
         // keeps the steady-state list short in the first place.
-        for commit in commits
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .take(GITHUB_CHECK_RUN_COMMIT_BUDGET)
-        {
+        let commits = commits.as_array().cloned().unwrap_or_default();
+        require_complete_page(commits.len() > GITHUB_CHECK_RUN_COMMIT_BUDGET)?;
+        for commit in commits {
             let Some(sha) = commit.get("sha").and_then(Value::as_str) else {
                 continue;
             };
@@ -1288,8 +1309,8 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                         .unwrap_or_else(|| format!("check:{id}")),
                     subject_revision: Some(sha.to_owned()),
                     occurred_at: parse_occurred_at(&Value::String(updated)).ok(),
+                    provenance: operation_provenance(&check).into(),
                     payload: json!({ "repository": repository_info, "check_run": check }).into(),
-                    provenance: Value::Null.into(),
                 });
             }
         }
@@ -1443,8 +1464,8 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
             correlation_key: format!("issue:{issue_id}"),
             subject_revision: None,
             occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
+            provenance: operation_provenance(&issue).into(),
             payload: json!({ "issue": issue.clone() }).into(),
-            provenance: Value::Null.into(),
         });
         for comment in issue
             .pointer("/fields/comment/comments")
@@ -1476,8 +1497,8 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
                 correlation_key: format!("issue:{issue_id}"),
                 subject_revision: None,
                 occurred_at: parse_occurred_at(&Value::String(comment_updated)).ok(),
+                provenance: operation_provenance(&comment).into(),
                 payload: json!({"issue": issue, "comment": comment}).into(),
-                provenance: Value::Null.into(),
             });
         }
     }
@@ -1713,9 +1734,7 @@ fn handle_github(request: AdapterRequest, body_limit: usize) -> AdapterResponse 
         .or_else(|| payload.pointer("/workflow_run/head_sha"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let provenance = extract_runinator_operation_key(&payload)
-        .map(|operation_key| json!({ "operation_key": operation_key }))
-        .unwrap_or(Value::Null);
+    let provenance = operation_provenance(&payload);
     AdapterResponse {
         verified: true,
         events: vec![NormalizedAdapterEvent {
@@ -1788,9 +1807,7 @@ fn handle_jira(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
             "Jira event lacks stable delivery, project, or issue identity",
         );
     }
-    let provenance = extract_runinator_operation_key(&payload)
-        .map(|operation_key| json!({ "operation_key": operation_key }))
-        .unwrap_or(Value::Null);
+    let provenance = operation_provenance(&payload);
     AdapterResponse {
         verified: true,
         events: vec![NormalizedAdapterEvent {
@@ -2209,3 +2226,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "poll_safety_tests.rs"]
+mod poll_safety_tests;

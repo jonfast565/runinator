@@ -19,7 +19,7 @@ use runinator_models::{
     ingress_control::{BrokerMessageDirection, BrokerMessageRecord},
     value::Value,
 };
-use runinator_store::roles::DeliveryStore;
+use runinator_store::roles::{DeliveryStore, OrchestrationStore};
 use serde::Serialize;
 use tracing::warn;
 use uuid::Uuid;
@@ -38,7 +38,7 @@ struct BrokerTraceCorrelation {
     trace_id: Option<Uuid>,
 }
 
-impl<T: DeliveryStore> TracingBroker<T> {
+impl<T: DeliveryStore + OrchestrationStore> TracingBroker<T> {
     pub(crate) fn new(inner: Arc<dyn Broker>, store: Arc<T>) -> Self {
         Self { inner, store }
     }
@@ -56,12 +56,29 @@ impl<T: DeliveryStore> TracingBroker<T> {
             .unwrap_or_else(|error| {
                 Value::String(format!("failed to serialize broker message: {error}"))
             });
+        let poll_attempt_id = payload
+            .pointer("/command/effect_id")
+            .or_else(|| payload.pointer("/result/effect_id"))
+            .and_then(|value| value.as_str())
+            .and_then(|value| Uuid::parse_str(value).ok());
+        let adapter_id = if let Some(id) = poll_attempt_id {
+            self.store
+                .fetch_orchestration_adapter_poll_dispatch(id)
+                .await
+                .ok()
+                .flatten()
+                .map(|dispatch| dispatch.adapter_id)
+        } else {
+            None
+        };
         let record = BrokerMessageRecord {
+            adapter_id,
+            poll_attempt_id: poll_attempt_id.filter(|_| adapter_id.is_some()),
             id: Uuid::now_v7(),
             channel: channel.into(),
             direction,
             message_kind: message_kind.into(),
-            workflow_run_id: non_nil(correlation.workflow_run_id),
+            workflow_run_id: non_nil(correlation.workflow_run_id).filter(|_| adapter_id.is_none()),
             delivery_id: correlation.delivery_id,
             dedupe_key: correlation.dedupe_key,
             trace_id: non_nil(correlation.trace_id),
@@ -250,7 +267,7 @@ fn ingress_correlation(command: &WsIngressCommand) -> (Option<Uuid>, Option<Uuid
 }
 
 #[async_trait]
-impl<T: DeliveryStore> Broker for TracingBroker<T> {
+impl<T: DeliveryStore + OrchestrationStore> Broker for TracingBroker<T> {
     fn supports_workflow_effect_channels(&self) -> bool {
         self.inner.supports_workflow_effect_channels()
     }

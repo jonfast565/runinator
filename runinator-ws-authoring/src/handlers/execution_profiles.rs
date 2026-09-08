@@ -104,8 +104,12 @@ async fn consumer_admitted_profile<T: RuntimeStore + OrchestrationStore>(
         .ok()
         .flatten()
         .is_some_and(|dispatch| {
-            dispatch.profile_id == profile_id
-                && matches!(dispatch.state.as_str(), "queued" | "published" | "running")
+            dispatch.deadline_at > Utc::now()
+                && dispatch.profile_id == profile_id
+                && matches!(
+                    dispatch.state.as_str(),
+                    "queued" | "publishing" | "published" | "running"
+                )
         })
 }
 

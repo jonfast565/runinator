@@ -17,7 +17,7 @@ pub mod settings;
 pub mod simulate;
 pub mod stability;
 
-mod adapter_polling;
+pub mod adapter_polling;
 mod broker_trace;
 mod effect_consumer;
 mod effect_deadline;
@@ -33,3 +33,8 @@ pub use infrastructure_effect_host::run_infrastructure_effect_host;
 
 pub use effect_consumer::run_effect_result_consumer;
 pub use ingress_consumer::run_ingress_consumer;
+
+mod adapter_control;
+
+#[cfg(test)]
+mod adapter_control_tests;

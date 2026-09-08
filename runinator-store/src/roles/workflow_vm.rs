@@ -35,6 +35,7 @@ pub struct WorkflowTimerInterrupt {
 /// Everything needed to freeze a new VM-backed workflow run in one transaction.
 #[derive(Debug, Clone)]
 pub struct NewWorkflowVmRun {
+    pub requested_run_id: Option<Uuid>,
     /// Verified replay-prefix values, installed atomically into a fresh root identity.
     pub replay_seed: Option<WorkflowReplaySeed>,
     pub workflow_id: Uuid,

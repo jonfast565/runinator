@@ -119,6 +119,11 @@ pub enum Example {
     AdapterEnable,
     AdapterTest,
     AdapterTestResult,
+    AdapterDeliveries,
+    AdapterAttempts,
+    AdapterInspection,
+    OrchestrationDebugControl,
+    AdapterDecision,
     AdapterHealth,
     AdapterWebhookResponse,
 }
@@ -408,6 +413,15 @@ pub fn example_value(example: Example) -> Option<Value> {
             "headers": { "x-delivery-id": "delivery-123" },
             "body_base64": "eyJldmVudCI6InVwZGF0ZWQifQ=="
         }),
+        Example::AdapterDeliveries => {
+            json!([{ "id":UUID_EXAMPLE,"origin":{"adapter_id":UUID_EXAMPLE,"revision":1,"delivery_record_id":UUID_EXAMPLE},"attempt_id":null,"state":"held","approved":false,"event":{"source":"github","delivery_id":"delivery-1","event_type":"pull_request","scope":"github:repository:1","correlation_key":"pr:1","payload":{},"provenance":{}},"error":null,"preview":{},"outcome":null,"received_at":TIMESTAMP_EXAMPLE,"updated_at":TIMESTAMP_EXAMPLE }])
+        }
+        Example::AdapterAttempts => {
+            json!([{"id":UUID_EXAMPLE,"adapter_id":UUID_EXAMPLE,"adapter_revision":1,"dry_run":true,"state":"queued","result":null,"error":null,"created_at":TIMESTAMP_EXAMPLE,"updated_at":TIMESTAMP_EXAMPLE,"deadline_at":TIMESTAMP_EXAMPLE}])
+        }
+        Example::AdapterInspection => json!({"adapter_id":UUID_EXAMPLE,"mode":"review"}),
+        Example::OrchestrationDebugControl => json!({"paused":true,"steps":1}),
+        Example::AdapterDecision => json!({"accepted":true}),
         Example::AdapterTestResult => json!({
             "verified": true,
             "events": [{

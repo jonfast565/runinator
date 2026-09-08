@@ -89,6 +89,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
         &self,
         workflow_run_id: Option<Uuid>,
         pipeline_run_id: Option<Uuid>,
+        adapter_id: Option<Uuid>,
         channel: Option<String>,
         limit: i64,
     ) -> impl Future<Output = Result<Vec<BrokerMessageRecord>, SendableError>> + Send;

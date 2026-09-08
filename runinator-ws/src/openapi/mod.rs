@@ -29,6 +29,7 @@ use examples::{UUID_EXAMPLE, example_value};
 /// registration and its documentation are added in one place. `route_parity` diffs the union of
 /// these against the union of the registered routes.
 const DOC_SETS: &[&[EndpointDoc]] = &[
+    runinator_ws_runtime::handlers::adapter_control::DOCS,
     handlers::health::DOCS,
     DOCS,
     websocket::DOCS,

@@ -122,6 +122,8 @@ fallible_row_mapper!(row_to_external_ingress_gate(row) -> ExternalIngressGate {
 
 fallible_row_mapper!(row_to_external_ingress_record(row) -> ExternalIngressRecord {
     Ok(ExternalIngressRecord {
+        adapter: row.get::<Option<String>,_>("adapter").map(|v|serde_json::from_str(&v)).transpose()?,
+        caller_org_id: row.get("caller_org_id"),
         id: row.get("id"),
         target: ingress_target(row.get("target_kind"), row.get("target_id"))?,
         owner_scope: owner_scope(row.get("owner_scope_kind"), row.get("owner_scope_id"))?,
@@ -183,6 +185,7 @@ fn broker_message_direction(value: String) -> Result<BrokerMessageDirection, Sen
 
 fallible_row_mapper!(row_to_broker_message_record(row) -> BrokerMessageRecord {
     Ok(BrokerMessageRecord {
+        adapter_id:row.get("adapter_id"),poll_attempt_id:row.get("poll_attempt_id"),
         id: row.get("id"), channel: row.get("channel"),
         direction: broker_message_direction(row.get("direction"))?,
         message_kind: row.get("message_kind"), workflow_run_id: row.get("workflow_run_id"),

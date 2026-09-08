@@ -213,6 +213,9 @@ macro_rules! table_policy {
 /// Exhaustive schema policy inventory. The database suite compares this list with the migrated
 /// schema so adding a table without choosing its lifecycle is a test failure.
 pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
+    table_policy!("adapter_deliveries", ServiceRetention),
+    table_policy!("adapter_inspection", BoundedState),
+    table_policy!("orchestration_debug_controls", BoundedState),
     table_policy!("agent_directives", ColdArchive),
     table_policy!("agent_enrollment_tokens", ServiceRetention),
     table_policy!("api_keys", ExplicitLifecycle),
@@ -253,7 +256,7 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("notification_receipts", CascadeWithParent),
     table_policy!("notifications", ColdArchive),
     table_policy!("orchestration_adapter_polls", BoundedState),
-    table_policy!("orchestration_adapter_poll_dispatches", BoundedState),
+    table_policy!("orchestration_adapter_poll_dispatches", ServiceRetention),
     table_policy!("orchestration_adapter_revisions", ExplicitLifecycle),
     table_policy!("orchestration_adapters", ExplicitLifecycle),
     table_policy!("orchestration_bindings", ColdArchive),

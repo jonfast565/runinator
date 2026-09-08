@@ -170,6 +170,8 @@ async fn broker_message_trace_filters_by_run_and_prunes_old_rows() {
         (older_run, now - chrono::Duration::days(8)),
     ] {
         db.record_broker_message(BrokerMessageRecord {
+            adapter_id: None,
+            poll_attempt_id: None,
             id: Uuid::now_v7(),
             channel: "effect".into(),
             direction: BrokerMessageDirection::Published,
@@ -186,7 +188,7 @@ async fn broker_message_trace_filters_by_run_and_prunes_old_rows() {
     }
 
     let matching = db
-        .fetch_broker_messages(Some(matching_run), None, Some("effect".into()), 20)
+        .fetch_broker_messages(Some(matching_run), None, None, Some("effect".into()), 20)
         .await
         .unwrap();
     assert_eq!(matching.len(), 1);

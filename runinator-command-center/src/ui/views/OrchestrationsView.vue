@@ -308,6 +308,7 @@
                   }}</span>
                 </button>
               </nav>
+              <OrchestrationDebugControls :pipeline-id="store.selected.pipeline_id" />
               <section class="orchestration-workspace">
                 <div v-if="activeInstanceTab === 'Timeline'" class="orchestration-tab-panel">
                   <div class="orchestration-section-heading">
@@ -1156,6 +1157,11 @@
                   </div>
                 </section>
 
+                <AdapterIngressPanel
+                  v-else-if="activeAdapterTab === 'Messages'"
+                  :adapter-id="store.selectedAdapter.id"
+                  @open-binding="mode = 'Instances'"
+                />
                 <section v-else class="adapter-tab-panel">
                   <div class="adapter-tab-heading">
                     <div>
@@ -1164,7 +1170,11 @@
                     </div>
                     <span class="text-xs text-fg-muted">No event is persisted or routed.</span>
                   </div>
-                  <div class="adapter-test-inputs">
+                  <p v-if="testJobId" class="text-sm" role="status">
+                    Worker test {{ testJobId }} · {{ testJobState }}
+                  </p>
+                  <p v-if="testError" role="alert">{{ testError }}</p>
+                  <div v-if="currentTransport !== 'polling'" class="adapter-test-inputs">
                     <label>
                       <span>Request headers</span>
                       <small>JSON object with string values</small>
@@ -1181,7 +1191,12 @@
                       <textarea v-model="testBody" class="min-h-48" spellcheck="false" />
                     </label>
                   </div>
-                  <button class="btn btn-primary" type="button" @click="runTest">
+                  <button
+                    class="btn btn-primary"
+                    type="button"
+                    :disabled="testBusy"
+                    @click="runTest"
+                  >
                     <Icon name="play" :size="16" />
                     Verify and preview routing
                   </button>
@@ -1747,7 +1762,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import AdapterIngressPanel from "../components/orchestration/AdapterIngressPanel.vue";
+import OrchestrationDebugControls from "../components/orchestration/OrchestrationDebugControls.vue";
+import { fetchAdapterAttempts } from "../../core/api/commandCenterApi";
+import { onBeforeUnmount, computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import type {
   AdapterAuthentication,
   AdapterDefinition,
@@ -1801,7 +1819,7 @@ const secrets = useSecretsStore();
 const workflows = useWorkflowsStore();
 const modes = ["Definitions", "Instances", "Adapters"] as const;
 type Mode = (typeof modes)[number];
-const mode = ref<Mode>("Definitions");
+const mode = ref<Mode>(store.selectedId ? "Instances" : "Definitions");
 const definitionPipelineId = ref<string | null>(null);
 const definitionLoading = ref(false);
 const definitionError = ref<string | null>(null);
@@ -1826,7 +1844,7 @@ const instanceTabs = [
   "Commands",
   "Raw",
 ];
-const adapterTabs = ["Configuration", "Revisions", "Test"];
+const adapterTabs = ["Configuration", "Revisions", "Messages", "Test"];
 const activeInstanceTab = ref("Timeline");
 // mobile master-detail: the store always keeps a selection, so "back" is a local pane swap.
 const showInstanceList = ref(false);
@@ -1914,6 +1932,23 @@ interface AdapterTestResult {
   previews: AdapterEventPreview[];
 }
 const testResult = ref<AdapterTestResult | null>(null);
+const testJobId = ref<string | null>(null);
+const testJobState = ref("");
+const testError = ref("");
+const testBusy = ref(false);
+let testJobTimer = 0;
+onBeforeUnmount(() => {
+  window.clearInterval(testJobTimer);
+});
+watch(
+  () => store.selectedAdapterId,
+  () => {
+    window.clearInterval(testJobTimer);
+    testJobId.value = null;
+    testResult.value = null;
+    testBusy.value = false;
+  },
+);
 const adapterFormOpen = ref(false);
 const editingAdapterId = ref<string | null>(null);
 const adapterFormSaving = ref(false);
@@ -2542,11 +2577,62 @@ async function runTest(): Promise<void> {
     headers[name] = value;
   }
 
-  testResult.value = (await store.runAdapterTest(
-    store.selectedAdapter.id,
-    headers,
-    toBase64(testBody.value),
-  )) as AdapterTestResult;
+  testError.value = "";
+  testBusy.value = true;
+
+  try {
+    const adapterId = store.selectedAdapter.id;
+    const result = (await store.runAdapterTest(
+      adapterId,
+      headers,
+      toBase64(testBody.value),
+    )) as AdapterTestResult & { job_id?: string };
+
+    if (result.job_id) {
+      testJobId.value = result.job_id;
+      testJobState.value = "queued";
+      window.clearInterval(testJobTimer);
+      testJobTimer = window.setInterval(
+        () =>
+          void (async () => {
+            try {
+              const attempts = await fetchAdapterAttempts(adapterId);
+
+              if (store.selectedAdapterId !== adapterId) {
+                return;
+              }
+
+              const job = attempts.find((attempt) => attempt.id === testJobId.value);
+
+              if (!job) {
+                return;
+              }
+
+              testJobState.value = job.state;
+
+              if (["succeeded", "failed", "expired"].includes(job.state)) {
+                window.clearInterval(testJobTimer);
+                testBusy.value = false;
+                testError.value = job.error ?? "";
+
+                if (job.result) {
+                  testResult.value = job.result as AdapterTestResult;
+                }
+              }
+            } catch (cause) {
+              testError.value = String(cause);
+            }
+          })(),
+        1000,
+      );
+    } else {
+      testResult.value = result;
+      testBusy.value = false;
+    }
+  } catch (cause) {
+    testError.value = String(cause);
+    testBusy.value = false;
+  }
 }
 
 function initializeKind(): void {

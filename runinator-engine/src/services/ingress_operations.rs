@@ -693,3 +693,39 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 }
+
+impl<T: IngressStore + runinator_store::roles::AdapterControlStore> IngressOperations<T> {
+    pub async fn approve_review(
+        &self,
+        id: Uuid,
+        actor: Uuid,
+        org_id: Option<Uuid>,
+    ) -> Result<Option<ExternalIngressRecord>, SendableError> {
+        if !self
+            .store
+            .approve_external_ingress(id, actor, org_id)
+            .await?
+        {
+            return Ok(None);
+        }
+        self.review_record(id).await
+    }
+    pub async fn approve_fifo(
+        &self,
+        target: IngressTarget,
+        actor: Uuid,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<ExternalIngressRecord>, SendableError> {
+        let mut records = self
+            .review_records(None, Some(target), Some(IngressControlState::Held), 1000)
+            .await?;
+        records.sort_by_key(|record| (record.received_at, record.id));
+        let mut queued = Vec::new();
+        for record in records {
+            if let Some(record) = self.approve_review(record.id, actor, org_id).await? {
+                queued.push(record)
+            }
+        }
+        Ok(queued)
+    }
+}

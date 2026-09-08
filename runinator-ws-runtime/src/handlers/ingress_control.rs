@@ -10,29 +10,28 @@ use axum::{
 use chrono::Utc;
 use runinator_engine::{
     audit::{AuditEntry, AuditOutcome, record_audit},
-    services::{IngressOperations, PipelineIngressRequest, PipelineOperations, RunOperations},
+    services::IngressOperations,
 };
 use runinator_models::{
     auth::{AuthContext, Permission},
     ingress_control::{
         BROKER_INGRESS_SESSION_TTL_SECONDS, BrokerIngressSession, BrokerIngressSessionMode,
-        ExternalIngressGate, ExternalIngressGateMode, ExternalIngressRecord, IngressControlState,
+        ExternalIngressGate, ExternalIngressGateMode, IngressControlState,
     },
     orchestration::{IngressTarget, IngressTargetKind},
     rbac::{Action, ScopeKind, ScopeRef},
-    replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
     validation::{Validate, ValidationError},
 };
 use runinator_store::roles::{DefinitionStore, DeliveryStore};
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
-use runinator_ws_core::models::{ApiResponse, IngressEventRequest};
+use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker, GuardError, IntoReply};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::runs::{RunOperationsStore, WorkflowIngressContext, process_workflow_ingress};
+use super::runs::RunOperationsStore;
 
 pub trait IngressControlStore: RunOperationsStore + DeliveryStore + DefinitionStore {}
 
@@ -298,99 +297,8 @@ pub async fn get_external<T: IngressControlStore>(
     )
 }
 
-async fn apply_external<T: IngressControlStore>(
-    db: Arc<T>,
-    runs: Arc<RunOperations<T>>,
-    pipelines: Arc<PipelineOperations<T>>,
-    ctx: &AuthContext,
-    events: &EventSender,
-    record: ExternalIngressRecord,
-) -> ExternalIngressRecord {
-    let ingress = IngressOperations::new(db.clone());
-    let result = match record.target.kind {
-        IngressTargetKind::Workflow => {
-            let request = IngressEventRequest {
-                source: record.event.source.clone(),
-                event_id: record.event.event_id.clone(),
-                event_type: record.event.event_type.clone(),
-                correlation_key: record.event.correlation_key.clone(),
-                payload: record.event.payload.clone(),
-                provenance: record.event.provenance.clone(),
-                occurred_at: record.event.occurred_at,
-            };
-            let provenance = WorkflowRunProvenance {
-                source_kind: Some(TriggerSourceKind::Api),
-                actor_type: Some(TriggerActorType::User),
-                actor_replica_id: None,
-                actor_display_name: Some("ingress-control".into()),
-                request_host: None,
-                request_ip: None,
-                metadata: record.event.provenance.clone(),
-            };
-            let (status, _) = process_workflow_ingress(WorkflowIngressContext {
-                db: db.clone(),
-                operations: runs,
-                caller_org_id: ctx.org_id,
-                actor_id: ctx.principal_id,
-                workflow_id: record.target.id,
-                request,
-                provenance,
-                bypass_gate: true,
-            })
-            .await;
-            if status.is_success() {
-                Ok(())
-            } else {
-                Err(format!("workflow ingress returned {status}"))
-            }
-        }
-        IngressTargetKind::Pipeline => pipelines
-            .process_approved_ingress(
-                record.target.id,
-                ctx.org_id,
-                PipelineIngressRequest {
-                    source: record.event.source.clone(),
-                    event_id: record.event.event_id.clone(),
-                    event_type: record.event.event_type.clone(),
-                    correlation_key: record.event.correlation_key.clone(),
-                    payload: record.event.payload.clone(),
-                    provenance: record.event.provenance.clone(),
-                    occurred_at: record.event.occurred_at,
-                },
-                None,
-            )
-            .await
-            .map(|_| ())
-            .map_err(|error| format!("{error:?}")),
-    };
-    let (state, error) = match result {
-        Ok(()) => (IngressControlState::Applied, None),
-        Err(error) => (IngressControlState::Failed, Some(error)),
-    };
-    let _ = ingress.finish_review(record.id, state, error).await;
-    emit_change(
-        events,
-        "external",
-        record.id,
-        match state {
-            IngressControlState::Applied => "applied",
-            IngressControlState::Failed => "failed",
-            _ => "applying",
-        },
-        record.owner_scope,
-    );
-    ingress
-        .review_record(record.id)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(record)
-}
-
 pub async fn approve_external<T: IngressControlStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(runs): Extension<Arc<RunOperations<T>>>,
-    Extension(pipelines): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Extension(events): Extension<EventSender>,
     Path(id): Path<Uuid>,
@@ -404,16 +312,24 @@ pub async fn approve_external<T: IngressControlStore>(
     if let Err(reply) = require_target(db.as_ref(), &ctx, &pending.target, Permission::Run).await {
         return reply.into_reply();
     }
-    if pending.gate_mode != ExternalIngressGateMode::Review {
+    if pending.gate_mode != ExternalIngressGateMode::Review
+        && pending.state != IngressControlState::Failed
+    {
         return bad_request("paused queues must be released in FIFO order");
     }
     let actor = ctx.principal_id.unwrap_or(Uuid::nil());
-    let claimed = match ingress.claim_review(id, actor).await {
+    let record = match ingress.approve_review(id, actor, ctx.org_id).await {
         Ok(Some(value)) => value,
         Ok(None) => return bad_request("external ingress record is no longer held"),
         Err(error) => return api_error(error.to_string()),
     };
-    let record = apply_external(db.clone(), runs, pipelines, &ctx, &events, claimed).await;
+    emit_change(
+        &events,
+        "external",
+        record.id,
+        "approved",
+        record.owner_scope,
+    );
     record_audit(
         db.as_ref(),
         AuditEntry::new(
@@ -435,8 +351,6 @@ pub async fn approve_external<T: IngressControlStore>(
 
 pub async fn release_external<T: IngressControlStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(runs): Extension<Arc<RunOperations<T>>>,
-    Extension(pipelines): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Extension(events): Extension<EventSender>,
     Path((kind, id)): Path<(String, Uuid)>,
@@ -459,24 +373,20 @@ pub async fn release_external<T: IngressControlStore>(
         return bad_request("FIFO release is available only while the target gate is paused");
     }
     let actor = ctx.principal_id.unwrap_or(Uuid::nil());
-    let mut released = Vec::new();
-    loop {
-        let Some(record) = (match ingress.claim_oldest_review(target.clone(), actor).await {
-            Ok(value) => value,
-            Err(error) => return api_error(error.to_string()),
-        }) else {
-            break;
-        };
-        released.push(
-            apply_external(
-                db.clone(),
-                runs.clone(),
-                pipelines.clone(),
-                &ctx,
-                &events,
-                record,
-            )
-            .await,
+    let released = match ingress
+        .approve_fifo(target.clone(), actor, ctx.org_id)
+        .await
+    {
+        Ok(records) => records,
+        Err(error) => return api_error(error.to_string()),
+    };
+    for record in &released {
+        emit_change(
+            &events,
+            "external",
+            record.id,
+            "approved",
+            record.owner_scope,
         );
     }
     record_audit(

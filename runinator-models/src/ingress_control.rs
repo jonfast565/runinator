@@ -56,6 +56,10 @@ pub enum IngressControlState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalIngressRecord {
+    #[serde(default)]
+    pub adapter: Option<crate::adapter_control::AdapterOrigin>,
+    #[serde(default)]
+    pub caller_org_id: Option<Uuid>,
     pub id: Uuid,
     pub target: IngressTarget,
     pub owner_scope: ScopeRef,
@@ -151,6 +155,10 @@ pub enum BrokerIngressCapture {
 /// durable engine is available to the workflow or pipeline run that owns it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerMessageRecord {
+    #[serde(default)]
+    pub adapter_id: Option<Uuid>,
+    #[serde(default)]
+    pub poll_attempt_id: Option<Uuid>,
     pub id: Uuid,
     /// `effect`, `effect_result`, `wake`, `ingress`, `control`, or `agent`.
     pub channel: String,
@@ -184,4 +192,15 @@ pub struct IngressControlQuery {
     pub target_id: Option<Uuid>,
     pub state: Option<IngressControlState>,
     pub limit: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalIngressCaptureRequest {
+    pub target: IngressTarget,
+    pub owner_scope: ScopeRef,
+    pub gate_mode: ExternalIngressGateMode,
+    pub event: IngressEvent,
+    pub adapter: Option<crate::adapter_control::AdapterOrigin>,
+    pub now: DateTime<Utc>,
+    pub capacity: i64,
 }

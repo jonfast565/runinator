@@ -8,6 +8,7 @@ use uuid::Uuid;
 use runinator_store::roles::NewWorkflowVmRun;
 
 pub(crate) struct WorkflowVmRunRequest {
+    pub requested_run_id: Option<Uuid>,
     pub workflow_id: Uuid,
     pub workflow_snapshot: WorkflowDefinition,
     pub parameters: Value,
@@ -37,6 +38,18 @@ pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     name: Option<String>,
     provenance: runinator_models::replicas::WorkflowRunProvenance,
 ) -> Result<WorkflowRun, SendableError> {
+    create_workflow_run_with_id(db, workflow_id, parameters, debug, name, provenance, None).await
+}
+
+pub async fn create_workflow_run_with_id<T: RuntimeStore + WorkflowVmStore>(
+    db: &T,
+    workflow_id: Uuid,
+    parameters: Value,
+    debug: bool,
+    name: Option<String>,
+    provenance: runinator_models::replicas::WorkflowRunProvenance,
+    requested_run_id: Option<Uuid>,
+) -> Result<WorkflowRun, SendableError> {
     let workflow_snapshot = support::fetch_workflow_snapshot(db, workflow_id).await?;
     let state = if debug {
         runinator_models::json!({
@@ -58,6 +71,7 @@ pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     create_workflow_vm_run(
         db,
         WorkflowVmRunRequest {
+            requested_run_id,
             workflow_id,
             workflow_snapshot,
             parameters,
@@ -75,6 +89,7 @@ pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
     request: WorkflowVmRunRequest,
 ) -> Result<WorkflowRun, SendableError> {
     let WorkflowVmRunRequest {
+        requested_run_id,
         workflow_id,
         workflow_snapshot,
         parameters,
@@ -100,6 +115,7 @@ pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
     // in-flight run neither loses its settings nor changes behaviour after an edit.
     let config = runinator_runtime::config::config_tree_for_workflow(db, &workflow_snapshot).await;
     db.create_workflow_vm_run(NewWorkflowVmRun {
+        requested_run_id,
         replay_seed: None,
         workflow_id,
         workflow_snapshot,

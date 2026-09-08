@@ -29,6 +29,11 @@ pub trait IngressStore: Send + Sync + 'static {
         gate: ExternalIngressGate,
     ) -> impl Future<Output = Result<ExternalIngressGate, SendableError>> + Send;
 
+    fn capture_external_ingress_request(
+        &self,
+        request: runinator_models::ingress_control::ExternalIngressCaptureRequest,
+    ) -> impl Future<Output = Result<ExternalIngressCapture, SendableError>> + Send;
+
     fn capture_external_ingress(
         &self,
         target: IngressTarget,
@@ -37,7 +42,19 @@ pub trait IngressStore: Send + Sync + 'static {
         event: IngressEvent,
         now: DateTime<Utc>,
         capacity: i64,
-    ) -> impl Future<Output = Result<ExternalIngressCapture, SendableError>> + Send;
+    ) -> impl Future<Output = Result<ExternalIngressCapture, SendableError>> + Send {
+        self.capture_external_ingress_request(
+            runinator_models::ingress_control::ExternalIngressCaptureRequest {
+                target,
+                owner_scope,
+                gate_mode,
+                event,
+                adapter: None,
+                now,
+                capacity,
+            },
+        )
+    }
 
     fn fetch_external_ingress_record(
         &self,

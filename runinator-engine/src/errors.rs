@@ -265,6 +265,8 @@ pub const CONSOLE_CELL_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
 );
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
+    ADAPTER_EVENT_REJECTED,
+    ADAPTER_EVENT_UNAVAILABLE,
     CONTRACT_PUBLICATION,
     REPLAY_UNSAFE,
     IMPORT_UNKNOWN_SUBFLOW,
@@ -336,3 +338,14 @@ impl EngineErrors for EngineErrorCatalog {
         DICTIONARY
     }
 }
+
+pub const ADAPTER_EVENT_REJECTED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI188",
+    "adapter.event.rejected",
+    "Adapter event rejected",
+);
+pub const ADAPTER_EVENT_UNAVAILABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI189",
+    "adapter.event.unavailable",
+    "Adapter event processing unavailable",
+);

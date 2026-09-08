@@ -64,3 +64,6 @@ pub use workspaces::WorkspaceStore;
 
 pub mod durable_workspaces;
 pub use durable_workspaces::DurableWorkspaceStore;
+
+pub mod adapter_control;
+pub use adapter_control::AdapterControlStore;

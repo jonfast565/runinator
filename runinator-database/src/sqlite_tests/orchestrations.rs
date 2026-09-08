@@ -36,6 +36,7 @@ async fn standalone_workflow_run_has_no_orchestration_binding() {
     let workflow_id = snapshot.id.unwrap();
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            requested_run_id: None,
             replay_seed: None,
             workflow_id,
             workflow_snapshot: snapshot,
@@ -277,6 +278,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
             Value::Null,
             Default::default(),
             PipelineExecutionContext {
+                requested_run_id: None,
                 orchestration_binding_id: Some(binding_id),
                 execution_epoch: Some(1),
                 start_member: None,
@@ -298,6 +300,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .unwrap();
     let workflow_run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            requested_run_id: None,
             replay_seed: None,
             workflow_id,
             workflow_snapshot: member,
@@ -664,6 +667,8 @@ async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
         notification_delivery_id: None,
     };
     db.insert_orchestration_adapter_poll_dispatch(AdapterPollDispatch {
+        dry_run: false,
+        deadline_at: now + chrono::TimeDelta::seconds(300),
         id: dispatch_id,
         adapter_id,
         adapter_revision: 1,

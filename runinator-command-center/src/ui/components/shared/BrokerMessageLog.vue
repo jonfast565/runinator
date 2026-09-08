@@ -74,11 +74,12 @@ import Icon from "./Icon.vue";
 
 const props = withDefaults(
   defineProps<{
+    adapterId?: string | null;
     workflowRunId?: string | null;
     pipelineRunId?: string | null;
     title?: string;
   }>(),
-  { workflowRunId: null, pipelineRunId: null, title: "Broker messages" },
+  { adapterId: null, workflowRunId: null, pipelineRunId: null, title: "Broker messages" },
 );
 
 const records = ref<JsonRecord[]>([]);
@@ -152,6 +153,7 @@ async function refresh(resetScroll = false): Promise<void> {
 
   try {
     const nextRecords = await listBrokerMessages({
+      adapterId: props.adapterId ?? undefined,
       workflowRunId: props.workflowRunId ?? undefined,
       pipelineRunId: props.pipelineRunId ?? undefined,
       limit: 250,
@@ -176,7 +178,7 @@ function toggleLiveUpdates(): void {
 }
 
 watch(
-  () => [props.workflowRunId, props.pipelineRunId],
+  () => [props.workflowRunId, props.pipelineRunId, props.adapterId],
   () => void refresh(true),
   { immediate: true },
 );

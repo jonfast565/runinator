@@ -219,6 +219,7 @@ pub async fn create_workflow_run_for_trigger<T: ScheduleStore + RuntimeStore + W
     super::runs::create_workflow_vm_run(
         db,
         super::runs::WorkflowVmRunRequest {
+            requested_run_id: None,
             workflow_id: trigger.workflow_id,
             workflow_snapshot,
             parameters,

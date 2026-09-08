@@ -21,6 +21,7 @@ async fn source() -> (SqliteDb, Uuid) {
     let module = runinator_workflows::compile_workflow_module(&snapshot).unwrap();
     let run = db
         .create_workflow_vm_run(NewWorkflowVmRun {
+            requested_run_id: None,
             replay_seed: None,
             workflow_id: snapshot.id.unwrap(),
             workflow_snapshot: snapshot,

@@ -84,6 +84,7 @@ pub const RESERVED_PLATFORM_ORGANIZATION: ErrorDescriptor = ErrorDescriptor::new
 );
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
+    ADAPTER_QUEUE_FULL,
     WORKFLOW_PUBLICATION_CONFLICT,
     PLATFORM_RECONCILIATION_BLOCKED,
     HUMAN_PLATFORM_ROLE,
@@ -116,3 +117,9 @@ impl EngineErrors for DatabaseErrors {
         DICTIONARY
     }
 }
+
+pub const ADAPTER_QUEUE_FULL: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI517",
+    "database.adapter.queue_full",
+    "Adapter delivery journal is full",
+);

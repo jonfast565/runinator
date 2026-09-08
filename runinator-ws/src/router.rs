@@ -213,6 +213,9 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         .merge(automation::routes(pool.clone()))
         .merge(observability::routes(pool.clone()))
         .merge(ingress_control::routes(pool.clone()))
+        .merge(runinator_ws_runtime::handlers::adapter_control::routes(
+            pool.clone(),
+        ))
         .merge(credentials::routes(pool.clone()))
         .merge(execution_profiles::routes(pool.clone()))
         .merge(providers::routes(pool.clone()))

@@ -310,10 +310,10 @@ where
             BrokerMessageDirection::Published => "published",
             BrokerMessageDirection::Received => "received",
         };
-        sqlx::query(&self.render("INSERT INTO broker_messages (id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+        sqlx::query(&self.render("INSERT INTO broker_messages (id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at, adapter_id, poll_attempt_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
             .bind(record.id).bind(record.channel).bind(direction).bind(record.message_kind)
             .bind(record.workflow_run_id).bind(record.delivery_id).bind(record.dedupe_key)
-            .bind(record.trace_id).bind(record.payload.to_string()).bind(record.occurred_at.timestamp())
+            .bind(record.trace_id).bind(record.payload.to_string()).bind(record.occurred_at.timestamp()).bind(record.adapter_id).bind(record.poll_attempt_id)
             .execute(self.pool()).await?;
         Ok(())
     }
@@ -322,11 +322,12 @@ where
         &self,
         workflow_run_id: Option<Uuid>,
         pipeline_run_id: Option<Uuid>,
+        adapter_id: Option<Uuid>,
         channel: Option<String>,
         limit: i64,
     ) -> Result<Vec<BrokerMessageRecord>, SendableError> {
         let mut sql = String::from(
-            "SELECT id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at FROM broker_messages WHERE 1 = 1",
+            "SELECT id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at, adapter_id, poll_attempt_id FROM broker_messages WHERE 1 = 1",
         );
         if workflow_run_id.is_some() {
             sql.push_str(" AND workflow_run_id = ?");
@@ -335,6 +336,9 @@ where
             sql.push_str(
                 " AND workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
             );
+        }
+        if adapter_id.is_some() {
+            sql.push_str(" AND adapter_id = ?");
         }
         if channel.is_some() {
             sql.push_str(" AND channel = ?");
@@ -347,6 +351,9 @@ where
         }
         if let Some(id) = pipeline_run_id {
             query = query.bind(id);
+        }
+        if let Some(adapter_id) = adapter_id {
+            query = query.bind(adapter_id);
         }
         if let Some(channel) = channel {
             query = query.bind(channel);

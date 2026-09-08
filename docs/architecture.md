@@ -135,6 +135,8 @@ rather than placing persistence logic in the web handlers.
 
 ### Inbound adapters and correlated orchestration
 
+See [adapter debugging](adapter-debugging.md) for durable delivery inspection, recovered approvals, worker-backed test jobs, and reducer pause/step controls.
+
 Inbound orchestration adapters are deliberately separate from outbound providers. `runinator-adapter-host` runs adapter code on loopback only: authoring handlers use it for kind discovery, webhook verification, and adapter tests, while the engine uses it for durable polling. It ships as a sidecar of the web-service and standalone-engine pods, not as a network Service. The adapter client, shared request contract, and SDK keep both call paths on one authenticated protocol.
 
 An admitted pipeline can additionally carry an orchestration policy. The engine binds each admitted scope and correlation key to a durable generation, pins the pipeline revision, then applies intent priority, coalescing, phase output mapping, workspace leases, and retry budgets. This makes later webhooks and polls converge on one durable orchestration rather than independently starting duplicate workflow runs.

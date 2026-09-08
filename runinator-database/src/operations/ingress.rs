@@ -15,7 +15,7 @@ use runinator_models::{
 
 const INGRESS_ADMISSION_COLUMNS: &str = "id, org_scope, scope, correlation_key, generation, workflow_id, pipeline_id, status, workflow_run_id, pipeline_run_id, policy, created_at, updated_at";
 const INGRESS_EVENT_COLUMNS: &str = "id, admission_id, sequence, generation, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, received_at, disposition, queue_state, claim_token, promoted_generation, workflow_run_id, pipeline_run_id";
-const EXTERNAL_CONTROL_COLUMNS: &str = "id, target_kind, target_id, owner_scope_kind, owner_scope_id, gate_mode, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, state, reviewed_by, last_error, received_at, resolved_at";
+const EXTERNAL_CONTROL_COLUMNS: &str = "id, target_kind, target_id, owner_scope_kind, owner_scope_id, gate_mode, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, state, reviewed_by, last_error, received_at, resolved_at, adapter, caller_org_id";
 
 fn target_kind_name(kind: runinator_models::orchestration::IngressTargetKind) -> &'static str {
     match kind {
@@ -125,6 +125,7 @@ where
     for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<i64>: Encode<'q, B::Db> + Type<B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
@@ -182,15 +183,19 @@ where
             })
     }
 
-    async fn capture_external_ingress(
+    async fn capture_external_ingress_request(
         &self,
-        target: IngressTarget,
-        owner_scope: ScopeRef,
-        gate_mode: ExternalIngressGateMode,
-        event: IngressEvent,
-        now: chrono::DateTime<chrono::Utc>,
-        capacity: i64,
+        request: runinator_models::ingress_control::ExternalIngressCaptureRequest,
     ) -> Result<ExternalIngressCapture, SendableError> {
+        let runinator_models::ingress_control::ExternalIngressCaptureRequest {
+            target,
+            owner_scope,
+            gate_mode,
+            event,
+            adapter,
+            now,
+            capacity,
+        } = request;
         let target_kind = target_kind_name(target.kind);
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render("UPDATE ingress_control_gates SET updated_at = updated_at WHERE target_kind = ? AND target_id = ?"))
@@ -213,12 +218,12 @@ where
         }
         let id = Uuid::now_v7();
         sqlx::query(&self.render(
-            "INSERT INTO ingress_control_events (id, target_kind, target_id, owner_scope_kind, owner_scope_id, gate_mode, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, state, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?)",
+            "INSERT INTO ingress_control_events (id, target_kind, target_id, owner_scope_kind, owner_scope_id, gate_mode, source, event_id, event_type, correlation_key, payload, provenance, occurred_at, state, received_at, adapter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, ?)",
         ))
         .bind(id).bind(target_kind).bind(target.id).bind(owner_scope.kind.as_str()).bind(owner_scope.id)
         .bind(gate_mode_name(gate_mode)).bind(event.source.as_str()).bind(event.event_id.as_str())
         .bind(event.event_type.as_str()).bind(event.correlation_key.as_str()).bind(event.payload.to_string())
-        .bind(event.provenance.to_string()).bind(event.occurred_at.map(|value| value.timestamp())).bind(now.timestamp())
+        .bind(event.provenance.to_string()).bind(event.occurred_at.map(|value| value.timestamp())).bind(now.timestamp()).bind(adapter.map(|origin|serde_json::to_string(&origin)).transpose()?)
         .execute(&mut *tx).await?;
         let row = sqlx::query(&self.render(&format!(
             "SELECT {EXTERNAL_CONTROL_COLUMNS} FROM ingress_control_events WHERE id = ?"
@@ -356,8 +361,20 @@ where
         reviewed_by: Uuid,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, SendableError> {
-        Ok(sqlx::query(&self.render("UPDATE ingress_control_events SET state = 'dropped', reviewed_by = ?, resolved_at = ? WHERE id = ? AND state = 'held'"))
-            .bind(reviewed_by).bind(now.timestamp()).bind(id).execute(self.pool()).await?.affected() > 0)
+        let origin = self
+            .fetch_external_ingress_record(id)
+            .await?
+            .and_then(|record| record.adapter)
+            .and_then(|origin| origin.delivery_record_id);
+        let mut tx = self.pool().begin().await?;
+        let changed = sqlx::query(&self.render("UPDATE ingress_control_events SET state = 'dropped', reviewed_by = ?, resolved_at = ? WHERE id = ? AND state IN ('held', 'failed')"))
+            .bind(reviewed_by).bind(now.timestamp()).bind(id).execute(&mut *tx).await?.affected() > 0;
+        if changed && let Some(delivery_id) = origin {
+            sqlx::query(&self.render("UPDATE adapter_deliveries SET state = 'dropped', updated_at = ? WHERE id = ? AND state IN ('held_at_pipeline', 'failed')"))
+                .bind(now.timestamp()).bind(delivery_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(changed)
     }
 
     async fn claim_ingress_admission(

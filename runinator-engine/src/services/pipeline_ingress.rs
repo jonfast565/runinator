@@ -71,7 +71,7 @@ impl PipelineIngressRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PipelineIngressResult {
     pub admission_id: Uuid,
     pub generation: i64,
@@ -100,7 +100,11 @@ impl PipelineIngressError {
     }
 }
 
-fn result(entry: &IngressInboxEntry, duplicate: bool, message: &str) -> PipelineIngressResult {
+pub(super) fn result(
+    entry: &IngressInboxEntry,
+    duplicate: bool,
+    message: &str,
+) -> PipelineIngressResult {
     PipelineIngressResult {
         admission_id: entry.admission_id,
         generation: entry.promoted_generation.unwrap_or(entry.generation),
@@ -129,7 +133,7 @@ where
         pipeline_id: Uuid,
         caller_org_id: Option<Uuid>,
         request: PipelineIngressRequest,
-        adapter: Option<(Uuid, i64)>,
+        adapter: Option<runinator_models::adapter_control::AdapterOrigin>,
     ) -> Result<PipelineIngressResult, PipelineIngressError> {
         self.process_ingress_inner(pipeline_id, caller_org_id, request, adapter, false)
             .await
@@ -140,7 +144,7 @@ where
         pipeline_id: Uuid,
         caller_org_id: Option<Uuid>,
         request: PipelineIngressRequest,
-        adapter: Option<(Uuid, i64)>,
+        adapter: Option<runinator_models::adapter_control::AdapterOrigin>,
     ) -> Result<PipelineIngressResult, PipelineIngressError> {
         self.process_ingress_inner(pipeline_id, caller_org_id, request, adapter, true)
             .await
@@ -151,7 +155,7 @@ where
         pipeline_id: Uuid,
         caller_org_id: Option<Uuid>,
         request: PipelineIngressRequest,
-        adapter: Option<(Uuid, i64)>,
+        adapter: Option<runinator_models::adapter_control::AdapterOrigin>,
         bypass_gate: bool,
     ) -> Result<PipelineIngressResult, PipelineIngressError> {
         let pipeline = self
@@ -203,8 +207,19 @@ where
                 .owner_scope_for_target(&target)
                 .await
                 .map_err(PipelineIngressError::internal)?;
-            return match ingress
-                .capture_for_review(target, owner_scope, gate.mode, event)
+            return match self
+                .store
+                .capture_external_ingress_request(
+                    runinator_models::ingress_control::ExternalIngressCaptureRequest {
+                        target,
+                        owner_scope,
+                        gate_mode: gate.mode,
+                        event,
+                        adapter,
+                        now: Utc::now(),
+                        capacity: runinator_models::ingress_control::INGRESS_CONTROL_QUEUE_CAPACITY,
+                    },
+                )
                 .await
                 .map_err(PipelineIngressError::internal)?
             {
@@ -225,7 +240,7 @@ where
             match ingress
                 .claim_start(org_id, target, policy.clone(), &event)
                 .await
-                .map_err(|error| PipelineIngressError::Invalid(error.to_string()))?
+                .map_err(PipelineIngressError::internal)?
             {
                 Some(IngressAdmissionClaim::Acquired(value)) => {
                     match ingress
@@ -266,7 +281,25 @@ where
                 .await
                 .map_err(PipelineIngressError::internal)?
             {
-                return Ok(result(&entry, true, "duplicate ingress event"));
+                if entry.pipeline_run_id.is_some()
+                    || !matches!(
+                        entry.disposition,
+                        IngressEventDisposition::Started | IngressEventDisposition::Requeued
+                    )
+                {
+                    return Ok(result(&entry, true, "duplicate ingress event"));
+                }
+                if let Some(binding) = self
+                    .store
+                    .fetch_orchestration_binding_for_admission(admission_id, admission.generation)
+                    .await
+                    .map_err(PipelineIngressError::internal)?
+                {
+                    let mut reply = result(&entry, true, "duplicate managed ingress event");
+                    reply.orchestration_binding_id = Some(binding.id);
+                    return Ok(reply);
+                }
+                start_record = Some(entry);
             }
             if admission.target.kind != IngressTargetKind::Pipeline
                 || admission.target.id != pipeline_id
@@ -281,22 +314,11 @@ where
                 IngressAdmissionStatus::Active => IngressLifecycle::Active,
                 IngressAdmissionStatus::Terminal => IngressLifecycle::Terminal,
             };
-            if !snapshot
-                .dispatches_for(&event.event_type, lifecycle, &event.payload)
-                .is_empty()
-            {
-                let record = ingress
-                    .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)
-                    .await
-                    .map_err(PipelineIngressError::internal)?;
-                return Ok(result(
-                    &record.entry,
-                    record.duplicate,
-                    "orchestration intent event accepted",
-                ));
-            }
-            match snapshot.action_for_payload(&event.event_type, lifecycle, &event.payload) {
-                Some(IngressAction::Record) => {
+            if start_record.is_none() {
+                if !snapshot
+                    .dispatches_for(&event.event_type, lifecycle, &event.payload)
+                    .is_empty()
+                {
                     let record = ingress
                         .persist_event(&admission, &event, IngressEventDisposition::Recorded, false)
                         .await
@@ -304,95 +326,124 @@ where
                     return Ok(result(
                         &record.entry,
                         record.duplicate,
-                        "ingress event recorded",
+                        "orchestration intent event accepted",
                     ));
                 }
-                Some(IngressAction::Queue) if lifecycle == IngressLifecycle::Active => {
-                    let record = ingress
-                        .persist_event(&admission, &event, IngressEventDisposition::Queued, true)
-                        .await
-                        .map_err(PipelineIngressError::internal)?;
-                    return Ok(result(
-                        &record.entry,
-                        record.duplicate,
-                        "ingress event queued",
-                    ));
-                }
-                Some(IngressAction::Interrupt) if lifecycle == IngressLifecycle::Active => {
-                    let run_id = admission.pipeline_run_id.ok_or_else(|| {
-                        PipelineIngressError::Internal(
-                            "active ingress admission is not bound to a pipeline run".into(),
-                        )
-                    })?;
-                    let record = ingress
-                        .persist_event(
-                            &admission,
-                            &event,
-                            IngressEventDisposition::InterruptRequested,
-                            false,
-                        )
-                        .await
-                        .map_err(PipelineIngressError::internal)?;
-                    if record.duplicate {
+                match snapshot.action_for_payload(&event.event_type, lifecycle, &event.payload) {
+                    Some(IngressAction::Record) => {
+                        let record = ingress
+                            .persist_event(
+                                &admission,
+                                &event,
+                                IngressEventDisposition::Recorded,
+                                false,
+                            )
+                            .await
+                            .map_err(PipelineIngressError::internal)?;
                         return Ok(result(
                             &record.entry,
-                            true,
-                            "duplicate pipeline interrupt event",
+                            record.duplicate,
+                            "ingress event recorded",
                         ));
                     }
-                    let _ = ingress
-                        .bind_event_pipeline_run(record.entry.id, run_id)
-                        .await;
-                    self.cancel_run(run_id)
-                        .await
-                        .map_err(|error| PipelineIngressError::Invalid(error.to_string()))?;
-                    return Ok(result(
-                        &record.entry,
-                        false,
-                        "pipeline and active members canceled",
-                    ));
-                }
-                Some(IngressAction::Requeue) if lifecycle == IngressLifecycle::Terminal => {
-                    match ingress
-                        .requeue_terminal_event(&admission, &snapshot, &event)
-                        .await
-                        .map_err(PipelineIngressError::internal)?
-                    {
-                        Some(record) if record.duplicate => {
+                    Some(IngressAction::Queue) if lifecycle == IngressLifecycle::Active => {
+                        let record = ingress
+                            .persist_event(
+                                &admission,
+                                &event,
+                                IngressEventDisposition::Queued,
+                                true,
+                            )
+                            .await
+                            .map_err(PipelineIngressError::internal)?;
+                        return Ok(result(
+                            &record.entry,
+                            record.duplicate,
+                            "ingress event queued",
+                        ));
+                    }
+                    Some(IngressAction::Interrupt) if lifecycle == IngressLifecycle::Active => {
+                        let run_id = admission.pipeline_run_id.ok_or_else(|| {
+                            PipelineIngressError::Internal(
+                                "active ingress admission is not bound to a pipeline run".into(),
+                            )
+                        })?;
+                        let record = ingress
+                            .persist_event(
+                                &admission,
+                                &event,
+                                IngressEventDisposition::InterruptRequested,
+                                false,
+                            )
+                            .await
+                            .map_err(PipelineIngressError::internal)?;
+                        if record.duplicate {
                             return Ok(result(
                                 &record.entry,
                                 true,
-                                "duplicate terminal requeue event",
+                                "duplicate pipeline interrupt event",
                             ));
                         }
-                        Some(record) => {
-                            admission = ingress
-                                .fetch(
-                                    org_id,
-                                    snapshot.scope.clone(),
-                                    event.correlation_key.clone(),
-                                )
-                                .await
-                                .map_err(PipelineIngressError::internal)?
-                                .ok_or_else(|| {
-                                    PipelineIngressError::Internal(
-                                        "requeued ingress admission disappeared".into(),
+                        let _ = ingress
+                            .bind_event_pipeline_run(record.entry.id, run_id)
+                            .await;
+                        self.cancel_run(run_id)
+                            .await
+                            .map_err(|error| PipelineIngressError::Invalid(error.to_string()))?;
+                        return Ok(result(
+                            &record.entry,
+                            false,
+                            "pipeline and active members canceled",
+                        ));
+                    }
+                    Some(IngressAction::Requeue) if lifecycle == IngressLifecycle::Terminal => {
+                        match ingress
+                            .requeue_terminal_event(&admission, &snapshot, &event)
+                            .await
+                            .map_err(PipelineIngressError::internal)?
+                        {
+                            Some(record) if record.duplicate => {
+                                return Ok(result(
+                                    &record.entry,
+                                    true,
+                                    "duplicate terminal requeue event",
+                                ));
+                            }
+                            Some(record) => {
+                                admission = ingress
+                                    .fetch(
+                                        org_id,
+                                        snapshot.scope.clone(),
+                                        event.correlation_key.clone(),
                                     )
-                                })?;
-                            start_record = Some(record.entry);
-                        }
-                        None => {
-                            return Err(PipelineIngressError::Conflict(
-                                "another ingress event already started the next generation".into(),
-                            ));
+                                    .await
+                                    .map_err(PipelineIngressError::internal)?
+                                    .ok_or_else(|| {
+                                        PipelineIngressError::Internal(
+                                            "requeued ingress admission disappeared".into(),
+                                        )
+                                    })?;
+                                start_record = Some(record.entry);
+                            }
+                            None => {
+                                return Err(PipelineIngressError::Conflict(
+                                    "another ingress event already started the next generation"
+                                        .into(),
+                                ));
+                            }
                         }
                     }
-                }
-                _ => {
-                    let _ = ingress
-                        .persist_event(&admission, &event, IngressEventDisposition::Rejected, false)
-                        .await;
-                    return Err(PipelineIngressError::Conflict("ingress event has no configured route for the admission lifecycle; no run was started".into()));
+                    _ => {
+                        let _ = ingress
+                            .persist_event(
+                                &admission,
+                                &event,
+                                IngressEventDisposition::Rejected,
+                                false,
+                            )
+                            .await;
+                        return Err(PipelineIngressError::Conflict("ingress event has no configured route for the admission lifecycle; no run was started".into()));
+                    }
                 }
             }
         }
@@ -402,7 +453,11 @@ where
         if pipeline.metadata.get("orchestration").is_some() {
             let orchestrations = OrchestrationOperations::new(self.store.clone());
             let binding = orchestrations
-                .admit_with_adapter(&admission, &pipeline, adapter)
+                .admit_with_adapter(
+                    &admission,
+                    &pipeline,
+                    adapter.map(|origin| (origin.adapter_id, origin.revision)),
+                )
                 .await
                 .map_err(PipelineIngressError::internal)?
                 .ok_or_else(|| {
@@ -410,9 +465,9 @@ where
                         "managed orchestration policy disappeared".into(),
                     )
                 })?;
-            if let Some((adapter_id, _)) = adapter {
+            if let Some(origin) = adapter {
                 self.store
-                    .mark_orchestration_adapter_admitted(adapter_id, Utc::now())
+                    .mark_orchestration_adapter_admitted(origin.adapter_id, Utc::now())
                     .await
                     .map_err(PipelineIngressError::internal)?;
             }
@@ -426,13 +481,7 @@ where
             return Ok(reply);
         }
         match self
-            .create_run(
-                admission.target.id,
-                event.payload.clone(),
-                None,
-                Some(format!("ingress:{}", event.event_id)),
-                None,
-            )
+            .create_ingress_run(admission.target.id, event.payload.clone(), start_entry.id)
             .await
         {
             Ok(run) => match ingress

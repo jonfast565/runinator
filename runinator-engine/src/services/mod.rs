@@ -25,7 +25,7 @@ mod workflow_authoring;
 mod workflow_files;
 mod workspace_operations;
 
-pub use adapter_operations::AdapterOperations;
+pub use adapter_operations::{AdapterOperations, AdapterRoutingError};
 pub use automation_operations::AutomationOperations;
 pub use catalog_operations::{CatalogOperations, provider_catalog_item};
 pub use console_operations::ConsoleOperations;
@@ -73,3 +73,12 @@ mod workflow_authoring_tests;
 
 mod durable_workspaces;
 pub use durable_workspaces::{WorkspaceContent, WorkspaceService, run_workspace_storage_cleanup};
+
+mod adapter_deliveries;
+pub(crate) use adapter_deliveries::process_delivery;
+pub use adapter_deliveries::redact_adapter_diagnostic;
+
+mod workflow_ingress;
+pub use workflow_ingress::{
+    WorkflowIngressContext, WorkflowIngressStore, process_workflow_ingress,
+};

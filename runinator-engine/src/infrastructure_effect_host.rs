@@ -796,6 +796,7 @@ async fn execute_child_run<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     let child = crate::repository::create_workflow_vm_run(
         db,
         crate::repository::WorkflowVmRunRequest {
+            requested_run_id: None,
             workflow_id,
             workflow_snapshot: workflow,
             parameters: input,

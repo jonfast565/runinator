@@ -1105,13 +1105,7 @@ where
         dispatch: AdapterPollDispatch,
     ) -> Result<(), SendableError> {
         let mut transaction = self.pool().begin().await?;
-        sqlx::query(
-            &self.render("DELETE FROM orchestration_adapter_poll_dispatches WHERE adapter_id = ?"),
-        )
-        .bind(dispatch.adapter_id)
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(&self.render("INSERT INTO orchestration_adapter_poll_dispatches (id, adapter_id, adapter_revision, profile_id, claim_owner, command, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+        sqlx::query(&self.render("INSERT INTO orchestration_adapter_poll_dispatches (id, adapter_id, adapter_revision, profile_id, claim_owner, command, state, created_at, updated_at, dry_run, deadline_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
             .bind(dispatch.id)
             .bind(dispatch.adapter_id)
             .bind(dispatch.adapter_revision)
@@ -1120,7 +1114,7 @@ where
             .bind(serde_json::to_string(&dispatch.command)?)
             .bind(dispatch.state)
             .bind(dispatch.created_at.timestamp())
-            .bind(dispatch.updated_at.timestamp())
+            .bind(dispatch.updated_at.timestamp()).bind(dispatch.dry_run).bind(dispatch.deadline_at.timestamp())
             .execute(&mut *transaction)
             .await?;
         transaction.commit().await?;
@@ -1131,7 +1125,7 @@ where
         &self,
         dispatch_id: Uuid,
     ) -> Result<Option<AdapterPollDispatch>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, adapter_id, adapter_revision, profile_id, claim_owner, command, state, created_at, updated_at FROM orchestration_adapter_poll_dispatches WHERE id = ?"))
+        let row = sqlx::query(&self.render("SELECT id, adapter_id, adapter_revision, profile_id, claim_owner, command, state, created_at, updated_at, dry_run, deadline_at FROM orchestration_adapter_poll_dispatches WHERE id = ?"))
             .bind(dispatch_id)
             .fetch_optional(self.pool())
             .await?;
@@ -1139,6 +1133,8 @@ where
             let timestamp =
                 |value: i64| DateTime::<Utc>::from_timestamp(value, 0).unwrap_or_else(Utc::now);
             Ok(AdapterPollDispatch {
+                dry_run: row.get("dry_run"),
+                deadline_at: timestamp(row.get("deadline_at")),
                 id: row.get("id"),
                 adapter_id: row.get("adapter_id"),
                 adapter_revision: row.get("adapter_revision"),
@@ -1159,7 +1155,7 @@ where
         state: String,
         now: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
-        let result = sqlx::query(&self.render("UPDATE orchestration_adapter_poll_dispatches SET state = ?, updated_at = ? WHERE id = ?"))
+        let result = sqlx::query(&self.render("UPDATE orchestration_adapter_poll_dispatches SET state = ?, updated_at = ? WHERE id = ? AND state NOT IN ('succeeded', 'failed', 'expired')"))
             .bind(state)
             .bind(now.timestamp())
             .bind(dispatch_id)
@@ -1177,8 +1173,8 @@ where
         next_poll_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
-        Ok(sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET revision = ?, checkpoint = ?, next_poll_at = ?, claimed_by = NULL, claimed_until = NULL, last_success_at = ?, last_error = NULL WHERE adapter_id = ? AND claimed_by = ?"))
-            .bind(revision).bind(checkpoint.to_string()).bind(next_poll_at.timestamp()).bind(now.timestamp()).bind(adapter_id).bind(instance_id).execute(self.pool()).await?.affected() != 0)
+        Ok(sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET revision = ?, checkpoint = ?, next_poll_at = ?, claimed_by = NULL, claimed_until = NULL, last_success_at = ?, last_error = NULL WHERE adapter_id = ? AND claimed_by = ? AND revision = ? AND claimed_until >= ?"))
+            .bind(revision).bind(checkpoint.to_string()).bind(next_poll_at.timestamp()).bind(now.timestamp()).bind(adapter_id).bind(instance_id).bind(revision).bind(now.timestamp()).execute(self.pool()).await?.affected() != 0)
     }
 
     async fn fail_orchestration_adapter_poll(

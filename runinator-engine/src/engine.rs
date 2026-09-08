@@ -59,6 +59,7 @@ pub trait BackgroundEngineStore:
     RuntimeStore
     + WorkflowVmStore
     + RunStore
+    + runinator_store::roles::FileStore
     + NotificationStore
     + ReplicaStore
     + OrgStore
@@ -79,6 +80,7 @@ impl<T> BackgroundEngineStore for T where
     T: RuntimeStore
         + WorkflowVmStore
         + RunStore
+        + runinator_store::roles::FileStore
         + NotificationStore
         + ReplicaStore
         + OrgStore
@@ -171,6 +173,12 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         publisher.clone(),
         instance.clone(),
         server_settings.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(crate::adapter_control::run_adapter_control_loop(
+        pool.clone(),
+        broker.clone(),
+        publisher.clone(),
         shutdown.clone(),
     ));
     loops.spawn(crate::adapter_polling::run_adapter_poll_loop(

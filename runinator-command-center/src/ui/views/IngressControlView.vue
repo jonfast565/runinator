@@ -38,7 +38,8 @@
       </div>
 
       <div class="ingress-content">
-        <template v-if="section === 'external'">
+        <AdapterIngressPanel v-if="section === 'adapters'" />
+        <template v-else-if="section === 'external'">
           <div class="control-strip">
             <label
               >Target
@@ -206,6 +207,7 @@ import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import BrokerMessageLog from "../components/shared/BrokerMessageLog.vue";
+import AdapterIngressPanel from "../components/orchestration/AdapterIngressPanel.vue";
 import DeadLettersView from "./DeadLettersView.vue";
 import { useAppStore } from "../adapters/pinia/app";
 import { useOrgsStore } from "../adapters/pinia/orgs";
@@ -227,9 +229,10 @@ import {
   renewBrokerIngressSession,
 } from "../../core/api/commandCenterApi";
 
-type Section = "external" | "broker" | "dead";
+type Section = "adapters" | "external" | "broker" | "dead";
 type ScopeKind = "platform" | "organization" | "team" | "user";
 const tabs: { id: Section; label: string }[] = [
+  { id: "adapters", label: "Adapter Events" },
   { id: "external", label: "External Events" },
   { id: "broker", label: "Broker Messages" },
   { id: "dead", label: "Dead Letters" },
@@ -685,9 +688,10 @@ const FlowBoard = defineComponent({
                             : "",
                         ),
                       ]),
-                      definition.id === "held"
+                      definition.id === "held" ||
+                      (props.stream === "external" && record.state === "failed")
                         ? h("div", { class: "card-actions" }, [
-                            record.gate_mode === "paused"
+                            record.gate_mode === "paused" && record.state !== "failed"
                               ? null
                               : h(
                                   "button",
@@ -698,7 +702,7 @@ const FlowBoard = defineComponent({
                                       emit("approve", record);
                                     },
                                   },
-                                  "Approve",
+                                  record.state === "failed" ? "Retry" : "Approve",
                                 ),
                             h(
                               "button",

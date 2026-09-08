@@ -344,6 +344,7 @@ async fn prepare<T: RuntimeStore + WorkflowVmStore>(
         "replay": { "source_run_id": id, "from_step_id": from, "seeded_receipts": plan.seeded_receipts, "plan_fingerprint": plan.plan_fingerprint }
     });
     let start = NewWorkflowVmRun {
+        requested_run_id: None,
         workflow_id: source.workflow_id,
         workflow_snapshot: snapshot,
         parameters: source.parameters,

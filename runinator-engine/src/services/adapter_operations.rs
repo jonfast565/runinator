@@ -29,7 +29,7 @@ use super::choose_intent;
 
 #[derive(Clone)]
 pub struct AdapterOperations<T> {
-    store: Arc<T>,
+    pub(super) store: Arc<T>,
 }
 
 impl<T> AdapterOperations<T> {
@@ -157,7 +157,7 @@ impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
         &self,
         adapter: &AdapterDefinition,
         event: &NormalizedAdapterEvent,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid, AdapterRoutingError> {
         if let Some(admission) = self
             .store
             .fetch_ingress_admission(
@@ -166,7 +166,7 @@ impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
                 event.correlation_key.clone(),
             )
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
         {
             return match admission.target.kind {
                 IngressTargetKind::Pipeline => Ok(admission.target.id),
@@ -180,9 +180,9 @@ impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
             .store
             .fetch_pipelines()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
         {
-            if pipeline.org_id != Some(adapter.org_id) {
+            if !pipeline.enabled || pipeline.org_id != Some(adapter.org_id) {
                 continue;
             }
             let Some(raw_policy) = pipeline.metadata.get("ingress") else {
@@ -190,10 +190,10 @@ impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
             };
             let policy: IngressPolicy =
                 serde_json::from_value(raw_policy.clone().into()).map_err(|error| {
-                    format!(
+                    AdapterRoutingError::Rejected(format!(
                         "pipeline '{}' has invalid ingress policy: {error}",
                         pipeline.name
-                    )
+                    ))
                 })?;
             if policy.scope == event.scope
                 && policy.action_for_payload(
@@ -208,26 +208,46 @@ impl<T: DefinitionStore + IngressStore> AdapterOperations<T> {
         }
         match candidates.as_slice() {
             [pipeline_id] => Ok(*pipeline_id),
-            [] => Err(format!(
+            [] => Err(AdapterRoutingError::Rejected(format!(
                 "no pipeline admission route matched scope '{}' and event '{}'",
                 event.scope, event.event_type
-            )),
-            _ => Err(format!(
+            ))),
+            _ => Err(AdapterRoutingError::Rejected(format!(
                 "multiple pipeline admission routes matched scope '{}' and event '{}'; make admission routes unambiguous",
                 event.scope, event.event_type
-            )),
+            ))),
         }
     }
 }
 
 impl<T: IngressStore + OrchestrationStore> AdapterOperations<T> {
+    pub async fn prepare_event(
+        &self,
+        org_id: Uuid,
+        mut event: NormalizedAdapterEvent,
+    ) -> Result<NormalizedAdapterEvent, AdapterRoutingError> {
+        event
+            .validate_identity()
+            .map_err(AdapterRoutingError::Rejected)?;
+        self.resolve_correlation_alias(org_id, &mut event).await?;
+        if let Some(payload) = event.payload.as_object_mut() {
+            if let Some(revision) = event.subject_revision.clone() {
+                payload.insert("subject_revision".into(), revision.into());
+            }
+            if !event.provenance.is_null() {
+                payload.insert("provenance".into(), event.provenance.clone());
+            }
+        }
+        Ok(event)
+    }
+
     /// Direct admission identity always wins. Otherwise, route an alias learned from an earlier
     /// phase result to its binding generation's canonical ingress key while retaining provenance.
     pub async fn resolve_correlation_alias(
         &self,
         org_id: Uuid,
         event: &mut NormalizedAdapterEvent,
-    ) -> Result<(), String> {
+    ) -> Result<(), AdapterRoutingError> {
         if self
             .store
             .fetch_ingress_admission(
@@ -236,7 +256,7 @@ impl<T: IngressStore + OrchestrationStore> AdapterOperations<T> {
                 event.correlation_key.clone(),
             )
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
             .is_some()
         {
             return Ok(());
@@ -250,7 +270,7 @@ impl<T: IngressStore + OrchestrationStore> AdapterOperations<T> {
                 event.correlation_key.clone(),
             )
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
         else {
             return Ok(());
         };
@@ -258,7 +278,7 @@ impl<T: IngressStore + OrchestrationStore> AdapterOperations<T> {
             .store
             .fetch_orchestration_binding(alias.binding_id)
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
         else {
             return Err("correlation alias refers to a missing binding".into());
         };
@@ -294,7 +314,9 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
         &self,
         adapter: &AdapterDefinition,
         event: &NormalizedAdapterEvent,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, AdapterRoutingError> {
+        let received = event.clone();
+        let event = &self.prepare_event(adapter.org_id, event.clone()).await?;
         let admission = self
             .store
             .fetch_ingress_admission(
@@ -303,7 +325,7 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
                 event.correlation_key.clone(),
             )
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?;
         let lifecycle = admission
             .as_ref()
             .map(|admission| match admission.status {
@@ -318,7 +340,7 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
                     .store
                     .fetch_pipeline(admission.target.id)
                     .await
-                    .map_err(|error| error.to_string())?
+                    .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
                     .into_iter()
                     .collect::<Vec<_>>(),
                 IngressTargetKind::Workflow => {
@@ -331,9 +353,9 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
             self.store
                 .fetch_pipelines()
                 .await
-                .map_err(|error| error.to_string())?
+                .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?
                 .into_iter()
-                .filter(|pipeline| pipeline.org_id == Some(adapter.org_id))
+                .filter(|pipeline| pipeline.enabled && pipeline.org_id == Some(adapter.org_id))
                 .collect::<Vec<_>>()
         };
         pipelines.sort_by(|left, right| left.name.cmp(&right.name));
@@ -344,7 +366,7 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
                     .store
                     .fetch_orchestration_binding_for_admission(id, admission.generation)
                     .await
-                    .map_err(|error| error.to_string())?,
+                    .map_err(|error| AdapterRoutingError::Unavailable(error.to_string()))?,
                 None => None,
             }
         } else {
@@ -429,6 +451,7 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
             );
         }
         Ok(serde_json::json!({
+            "received_identity": {"scope": received.scope, "correlation_key": received.correlation_key},
             "delivery_id": event.delivery_id,
             "scope": event.scope,
             "correlation_key": event.correlation_key,
@@ -438,5 +461,63 @@ impl<T: DefinitionStore + IngressStore + OrchestrationStore + RuntimeStore> Adap
             "pipeline_matches": matches,
             "validation_errors": validation_errors,
         }))
+    }
+}
+
+#[derive(Debug)]
+pub enum AdapterRoutingError {
+    Rejected(String),
+    Unavailable(String),
+}
+impl From<&str> for AdapterRoutingError {
+    fn from(value: &str) -> Self {
+        Self::Rejected(value.into())
+    }
+}
+impl std::fmt::Display for AdapterRoutingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (descriptor, detail) = match self {
+            Self::Rejected(detail) => (crate::errors::ADAPTER_EVENT_REJECTED, detail),
+            Self::Unavailable(detail) => (crate::errors::ADAPTER_EVENT_UNAVAILABLE, detail),
+        };
+        write!(f, "{} - {}: {detail}", descriptor.code, descriptor.summary)
+    }
+}
+impl std::error::Error for AdapterRoutingError {}
+
+impl<T: OrchestrationStore> AdapterOperations<T> {
+    pub async fn deliveries(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<runinator_models::adapter_control::AdapterDeliveryRecord>, SendableError> {
+        self.store.fetch_adapter_deliveries(id, 250).await
+    }
+    pub async fn delivery(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<runinator_models::adapter_control::AdapterDeliveryRecord>, SendableError>
+    {
+        self.store.fetch_adapter_delivery(id).await
+    }
+    pub async fn decide_delivery(&self, id: Uuid, approve: bool) -> Result<bool, SendableError> {
+        self.store.decide_adapter_delivery(id, approve).await
+    }
+    pub async fn inspection(
+        &self,
+        id: Uuid,
+    ) -> Result<runinator_models::adapter_control::AdapterInspection, SendableError> {
+        self.store.adapter_inspection(id).await
+    }
+    pub async fn set_inspection(
+        &self,
+        value: runinator_models::adapter_control::AdapterInspection,
+    ) -> Result<(), SendableError> {
+        self.store.set_adapter_inspection(value).await
+    }
+    pub async fn attempts(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<runinator_models::adapter_control::AdapterPollAttempt>, SendableError> {
+        self.store.fetch_adapter_poll_attempts(id, 100).await
     }
 }

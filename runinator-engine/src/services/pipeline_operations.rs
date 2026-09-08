@@ -206,6 +206,41 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         actor_display_name: Option<String>,
         start_member: Option<String>,
     ) -> Result<PipelineRun, SendableError> {
+        self.create_run_with_id(
+            pipeline_id,
+            parameters,
+            revision,
+            actor_display_name,
+            start_member,
+            None,
+        )
+        .await
+    }
+    pub async fn create_ingress_run(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+        event_id: Uuid,
+    ) -> Result<PipelineRun, SendableError> {
+        self.create_run_with_id(
+            pipeline_id,
+            parameters,
+            None,
+            Some("ingress-control".into()),
+            None,
+            Some(event_id),
+        )
+        .await
+    }
+    async fn create_run_with_id(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+        revision: Option<i64>,
+        actor_display_name: Option<String>,
+        start_member: Option<String>,
+        requested_run_id: Option<Uuid>,
+    ) -> Result<PipelineRun, SendableError> {
         let run = repository::create_manual_pipeline_run(
             self.store.as_ref(),
             pipeline_id,
@@ -214,6 +249,7 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
             None,
             actor_display_name,
             PipelineExecutionContext {
+                requested_run_id,
                 start_member,
                 ..Default::default()
             },

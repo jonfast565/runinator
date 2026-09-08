@@ -12,9 +12,7 @@ use axum::{
 use chrono::Utc;
 use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
-use runinator_engine::services::{
-    AdapterOperations, ExecutionProfileOperations, PipelineOperations,
-};
+use runinator_engine::services::{AdapterOperations, ExecutionProfileOperations};
 use runinator_models::{
     auth::{AuthContext, Permission, PrincipalKind, ResourceType},
     orchestration::{
@@ -33,10 +31,7 @@ use runinator_store::{
 };
 use runinator_ws_core::{
     ValidatedJson,
-    models::{
-        AdapterApplyRequest, AdapterEnableRequest, AdapterTestRequest, ApiResponse,
-        IngressEventRequest,
-    },
+    models::{AdapterApplyRequest, AdapterEnableRequest, AdapterTestRequest, ApiResponse},
     openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body},
     responses::{api_error, bad_request, not_found},
 };
@@ -44,8 +39,6 @@ use runinator_ws_middleware::authz::{
     AuthContextExt, AuthorizationStore, AuthzChecker, GuardError, IntoReply,
 };
 use uuid::Uuid;
-
-use super::pipelines::process_pipeline_ingress;
 
 async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String>
 {
@@ -785,7 +778,8 @@ pub async fn test<
         + SettingStore
         + RuntimeStore
         + DefinitionStore
-        + IngressStore,
+        + IngressStore
+        + ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -797,7 +791,7 @@ pub async fn test<
         Ok(value) => value,
         Err(reply) => return reply.into_reply(),
     };
-    let revision = match current_revision(&operations, &adapter).await {
+    let mut revision = match current_revision(&operations, &adapter).await {
         Ok(value) => value,
         Err(reply) => return reply.into_reply(),
     };
@@ -809,11 +803,60 @@ pub async fn test<
                 .map(|secret_bindings| AdapterAuthentication::Secrets { secret_bindings })
         })
         .unwrap_or_else(|| revision.authentication.clone());
-    let Some(bindings) = authentication.secret_bindings().cloned() else {
-        return bad_request(
-            "execution-profile adapter tests run asynchronously on a matching worker",
-        );
-    };
+    if matches!(
+        authentication,
+        AdapterAuthentication::ExecutionProfile { .. }
+    ) {
+        if revision.transport != AdapterTransport::Polling {
+            return bad_request("execution profiles require polling transport");
+        }
+        if let Err(reply) = validate_adapter_auth_access(
+            &db,
+            Some(&ctx),
+            Some(id),
+            adapter.org_id,
+            &authentication,
+            &["github".into()],
+        )
+        .await
+        {
+            return reply;
+        }
+        revision.authentication = authentication;
+        if let Some(configuration) = request.configuration {
+            revision.configuration = configuration;
+        }
+        let input = AdapterPollRequest {
+            configuration: serde_json::to_value(&revision.configuration).unwrap_or_default(),
+            secrets: serde_json::Value::Null,
+            checkpoint: serde_json::Value::Null,
+            initialize: false,
+        };
+        return match runinator_engine::adapter_polling::create_poll_attempt(
+            db,
+            runinator_engine::adapter_polling::PollAttemptRequest {
+                adapter: &adapter,
+                revision: &revision,
+                request: input,
+                claim_owner: Uuid::now_v7().to_string(),
+                dry_run: true,
+            },
+        )
+        .await
+        {
+            Ok(job_id) => (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::JsonValue(
+                    serde_json::json!({"job_id":job_id,"state":"queued"}).into(),
+                )),
+            ),
+            Err(error) => api_error(error.to_string()),
+        };
+    }
+    let bindings = authentication
+        .secret_bindings()
+        .cloned()
+        .unwrap_or_default();
     if let Err(reply) =
         validate_adapter_secret_access(db.as_ref(), Some(&ctx), Some(id), adapter.org_id, &bindings)
             .await
@@ -951,7 +994,6 @@ pub async fn webhook<
         + ExecutionProfileStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(pipelines): Extension<Arc<PipelineOperations<T>>>,
     Path(endpoint): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -1017,9 +1059,42 @@ pub async fn webhook<
     let normalized = match runinator_adapter_client::verify_normalize(&adapter.kind, request).await
     {
         Ok(value) => value,
-        Err(error) => return api_error(error.to_string()),
+        Err(error) => {
+            let message = error.to_string();
+            if let Err(capture_error) = operations
+                .capture_delivery(
+                    runinator_models::adapter_control::AdapterOrigin {
+                        adapter_id: adapter.id,
+                        revision: revision.revision,
+                        delivery_record_id: None,
+                    },
+                    None,
+                    None,
+                    Some(message.clone()),
+                )
+                .await
+            {
+                return api_error(capture_error.to_string());
+            }
+            return api_error(message);
+        }
     };
     if !normalized.verified {
+        if let Err(error) = operations
+            .capture_delivery(
+                runinator_models::adapter_control::AdapterOrigin {
+                    adapter_id: adapter.id,
+                    revision: revision.revision,
+                    delivery_record_id: None,
+                },
+                None,
+                None,
+                Some(normalized.errors.join("; ")),
+            )
+            .await
+        {
+            return api_error(error.to_string());
+        }
         return (
             StatusCode::UNAUTHORIZED,
             Json(ApiResponse::ApiError(runinator_ws_core::models::ApiError {
@@ -1031,61 +1106,24 @@ pub async fn webhook<
         );
     }
     let mut outcomes = Vec::new();
-    for mut event in normalized.events {
-        if let Err(error) = event.validate_identity() {
-            return bad_request(error);
-        }
-        if let Err(error) = operations
-            .resolve_correlation_alias(adapter.org_id, &mut event)
+    for event in normalized.events {
+        match operations
+            .capture_delivery(
+                runinator_models::adapter_control::AdapterOrigin {
+                    adapter_id: adapter.id,
+                    revision: revision.revision,
+                    delivery_record_id: None,
+                },
+                None,
+                Some(event),
+                None,
+            )
             .await
         {
-            return bad_request(error);
-        }
-        if let Some(payload) = event.payload.as_object_mut() {
-            if let Some(subject_revision) = event.subject_revision.clone() {
-                payload.insert("subject_revision".into(), subject_revision.into());
-            }
-            if !event.provenance.is_null() {
-                payload.insert("provenance".into(), event.provenance.clone());
-            }
-        }
-        let pipeline_id = match operations.pipeline_for_event(&adapter, &event).await {
-            Ok(value) => value,
-            Err(error) => return bad_request(error),
-        };
-        match runinator_store::resource_access::resource_can_consume(
-            db.as_ref(),
-            ResourceType::Pipeline,
-            pipeline_id,
-            ResourceType::OrchestrationAdapter,
-            adapter.id,
-        )
-        .await
-        {
-            Ok(true) => {}
-            Ok(false) => return bad_request("pipeline is not permitted to use this adapter"),
+            Ok(record) => outcomes
+                .push(serde_json::json!({"delivery_record_id":record.id,"state":record.state})),
             Err(error) => return api_error(error.to_string()),
         }
-        let reply = process_pipeline_ingress(
-            pipelines.clone(),
-            pipeline_id,
-            Some(adapter.org_id),
-            IngressEventRequest {
-                source: format!("adapter:{}:{}", adapter.id, event.source),
-                event_id: event.delivery_id,
-                event_type: event.event_type,
-                correlation_key: event.correlation_key,
-                payload: event.payload,
-                provenance: event.provenance,
-                occurred_at: event.occurred_at,
-            },
-            Some((adapter.id, revision.revision)),
-        )
-        .await;
-        if !reply.0.is_success() {
-            return reply.into_reply();
-        }
-        outcomes.push(serde_json::to_value(&reply.1.0).unwrap_or_default());
     }
     (
         StatusCode::ACCEPTED,
@@ -1295,7 +1333,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/orchestrations/adapters/{id}/test",
         "Orchestration Adapters",
         "Test adapter verification and routing",
-        "Verifies a webhook sample or performs a non-persisting polling preview, then normalizes events and previews matching routes and candidate intents.",
+        "Verifies a webhook sample or previews a poll without admission or checkpoint changes. Execution-profile polling returns HTTP 202 with job_id and state; inspect the durable result through the adapter attempts endpoint. Other previews return HTTP 200.",
         EndpointPolicy::ScopedAction(Action::Edit),
         json_body(
             "Sample headers and base64 body, with optional temporary configuration and Secret bindings.",

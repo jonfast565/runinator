@@ -288,6 +288,7 @@ where
         }
 
         let NewWorkflowVmRun {
+            requested_run_id,
             replay_seed,
             workflow_id,
             workflow_snapshot,
@@ -307,7 +308,13 @@ where
                 module.instructions.len()
             )));
         }
-        let run_id = Uuid::now_v7();
+        let run_id = requested_run_id.unwrap_or_else(Uuid::now_v7);
+        if requested_run_id.is_some()
+            && let Some(run) = self.fetch_workflow_run(run_id).await?
+        {
+            return Ok(run);
+        }
+
         let now = Utc::now().timestamp();
         let state = WorkflowExecutionState::from_state(&state);
         let mut continuation = WorkflowContinuation::start(run_id, module.version);

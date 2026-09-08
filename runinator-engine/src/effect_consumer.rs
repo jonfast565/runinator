@@ -359,14 +359,26 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
     }
 }
 
-async fn settle_adapter_poll_result<T: crate::engine::BackgroundEngineStore>(
+pub(crate) async fn settle_adapter_poll_result<T: crate::engine::BackgroundEngineStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     publisher: crate::events::EventSender,
     dispatch: &runinator_store::roles::AdapterPollDispatch,
     kind: &EffectResultKind,
 ) -> Result<(), String> {
-    if matches!(dispatch.state.as_str(), "succeeded" | "failed") {
+    if matches!(dispatch.state.as_str(), "succeeded" | "failed" | "expired") {
+        return Ok(());
+    }
+    if dispatch.deadline_at <= chrono::Utc::now() {
+        db.finish_adapter_poll_attempt(
+            dispatch.id,
+            "expired".into(),
+            Default::default(),
+            Some("late poll result ignored".into()),
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         return Ok(());
     }
     if matches!(kind, EffectResultKind::Claimed { .. }) {
@@ -387,6 +399,52 @@ async fn settle_adapter_poll_result<T: crate::engine::BackgroundEngineStore>(
     else {
         return Ok(());
     };
+    if dispatch.dry_run {
+        let value: serde_json::Value = output.clone().unwrap_or_default().into();
+        let mut result = serde_json::Value::Null;
+        let mut error = message.clone();
+        if *status == WorkflowEffectStatus::Succeeded {
+            match serde_json::from_value::<AdapterPollResponse>(value) {
+                Ok(response) => {
+                    let operations = crate::services::AdapterOperations::new(db.clone());
+                    let adapter = operations
+                        .fetch(dispatch.adapter_id)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "adapter no longer exists".to_string())?;
+                    let mut previews = Vec::new();
+                    for event in &response.events {
+                        previews.push(match operations.preview_event(&adapter, event).await {
+                            Ok(value) => value,
+                            Err(error) => {
+                                serde_json::json!({"validation_errors":[error.to_string()]})
+                            }
+                        });
+                    }
+                    error = response.error.clone();
+                    result = serde_json::json!({"verified":error.is_none(),"events":response.events,"previews":previews,"errors":error.iter().collect::<Vec<_>>()});
+                }
+                Err(cause) => error = Some(cause.to_string()),
+            }
+        } else if error.is_none() {
+            error = Some(format!("poll test returned {status:?}"));
+        }
+        db.finish_adapter_poll_attempt(
+            dispatch.id,
+            if error.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            }
+            .into(),
+            result.into(),
+            error,
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     let failure = if *status == WorkflowEffectStatus::Succeeded {
         let value: serde_json::Value = output.clone().unwrap_or_default().into();
         match serde_json::from_value::<AdapterPollResponse>(value) {
@@ -419,18 +477,30 @@ async fn settle_adapter_poll_result<T: crate::engine::BackgroundEngineStore>(
             dispatch.adapter_id,
             dispatch.claim_owner.clone(),
             now + chrono::TimeDelta::seconds(60),
-            error,
+            error.clone(),
             now,
         )
         .await
         .map_err(|error| error.to_string())?;
-        db.update_orchestration_adapter_poll_dispatch_state(dispatch.id, "failed".into(), now)
-            .await
-            .map_err(|error| error.to_string())?;
+        db.finish_adapter_poll_attempt(
+            dispatch.id,
+            "failed".into(),
+            Default::default(),
+            Some(error.clone()),
+            now,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     } else {
-        db.update_orchestration_adapter_poll_dispatch_state(dispatch.id, "succeeded".into(), now)
-            .await
-            .map_err(|error| error.to_string())?;
+        db.finish_adapter_poll_attempt(
+            dispatch.id,
+            "succeeded".into(),
+            Default::default(),
+            None,
+            now,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

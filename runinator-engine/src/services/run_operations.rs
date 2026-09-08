@@ -119,6 +119,20 @@ impl<
         &self,
         request: CreateWorkflowRunRequest,
     ) -> Result<WorkflowRun, SendableError> {
+        self.create_with_id(request, None).await
+    }
+    pub async fn create_for_ingress(
+        &self,
+        request: CreateWorkflowRunRequest,
+        event_id: Uuid,
+    ) -> Result<WorkflowRun, SendableError> {
+        self.create_with_id(request, Some(event_id)).await
+    }
+    async fn create_with_id(
+        &self,
+        request: CreateWorkflowRunRequest,
+        requested_run_id: Option<Uuid>,
+    ) -> Result<WorkflowRun, SendableError> {
         let CreateWorkflowRunRequest {
             workflow_id,
             parameters,
@@ -175,13 +189,14 @@ impl<
                 )));
             }
         }
-        let run = repository::create_workflow_run(
+        let run = repository::create_workflow_run_with_id(
             self.store.as_ref(),
             workflow_id,
             parameters,
             debug,
             name,
             provenance,
+            requested_run_id,
         )
         .await?;
         if !supplied_file_ids.is_empty() {

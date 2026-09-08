@@ -577,6 +577,7 @@ pub struct DeadLetterQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct BrokerMessageQuery {
+    pub adapter_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_run_id: Option<Uuid>,
     #[serde(default)]

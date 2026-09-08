@@ -821,7 +821,12 @@ where
         provenance: WorkflowRunProvenance,
         execution: PipelineExecutionContext,
     ) -> Result<PipelineRun, SendableError> {
-        let id = Uuid::now_v7();
+        let id = execution.requested_run_id.unwrap_or_else(Uuid::now_v7);
+        if execution.requested_run_id.is_some()
+            && let Some(run) = self.fetch_pipeline_run(id).await?
+        {
+            return Ok(run);
+        }
         let created_at = Utc::now().timestamp();
         let snapshot_json = serde_json::to_string(&pipeline_snapshot)?;
         let source_kind = provenance.source_kind.map(|v| v.as_str().to_string());

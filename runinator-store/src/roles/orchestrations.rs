@@ -94,6 +94,8 @@ pub struct NewAdapterRevision {
 
 #[derive(Debug, Clone)]
 pub struct AdapterPollDispatch {
+    pub dry_run: bool,
+    pub deadline_at: DateTime<Utc>,
     pub id: Uuid,
     pub adapter_id: Uuid,
     pub adapter_revision: i64,
@@ -115,7 +117,7 @@ pub struct ExternalOperationUpdate {
 }
 
 /// Owns binding CAS, reducer leasing, immutable reductions/epochs, and the command outbox.
-pub trait OrchestrationStore: Send + Sync + 'static {
+pub trait OrchestrationStore: super::AdapterControlStore + Send + Sync + 'static {
     fn create_orchestration_binding(
         &self,
         binding: NewOrchestrationBinding,

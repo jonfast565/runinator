@@ -89,6 +89,19 @@ impl<T> OrchestrationOperations<T> {
 }
 
 impl<T: OrchestrationStore> OrchestrationOperations<T> {
+    pub async fn debug_control(
+        &self,
+        id: Uuid,
+    ) -> Result<runinator_models::adapter_control::OrchestrationDebugControl, SendableError> {
+        self.store.orchestration_debug_control(id).await
+    }
+    pub async fn set_debug_control(
+        &self,
+        id: Uuid,
+        value: runinator_models::adapter_control::OrchestrationDebugControl,
+    ) -> Result<(), SendableError> {
+        self.store.set_orchestration_debug_control(id, value).await
+    }
     pub async fn list_bindings(
         &self,
         org_id: Option<Uuid>,
@@ -450,6 +463,13 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             .into_iter()
             .filter(|event| event.sequence > last_reduced_sequence)
         {
+            if !self
+                .store
+                .take_orchestration_debug_permit(binding.pipeline_id)
+                .await?
+            {
+                return Ok(binding);
+            }
             binding = self.reduce_event(binding, owner, &ingress, &event).await?;
         }
 
@@ -458,6 +478,13 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             .fetch_orchestration_pending_intents(binding.id)
             .await?;
         if let Some(pending) = due.into_iter().find(|intent| intent.wake_at <= Utc::now()) {
+            if !self
+                .store
+                .take_orchestration_debug_permit(binding.pipeline_id)
+                .await?
+            {
+                return Ok(binding);
+            }
             (binding, _) = self
                 .apply_intent(
                     binding,

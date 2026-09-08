@@ -369,7 +369,7 @@ pub async fn process_pipeline_ingress<
     pipeline_id: Uuid,
     caller_org_id: Option<Uuid>,
     request: IngressEventRequest,
-    adapter: Option<(Uuid, i64)>,
+    adapter: Option<runinator_models::adapter_control::AdapterOrigin>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match service
         .process_ingress(

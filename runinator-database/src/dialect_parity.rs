@@ -96,6 +96,11 @@ fn sample_trigger(workflow_id: Uuid) -> WorkflowTrigger {
 /// the store must be exclusive to this call: several assertions count rows or depend on a claim
 /// finding nothing else outstanding.
 pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db: &T) {
+    adapter_control_tests::held_origin_survives_approval(db).await;
+    adapter_control_tests::approval_recovers_expired_lease_and_retries_failure(db).await;
+    adapter_control_tests::delivery_journal_and_broker_trace_are_adapter_scoped(db).await;
+    adapter_control_tests::reducer_pause_step_and_resume(db).await;
+    adapter_control_tests::poll_publication_recovers_and_retains_fenced_attempts(db).await;
     assert_implicit_platform_identity(db).await;
     assert_workflow_upsert(db).await;
     let after = db.fetch_workflows().await.unwrap().remove(0);
@@ -3117,3 +3122,5 @@ async fn assert_workflow_effect_retry_lifecycle<T: DatabaseImpl + WorkflowVmStor
 
 #[path = "dialect_parity_workspace_tests.rs"]
 mod durable_workspace_tests;
+
+mod adapter_control_tests;

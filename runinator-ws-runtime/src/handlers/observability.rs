@@ -58,10 +58,27 @@ pub async fn get_broker_messages<T: AuthorizationStore + DeliveryStore>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<BrokerMessageQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if query.workflow_run_id.is_some() && query.pipeline_run_id.is_some() {
-        return bad_request("select either workflow_run_id or pipeline_run_id");
+    if [
+        query.workflow_run_id,
+        query.pipeline_run_id,
+        query.adapter_id,
+    ]
+    .iter()
+    .flatten()
+    .count()
+        > 1
+    {
+        return bad_request("select one workflow, pipeline run, or adapter");
     }
-    let authorization = if let Some(workflow_run_id) = query.workflow_run_id {
+    let authorization = if let Some(adapter_id) = query.adapter_id {
+        AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(
+                runinator_models::auth::ResourceType::OrchestrationAdapter,
+                adapter_id,
+                runinator_models::auth::Permission::View,
+            )
+            .await
+    } else if let Some(workflow_run_id) = query.workflow_run_id {
         AuthzChecker::new(db.as_ref(), &ctx)
             .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::View)
             .await
@@ -83,15 +100,25 @@ pub async fn get_broker_messages<T: AuthorizationStore + DeliveryStore>(
         .fetch_broker_messages(
             query.workflow_run_id,
             query.pipeline_run_id,
+            query.adapter_id,
             query.channel,
             clamp_limit(query.limit),
         )
         .await
     {
-        Ok(records) => (
-            StatusCode::OK,
-            Json(ApiResponse::BrokerMessageList(records)),
-        ),
+        Ok(mut records) => {
+            for record in &mut records {
+                if record.adapter_id.is_some() {
+                    let mut payload: serde_json::Value = record.payload.clone().into();
+                    runinator_engine::services::redact_adapter_diagnostic(&mut payload);
+                    record.payload = payload.into();
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::BrokerMessageList(records)),
+            )
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
