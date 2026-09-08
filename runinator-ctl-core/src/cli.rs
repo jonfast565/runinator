@@ -576,6 +576,27 @@ pub enum ExecutionProfileCommands {
     List,
     /// Show one profile by UUID.
     Show { id: Uuid },
+    /// Add an execution profile from generic command-line fields and JSON specifications.
+    Add {
+        /// Stable profile name for workflow and adapter bindings.
+        #[arg(long)]
+        name: String,
+        /// Optional description of the profile's credential material.
+        #[arg(long)]
+        description: Option<String>,
+        /// Credential scope the profile can satisfy. Repeat for each scope.
+        #[arg(long = "credential-scope", required = true)]
+        credential_scopes: Vec<String>,
+        /// ExecutionProfileCollectionSpec encoded as JSON.
+        #[arg(long, value_name = "JSON")]
+        collection: String,
+        /// Optional ExecutionProfileExposureSpec encoded as JSON.
+        #[arg(long, value_name = "JSON")]
+        exposure: Option<String>,
+        /// Preserve this UUID when reapplying the profile.
+        #[arg(long)]
+        id: Option<Uuid>,
+    },
     /// Apply a JSON profile configuration, preserving the supplied or generated UUID.
     Apply {
         file: PathBuf,

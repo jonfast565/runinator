@@ -3,7 +3,8 @@
 use super::*;
 
 use runinator_ctl_core::cli::{
-    CliTimelineFormat, Commands, OrgCommands, PipelineCommands, RunCommands, WorkflowCommands,
+    CliTimelineFormat, Commands, ExecutionProfileCommands, OrgCommands, PipelineCommands,
+    RunCommands, WorkflowCommands,
 };
 
 fn tokens(line: &str) -> Vec<String> {
@@ -94,6 +95,22 @@ fn parses_organization_scope_commands_in_the_repl() {
         Commands::Orgs {
             command: OrgCommands::Rename { org: parsed_org_id, ref name }
         } if parsed_org_id.to_string() == org_id && name == "Acme Labs"
+    ));
+}
+
+#[test]
+fn parses_the_generic_execution_profile_add_command() {
+    let id = "00000000-0000-0000-0000-000000000001";
+    let parsed = parse(&tokens(&format!(
+        "execution-profiles add --name desktop-session --credential-scope provider-a --collection '{{\"sources\":[{{\"type\":\"file\",\"path\":\"~/.credentials\",\"target\":\".credentials\"}}]}}' --id {id}"
+    )))
+    .expect("parses");
+
+    assert!(matches!(
+        parsed.command,
+        Commands::ExecutionProfiles {
+            command: ExecutionProfileCommands::Add { ref name, ref credential_scopes, id: Some(parsed_id), .. }
+        } if name == "desktop-session" && credential_scopes == &[String::from("provider-a")] && parsed_id.to_string() == id
     ));
 }
 

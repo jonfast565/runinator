@@ -167,6 +167,24 @@ fn a_built_command_line_parses() {
 }
 
 #[test]
+fn execution_profile_add_has_a_callable_schema() {
+    let built = line(
+        "runinator_execution_profiles_add",
+        json!({
+            "name": "desktop-session",
+            "credential_scopes": ["provider-a"],
+            "collection": { "sources": [{ "type": "file", "path": "~/.credentials", "target": ".credentials" }] },
+            "id": "00000000-0000-0000-0000-000000000001"
+        }),
+    );
+    assert_eq!(built[0..2], ["execution-profiles", "add"]);
+    assert!(built.contains(&"--name".to_string()));
+    assert!(built.contains(&"desktop-session".to_string()));
+    assert!(built.contains(&"--credential-scope".to_string()));
+    assert!(repl::parse(&built).is_ok(), "clap rejected {built:?}");
+}
+
+#[test]
 fn positionals_keep_their_declared_order() {
     let built = line(
         "runinator_settings_set",

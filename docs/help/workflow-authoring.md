@@ -17,6 +17,22 @@ ordinary scalar credentials and config, import an `.rrx` source containing a `se
 encrypted and resolve late at the worker, while config values are arbitrary JSON
 read by the web service.
 
+Create an execution profile directly from generic command-line fields. For example, a GitHub CLI
+profile on a desktop with `gh` installed can be expressed as:
+
+```bash
+runinatorctl execution-profiles add \
+  --name github-default \
+  --description 'GitHub CLI login' \
+  --credential-scope github \
+  --collection '{"probe":{"argv":["gh","auth","status"]},"refresh":{"argv":["gh","auth","login"],"interactive":true},"sources":[{"type":"directory","path":"~/.config/gh","glob":"*","target":".config/gh"}]}' \
+  --exposure '{"home_overlay":true,"environment":{"GH_CONFIG_DIR":"${PROFILE_HOME}/.config/gh"}}'
+```
+
+The command accepts provider-neutral scopes and profile specifications; `--collection` is required,
+while `--exposure` defaults to an empty specification. Approve the newly configured profile in the
+desktop agent and use `execution-profiles rotate <profile-id>` to request a collection.
+
 The Execution Profiles table reports desktop collection health separately from publication
 availability. **Dry run** and **Rotate** queue a durable desktop operation for an agent that has
 locally approved the current configuration; a failed operation leaves the active credential
