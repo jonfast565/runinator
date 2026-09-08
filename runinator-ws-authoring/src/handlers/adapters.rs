@@ -177,6 +177,7 @@ async fn validate_adapter_auth_access<T: AuthorizationStore + ExecutionProfileSt
         AdapterAuthentication::ExecutionProfile {
             profile,
             required_labels,
+            ..
         } => {
             if required_labels.is_empty() {
                 return Err(bad_request("profile-backed polling requires worker labels"));
@@ -285,7 +286,7 @@ fn validate_definition(
     request: &AdapterApplyRequest,
     kind: &AdapterKindMetadata,
 ) -> Result<(), String> {
-    let authentication = effective_authentication(request);
+    let authentication = authentication_for_kind(request, kind);
     if request.name.trim().is_empty() {
         return Err("adapter name is required".into());
     }
@@ -316,10 +317,11 @@ fn validate_definition(
                 request.kind
             ));
         }
+        let has_polling_secrets = matches!(&authentication, AdapterAuthentication::Secrets { secret_bindings } if kind.polling_secret_fields.iter().filter(|field| field.required).all(|field| secret_bindings.contains_key(&field.name)));
         match request.kind.as_str() {
-            "github" if valid_github_repositories(&request.configuration) && matches!(authentication, AdapterAuthentication::ExecutionProfile { .. }) => return Ok(()),
-            "jira" if ["instance_id", "base_url", "email", "jql"].iter().all(|field| request.configuration.get(*field).and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty())) && matches!(&authentication, AdapterAuthentication::Secrets { secret_bindings } if secret_bindings.contains_key("api_token")) => return Ok(()),
-            "github" => return Err("GitHub polling requires repositories and a GitHub execution profile".into()),
+            "github" if valid_github_repositories(&request.configuration) && (has_polling_secrets || matches!(authentication, AdapterAuthentication::ExecutionProfile { .. })) => return Ok(()),
+            "jira" if ["instance_id", "base_url", "email", "jql"].iter().all(|field| request.configuration.get(*field).and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty())) && has_polling_secrets => return Ok(()),
+            "github" => return Err("GitHub polling requires repositories and either an access-token secret or a GitHub execution profile".into()),
             "jira" => return Err("Jira polling requires instance_id, base_url, email, jql, and api_token secret binding".into()),
             _ => return Err("only GitHub and Jira adapters support polling".into()),
         }
@@ -371,6 +373,20 @@ fn effective_authentication(request: &AdapterApplyRequest) -> AdapterAuthenticat
         }
         authentication => authentication.clone(),
     }
+}
+
+fn authentication_for_kind(
+    request: &AdapterApplyRequest,
+    kind: &AdapterKindMetadata,
+) -> AdapterAuthentication {
+    let mut authentication = effective_authentication(request);
+    if let AdapterAuthentication::ExecutionProfile {
+        required_scopes, ..
+    } = &mut authentication
+    {
+        *required_scopes = kind.execution_profile_scopes.clone();
+    }
+    authentication
 }
 
 fn identity_projection(
@@ -553,7 +569,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
     }
-    let authentication = effective_authentication(&request);
+    let authentication = authentication_for_kind(&request, &kind);
     if let Err(reply) = validate_adapter_auth_access(
         &db,
         Some(&ctx),
@@ -634,7 +650,7 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
     }
-    let authentication = effective_authentication(&request);
+    let authentication = authentication_for_kind(&request, &kind);
     if let Err(reply) = validate_adapter_auth_access(
         &db,
         Some(&ctx),
@@ -1309,7 +1325,7 @@ pub const DOCS: &[EndpointDoc] = &[
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{identity_projection, validate_definition};
+    use super::{authentication_for_kind, identity_projection, validate_definition};
     use runinator_models::{
         json,
         orchestration::{
@@ -1389,6 +1405,7 @@ mod tests {
             capabilities: vec![],
             setup_instructions: vec![],
             polling_authentication: vec![AdapterAuthenticationKind::Secrets],
+            polling_secret_fields: vec![],
             execution_profile_scopes: vec![],
         };
         let request = AdapterApplyRequest {
@@ -1421,7 +1438,18 @@ mod tests {
             canonical_pointers: vec![],
             capabilities: vec![],
             setup_instructions: vec![],
-            polling_authentication: vec![AdapterAuthenticationKind::ExecutionProfile],
+            polling_authentication: vec![
+                AdapterAuthenticationKind::ExecutionProfile,
+                AdapterAuthenticationKind::Secrets,
+            ],
+            polling_secret_fields: vec![AdapterConfigurationField {
+                name: "access_token".into(),
+                value_type: RuninatorType::String,
+                required: true,
+                secret: true,
+                description: None,
+                default: Value::Null,
+            }],
             execution_profile_scopes: vec!["github".into()],
         };
         let github = AdapterApplyRequest {
@@ -1439,19 +1467,30 @@ mod tests {
                     "github-cli",
                 ),
                 required_labels: BTreeMap::from([("runner".into(), "desktop".into())]),
+                required_scopes: vec![],
             },
             secret_bindings: BTreeMap::new(),
             identity_configuration: Value::Null,
             expected_revision: None,
         };
         assert!(validate_definition(&github, &metadata).is_ok());
+        assert!(matches!(
+            authentication_for_kind(&github, &metadata),
+            AdapterAuthentication::ExecutionProfile { required_scopes, .. }
+                if required_scopes == ["github"]
+        ));
 
-        let mut missing_token = github;
-        missing_token.authentication = AdapterAuthentication::default();
+        let mut token_authenticated = github;
+        token_authenticated.authentication = AdapterAuthentication::Secrets {
+            secret_bindings: BTreeMap::from([("access_token".into(), Uuid::new_v4())]),
+        };
+        assert!(validate_definition(&token_authenticated, &metadata).is_ok());
+
+        token_authenticated.authentication = AdapterAuthentication::default();
         assert!(
-            validate_definition(&missing_token, &metadata)
+            validate_definition(&token_authenticated, &metadata)
                 .unwrap_err()
-                .contains("authentication mode")
+                .contains("access-token secret")
         );
 
         let unsupported = AdapterApplyRequest {
@@ -1468,7 +1507,7 @@ mod tests {
         assert!(
             validate_definition(&unsupported, &metadata)
                 .unwrap_err()
-                .contains("authentication mode")
+                .contains("only GitHub and Jira")
         );
     }
 }

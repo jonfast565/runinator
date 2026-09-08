@@ -131,6 +131,7 @@ async fn poll_one<T: BackgroundEngineStore>(
     if let AdapterAuthentication::ExecutionProfile {
         profile,
         required_labels,
+        required_scopes,
     } = &revision.authentication
     {
         let profile_id = profile.id();
@@ -164,6 +165,7 @@ async fn poll_one<T: BackgroundEngineStore>(
                 function: "poll".into(),
                 input: Value::from(serde_json::json!({
                     "kind": adapter.kind,
+                    "required_scopes": required_scopes,
                     "request": AdapterPollRequest {
                         configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
                         secrets: serde_json::Value::Null,

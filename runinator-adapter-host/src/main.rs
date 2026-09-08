@@ -643,6 +643,7 @@ fn placeholder_metadata(path: &Path) -> AdapterKindMetadata {
         canonical_pointers: vec![],
         capabilities: vec![],
         polling_authentication: vec![],
+        polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
         setup_instructions: vec![],
     }
@@ -763,6 +764,7 @@ fn generic_metadata() -> AdapterKindMetadata {
         ],
         capabilities: vec!["hmac_sha256".into(), "bearer".into()],
         polling_authentication: vec![],
+        polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
         setup_instructions: vec![
             "Configure the sender to POST the original JSON bytes to the webhook URL above.".into(),
@@ -805,6 +807,14 @@ fn jira_metadata() -> AdapterKindMetadata {
         ],
         capabilities: vec!["bearer".into(), "polling".into()],
         polling_authentication: vec![AdapterAuthenticationKind::Secrets],
+        polling_secret_fields: vec![field(
+            "api_token",
+            RuninatorType::String,
+            true,
+            true,
+            "Jira API token used with the configured account email.",
+            Value::Null,
+        )],
         execution_profile_scopes: vec![],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
@@ -841,12 +851,23 @@ fn github_metadata() -> AdapterKindMetadata {
             "/provenance".into(),
         ],
         capabilities: vec!["hmac_sha256".into(), "polling".into()],
-        polling_authentication: vec![AdapterAuthenticationKind::ExecutionProfile],
+        polling_authentication: vec![
+            AdapterAuthenticationKind::ExecutionProfile,
+            AdapterAuthenticationKind::Secrets,
+        ],
+        polling_secret_fields: vec![field(
+            "access_token",
+            RuninatorType::String,
+            true,
+            true,
+            "GitHub API token supplied to the GitHub CLI for this adapter.",
+            Value::Null,
+        )],
         execution_profile_scopes: vec!["github".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
             "For webhooks, use the displayed URL with application/json, select a matching webhook Secret, and subscribe to the required pull request, check run, and workflow run events.".into(),
-            "For polling, select a GitHub execution profile, list repositories as owner/name, and configure the cadence.".into(),
+            "For polling, choose either a stored API token or a GitHub execution profile, list repositories as owner/name, and configure the cadence. Both modes invoke the GitHub CLI.".into(),
         ],
     }
 }
@@ -972,30 +993,36 @@ fn parse_next_link(header: &str) -> Option<String> {
     })
 }
 
-async fn github_get(url: &str) -> Result<Value, PollError> {
-    let output = timeout(
-        Duration::from_secs(30),
-        Command::new("gh")
-            .args([
-                "api",
-                "--method",
-                "GET",
-                "--header",
-                "Accept: application/vnd.github+json",
-                "--header",
-                "X-GitHub-Api-Version: 2022-11-28",
-                url,
-            ])
-            .env_remove("GH_TOKEN")
-            .env_remove("GITHUB_TOKEN")
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GH_PAGER", "cat")
-            .env("NO_COLOR", "1")
-            .output(),
-    )
-    .await
-    .map_err(|_| PollError::Failed("gh api timed out".into()))?
-    .map_err(|error| PollError::Failed(format!("gh api could not start: {error}")))?;
+fn github_command(url: &str, access_token: Option<&str>) -> Command {
+    let mut command = Command::new("gh");
+    command
+        .args([
+            "api",
+            "--method",
+            "GET",
+            "--header",
+            "Accept: application/vnd.github+json",
+            "--header",
+            "X-GitHub-Api-Version: 2022-11-28",
+            url,
+        ])
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_PAGER", "cat")
+        .env("NO_COLOR", "1");
+    if let Some(access_token) = access_token {
+        command.env("GH_TOKEN", access_token);
+    }
+    command
+}
+
+async fn github_get(url: &str, access_token: Option<&str>) -> Result<Value, PollError> {
+    let mut command = github_command(url, access_token);
+    let output = timeout(Duration::from_secs(30), command.output())
+        .await
+        .map_err(|_| PollError::Failed("gh api timed out".into()))?
+        .map_err(|error| PollError::Failed(format!("gh api could not start: {error}")))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if error.to_ascii_lowercase().contains("rate limit") {
@@ -1020,12 +1047,13 @@ async fn github_collect(
     array_key: Option<&str>,
     since: Option<&str>,
     timestamp_of: impl Fn(&Value) -> String,
+    access_token: Option<&str>,
 ) -> Result<Vec<Value>, PollError> {
     let mut collected = Vec::new();
     for page in 1..=GITHUB_MAX_PAGES {
         let separator = if first_url.contains('?') { '&' } else { '?' };
         let current = format!("{first_url}{separator}page={page}");
-        let body = github_get(&current).await?;
+        let body = github_get(&current, access_token).await?;
         let values = array_key
             .and_then(|key| body.get(key))
             .and_then(Value::as_array)
@@ -1130,10 +1158,18 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         .ok_or_else(|| "GitHub polling requires configuration.repositories".to_string())?;
     let mut marks = existing_streams(&request.checkpoint);
     let mut events = Vec::new();
+    let access_token = request
+        .secrets
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
 
     for repository in repositories.iter().filter_map(Value::as_str) {
-        let repository_info =
-            github_get(&format!("https://api.github.com/repos/{repository}")).await?;
+        let repository_info = github_get(
+            &format!("https://api.github.com/repos/{repository}"),
+            access_token,
+        )
+        .await?;
         let repository_id = github_repository_id(repository, &repository_info)?;
 
         for (url, event_type, array_key) in [
@@ -1152,7 +1188,14 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
         ] {
             let stream = format!("{repository_id}:{event_type}");
             let since = stream_checkpoint(&request.checkpoint, &stream);
-            for value in github_collect(url, array_key, since.as_deref(), github_updated_at).await?
+            for value in github_collect(
+                url,
+                array_key,
+                since.as_deref(),
+                github_updated_at,
+                access_token,
+            )
+            .await?
             {
                 let updated = github_updated_at(&value);
                 if since
@@ -1197,7 +1240,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
             commits_url.push_str("&since=");
             commits_url.push_str(&urlencoding::encode(since));
         }
-        let commits = github_get(&commits_url).await?;
+        let commits = github_get(&commits_url, access_token).await?;
         // one check-runs request per commit is the expensive part of this poll. bounding it keeps a
         // busy repository from spending the hourly quota in a single pass; `since` above is what
         // keeps the steady-state list short in the first place.
@@ -1218,6 +1261,7 @@ async fn poll_github_inner(request: &AdapterPollRequest) -> Result<AdapterPollRe
                 Some("check_runs"),
                 None,
                 github_check_stamp,
+                access_token,
             )
             .await?;
             for check in checks {
@@ -2133,12 +2177,35 @@ mod tests {
             jira.polling_authentication,
             vec![AdapterAuthenticationKind::Secrets]
         );
+        assert_eq!(jira.polling_secret_fields[0].name, "api_token");
         let github = github_metadata();
         assert!(!github.setup_instructions.is_empty());
         assert_eq!(
             github.polling_authentication,
-            vec![AdapterAuthenticationKind::ExecutionProfile]
+            vec![
+                AdapterAuthenticationKind::ExecutionProfile,
+                AdapterAuthenticationKind::Secrets,
+            ]
         );
+        assert_eq!(github.polling_secret_fields[0].name, "access_token");
         assert_eq!(github.execution_profile_scopes, vec!["github"]);
+    }
+
+    #[test]
+    fn github_api_tokens_are_supplied_only_to_the_gh_process() {
+        let command = github_command("repos/octo/example", Some("adapter-token"));
+        let gh_token = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == "GH_TOKEN")
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str());
+        assert_eq!(gh_token, Some("adapter-token"));
+        assert!(
+            command
+                .as_std()
+                .get_envs()
+                .any(|(name, value)| name == "GITHUB_TOKEN" && value.is_none())
+        );
     }
 }

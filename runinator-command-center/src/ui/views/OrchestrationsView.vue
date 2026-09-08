@@ -1497,6 +1497,35 @@
               </div>
             </div>
             <div v-if="adapterForm.transport === 'polling'" class="adapter-field-grid">
+              <div
+                v-if="pollingAuthenticationOptions.length > 1"
+                class="adapter-form-field adapter-field-wide"
+              >
+                <span>Authentication</span>
+                <div class="adapter-transport-grid">
+                  <button
+                    v-for="authentication in pollingAuthenticationOptions"
+                    :key="authentication"
+                    type="button"
+                    class="adapter-transport-option"
+                    :class="{ 'is-selected': adapterForm.authentication_kind === authentication }"
+                    @click="selectAuthentication(authentication)"
+                  >
+                    <span class="adapter-section-icon">
+                      <Icon :name="authentication === 'secrets' ? 'key' : 'monitor'" :size="17" />
+                    </span>
+                    <span>
+                      <strong>{{ authenticationLabel(authentication) }}</strong>
+                      <small>{{ authenticationDescription(authentication) }}</small>
+                    </span>
+                    <Icon
+                      v-if="adapterForm.authentication_kind === authentication"
+                      name="check"
+                      :size="17"
+                    />
+                  </button>
+                </div>
+              </div>
               <label class="adapter-form-field">
                 <span>Check every</span>
                 <div class="adapter-number-field">
@@ -1557,29 +1586,47 @@
                   />
                 </label>
               </template>
-              <label v-if="adapterForm.kind === 'github'" class="adapter-form-field">
-                <span>GitHub execution profile</span>
+              <label
+                v-if="adapterForm.authentication_kind === 'execution_profile'"
+                class="adapter-form-field"
+              >
+                <span>Execution profile</span>
                 <select v-model="adapterForm.profile_id" required>
-                  <option value="">Choose a GitHub CLI profile</option>
-                  <option v-for="profile in githubProfiles" :key="profile.id" :value="profile.id">
+                  <option value="">Choose a compatible profile</option>
+                  <option
+                    v-for="profile in compatibleProfiles"
+                    :key="profile.id"
+                    :value="profile.id"
+                  >
                     {{ profile.name }}
                   </option>
                 </select>
-                <small>Polling runs on a desktop worker using its authenticated <code>gh</code> session.</small>
-              </label>
-              <label v-else class="adapter-form-field">
-                <span>API token</span>
-                <select
-                  v-model="adapterForm.secret_bindings.api_token"
-                  required
+                <small
+                  >Polling runs on a matching worker with this isolated credential bundle.</small
                 >
-                  <option value="">Choose a stored secret</option>
-                  <option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">
-                    {{ secret.scope }}/{{ secret.name }}
-                  </option>
-                </select>
-                <small>The credential stays in the secret store and is never copied here.</small>
               </label>
+              <template v-else>
+                <label
+                  v-for="field in pollingSecretFields"
+                  :key="field.name"
+                  class="adapter-form-field"
+                >
+                  <span
+                    >{{ humanizeKey(field.name)
+                    }}<template v-if="field.required"> *</template></span
+                  >
+                  <select
+                    v-model="adapterForm.secret_bindings[field.name]"
+                    :required="field.required"
+                  >
+                    <option value="">Choose a stored secret</option>
+                    <option v-for="secret in selectableSecrets" :key="secret.id" :value="secret.id">
+                      {{ secret.scope }}/{{ secret.name }}
+                    </option>
+                  </select>
+                  <small>{{ field.description || "Resolved only for this adapter poll." }}</small>
+                </label>
+              </template>
             </div>
             <div v-else class="adapter-field-grid">
               <label
@@ -1878,6 +1925,7 @@ interface AdapterFormState {
   name: string;
   kind: string;
   transport: "webhook" | "polling";
+  authentication_kind: "secrets" | "execution_profile";
   configuration: Record<string, JsonValue>;
   secret_bindings: Record<string, string>;
   profile_id: string;
@@ -1886,6 +1934,7 @@ const adapterForm = reactive<AdapterFormState>({
   name: "",
   kind: "",
   transport: "webhook",
+  authentication_kind: "secrets",
   configuration: {},
   secret_bindings: {},
   profile_id: "",
@@ -1903,6 +1952,8 @@ const configurationFields = computed(
 );
 const secretFields = computed(() => formKind.value?.fields.filter((field) => field.secret) ?? []);
 const supportsPolling = computed(() => formKind.value?.capabilities.includes("polling") ?? false);
+const pollingAuthenticationOptions = computed(() => formKind.value?.polling_authentication ?? []);
+const pollingSecretFields = computed(() => formKind.value?.polling_secret_fields ?? []);
 const connectionStepDescription = computed(() =>
   adapterForm.transport === "polling"
     ? "Choose what to watch, how often to check, and which stored credential to use."
@@ -1914,12 +1965,14 @@ const identityHasValues = computed(() => identityEntryCount.value > 0);
 const selectableSecrets = computed(() =>
   secrets.secretEntries.filter((secret) => Boolean(secret.id)),
 );
-const githubProfiles = computed(() =>
+const compatibleProfiles = computed(() =>
   executionProfiles.value.filter(
     (profile) =>
       profile.enabled &&
       ["ready", "expiring"].includes(profile.health) &&
-      profile.credential_scopes.includes("github"),
+      (formKind.value?.execution_profile_scopes ?? []).every((scope) =>
+        profile.credential_scopes.includes(scope),
+      ),
   ),
 );
 const currentAdapterRevision = computed<AdapterRevision | undefined>(
@@ -2500,6 +2553,7 @@ function initializeKind(): void {
   adapterForm.configuration = {};
   adapterForm.secret_bindings = {};
   adapterForm.profile_id = "";
+  adapterForm.authentication_kind = formKind.value?.polling_authentication.at(0) ?? "secrets";
   adapterIdentity.value = {};
 
   if (adapterForm.kind !== "github" && adapterForm.kind !== "jira") {
@@ -2530,12 +2584,32 @@ function selectTransport(transport: "webhook" | "polling"): void {
   adapterForm.transport = transport;
 
   if (transport === "polling") {
+    if (!pollingAuthenticationOptions.value.includes(adapterForm.authentication_kind)) {
+      adapterForm.authentication_kind = pollingAuthenticationOptions.value.at(0) ?? "secrets";
+    }
+
     adapterForm.configuration.poll_interval_seconds ??= 60;
 
     if (adapterForm.kind === "github") {
       adapterForm.configuration.repositories ??= [];
     }
+  } else {
+    adapterForm.authentication_kind = "secrets";
   }
+}
+
+function selectAuthentication(authentication: "secrets" | "execution_profile"): void {
+  adapterForm.authentication_kind = authentication;
+}
+
+function authenticationLabel(authentication: "secrets" | "execution_profile"): string {
+  return authentication === "secrets" ? "API token" : "Execution profile";
+}
+
+function authenticationDescription(authentication: "secrets" | "execution_profile"): string {
+  return authentication === "secrets"
+    ? "Resolve a stored token on the server"
+    : "Run on a worker with isolated credentials";
 }
 
 function setAdapterIdentity(value: unknown): void {
@@ -2550,6 +2624,7 @@ function openAdapterForm(adapter?: AdapterDefinition, clone = false): void {
   adapterForm.name = adapter ? `${adapter.name}${clone ? " copy" : ""}` : "";
   adapterForm.kind = adapter ? adapter.kind : firstKind ? firstKind.kind : "";
   adapterForm.transport = revision?.transport ?? "webhook";
+  adapterForm.authentication_kind = revision?.authentication.kind ?? "secrets";
   adapterForm.configuration = revision ? jsonObject(revision.configuration) : {};
   adapterForm.secret_bindings =
     revision?.authentication.kind === "secrets"
@@ -2584,10 +2659,10 @@ async function saveAdapter(): Promise<void> {
   );
   const profile = executionProfiles.value.find((value) => value.id === adapterForm.profile_id);
   const authentication: AdapterAuthentication =
-    adapterForm.transport === "polling" && adapterForm.kind === "github"
+    adapterForm.transport === "polling" && adapterForm.authentication_kind === "execution_profile"
       ? {
           kind: "execution_profile",
-          profile: { id: adapterForm.profile_id, name: profile?.name ?? "github-cli" },
+          profile: { id: adapterForm.profile_id, name: profile?.name ?? `${kind.kind}-profile` },
           required_labels: { runner: "desktop" },
         }
       : { kind: "secrets", secret_bindings: bindings };
@@ -2623,6 +2698,7 @@ function authenticationProfileId(authentication: AdapterAuthentication): string 
   if (authentication.kind !== "execution_profile") {
     return "";
   }
+
   return "id" in authentication.profile
     ? authentication.profile.id
     : authentication.profile.reference.id;
@@ -2640,11 +2716,13 @@ watch(
 
 onMounted(() => {
   void refreshDefinitions();
-  void fetchExecutionProfiles().then((profiles) => {
-    executionProfiles.value = profiles;
-  }).catch(() => {
-    executionProfiles.value = [];
-  });
+  void fetchExecutionProfiles()
+    .then((profiles) => {
+      executionProfiles.value = profiles;
+    })
+    .catch(() => {
+      executionProfiles.value = [];
+    });
 });
 </script>
 

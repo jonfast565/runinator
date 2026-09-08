@@ -424,16 +424,36 @@ async fn process_provider_effect(
         None => None,
     };
     if provider == "__runinator_adapter" {
+        let mut required_scopes = input
+            .get("required_scopes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|scope| !scope.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        // Revisions created before required scopes were frozen only supported GitHub profiles.
+        if required_scopes.is_empty() && input.get("kind").and_then(Value::as_str) == Some("github")
+        {
+            required_scopes.push("github".into());
+        }
         let result = match profile_lease.as_ref() {
-            Some(lease)
-                if lease
-                    .credential_scopes
+            Some(lease) => {
+                let missing = required_scopes
                     .iter()
-                    .any(|scope| scope == "github") =>
-            {
-                execute_adapter_poll(&input, &lease.context, timeout_seconds).await
+                    .filter(|scope| !lease.credential_scopes.contains(scope))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if missing.is_empty() {
+                    execute_adapter_poll(&input, &lease.context, timeout_seconds).await
+                } else {
+                    Err(format!(
+                        "execution profile is missing adapter credential scopes: {}",
+                        missing.join(", ")
+                    ))
+                }
             }
-            Some(_) => Err("execution profile is missing the github credential scope".into()),
             None => Err("adapter poll requires an execution profile".into()),
         };
         match result {

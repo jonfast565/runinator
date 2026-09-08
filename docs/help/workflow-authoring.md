@@ -237,13 +237,15 @@ interchangeable.
 GitHub and Jira adapters accept `"transport": "webhook"` (the default) or
 `"transport": "polling"`. A polling revision is scheduled durably by the engine, so embedded and
 standalone engine deployments use the same claim/checkpoint path and multiple replicas do not poll
-the same revision concurrently. GitHub polling requires `configuration.repositories` plus a
-published execution profile with the `github` credential scope. It is dispatched to a matching
-worker (the command center defaults to `runner=desktop`) and uses the authenticated GitHub CLI
-session collected in that profile; authored API tokens are not accepted. Jira polling remains a
-server-side HTTP poller and requires `instance_id`, `base_url`, `email`, and `jql` plus an
-`api_token` Secret binding. Both accept `poll_interval_seconds` from 30 through 3600, defaulting to
-60.
+the same revision concurrently. GitHub polling requires `configuration.repositories` and lets the
+author choose its authentication mode on each immutable adapter revision: either an `access_token`
+Secret binding or a published execution profile with the `github` credential scope. Both modes use
+the GitHub CLI. Secret-backed polling supplies the token only to the adapter-host `gh` process;
+profile-backed polling is dispatched to a matching worker (the command center defaults to
+`runner=desktop`) and uses the authenticated CLI session collected in that profile. Jira polling
+remains a server-side HTTP poller and requires `instance_id`, `base_url`, `email`, and `jql` plus an
+`api_token` Secret binding. Both adapters accept `poll_interval_seconds` from 30 through 3600,
+defaulting to 60.
 
 Outbound workflows can use `github_cli.api`, `github_cli.graphql`, or the allowlisted
 `github_cli.run` command families (`pr`, `issue`, `run`, `workflow`, `release`, `repo`, and

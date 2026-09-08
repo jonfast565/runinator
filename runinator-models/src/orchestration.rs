@@ -770,6 +770,9 @@ pub struct AdapterKindMetadata {
     /// Authentication modes accepted when this kind is configured for durable polling.
     #[serde(default)]
     pub polling_authentication: Vec<AdapterAuthenticationKind>,
+    /// Secret bindings accepted when polling uses stored API credentials.
+    #[serde(default)]
+    pub polling_secret_fields: Vec<AdapterConfigurationField>,
     /// Credential scopes required from a selected execution profile.
     #[serde(default)]
     pub execution_profile_scopes: Vec<String>,
@@ -840,6 +843,9 @@ pub enum AdapterAuthentication {
     ExecutionProfile {
         profile: crate::execution_profiles::ExecutionProfileBinding,
         required_labels: BTreeMap<String, String>,
+        /// Scopes frozen from adapter-kind metadata when this revision is authored.
+        #[serde(default)]
+        required_scopes: Vec<String>,
     },
 }
 

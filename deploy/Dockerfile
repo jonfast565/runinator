@@ -28,7 +28,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.17.654
+ARG RUNINATOR_VERSION=0.17.655
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -167,6 +167,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-blob"]
 # it is the process that loads adapter code. the static musl link means it has no dynamic loader
 # either, so in a container it serves the compiled-in kinds and ignores RUNINATOR_ADAPTER_PLUGIN_PATHS.
 FROM runtime-base AS adapter-host
+RUN apk add --no-cache github-cli \
+    && gh --version
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /usr/local/bin/runinator-adapter-host
 ENV RUNINATOR_ADAPTER_HOST_PORT=8790
 USER runinator

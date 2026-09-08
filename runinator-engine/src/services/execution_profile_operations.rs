@@ -700,6 +700,7 @@ mod tests {
                 authentication: AdapterAuthentication::ExecutionProfile {
                     profile: ExecutionProfileBinding::resolved(profile_id, &profile.name),
                     required_labels: BTreeMap::new(),
+                    required_scopes: vec!["github".into()],
                 },
                 identity_configuration: runinator_models::json!({}),
                 actor_id: None,

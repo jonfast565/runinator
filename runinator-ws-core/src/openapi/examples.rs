@@ -374,7 +374,7 @@ pub fn example_value(example: Example) -> Option<Value> {
                 "fields": [{ "name": "delivery_id_pointer", "value_type": "string", "required": true, "secret": false, "default": null }],
                 "event_names": ["created", "updated"], "canonical_pointers": ["/subject/id"],
                 "capabilities": ["hmac_sha256", "bearer"],
-                "polling_authentication": [], "execution_profile_scopes": []
+                "polling_authentication": [], "polling_secret_fields": [], "execution_profile_scopes": []
             },
             "origin": "builtin", "healthy": true, "error": null
         }]),

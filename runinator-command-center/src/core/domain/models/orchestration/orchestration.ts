@@ -2,13 +2,7 @@ import type { JsonValue } from "../../json";
 import type { RuninatorType } from "../provider/runinator-type";
 
 export type OrchestrationStatus =
-  | "pending"
-  | "running"
-  | "waiting"
-  | "suspended"
-  | "completed"
-  | "failed"
-  | "terminated";
+  "pending" | "running" | "waiting" | "suspended" | "completed" | "failed" | "terminated";
 
 export interface OrchestrationBinding {
   id: string;
@@ -214,6 +208,7 @@ export interface AdapterKindMetadata {
   capabilities: string[];
   setup_instructions?: string[];
   polling_authentication: ("secrets" | "execution_profile")[];
+  polling_secret_fields: AdapterConfigurationField[];
   execution_profile_scopes: string[];
 }
 
@@ -225,6 +220,7 @@ export type AdapterAuthentication =
         | { id: string; name: string }
         | { reference: { id: string; kind: "execution_profile"; path?: unknown } };
       required_labels: Record<string, string>;
+      required_scopes?: string[];
     };
 
 export interface AdapterKindCatalogEntry {

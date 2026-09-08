@@ -39,8 +39,9 @@ macOS reads the bundle's `Info.plist` at launch to show **Runinator Desktop
 Agent** in the Dock. The bundle also contains `keychain-export` and the one-shot
 `runinator-adapter-host` in `Contents/Resources`; approved execution profiles and
 profile-backed GitHub polling therefore do not rely on the launch environment's `PATH` for
-Runinator helpers. GitHub polling still requires the GitHub CLI itself to be installed and
-authenticated before the profile is collected.
+Runinator helpers. Profile-backed GitHub polling still requires the GitHub CLI itself to be
+installed and authenticated before the profile is collected; Kubernetes adapter-host and worker
+images include the CLI for both stored-token and profile-backed polling.
 
 For macOS development, `cargo run -p runinator-desktop-agent` builds and stages
 that same helper with the desktop-agent binary, so the profile command works
