@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ExecutionProfile,
   ExecutionProfileCollectionStatus,
   ExecutionProfileInput,
 } from "../../domain/models";
 import type { AppService } from "../app";
+import { createEventStreamRouter, type EventStreamRouterDeps } from "../../realtime/event-router";
 import { createExecutionProfilesService } from "../execution-profiles";
 
 vi.mock("../../api/commandCenterApi", () => ({
@@ -75,6 +76,10 @@ describe("execution-profile service", () => {
     vi.mocked(fetchExecutionProfileCollectionStatuses).mockResolvedValue([collectionStatus]);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("refreshes and clears backend state", async () => {
     const service = createExecutionProfilesService(app);
     await service.refresh();
@@ -92,4 +97,68 @@ describe("execution-profile service", () => {
     expect(deleteExecutionProfile).toHaveBeenCalledWith(profile.id);
     expect(fetchExecutionProfiles).toHaveBeenCalledTimes(2);
   });
+});
+
+describe("execution-profile live updates", () => {
+  it("routes websocket events and coalesces a burst into a refresh of errors and publication", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchExecutionProfiles).mockClear();
+    vi.mocked(fetchExecutionProfileCollectionStatuses).mockClear();
+    const failedProfile = { ...profile, health: "error" as const, last_error: "collector failed" };
+    vi.mocked(fetchExecutionProfiles).mockResolvedValue([failedProfile]);
+    vi.mocked(fetchExecutionProfileCollectionStatuses).mockResolvedValue([collectionStatus]);
+    const service = createExecutionProfilesService(app);
+    const router = createEventStreamRouter(
+      () =>
+        ({
+          refreshExecutionProfilesIfActive: () => {
+            service.scheduleCollectionStatusRefresh();
+          },
+        }) as EventStreamRouterDeps,
+    );
+    router.route({ type: "execution_profiles_changed" });
+    router.route({ type: "execution_profiles_changed" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fetchExecutionProfiles).toHaveBeenCalledTimes(1);
+    expect(fetchExecutionProfileCollectionStatuses).toHaveBeenCalledTimes(1);
+    expect(service.getState().profiles[0]?.last_error).toBe("collector failed");
+    expect(service.getState().collectionStatuses[profile.id]).toEqual(collectionStatus);
+  });
+
+  it("discards in-flight responses after the authenticated scope is cleared", async () => {
+    let resolveProfiles!: (profiles: ExecutionProfile[]) => void;
+    vi.mocked(fetchExecutionProfiles).mockReturnValue(
+      new Promise((resolve) => {
+        resolveProfiles = resolve;
+      }),
+    );
+    vi.mocked(fetchExecutionProfileCollectionStatuses).mockResolvedValue([collectionStatus]);
+    const service = createExecutionProfilesService(app);
+    const pending = service.refreshCollectionStatus();
+    service.clear();
+    resolveProfiles([profile]);
+    await pending;
+    expect(service.getState().profiles).toEqual([]);
+    expect(service.getState().collectionStatuses).toEqual({});
+  });
+});
+
+it("refetches after a websocket event arrives during an in-flight status request", async () => {
+  let resolveProfiles!: (profiles: ExecutionProfile[]) => void;
+  vi.mocked(fetchExecutionProfiles).mockReset();
+  vi.mocked(fetchExecutionProfiles)
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveProfiles = resolve;
+      }),
+    )
+    .mockResolvedValue([{ ...profile, last_error: "new failure" }]);
+  vi.mocked(fetchExecutionProfileCollectionStatuses).mockResolvedValue([collectionStatus]);
+  const service = createExecutionProfilesService(app);
+  const first = service.refreshCollectionStatus();
+  const next = service.refreshCollectionStatus();
+  resolveProfiles([profile]);
+  await Promise.all([first, next]);
+  expect(fetchExecutionProfiles).toHaveBeenCalledTimes(2);
+  expect(service.getState().profiles[0]?.last_error).toBe("new failure");
 });

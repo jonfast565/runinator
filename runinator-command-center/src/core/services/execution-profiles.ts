@@ -21,6 +21,10 @@ export interface ExecutionProfilesState {
 
 export function createExecutionProfilesService(app: AppService) {
   const store = createStore<ExecutionProfilesState>({ profiles: [], collectionStatuses: {} });
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let backgroundRefresh: Promise<void> | undefined;
+  let refreshRevision = 0;
+  let generation = 0;
   const indexStatuses = (statuses: ExecutionProfileCollectionStatus[]) =>
     Object.fromEntries(statuses.map((status) => [status.profile_id, status]));
   const service = {
@@ -33,14 +37,49 @@ export function createExecutionProfilesService(app: AppService) {
       );
       store.setState(() => ({ profiles, collectionStatuses: indexStatuses(statuses) }));
     },
-    async refreshCollectionStatus() {
-      const statuses = await fetchExecutionProfileCollectionStatuses();
-      store.setState((state) => ({
-        ...state,
-        collectionStatuses: indexStatuses(statuses),
-      }));
+    scheduleCollectionStatusRefresh() {
+      if (refreshTimer !== undefined) {
+        return;
+      }
+
+      refreshTimer = setTimeout(() => {
+        refreshTimer = undefined;
+        void service.refreshCollectionStatus().catch(() => undefined);
+      }, 100);
+    },
+    refreshCollectionStatus(): Promise<void> {
+      refreshRevision += 1;
+
+      if (backgroundRefresh) {
+        return backgroundRefresh;
+      }
+
+      const startedGeneration = generation;
+      backgroundRefresh = (async () => {
+        let fetchedRevision = -1;
+
+        while (fetchedRevision < refreshRevision) {
+          fetchedRevision = refreshRevision;
+          const [profiles, statuses] = await Promise.all([
+            fetchExecutionProfiles(),
+            fetchExecutionProfileCollectionStatuses(),
+          ]);
+
+          if (startedGeneration !== generation) {
+            return;
+          }
+
+          store.setState(() => ({ profiles, collectionStatuses: indexStatuses(statuses) }));
+        }
+      })().finally(() => {
+        backgroundRefresh = undefined;
+      });
+      return backgroundRefresh;
     },
     clear() {
+      generation += 1;
+      clearTimeout(refreshTimer);
+      refreshTimer = undefined;
       store.setState(() => ({ profiles: [], collectionStatuses: {} }));
     },
     async save(id: string, profile: ExecutionProfileInput) {

@@ -437,7 +437,10 @@ impl AgentObserver for DesktopObserver {
         let activity = match event {
             WorkerEvent::EffectStarted {
                 provider, function, ..
-            } => format!("executing {provider}.{function}"),
+            } => {
+                crate::notify::notify_action_started(provider, function);
+                format!("executing {provider}.{function}")
+            }
             WorkerEvent::EffectFinished { .. } => "waiting for desktop work".to_string(),
             WorkerEvent::EffectSkippedDuplicate { .. } => "skipped duplicate delivery".to_string(),
             WorkerEvent::ControlReceived { kind, .. } => {

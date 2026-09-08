@@ -178,7 +178,11 @@ fn spawn_execution_profile_sync(
             }
             if refresh {
                 tui::activity("execution profiles", "checking local approvals", None);
-                match crate::execution_profiles::synchronize(&client, tui::log_line).await {
+                match crate::execution_profiles::synchronize(&client, tui::log_line, |profiles| {
+                    register_execution_profiles(profiles, selected);
+                })
+                .await
+                {
                     Ok(next) => {
                         profiles = next;
                         selected = selected.min(profiles.len().saturating_sub(1));

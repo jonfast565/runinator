@@ -1779,6 +1779,19 @@ impl eframe::App for DesktopAgentApp {
                             }
                         });
                     });
+                    let pending_approvals = execution_profiles.iter().filter(|profile| {
+                        profile.enabled && self.draft.approved_execution_profiles.get(&profile.id)
+                            != Some(&profile.config_digest)
+                    }).count();
+                    if pending_approvals > 0 {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(egui::Color32::YELLOW,
+                                format!("{pending_approvals} execution profile(s) need local approval."));
+                            if ui.button("Review approvals").clicked() {
+                                self.execution_profiles_dialog = true;
+                            }
+                        });
+                    }
                     match &connection {
                         ConnectionState::Reconnecting {
                             retry_secs,

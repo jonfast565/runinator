@@ -396,3 +396,15 @@ to use `--database-path` (defaults to `~/.runinator/runinator.db`). `cargo run
 -p xtask -- build` on its own just builds the workspace plus the host-only
 generic Keychain collector command (`tools/keychain-export`)
 without starting anything.
+
+### Desktop execution-profile status
+
+The desktop agent shows local profile approvals before starting collection. New or changed
+approvals appear in the agent window and trigger a native notification once per configuration.
+Requested collections and actions executing on the desktop also trigger native notifications;
+collection progress and failures remain available under **Execution profiles** and in the log.
+System prompts such as macOS Keychain access are separate from Runinator's saved local approval.
+
+Execution-profile approval, collection, publication, and failure changes update Command Center
+through its scoped WebSocket event stream. Background refreshes reload both definitions and
+collection status; the page retains polling as a fallback if an event is missed.

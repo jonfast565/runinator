@@ -138,7 +138,8 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         events.embedded_engine_signals(),
     ));
     let workflow_authoring = Arc::new(WorkflowAuthoring::new(pool.clone(), events.publisher()));
-    let execution_profile_operations = Arc::new(ExecutionProfileOperations::new(pool.clone()));
+    let execution_profile_operations =
+        Arc::new(ExecutionProfileOperations::new(pool.clone()).with_events(events.publisher()));
     let pipeline_operations = Arc::new(PipelineOperations::new(
         pool.clone(),
         broker.clone(),

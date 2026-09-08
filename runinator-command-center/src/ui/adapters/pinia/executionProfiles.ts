@@ -20,6 +20,9 @@ export const useExecutionProfilesStore = defineStore("execution-profiles", () =>
         : state.value.profiles;
     }),
     refresh: () => executionProfilesService.refresh(),
+    scheduleCollectionStatusRefresh: () => {
+      executionProfilesService.scheduleCollectionStatusRefresh();
+    },
     refreshCollectionStatus: () => executionProfilesService.refreshCollectionStatus(),
     clear: () => {
       executionProfilesService.clear();

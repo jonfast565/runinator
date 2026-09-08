@@ -330,7 +330,7 @@ pub async fn complete_operation<T: AuthorizationStore + ExecutionProfileStore>(
         return not_found("execution profile operation not found");
     };
     match service
-        .complete_operation(id, agent_id, request.state, request.error)
+        .complete_operation(id, agent_id, ctx.org_id, request)
         .await
     {
         Ok(true) => (

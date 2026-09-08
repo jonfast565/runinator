@@ -22,6 +22,7 @@ export interface EventStreamRouterDeps {
   refreshPipelineDetailIfMember: (runId: string) => void;
   refreshOrchestrationsIfActive: (orchestrationId?: string) => void;
   refreshAdaptersIfActive: () => void;
+  refreshExecutionProfilesIfActive: () => void;
   refreshIngressControlIfActive: () => void;
 }
 
@@ -35,6 +36,7 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
           context.refreshActiveState();
           break;
         case "workflows_changed":
+          context.refreshExecutionProfilesIfActive();
           context.refreshWorkflowsIfClean();
           break;
 
@@ -63,6 +65,10 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
 
         case "external_operation_changed":
           context.refreshOrchestrationsIfActive(event.orchestration_id as string);
+          break;
+
+        case "execution_profiles_changed":
+          context.refreshExecutionProfilesIfActive();
           break;
 
         case "adapter_changed":

@@ -1,5 +1,6 @@
 import { onBeforeUnmount, watch } from "vue";
 import { endpointForTab, isResourceTab, useAppStore } from "../../ui/adapters/pinia/app";
+import { useExecutionProfilesStore } from "../../ui/adapters/pinia/executionProfiles";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useSchedulesStore } from "../../ui/adapters/pinia/schedules";
@@ -19,6 +20,13 @@ export function useEventStream() {
   const pipelineRuns = usePipelineRunsStore();
   const orchestrations = useOrchestrationsStore();
   const auth = useAuthStore();
+  const executionProfiles = useExecutionProfilesStore();
+
+  function refreshExecutionProfilesIfActive() {
+    if (app.activeTab === "ExecutionProfiles") {
+      executionProfiles.scheduleCollectionStatusRefresh();
+    }
+  }
 
   function refreshResourcesIfActive() {
     if (!isResourceTab(app.activeTab)) {
@@ -58,6 +66,7 @@ export function useEventStream() {
       void orchestrations.refreshAdapters();
     }
 
+    refreshExecutionProfilesIfActive();
     refreshResourcesIfActive();
   }
 
@@ -67,6 +76,7 @@ export function useEventStream() {
     isWorkflowEditorDirty: workflows.isDirty,
     refreshResourcesIfActive,
     refreshActiveState,
+    refreshExecutionProfilesIfActive,
     refreshWorkflowsIfClean: () => {
       if (app.activeTab === "Workflows" && !workflows.isDirty) {
         void workflows.refreshWorkflows();
@@ -126,7 +136,9 @@ export function useEventStream() {
   const client = new EventStreamClient({
     getServiceUrl: () => app.serviceUrl,
     getServiceKnown: () => app.serviceKnown,
-    onStateChange: (state) => { app.setEventStreamState(state); },
+    onStateChange: (state) => {
+      app.setEventStreamState(state);
+    },
     onFallbackTick: refreshActiveState,
     router,
   });
@@ -160,5 +172,7 @@ export function useEventStream() {
     { immediate: true },
   );
 
-  onBeforeUnmount(() => { client.disconnect(); });
+  onBeforeUnmount(() => {
+    client.disconnect();
+  });
 }

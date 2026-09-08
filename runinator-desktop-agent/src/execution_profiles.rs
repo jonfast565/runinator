@@ -39,6 +39,48 @@ pub struct LocalProfileStatus {
     pub message: String,
 }
 
+fn newly_required_approvals<'a>(
+    previous: &[LocalProfileStatus],
+    current: &'a [LocalProfileStatus],
+) -> Vec<&'a LocalProfileStatus> {
+    current
+        .iter()
+        .filter(|profile| {
+            profile.enabled
+                && !profile.approved
+                && !previous.iter().any(|old| {
+                    old.id == profile.id
+                        && old.config_digest == profile.config_digest
+                        && old.enabled
+                        && !old.approved
+                })
+        })
+        .collect()
+}
+
+fn update_local_statuses(shared: &SharedHandle, statuses: &[LocalProfileStatus]) {
+    let notices = {
+        let Ok(mut guard) = shared.lock() else {
+            return;
+        };
+        let notices = newly_required_approvals(&guard.execution_profiles, statuses)
+            .into_iter()
+            .map(|profile| profile.name.clone())
+            .collect::<Vec<_>>();
+        guard.execution_profiles = statuses.to_vec();
+        notices
+    };
+    for name in notices {
+        log_line(
+            shared,
+            format!(
+                "Execution profile '{name}' requires local approval. Open Execution profiles to review it."
+            ),
+        );
+        crate::notify::notify_profile_approval(&name);
+    }
+}
+
 pub fn spawn(
     runtime: &tokio::runtime::Handle,
     client: AsyncApiClient<StaticLocator>,
@@ -54,13 +96,14 @@ pub fn spawn(
             if !wait_until_running(&mut agent).await {
                 return;
             }
-            match synchronize(&client, |message| log_line(&shared, message)).await {
-                Ok(statuses) => {
-                    shared
-                        .lock()
-                        .expect("desktop agent state lock poisoned")
-                        .execution_profiles = statuses;
-                }
+            match synchronize(
+                &client,
+                |message| log_line(&shared, message),
+                |statuses| update_local_statuses(&shared, statuses),
+            )
+            .await
+            {
+                Ok(_) => {}
                 Err(error) => {
                     log_line(
                         &shared,
@@ -110,14 +153,9 @@ fn collection_can_run(status: &runinator_worker::AgentStatus) -> bool {
 pub async fn synchronize(
     client: &AsyncApiClient<StaticLocator>,
     log: impl Fn(String),
+    update: impl Fn(&[LocalProfileStatus]),
 ) -> Result<Vec<LocalProfileStatus>, Box<dyn std::error::Error + Send + Sync>> {
     let profiles = client.list_execution_profiles().await?;
-    let mut pending_operations = client
-        .list_pending_execution_profile_operations()
-        .await?
-        .into_iter()
-        .map(|operation| (operation.profile_id, operation))
-        .collect::<BTreeMap<_, _>>();
     let approvals = crate::config::load().approved_execution_profiles;
     let mut statuses = profiles
         .iter()
@@ -137,6 +175,15 @@ pub async fn synchronize(
         })
         .collect::<Vec<_>>();
 
+    // publish approvals before any network claim or potentially interactive source can block.
+    update(&statuses);
+    let mut pending_operations = client
+        .list_pending_execution_profile_operations()
+        .await?
+        .into_iter()
+        .map(|operation| (operation.profile_id, operation))
+        .collect::<BTreeMap<_, _>>();
+
     for (index, profile) in profiles.into_iter().enumerate() {
         let approved = statuses[index].approved;
         report_agent_status(client, &profile, approved, None, None, None).await;
@@ -148,6 +195,7 @@ pub async fn synchronize(
                     operation_label(operation.kind)
                 );
             }
+            update(&statuses);
             continue;
         }
         let previous_revision = profile.current_revision;
@@ -165,6 +213,7 @@ pub async fn synchronize(
                 Err(_) => {
                     statuses[index].message =
                         "collection operation claimed by another desktop".into();
+                    update(&statuses);
                     continue;
                 }
             },
@@ -181,6 +230,22 @@ pub async fn synchronize(
                     .published_at
                     .is_none_or(|published| requested > published)
             });
+        statuses[index].message = format!(
+            "{} running; check for a system access prompt if collection is waiting",
+            if dry_run { "dry run" } else { "collection" }
+        );
+        update(&statuses);
+        if let Some(operation) = &operation {
+            log(format!(
+                "Execution profile '{}' {} started. Check for a system access prompt if collection is waiting.",
+                profile.name,
+                operation_label(operation.kind)
+            ));
+            crate::notify::notify_profile_collection(
+                &profile.name,
+                operation_label(operation.kind),
+            );
+        }
         let collection_profile = profile.clone();
         let result = tokio::task::spawn_blocking(move || {
             collect(&collection_profile, force_refresh && !dry_run, dry_run)
@@ -201,6 +266,7 @@ pub async fn synchronize(
                     )
                     .await;
                     complete_operation(client, operation.as_ref(), None).await;
+                    update(&statuses);
                     continue;
                 }
                 let request = ExecutionProfilePublishRequest {
@@ -256,6 +322,9 @@ pub async fn synchronize(
                     "Execution profile '{}' {action} failed: {error}",
                     statuses[index].name
                 ));
+                if operation.is_some() {
+                    crate::notify::notify_profile_failed(&profile.name);
+                }
                 let detail = status_error(&format!("desktop {action} failed"), &error);
                 report_agent_status(
                     client,
@@ -269,6 +338,7 @@ pub async fn synchronize(
                 complete_operation(client, operation.as_ref(), Some(detail)).await;
             }
         }
+        update(&statuses);
     }
     Ok(statuses)
 }
@@ -334,12 +404,11 @@ fn collect(
     force_refresh: bool,
     dry_run: bool,
 ) -> Result<(uuid::Uuid, Vec<u8>, String), Box<dyn std::error::Error + Send + Sync>> {
-    if force_refresh {
-        let refresh = profile
-            .collection
-            .refresh
-            .as_ref()
-            .ok_or("a refresh was requested but no refresh command is configured")?;
+    // refresh always recollects sources; an optional command can renew credentials first.
+    if force_refresh
+        && !dry_run
+        && let Some(refresh) = &profile.collection.refresh
+    {
         run_checked_command(refresh, "profile refresh", true)?;
     }
     if let Some(probe) = &profile.collection.probe
@@ -657,225 +726,5 @@ fn expand_path(raw: &str) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use runinator_models::execution_profiles::{
-        ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec, ExecutionProfileHealth,
-    };
-
-    #[test]
-    fn collection_maps_files_and_directories_into_one_deterministic_archive() {
-        let root =
-            std::env::temp_dir().join(format!("runinator-profile-test-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(root.join("cache/nested")).unwrap();
-        fs::write(root.join("config"), b"profile config").unwrap();
-        fs::write(root.join("cache/token.json"), b"token").unwrap();
-        fs::write(root.join("cache/nested/ignored.txt"), b"ignored").unwrap();
-        let profile = ExecutionProfile {
-            id: uuid::Uuid::new_v4(),
-            org_id: None,
-            name: "fixture".into(),
-            description: String::new(),
-            credential_scopes: vec!["fixture".into()],
-            collection: ExecutionProfileCollectionSpec {
-                version: 1,
-                probe: None,
-                refresh: None,
-                sources: vec![
-                    ExecutionProfileSource::File {
-                        path: root.join("config").to_string_lossy().into_owned(),
-                        target: ".tool/config".into(),
-                    },
-                    ExecutionProfileSource::Directory {
-                        path: root.join("cache").to_string_lossy().into_owned(),
-                        glob: "*.json".into(),
-                        target: ".tool/cache".into(),
-                    },
-                ],
-            },
-            exposure: ExecutionProfileExposureSpec::default(),
-            config_version: 1,
-            config_digest: "config-digest".into(),
-            enabled: true,
-            current_revision: None,
-            current_digest: None,
-            current_publisher_id: None,
-            published_at: None,
-            expires_at: None,
-            refresh_requested_at: None,
-            health: ExecutionProfileHealth::Unpublished,
-            last_error: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        let (_, first, first_digest) = collect(&profile, false, false).unwrap();
-        let (_, second, second_digest) = collect(&profile, false, false).unwrap();
-        assert_eq!(first, second);
-        assert_eq!(first_digest, second_digest);
-        let archive = zip::ZipArchive::new(Cursor::new(first)).unwrap();
-        let names = archive.file_names().map(str::to_string).collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            [
-                ".runinator-profile.json",
-                ".tool/cache/token.json",
-                ".tool/config"
-            ]
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn dry_run_does_not_refresh_after_a_failed_probe() {
-        let profile = ExecutionProfile {
-            id: uuid::Uuid::new_v4(),
-            org_id: None,
-            name: "dry-run".into(),
-            description: String::new(),
-            credential_scopes: vec!["fixture".into()],
-            collection: ExecutionProfileCollectionSpec {
-                version: 1,
-                probe: Some(ExecutionProfileCommand {
-                    argv: vec!["false".into()],
-                    interactive: false,
-                }),
-                refresh: Some(ExecutionProfileCommand {
-                    argv: vec!["true".into()],
-                    interactive: false,
-                }),
-                sources: vec![ExecutionProfileSource::File {
-                    path: "/dev/null".into(),
-                    target: ".tool/config".into(),
-                }],
-            },
-            exposure: ExecutionProfileExposureSpec::default(),
-            config_version: 1,
-            config_digest: "config-digest".into(),
-            enabled: true,
-            current_revision: None,
-            current_digest: None,
-            current_publisher_id: None,
-            published_at: None,
-            expires_at: None,
-            refresh_requested_at: None,
-            health: ExecutionProfileHealth::Testing,
-            last_error: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        let error = collect(&profile, false, true).unwrap_err();
-        assert!(error.to_string().contains("profile probe command 'false'"));
-        assert!(error.to_string().contains("during dry run"));
-    }
-
-    #[test]
-    fn missing_file_source_names_the_source_and_target() {
-        let missing = std::env::temp_dir().join(format!(
-            "runinator-profile-missing-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let profile = ExecutionProfile {
-            id: uuid::Uuid::new_v4(),
-            org_id: None,
-            name: "missing-file".into(),
-            description: String::new(),
-            credential_scopes: vec!["fixture".into()],
-            collection: ExecutionProfileCollectionSpec {
-                version: 1,
-                probe: None,
-                refresh: None,
-                sources: vec![ExecutionProfileSource::File {
-                    path: missing.to_string_lossy().into_owned(),
-                    target: ".tool/config".into(),
-                }],
-            },
-            exposure: ExecutionProfileExposureSpec::default(),
-            config_version: 1,
-            config_digest: "config-digest".into(),
-            enabled: true,
-            current_revision: None,
-            current_digest: None,
-            current_publisher_id: None,
-            published_at: None,
-            expires_at: None,
-            refresh_requested_at: None,
-            health: ExecutionProfileHealth::Testing,
-            last_error: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        let error = collect(&profile, false, true).unwrap_err().to_string();
-        assert!(error.contains("profile file source"));
-        assert!(error.contains(missing.to_string_lossy().as_ref()));
-        assert!(error.contains("target '.tool/config'"));
-    }
-
-    #[test]
-    fn missing_directory_source_names_the_source_and_target() {
-        let missing = std::env::temp_dir().join(format!(
-            "runinator-profile-directory-missing-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let error = collect_directory(
-            &mut BTreeMap::new(),
-            &missing,
-            ".tool/cache",
-            &Pattern::new("*.json").unwrap(),
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("profile directory source"));
-        assert!(error.contains(missing.to_string_lossy().as_ref()));
-        assert!(error.contains("target '.tool/cache'"));
-    }
-
-    #[test]
-    fn status_error_is_bounded_for_the_profile_status_api() {
-        let detail = status_error("desktop collection dry run failed", &"x".repeat(600));
-
-        assert_eq!(detail.chars().count(), MAX_STATUS_ERROR_CHARS);
-        assert!(detail.ends_with('…'));
-    }
-
-    #[test]
-    fn collection_waits_for_a_running_connected_agent() {
-        let mut status = runinator_worker::AgentStatus::default();
-        status.connection = ConnectionState::Connected;
-        assert!(!collection_can_run(&status));
-
-        status.running = true;
-        assert!(collection_can_run(&status));
-
-        status.connection = ConnectionState::Connecting;
-        assert!(!collection_can_run(&status));
-    }
-
-    #[test]
-    fn bundled_keychain_export_uses_the_app_resources_directory() {
-        let root = std::env::temp_dir().join(format!(
-            "runinator-keychain-export-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let executable =
-            root.join("Runinator Desktop Agent.app/Contents/MacOS/runinator-desktop-agent");
-        let helper = root.join("Runinator Desktop Agent.app/Contents/Resources/keychain-export");
-        fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        fs::create_dir_all(helper.parent().unwrap()).unwrap();
-        fs::write(&executable, []).unwrap();
-        fs::write(&helper, []).unwrap();
-
-        assert_eq!(bundled_keychain_export(&executable), Some(helper));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn cargo_build_stages_keychain_export() {
-        assert!(cargo_built_keychain_export().is_some());
-    }
-}
+#[path = "execution_profiles_tests.rs"]
+mod tests;

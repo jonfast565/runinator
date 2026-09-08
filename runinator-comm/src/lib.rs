@@ -932,6 +932,7 @@ impl UiEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEventKind {
     WorkflowsChanged,
+    ExecutionProfilesChanged,
     WorkflowRunChanged {
         run_id: Uuid,
     },

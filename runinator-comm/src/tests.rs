@@ -398,3 +398,24 @@ async fn virtual_udp_broadcast_drives_the_real_discovery_listener() {
     .unwrap();
     assert_eq!(url, "https://lan-cluster.local:8443/");
 }
+
+#[test]
+fn execution_profile_events_round_trip_with_owner_scope_and_no_credentials() {
+    let org_id = Uuid::now_v7();
+    let event = UiEvent::for_org(org_id, UiEventKind::ExecutionProfilesChanged);
+    let value = serde_json::to_value(event).unwrap();
+    assert_eq!(value["type"], "execution_profiles_changed");
+    assert_eq!(value["org_id"], org_id.to_string());
+    let decoded: UiEvent = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        decoded.scope,
+        runinator_models::rbac::ScopeRef::new(
+            runinator_models::rbac::ScopeKind::Organization,
+            Some(org_id)
+        )
+    );
+    assert!(matches!(
+        decoded.kind,
+        UiEventKind::ExecutionProfilesChanged
+    ));
+}

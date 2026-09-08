@@ -3,13 +3,16 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use runinator_broker_core::UiEventPublisher;
+use runinator_comm::{UiEvent, UiEventKind};
 use runinator_models::{
     errors::SendableError,
     execution_profiles::{
         ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileCollectionStatus,
-        ExecutionProfileHealth, ExecutionProfileOperation, ExecutionProfileOperationState,
-        ExecutionProfilePutRequest, ExecutionProfileRevision, ExecutionProfileSource,
-        is_portable_environment_name, validate_bundle_path, validate_environment_template,
+        ExecutionProfileHealth, ExecutionProfileOperation,
+        ExecutionProfileOperationCompleteRequest, ExecutionProfilePutRequest,
+        ExecutionProfileRevision, ExecutionProfileSource, is_portable_environment_name,
+        validate_bundle_path, validate_environment_template,
     },
     validation::Validate,
 };
@@ -25,15 +28,41 @@ use crate::repository;
 #[derive(Clone)]
 pub struct ExecutionProfileOperations<T> {
     store: Arc<T>,
+    events: Option<UiEventPublisher>,
 }
 
 impl<T> ExecutionProfileOperations<T> {
     pub fn new(store: Arc<T>) -> Self {
-        Self { store }
+        Self {
+            store,
+            events: None,
+        }
+    }
+
+    pub fn with_events(mut self, events: UiEventPublisher) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    fn notify_changed(&self, org_id: Option<Uuid>) {
+        if let Some(events) = &self.events {
+            events.emit(UiEvent::new(org_id, UiEventKind::ExecutionProfilesChanged));
+        }
     }
 }
 
 impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
+    async fn notify_profile_changed(&self, id: Uuid) {
+        if self.events.is_none() {
+            return;
+        }
+        match self.fetch(id).await {
+            Ok(Some(profile)) => self.notify_changed(profile.org_id),
+            Ok(None) => {}
+            Err(error) => log::warn!("could not resolve execution-profile event scope: {error}"),
+        }
+    }
+
     pub async fn list(&self, org_id: Option<Uuid>) -> Result<Vec<ExecutionProfile>, SendableError> {
         repository::list(self.store.as_ref(), org_id).await
     }
@@ -67,7 +96,9 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         &self,
         profile: &ExecutionProfile,
     ) -> Result<ExecutionProfile, SendableError> {
-        repository::save(self.store.as_ref(), profile).await
+        let saved = repository::save(self.store.as_ref(), profile).await?;
+        self.notify_changed(saved.org_id);
+        Ok(saved)
     }
 
     /// Normalize, validate, version, and persist one profile configuration. This is the shared
@@ -189,7 +220,9 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         &self,
         revision: &ExecutionProfileRevision,
     ) -> Result<ExecutionProfileRevision, SendableError> {
-        repository::publish_revision(self.store.as_ref(), revision).await
+        let published = repository::publish_revision(self.store.as_ref(), revision).await?;
+        self.notify_profile_changed(revision.profile_id).await;
+        Ok(published)
     }
 
     pub async fn fetch_revision(
@@ -201,7 +234,11 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
     }
 
     pub async fn remove(&self, id: Uuid, org_id: Option<Uuid>) -> Result<bool, SendableError> {
-        repository::remove(self.store.as_ref(), id, org_id).await
+        let removed = repository::remove(self.store.as_ref(), id, org_id).await?;
+        if removed {
+            self.notify_changed(org_id);
+        }
+        Ok(removed)
     }
 
     pub async fn request_refresh(
@@ -210,7 +247,12 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         org_id: Option<Uuid>,
         requested_at: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
-        repository::request_refresh(self.store.as_ref(), id, org_id, requested_at).await
+        let changed =
+            repository::request_refresh(self.store.as_ref(), id, org_id, requested_at).await?;
+        if changed {
+            self.notify_changed(org_id);
+        }
+        Ok(changed)
     }
 
     pub async fn update_health(
@@ -219,7 +261,11 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         health: ExecutionProfileHealth,
         error: Option<String>,
     ) -> Result<bool, SendableError> {
-        repository::update_health(self.store.as_ref(), id, health, error).await
+        let changed = repository::update_health(self.store.as_ref(), id, health, error).await?;
+        if changed {
+            self.notify_profile_changed(id).await;
+        }
+        Ok(changed)
     }
 
     /// Build the author-facing collection status without allowing desktop reports to mutate the
@@ -252,16 +298,21 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
     ) -> Result<(), SendableError> {
         self.store
             .upsert_execution_profile_agent_status(status)
-            .await
+            .await?;
+        self.notify_profile_changed(status.profile_id).await;
+        Ok(())
     }
 
     pub async fn request_operation(
         &self,
         operation: &ExecutionProfileOperation,
     ) -> Result<ExecutionProfileOperation, SendableError> {
-        self.store
+        let operation = self
+            .store
             .insert_execution_profile_operation(operation)
-            .await
+            .await?;
+        self.notify_profile_changed(operation.profile_id).await;
+        Ok(operation)
     }
 
     pub async fn latest_operation(
@@ -290,7 +341,8 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
         config_digest: &str,
     ) -> Result<Option<ExecutionProfileOperation>, SendableError> {
         let started_at = Utc::now();
-        self.store
+        let operation = self
+            .store
             .claim_execution_profile_operation(
                 operation_id,
                 agent_id,
@@ -298,19 +350,34 @@ impl<T: ExecutionProfileStore> ExecutionProfileOperations<T> {
                 started_at,
                 started_at + chrono::Duration::minutes(30),
             )
-            .await
+            .await?;
+        if let Some(operation) = &operation {
+            self.notify_profile_changed(operation.profile_id).await;
+        }
+        Ok(operation)
     }
 
     pub async fn complete_operation(
         &self,
         operation_id: Uuid,
         agent_id: Uuid,
-        state: ExecutionProfileOperationState,
-        error: Option<String>,
+        org_id: Option<Uuid>,
+        request: ExecutionProfileOperationCompleteRequest,
     ) -> Result<bool, SendableError> {
-        self.store
-            .complete_execution_profile_operation(operation_id, agent_id, state, error, Utc::now())
-            .await
+        let changed = self
+            .store
+            .complete_execution_profile_operation(
+                operation_id,
+                agent_id,
+                request.state,
+                request.error,
+                Utc::now(),
+            )
+            .await?;
+        if changed {
+            self.notify_changed(org_id);
+        }
+        Ok(changed)
     }
 }
 
@@ -513,211 +580,5 @@ fn normalize_command(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use runinator_database::sqlite::SqliteDb;
-    use runinator_models::{
-        execution_profiles::{
-            ExecutionProfileBinding, ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec,
-        },
-        orchestration::{AdapterAuthentication, AdapterTransport},
-    };
-    use runinator_store::{DatabaseImpl, roles::NewAdapterDefinition};
-
-    fn request() -> ExecutionProfilePutRequest {
-        ExecutionProfilePutRequest {
-            name: " github-default ".into(),
-            description: " GitHub login ".into(),
-            credential_scopes: vec!["github".into(), " copilot ".into()],
-            collection: ExecutionProfileCollectionSpec {
-                sources: vec![ExecutionProfileSource::File {
-                    path: " ~/.gitconfig ".into(),
-                    target: " .gitconfig ".into(),
-                }],
-                ..Default::default()
-            },
-            exposure: ExecutionProfileExposureSpec {
-                home_overlay: true,
-                environment: BTreeMap::from([(
-                    " GH_CONFIG_DIR ".into(),
-                    " ${PROFILE_HOME}/.config/gh ".into(),
-                )]),
-                ..Default::default()
-            },
-            enabled: true,
-        }
-    }
-
-    #[test]
-    fn canonical_profile_normalization_is_stable() {
-        let normalized = normalize_profile(request()).expect("valid profile");
-        assert_eq!(normalized.name, "github-default");
-        assert_eq!(normalized.description, "GitHub login");
-        assert_eq!(normalized.credential_scopes, ["copilot", "github"]);
-        assert_eq!(
-            normalized.exposure.environment.get("GH_CONFIG_DIR"),
-            Some(&"${PROFILE_HOME}/.config/gh".to_string())
-        );
-        assert_eq!(
-            normalize_profile(normalized.clone()).expect("idempotent"),
-            normalized
-        );
-    }
-
-    #[test]
-    fn canonical_profile_rejects_ambiguous_scopes_and_targets() {
-        let mut duplicate_scope = request();
-        duplicate_scope.credential_scopes = vec!["GitHub".into(), "github".into()];
-        assert!(normalize_profile(duplicate_scope).is_err());
-
-        let mut duplicate_target = request();
-        duplicate_target
-            .collection
-            .sources
-            .push(ExecutionProfileSource::File {
-                path: "~/.config/gh".into(),
-                target: ".gitconfig".into(),
-            });
-        assert!(normalize_profile(duplicate_target).is_err());
-    }
-
-    #[tokio::test]
-    async fn unchanged_configuration_preserves_publication_and_changes_invalidate_it() {
-        let path = std::env::temp_dir().join(format!("runinator-profile-{}.db", Uuid::now_v7()));
-        let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
-        db.run_init_scripts(&Vec::new()).await.unwrap();
-        let service = ExecutionProfileOperations::new(db);
-        let id = Uuid::new_v4();
-        let configured = service
-            .configure(id, None, request(), Some(Utc::now()), true)
-            .await
-            .unwrap();
-        service
-            .publish_revision(&ExecutionProfileRevision {
-                profile_id: id,
-                revision: 1,
-                digest: "archive".into(),
-                size_bytes: 7,
-                publisher_id: None,
-                expires_at: None,
-                created_at: configured.updated_at,
-                uri: "blob://profile".into(),
-            })
-            .await
-            .unwrap();
-
-        let unchanged = service
-            .configure(
-                id,
-                None,
-                request(),
-                Some(configured.updated_at + chrono::Duration::seconds(1)),
-                true,
-            )
-            .await
-            .unwrap();
-        assert_eq!(unchanged.config_version, 1);
-        assert_eq!(unchanged.current_revision, Some(1));
-
-        let mut changed_request = request();
-        changed_request.description = "Changed".into();
-        let changed = service
-            .configure(
-                id,
-                None,
-                changed_request,
-                Some(configured.updated_at + chrono::Duration::seconds(2)),
-                true,
-            )
-            .await
-            .unwrap();
-        assert_eq!(changed.config_version, 2);
-        assert_eq!(changed.health, ExecutionProfileHealth::Unpublished);
-        assert_eq!(changed.current_revision, None);
-        assert_eq!(changed.current_digest, None);
-
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn scoped_listing_includes_platform_profiles() {
-        let path = std::env::temp_dir().join(format!("runinator-profile-{}.db", Uuid::now_v7()));
-        let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
-        db.run_init_scripts(&Vec::new()).await.unwrap();
-        let service = ExecutionProfileOperations::new(db);
-        let org_id = Uuid::now_v7();
-
-        let mut platform = request();
-        platform.name = "platform-profile".into();
-        service
-            .configure(Uuid::now_v7(), None, platform, Some(Utc::now()), true)
-            .await
-            .unwrap();
-        let mut organization = request();
-        organization.name = "organization-profile".into();
-        service
-            .configure(
-                Uuid::now_v7(),
-                Some(org_id),
-                organization,
-                Some(Utc::now()),
-                true,
-            )
-            .await
-            .unwrap();
-
-        let profiles = service.list_visible_in_scope(Some(org_id)).await.unwrap();
-        assert_eq!(profiles.len(), 2);
-        assert_eq!(profiles[0].name, "organization-profile");
-        assert_eq!(profiles[1].name, "platform-profile");
-
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn adapter_dependencies_are_reported_for_profile_deletion() {
-        let path = std::env::temp_dir().join(format!("runinator-profile-{}.db", Uuid::now_v7()));
-        let db = Arc::new(SqliteDb::new(path.to_str().unwrap()).await.unwrap());
-        db.run_init_scripts(&Vec::new()).await.unwrap();
-        let service = ExecutionProfileOperations::new(db.clone());
-        let org_id = Uuid::now_v7();
-        let profile_id = Uuid::now_v7();
-        let profile = service
-            .configure(profile_id, Some(org_id), request(), Some(Utc::now()), true)
-            .await
-            .unwrap();
-
-        db.create_orchestration_adapter(
-            NewAdapterDefinition {
-                id: Uuid::now_v7(),
-                org_id,
-                name: "github-poller".into(),
-                kind: "github".into(),
-                kind_version: "1".into(),
-                transport: AdapterTransport::Polling,
-                endpoint_identity: Uuid::now_v7().to_string(),
-                configuration: runinator_models::json!({}),
-                authentication: AdapterAuthentication::ExecutionProfile {
-                    profile: ExecutionProfileBinding::resolved(profile_id, &profile.name),
-                    required_labels: BTreeMap::new(),
-                    required_scopes: vec!["github".into()],
-                },
-                identity_configuration: runinator_models::json!({}),
-                actor_id: None,
-            },
-            Utc::now(),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(
-            service
-                .dependent_adapter_names(profile_id, Some(org_id), &profile.name)
-                .await
-                .unwrap(),
-            ["github-poller"]
-        );
-
-        let _ = std::fs::remove_file(path);
-    }
-}
+#[path = "execution_profile_operations_tests.rs"]
+mod tests;

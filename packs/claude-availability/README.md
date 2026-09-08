@@ -21,6 +21,13 @@ runinatorctl --api-base-url http://127.0.0.1:8081/ login
 runinatorctl --api-base-url http://127.0.0.1:8081/ workflows apply packs/claude-availability
 ```
 
+The profile probes the installed Claude CLI and collects `~/.claude/CLAUDE.md` plus
+`Claude Code-credentials` through the bundled Keychain exporter. It deliberately has no separate
+refresh command: requesting rotation reruns those sources and publishes the current desktop login.
+If the login itself expires, sign in through Claude Code on the desktop and request rotation again.
+A saved local approval remains valid until the collection configuration changes. A macOS Keychain
+access prompt is separate from that Runinator approval.
+
 After the desktop agent receives the new profile configuration, approve
 `claude` in the agent and let it publish a profile revision. You can
 then request the profile's collection dry run and start the workflow:

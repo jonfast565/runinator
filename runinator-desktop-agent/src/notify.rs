@@ -1,7 +1,5 @@
-//! best-effort native desktop notifications for the agent's connection health, so an operator not
-//! watching the window (or the menu-bar icon) still hears when this machine drops off the broker and
-//! when it comes back. purely advisory: a platform that can't post a toast just gets nothing, and the
-//! call never blocks the caller — the actual `show()` runs on a detached thread.
+//! best-effort native notifications for desktop connection health, work, and profile approvals.
+//! platform delivery runs off the caller's thread and never blocks the worker.
 
 /// post a "went degraded" toast (broker unreachable / worker loop crash-looping).
 pub fn notify_degraded(detail: &str) {
@@ -37,9 +35,68 @@ pub fn notify_recovered() {
 // and swallow any error — a missing notification must never affect the agent's runtime.
 fn toast(summary: &'static str, body: String) {
     std::thread::spawn(move || {
-        let _ = notify_rust::Notification::new()
+        #[cfg(target_os = "macos")]
+        initialize_application();
+        if let Err(error) = notify_rust::Notification::new()
             .summary(summary)
             .body(&body)
-            .show();
+            .show()
+        {
+            tracing::warn!(%error, "desktop notification could not be delivered");
+        }
+    });
+}
+
+/// announce work actually executing on this desktop.
+pub fn notify_action_started(provider: &str, function: &str) {
+    toast(
+        "Runinator action running",
+        format!("Executing {provider}.{function} on this desktop."),
+    );
+}
+
+/// request approval of a new or changed collection specification.
+pub fn notify_profile_approval(name: &str) {
+    toast(
+        "Runinator profile approval required",
+        format!(
+            "Execution profile '{name}' needs local approval. Open Execution profiles in the desktop agent to review it."
+        ),
+    );
+}
+
+/// announce an explicitly requested collection before a source can wait for OS approval.
+pub fn notify_profile_collection(name: &str, operation: &str) {
+    toast(
+        "Runinator profile collection running",
+        format!(
+            "Execution profile '{name}': {operation}. Check for a system access prompt if collection is waiting."
+        ),
+    );
+}
+
+/// direct an operator to collection failure details retained in the agent.
+pub fn notify_profile_failed(name: &str) {
+    toast(
+        "Runinator profile collection failed",
+        format!(
+            "Execution profile '{name}' could not be collected. Open Execution profiles in the desktop agent for details."
+        ),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn initialize_application() {
+    static INITIALIZED: std::sync::Once = std::sync::Once::new();
+    INITIALIZED.call_once(|| {
+        // packaged agents should identify their own app instead of the library's Finder fallback.
+        let bundled = std::env::current_exe().ok().is_some_and(|path| {
+            path.parent()
+                .and_then(std::path::Path::parent)
+                .is_some_and(|contents| contents.join("Info.plist").is_file())
+        });
+        if bundled && let Err(error) = notify_rust::set_application("dev.runinator.desktop-agent") {
+            tracing::warn!(%error, "desktop notification identity could not be initialized");
+        }
     });
 }
