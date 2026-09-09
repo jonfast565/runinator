@@ -804,6 +804,14 @@ procedure division.
         if Command::new(executable).arg(version_arg).output().is_err() {
             continue;
         }
+        if language == "haskell"
+            && !Command::new("ghc-pkg")
+                .args(["latest", "aeson"])
+                .output()
+                .is_ok_and(|output| output.status.success())
+        {
+            continue;
+        }
         assert_eq!(
             run_command_language_contract(language, source),
             json!({ "answer": 42 }),
