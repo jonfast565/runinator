@@ -101,7 +101,9 @@ impl<S: ReadStore> WriteStore for Staging<S> {
         }
         let id = Id::object(kind, raw);
         let _guard = self.lock.lock().map_err(|_| Error::Poisoned)?;
-        if self.contains(id)? {
+        // stage locally without probing a potentially remote base for each new object.
+        if self.is_staged(id)? {
+            self.info(id)?;
             return Ok(id);
         }
         let path = self.path(id);

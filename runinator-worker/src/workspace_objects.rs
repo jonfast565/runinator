@@ -16,6 +16,10 @@ pub struct WorkerObjects {
 }
 
 impl WorkerObjects {
+    pub(super) fn cached(&self) -> CachedObjects<'_> {
+        CachedObjects(self.cache.path())
+    }
+
     pub fn new(
         api: AsyncApiClient<StaticLocator>,
         checkout: uuid::Uuid,
@@ -53,6 +57,33 @@ impl WorkerObjects {
             .map_err(io_error)
     }
 }
+
+/// The verified local subset of the remote store, used for pack deduplication.
+pub(super) struct CachedObjects<'a>(&'a std::path::Path);
+
+impl ReadStore for CachedObjects<'_> {
+    fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
+        let object = self.get(id)?;
+        Ok(ObjectInfo {
+            kind: object.kind,
+            raw_len: object.bytes.len(),
+        })
+    }
+
+    fn get(&self, id: Id) -> storage::Result<Object> {
+        match fs::File::open(self.0.join(id.to_string())) {
+            Ok(file) => storage::record::read(&file, 0, Some(id)).map(|(_, object)| object),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Err(storage::Error::NotFound(id.to_string()))
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "workspace_objects_tests.rs"]
+mod workspace_objects_tests;
 
 fn io_error(error: impl std::error::Error + Send + Sync + 'static) -> storage::Error {
     storage::Error::Io(std::io::Error::other(error))

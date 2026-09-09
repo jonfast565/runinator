@@ -7,9 +7,14 @@ in `docs/FORMAT.md`; the reference notes are not the production wire contract.
 
 `ReadStore` / `WriteStore` expose logical objects. `transaction::Edit` stages namespace and
 projection changes and creates an unpublished revision. `Staging` spools objects to disposable
-disk. `packs::seal` emits bounded packs containing only the selected reachable closure not already
-in a base store. `View` provides bounded directory pages, sparse materialization and range reads;
+disk without remote existence probes on writes. `packs::seal` emits bounded packs containing only
+the selected reachable closure not already in a base store. `View` provides bounded directory
+pages, sparse materialization and range reads;
 `diff::page` provides resumable Merkle diffs. `gc::mark_roots` takes explicit retained roots.
+
+Workers deduplicate outgoing packs against their verified local cache of remote objects. Objects
+absent from that cache are included, avoiding one API request per new object; the engine still
+validates uploaded packs and the complete revision before publication.
 
 `Repository` is a Unix filesystem reference implementation used by examples and tests. Runinator's
 cluster uses engine-owned blob access, SQL object locations, validated receipts and fenced

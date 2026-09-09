@@ -128,7 +128,7 @@ impl ActiveWorkspace {
             let revision = edit.finish("provider workspace", parent)?;
             packs::seal(
                 &edit.store,
-                objects.as_ref(),
+                &objects.cached(),
                 revision,
                 scratch.path(),
                 |pack| objects.upload(std::fs::read(pack.path)?),
