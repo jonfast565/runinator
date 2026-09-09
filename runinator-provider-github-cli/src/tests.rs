@@ -36,3 +36,18 @@ fn auth_and_extension_commands_are_not_allowlisted() {
     assert!(!ALLOWED_COMMANDS.contains(&"alias"));
     assert!(!ALLOWED_COMMANDS.contains(&"extension"));
 }
+
+#[test]
+fn workspace_affinity_sets_the_github_cli_working_directory() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut command = std::process::Command::new("gh");
+
+    apply_workspace_dir(
+        &mut command,
+        Some(workspace.path().to_str().expect("workspace path")),
+    )
+    .expect("workspace directory is accepted");
+
+    let workspace = std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+    assert_eq!(command.get_current_dir(), Some(workspace.as_path()));
+}

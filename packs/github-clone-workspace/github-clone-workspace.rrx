@@ -1,0 +1,84 @@
+language rexrap-1
+
+package {
+  {
+    "name": "GitHub Clone Workspace Pack",
+    "version": 1
+  }
+}
+
+namespace runinator.tools.github {
+
+workflow "Clone GitHub Repository" v1 {
+    params {
+        org: string,
+        repo_name: string,
+        workspace_name: string
+    }
+
+    key clone_to_workspace
+    workspace { key: params.workspace_name, create: true }
+
+    do {
+        @id("clone_repo")
+        @timeout(180s)
+        @runner("kubernetes")
+        @profile("github-default")
+        github_cli.run(
+            args: ["repo", "clone", "${params.org}/${params.repo_name}", "."]
+        )
+
+        @id("capture_revision")
+        @timeout(30s)
+        @runner("kubernetes")
+        git.capture_revision()
+    }
+}
+
+}
+
+tests {
+  {
+    "workflow": "Clone GitHub Repository",
+    "params": {
+      "org": "example-org",
+      "repo_name": "example-repo",
+      "workspace_name": "example-repo-workspace"
+    },
+    "tests": [
+      {
+        "name": "clones and records the workspace revision",
+        "mocks": {
+          "clone_repo": {
+            "output": {
+              "stdout": "Cloning into '.'..."
+            }
+          },
+          "capture_revision": {
+            "output": {
+              "sha": "0123456789abcdef",
+              "branch": "main",
+              "dirty": false,
+              "action": "capture_revision"
+            }
+          }
+        },
+        "expect": {
+          "status": "succeeded",
+          "reached": ["clone_repo", "capture_revision"]
+        }
+      },
+      {
+        "name": "fails when GitHub cannot clone the repository",
+        "mocks": {
+          "clone_repo": { "status": "failed" }
+        },
+        "expect": {
+          "status": "failed",
+          "reached": ["clone_repo"],
+          "not_reached": ["capture_revision"]
+        }
+      }
+    ]
+  }
+}

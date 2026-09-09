@@ -25,7 +25,7 @@ use runinator_plugin::{
     cancel::CancellationToken,
     provider::{Provider, ProviderEventSink},
 };
-use runinator_provider_support::process::ProcessOutputPump;
+use runinator_provider_support::{process::ProcessOutputPump, resolve_working_dir};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -200,6 +200,7 @@ impl Provider for GitHubCliProvider {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        apply_workspace_dir(&mut command, request.workspace_path.as_deref())?;
         if let Some(home) = &profile.home {
             command.env("HOME", home);
         }
@@ -260,6 +261,16 @@ impl Provider for GitHubCliProvider {
             artifacts: Vec::new(),
         })
     }
+}
+
+fn apply_workspace_dir(
+    command: &mut Command,
+    workspace_path: Option<&str>,
+) -> Result<(), SendableError> {
+    if let Some(directory) = resolve_working_dir(workspace_path, None)? {
+        command.current_dir(directory);
+    }
+    Ok(())
 }
 
 fn sanitize_stderr(stderr: &str) -> String {
