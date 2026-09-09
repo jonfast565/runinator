@@ -9,7 +9,11 @@ pub(super) async fn orgs(
     match command {
         OrgCommands::List => {
             let value = client.list_my_orgs().await?;
-            output::json(&value)
+            if json_output {
+                return output::json(&value);
+            }
+            print!("{}", output::value_table(&value)?);
+            Ok(())
         }
         OrgCommands::Use { org } => {
             let context = client.switch_org(*org).await?;
@@ -56,7 +60,11 @@ pub(super) async fn orgs(
         }
         OrgCommands::Nodes { org } => {
             let value = client.fetch_org_nodes(*org).await?;
-            output::json(&value)
+            if json_output {
+                return output::json(&value);
+            }
+            print!("{}", output::value_table(&value)?);
+            Ok(())
         }
         OrgCommands::Scale {
             org,
@@ -74,7 +82,11 @@ pub(super) async fn orgs(
         }
         OrgCommands::Usage { org } => {
             let value = client.fetch_org_usage(*org).await?;
-            output::json(&value)
+            if json_output {
+                return output::json(&value);
+            }
+            print!("{}", output::value_table(&value)?);
+            Ok(())
         }
     }
 }

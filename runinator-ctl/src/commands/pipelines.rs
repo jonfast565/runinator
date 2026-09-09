@@ -93,12 +93,7 @@ pub(super) async fn pipelines(
             if json_output {
                 return output::json(&found);
             }
-            println!("revision: {}", found.revision);
-            println!("digest: {}", found.digest);
-            println!("name: {}", found.name);
-            println!("source: {}", found.source);
-            println!("created_at: {}", output::time(found.created_at));
-            println!("graph: {}", serde_json::to_string_pretty(&found.graph)?);
+            print!("{}", output::value_table(&found)?);
             Ok(())
         }
         PipelineCommands::Runs {
@@ -130,14 +125,19 @@ pub(super) async fn pipelines(
             if json_output {
                 return output::json(&detail);
             }
-            println!(
-                "pipeline run {} [{}]",
-                detail.run.id,
-                detail.run.status.as_str()
+            print!(
+                "{}",
+                output::table(
+                    &["id", "pipeline", "status", "created", "message"],
+                    &[vec![
+                        detail.run.id.to_string(),
+                        detail.run.pipeline_id.to_string(),
+                        detail.run.status.as_str().to_string(),
+                        output::time(Some(detail.run.created_at)),
+                        detail.run.message.clone().unwrap_or_else(|| "-".into()),
+                    ]],
+                )
             );
-            if let Some(message) = &detail.run.message {
-                println!("{message}");
-            }
             let rows = detail
                 .members
                 .iter()
@@ -369,18 +369,22 @@ fn print_pipelines(pipelines: &[Pipeline]) {
 }
 
 fn print_pipeline(pipeline: &Pipeline) {
-    println!(
-        "{} — {} ({})",
-        pipeline.name,
-        pipeline.artifact_path().qualified(),
-        pipeline
-            .id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unsaved".into())
+    print!(
+        "{}",
+        output::table(
+            &["id", "path", "name", "enabled", "description"],
+            &[vec![
+                pipeline
+                    .id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "unsaved".into()),
+                pipeline.artifact_path().qualified(),
+                pipeline.name.clone(),
+                pipeline.enabled.to_string(),
+                pipeline.description.clone().unwrap_or_else(|| "-".into()),
+            ]],
+        )
     );
-    if let Some(description) = &pipeline.description {
-        println!("{description}");
-    }
     let rows = pipeline
         .graph
         .members

@@ -19,22 +19,26 @@ pub(super) async fn nodes(
                 println!("no provisioning backends configured");
                 return Ok(());
             }
-            println!("{:<12} {:<10} {:<10}", "backend", "available", "kinds");
-            for backend in &backends.backends {
-                let kinds = backend
-                    .kinds
-                    .iter()
-                    .map(|kind| kind.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                println!(
-                    "{:<12} {:<10} {:<10}",
-                    backend.backend.as_str(),
-                    backend.available,
-                    kinds
-                );
-            }
-            println!();
+            let rows = backends
+                .backends
+                .iter()
+                .map(|backend| {
+                    vec![
+                        backend.backend.as_str().to_string(),
+                        backend.available.to_string(),
+                        backend
+                            .kinds
+                            .iter()
+                            .map(|kind| kind.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(&["backend", "available", "kinds"], &rows)
+            );
             print_groups(&groups);
             Ok(())
         }
@@ -110,39 +114,33 @@ fn parse_labels(labels: &[String]) -> Result<std::collections::BTreeMap<String, 
 }
 
 fn print_groups(groups: &[ProvisionedGroup]) {
-    if groups.is_empty() {
-        println!("no node groups");
-        return;
-    }
-    println!(
-        "{:<12} {:<10} {:<8} {:<8} {:<9} {:<12}",
-        "backend", "kind", "desired", "live", "managed", "name"
+    let rows = groups
+        .iter()
+        .map(|group| {
+            vec![
+                group.backend.as_str().to_string(),
+                group.kind.as_str().to_string(),
+                group.desired.to_string(),
+                group.available.to_string(),
+                // ghost rows are kinds this backend has no template/deployment for.
+                if group.manageable { "yes" } else { "no" }.into(),
+                group.name.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(
+            &["backend", "kind", "desired", "live", "managed", "name"],
+            &rows,
+        )
     );
-    for group in groups {
-        println!(
-            "{:<12} {:<10} {:<8} {:<8} {:<9} {:<12}",
-            group.backend.as_str(),
-            group.kind.as_str(),
-            group.desired,
-            group.available,
-            // ghost rows are kinds this backend has no template/deployment for.
-            if group.manageable { "yes" } else { "no" },
-            group.name
-        );
-    }
 }
 
 fn report_group(group: &ProvisionedGroup, json_output: bool) -> Result<()> {
     if json_output {
         return output::json(group);
     }
-    println!(
-        "{} {} on {}: desired={} live={}",
-        group.kind.as_str(),
-        group.name,
-        group.backend.as_str(),
-        group.desired,
-        group.available
-    );
+    print!("{}", output::value_table(group)?);
     Ok(())
 }

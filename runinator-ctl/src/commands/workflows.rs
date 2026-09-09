@@ -119,19 +119,7 @@ pub(super) async fn workflows(
             if json_output {
                 return output::json(&found);
             }
-            println!("revision: {}", found.revision);
-            println!("name: {}", found.name);
-            println!("version: {}", found.version);
-            println!("source: {}", found.source);
-            println!("author: {}", revision_author_label(&found));
-            if let Some(note) = &found.note {
-                println!("note: {note}");
-            }
-            println!("created_at: {}", output::time(found.created_at));
-            println!(
-                "definition: {}",
-                serde_json::to_string_pretty(&found.definition)?
-            );
+            print!("{}", output::value_table(&found)?);
         }
         WorkflowCommands::Rollback { workflow, revision } => {
             let existing = fetch_workflow_ref(client, workflow).await?;

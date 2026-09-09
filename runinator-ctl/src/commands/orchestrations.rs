@@ -240,8 +240,12 @@ async fn orchestration_adapters(
         OrchestrationAdapterCommands::Show { id } => {
             let adapter = client.fetch_orchestration_adapter(*id).await?;
             let revisions = client.fetch_orchestration_adapter_revisions(*id).await?;
-            let value = json!({ "adapter": adapter, "revisions": revisions });
-            output::json(&value)
+            if json_output {
+                return output::json(&json!({ "adapter": adapter, "revisions": revisions }));
+            }
+            print!("{}", output::value_table(&adapter)?);
+            print!("{}", output::value_table(&revisions)?);
+            Ok(())
         }
         OrchestrationAdapterCommands::PollStatus { id } => {
             let status = client.fetch_orchestration_adapter_poll_status(*id).await?;
@@ -367,19 +371,37 @@ fn print_bindings(bindings: &[OrchestrationBinding]) {
 }
 
 fn print_binding(binding: &OrchestrationBinding) {
-    println!("orchestration: {}", binding.id);
-    println!("status: {}", binding.status.as_str());
-    println!("pipeline: {}", binding.pipeline_id);
-    println!("correlation: {}/{}", binding.scope, binding.correlation_key);
-    println!("generation: {}", binding.generation);
-    println!(
-        "revision: {} ({})",
-        binding.pipeline_revision, binding.pipeline_digest
+    print!(
+        "{}",
+        output::table(
+            &[
+                "id",
+                "status",
+                "pipeline",
+                "correlation",
+                "generation",
+                "revision",
+                "digest",
+                "epoch",
+                "phase",
+                "attempt",
+                "version",
+            ],
+            &[vec![
+                binding.id.to_string(),
+                binding.status.as_str().to_string(),
+                binding.pipeline_id.to_string(),
+                format!("{}/{}", binding.scope, binding.correlation_key),
+                binding.generation.to_string(),
+                binding.pipeline_revision.to_string(),
+                binding.pipeline_digest.clone(),
+                binding.current_epoch.to_string(),
+                binding.current_phase.clone().unwrap_or_else(|| "-".into()),
+                binding.current_attempt.to_string(),
+                binding.version.to_string(),
+            ]],
+        )
     );
-    println!("epoch: {}", binding.current_epoch);
-    println!("phase: {}", binding.current_phase.as_deref().unwrap_or("-"));
-    println!("attempt: {}", binding.current_attempt);
-    println!("version: {}", binding.version);
 }
 
 fn print_timeline(events: &[OrchestrationEventReduction]) {

@@ -214,78 +214,100 @@ async fn publish(
 }
 
 fn print_packages(packages: &[FunctionPackage]) {
-    println!("{:<32} {:>8} description", "package", "latest");
-    for package in packages {
-        println!(
-            "{:<32} {:>8} {}",
-            output::truncate(&package.qualified_name(), 32),
-            package
-                .latest_version
-                .map(|version| version.to_string())
-                .unwrap_or_else(|| "-".into()),
-            output::truncate(package.description.as_deref().unwrap_or("-"), 40)
-        );
-    }
+    let rows = packages
+        .iter()
+        .map(|package| {
+            vec![
+                output::truncate(&package.qualified_name(), 32),
+                package
+                    .latest_version
+                    .map(|version| version.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                output::truncate(package.description.as_deref().unwrap_or("-"), 40),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(&["package", "latest", "description"], &rows)
+    );
 }
 
 fn print_package(detail: &FunctionPackageDetail) {
-    println!("package: {}", detail.package.qualified_name());
-    if let Some(description) = &detail.package.description {
-        println!("description: {description}");
-    }
-    println!("versions: {}", detail.versions.len());
-    if !detail.aliases.is_empty() {
-        let aliases = detail
-            .aliases
-            .iter()
-            .map(|alias| format!("{}->{}", alias.name, alias.version))
-            .collect::<Vec<_>>()
-            .join(", ");
-        println!("aliases: {aliases}");
-    }
-    println!();
-    println!("{:<24} handler", "export");
-    for export in &detail.exports {
-        println!(
-            "{:<24} {}",
-            output::truncate(&export.name, 24),
-            export.handler
-        );
-    }
+    let aliases = detail
+        .aliases
+        .iter()
+        .map(|alias| format!("{}->{}", alias.name, alias.version))
+        .collect::<Vec<_>>()
+        .join(", ");
+    print!(
+        "{}",
+        output::table(
+            &["package", "description", "versions", "aliases"],
+            &[vec![
+                detail.package.qualified_name(),
+                detail
+                    .package
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| "-".into()),
+                detail.versions.len().to_string(),
+                if aliases.is_empty() {
+                    "-".into()
+                } else {
+                    aliases
+                },
+            ]],
+        )
+    );
+    let rows = detail
+        .exports
+        .iter()
+        .map(|export| vec![output::truncate(&export.name, 24), export.handler.clone()])
+        .collect::<Vec<_>>();
+    print!("{}", output::table(&["export", "handler"], &rows));
 }
 
 fn print_versions(detail: &FunctionPackageDetail) {
-    println!(
-        "{:>8} {:<20} {:<28} published",
-        "version", "runtime", "digest"
+    let rows = detail
+        .versions
+        .iter()
+        .map(|version| {
+            let aliases = detail
+                .aliases
+                .iter()
+                .filter(|alias| alias.version_id == version.id)
+                .map(|alias| alias.name.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            vec![
+                version.version.to_string(),
+                output::truncate(&version.runtime.runtime, 20),
+                output::truncate(&version.artifact_digest, 28),
+                output::time(Some(version.created_at)),
+                aliases,
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(
+            &["version", "runtime", "digest", "published", "aliases"],
+            &rows
+        )
     );
-    for version in &detail.versions {
-        let aliases = detail
-            .aliases
-            .iter()
-            .filter(|alias| alias.version_id == version.id)
-            .map(|alias| alias.name.clone())
-            .collect::<Vec<_>>()
-            .join(",");
-        println!(
-            "{:>8} {:<20} {:<28} {} {}",
-            version.version,
-            output::truncate(&version.runtime.runtime, 20),
-            output::truncate(&version.artifact_digest, 28),
-            output::time(Some(version.created_at)),
-            aliases
-        );
-    }
 }
 
 fn print_catalog(entries: &[FunctionCatalogEntry]) {
-    println!("{:<40} {:>8} aliases", "call", "version");
-    for entry in entries {
-        println!(
-            "{:<40} {:>8} {}",
-            output::truncate(&entry.binding().call_path(), 40),
-            entry.version,
-            entry.aliases.join(",")
-        );
-    }
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                output::truncate(&entry.binding().call_path(), 40),
+                entry.version.to_string(),
+                entry.aliases.join(","),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!("{}", output::table(&["call", "version", "aliases"], &rows));
 }

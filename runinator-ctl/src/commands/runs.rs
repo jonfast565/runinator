@@ -31,9 +31,17 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
                 }));
             }
             print_run_summary(&run);
-            println!("continuations\t{}", continuations.len());
-            println!("effects\t{}", effects.len());
-            println!("journal entries\t{}", journal.len());
+            print!(
+                "{}",
+                output::table(
+                    &["continuations", "effects", "journal_entries"],
+                    &[vec![
+                        continuations.len().to_string(),
+                        effects.len().to_string(),
+                        journal.len().to_string(),
+                    ]],
+                )
+            );
         }
         RunCommands::Timeline { id, format } => {
             print_workflow_timeline(client, *id, *format, json_output).await?;
@@ -99,7 +107,10 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             let plan = client
                 .workflow_replay_plan(*id, from_step_id.as_deref())
                 .await?;
-            output::json(&plan)?;
+            if json_output {
+                return output::json(&plan);
+            }
+            print!("{}", output::value_table(&plan)?);
         }
         RunCommands::Replay {
             id,
@@ -152,17 +163,7 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             if json_output {
                 return output::json(&artifacts);
             }
-            if artifacts.is_empty() {
-                println!("no artifacts for run {id}");
-                return Ok(());
-            }
-            for event in artifacts {
-                if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } =
-                    event.output
-                {
-                    println!("{}\t{}", event.effect_id, serde_json::to_string(&artifact)?);
-                }
-            }
+            artifacts::print_artifacts(&artifacts);
         }
     }
     Ok(())

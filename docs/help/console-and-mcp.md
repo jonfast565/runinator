@@ -73,6 +73,10 @@ same vocabulary over the HTTP API; the handful of commands that read or write a 
 (`workflows apply`, `functions publish`, `settings import`, `artifacts download`) stay listed in
 `:help` and say to run them with `runinatorctl`.
 
+Commands that read an item or collection render a terminal table by default. Add the global
+`--json` flag for the complete machine-readable response; it selects JSON consistently for lists,
+details, revisions, artifacts, and status views.
+
 ### Run status and timelines
 
 Workflow and pipeline run listings include both active and completed executions. Filter workflow

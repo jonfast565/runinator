@@ -252,38 +252,45 @@ fn optional_json(path: &Option<PathBuf>) -> Result<Option<Value>> {
 }
 
 fn print_workflows(workflows: &[WorkflowDefinition]) {
-    println!(
-        "{:<6} {:<36} {:>7} {:<8} updated_at",
-        "id", "name", "version", "enabled"
+    let rows = workflows
+        .iter()
+        .map(|workflow| {
+            vec![
+                workflow.id.unwrap_or_default().to_string(),
+                output::truncate(&workflow.name, 36),
+                workflow.version.to_string(),
+                workflow.enabled.to_string(),
+                output::time(workflow.updated_at),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(&["id", "name", "version", "enabled", "updated_at"], &rows)
     );
-    for workflow in workflows {
-        println!(
-            "{:<6} {:<36} {:>7} {:<8} {}",
-            workflow.id.unwrap_or_default(),
-            output::truncate(&workflow.name, 36),
-            workflow.version,
-            workflow.enabled,
-            output::time(workflow.updated_at)
-        );
-    }
 }
 
 fn print_workflow_revisions(revisions: &[WorkflowRevision]) {
-    println!(
-        "{:<4} {:<7} {:<10} {:<38} {:<28} created_at",
-        "rev", "version", "source", "name", "author"
+    let rows = revisions
+        .iter()
+        .map(|revision| {
+            vec![
+                revision.revision.to_string(),
+                revision.version.to_string(),
+                revision.source.to_string(),
+                output::truncate(&revision.name, 38),
+                output::truncate(&revision_author_label(revision), 28),
+                output::time(revision.created_at),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(
+            &["rev", "version", "source", "name", "author", "created_at"],
+            &rows,
+        )
     );
-    for revision in revisions {
-        println!(
-            "{:<4} {:<7} {:<10} {:<38} {:<28} {}",
-            revision.revision,
-            revision.version,
-            revision.source,
-            output::truncate(&revision.name, 38),
-            output::truncate(&revision_author_label(revision), 28),
-            output::time(revision.created_at)
-        );
-    }
 }
 
 // An unattributed write shows its kind rather than a blank shaped like a UUID.
@@ -295,43 +302,52 @@ fn revision_author_label(revision: &WorkflowRevision) -> String {
 }
 
 fn print_workflow(workflow: &WorkflowDefinition) -> Result<()> {
-    println!("id: {}", workflow.id.unwrap_or_default());
-    println!("name: {}", workflow.name);
-    println!("version: {}", workflow.version);
-    println!("enabled: {}", workflow.enabled);
-    println!("updated_at: {}", output::time(workflow.updated_at));
-    println!(
-        "definition: {}",
-        serde_json::to_string_pretty(&workflow.definition)?
-    );
+    print!("{}", output::value_table(workflow)?);
     Ok(())
 }
 
 fn print_runs(runs: &[WorkflowRun]) {
-    println!(
-        "{:<6} {:<18} {:<10} {:<22} {:<18} message",
-        "id", "status", "workflow", "active_node", "created_at"
+    let rows = runs
+        .iter()
+        .map(|run| {
+            vec![
+                run.id.to_string(),
+                run.status.as_str().to_string(),
+                run.workflow_id.to_string(),
+                output::truncate(run.active_node_id.as_deref().unwrap_or("-"), 22),
+                output::time(Some(run.created_at)),
+                output::truncate(run.message.as_deref().unwrap_or(""), 48),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(
+            &[
+                "id",
+                "status",
+                "workflow",
+                "active_node",
+                "created_at",
+                "message"
+            ],
+            &rows,
+        )
     );
-    for run in runs {
-        println!(
-            "{:<6} {:<18} {:<10} {:<22} {:<18} {}",
-            run.id,
-            run.status.as_str(),
-            run.workflow_id,
-            output::truncate(run.active_node_id.as_deref().unwrap_or("-"), 22),
-            output::truncate(&run.created_at.to_rfc3339(), 18),
-            output::truncate(run.message.as_deref().unwrap_or(""), 48)
-        );
-    }
 }
 
 fn print_run_summary(run: &WorkflowRun) {
-    println!(
-        "workflow_run id={} workflow_id={} status={} active_node={}",
-        run.id,
-        run.workflow_id,
-        run.status.as_str(),
-        run.active_node_id.as_deref().unwrap_or("-")
+    print!(
+        "{}",
+        output::table(
+            &["id", "workflow", "status", "active_node"],
+            &[vec![
+                run.id.to_string(),
+                run.workflow_id.to_string(),
+                run.status.as_str().to_string(),
+                run.active_node_id.as_deref().unwrap_or("-").to_string(),
+            ]],
+        )
     );
 }
 
@@ -348,83 +364,101 @@ fn print_task_response<T: serde::Serialize>(
 }
 
 fn print_approvals(approvals: &[Value]) {
-    println!(
-        "{:<6} {:<18} {:<10} {:<24} prompt",
-        "id", "status", "run", "node"
+    let rows = approvals
+        .iter()
+        .map(|approval| {
+            vec![
+                value_display(approval, "id"),
+                value_str(approval, "status").unwrap_or("-").to_string(),
+                value_display(approval, "workflow_run_id"),
+                output::truncate(value_str(approval, "node_id").unwrap_or("-"), 24),
+                output::truncate(value_str(approval, "prompt").unwrap_or(""), 64),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(&["id", "status", "run", "node", "prompt"], &rows)
     );
-    for approval in approvals {
-        println!(
-            "{:<6} {:<18} {:<10} {:<24} {}",
-            value_display(approval, "id"),
-            value_str(approval, "status").unwrap_or("-"),
-            value_display(approval, "workflow_run_id"),
-            output::truncate(value_str(approval, "node_id").unwrap_or("-"), 24),
-            output::truncate(value_str(approval, "prompt").unwrap_or(""), 64)
-        );
-    }
 }
 
 fn print_triggers(triggers: &[WorkflowTrigger]) {
-    println!(
-        "{:<6} {:<10} {:<8} {:<10} next_execution",
-        "id", "workflow", "enabled", "kind"
+    let rows = triggers
+        .iter()
+        .map(|trigger| {
+            vec![
+                trigger.id.unwrap_or_default().to_string(),
+                trigger.workflow_id.to_string(),
+                trigger.enabled.to_string(),
+                trigger.kind.as_str().to_string(),
+                output::time(trigger.next_execution),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(
+            &["id", "workflow", "enabled", "kind", "next_execution"],
+            &rows
+        )
     );
-    for trigger in triggers {
-        println!(
-            "{:<6} {:<10} {:<8} {:<10} {}",
-            trigger.id.unwrap_or_default(),
-            trigger.workflow_id,
-            trigger.enabled,
-            trigger.kind.as_str(),
-            output::time(trigger.next_execution)
-        );
-    }
 }
 
 fn print_providers(providers: &[ProviderMetadata]) {
-    println!("{:<28} {:>7} credential_scopes", "name", "actions");
-    for provider in providers {
-        println!(
-            "{:<28} {:>7} {}",
-            output::truncate(&provider.name, 28),
-            provider.actions.len(),
-            provider.metadata.credential_scopes.join(",")
-        );
-    }
+    let rows = providers
+        .iter()
+        .map(|provider| {
+            vec![
+                output::truncate(&provider.name, 28),
+                provider.actions.len().to_string(),
+                provider.metadata.credential_scopes.join(","),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(&["name", "actions", "credential_scopes"], &rows)
+    );
 }
 
 fn print_provider(provider: &ProviderMetadata) {
-    println!("name: {}", provider.name);
-    if !provider.metadata.credential_scopes.is_empty() {
-        println!(
-            "credential_scopes: {}",
-            provider.metadata.credential_scopes.join(",")
-        );
-    }
-    println!();
-    println!("{:<32} parameters", "action");
-    for action in &provider.actions {
-        let parameters = action
-            .parameters
-            .iter()
-            .map(|param| {
-                if param.required {
-                    format!("{}*", param.name)
-                } else {
-                    param.name.clone()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        println!(
-            "{:<32} {}",
-            output::truncate(&action.function_name, 32),
-            parameters
-        );
-        if let Some(description) = &action.description {
-            println!("  {}", output::truncate(description, 96));
-        }
-    }
+    print!(
+        "{}",
+        output::table(
+            &["name", "credential_scopes"],
+            &[vec![
+                provider.name.clone(),
+                provider.metadata.credential_scopes.join(","),
+            ]],
+        )
+    );
+    let rows = provider
+        .actions
+        .iter()
+        .map(|action| {
+            let parameters = action
+                .parameters
+                .iter()
+                .map(|param| {
+                    if param.required {
+                        format!("{}*", param.name)
+                    } else {
+                        param.name.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            vec![
+                output::truncate(&action.function_name, 32),
+                parameters,
+                output::truncate(action.description.as_deref().unwrap_or("-"), 96),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(&["action", "parameters", "description"], &rows)
+    );
 }
 
 fn value_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

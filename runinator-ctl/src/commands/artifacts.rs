@@ -1,5 +1,7 @@
 use super::*;
 
+use runinator_models::workflow_vm::{WorkflowEffectOutput, WorkflowEffectOutputEvent};
+
 pub(super) async fn artifacts(
     client: &Client,
     command: &ArtifactCommands,
@@ -11,18 +13,26 @@ pub(super) async fn artifacts(
             if json_output {
                 return output::json(&artifacts);
             }
-            if artifacts.is_empty() {
-                println!("no artifacts for effect {effect_id}");
-                return Ok(());
-            }
-            for event in artifacts {
-                if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } =
-                    event.output
-                {
-                    println!("{}", serde_json::to_string(&artifact)?);
-                }
-            }
+            print_artifacts(&artifacts);
         }
     }
     Ok(())
+}
+
+pub(super) fn print_artifacts(events: &[WorkflowEffectOutputEvent]) {
+    let rows = events
+        .iter()
+        .filter_map(|event| match &event.output {
+            WorkflowEffectOutput::Artifact { artifact } => Some(vec![
+                event.effect_id.to_string(),
+                artifact.to_string(),
+                event.created_at.to_string(),
+            ]),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::table(&["effect_id", "artifact", "created_at"], &rows)
+    );
 }

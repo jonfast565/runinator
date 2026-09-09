@@ -30,7 +30,10 @@ pub(super) async fn execution_profiles(
         }
         ExecutionProfileCommands::Show { id } => {
             let profile = client.fetch_execution_profile(*id).await?;
-            output::json(&profile)?;
+            if json_output {
+                return output::json(&profile);
+            }
+            print!("{}", output::value_table(&profile)?);
         }
         ExecutionProfileCommands::Status { id } => {
             let (profiles, mut statuses) = tokio::try_join!(

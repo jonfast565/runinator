@@ -131,31 +131,7 @@ fn print_replicas(replicas: &[ReplicaRecord]) {
 }
 
 fn print_replica(replica: &ReplicaRecord) -> Result<()> {
-    println!("id: {}", replica.replica_id);
-    println!("kind: {}", replica.replica_type.as_str());
-    println!("status: {}", replica.status.as_str());
-    println!("name: {}", name(replica));
-    println!("instance: {}", replica.instance_id);
-    println!("runtime: {}", replica.runtime_id);
-    println!("endpoint: {}", endpoint(replica));
-    if let Some(ip) = &replica.observed_ip {
-        println!("observed_ip: {ip}");
-    }
-    if let Some(version) = &replica.version {
-        println!("version: {version}");
-    }
-    println!("first_seen_at: {}", replica.first_seen_at.to_rfc3339());
-    println!(
-        "last_heartbeat_at: {}",
-        replica.last_heartbeat_at.to_rfc3339()
-    );
-    println!("offline_at: {}", output::time(replica.offline_at));
-    if !replica.attributes.is_null() {
-        println!(
-            "attributes: {}",
-            serde_json::to_string_pretty(&replica.attributes)?
-        );
-    }
+    print!("{}", output::value_table(replica)?);
     Ok(())
 }
 

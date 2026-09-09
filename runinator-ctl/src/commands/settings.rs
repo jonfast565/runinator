@@ -27,7 +27,15 @@ pub(super) async fn settings(
                         "write_only": true
                     }));
                 }
-                println!("secret {scope}/{name} is write-only");
+                print!(
+                    "{}",
+                    output::value_table(&json!({
+                        "scope": scope,
+                        "name": name,
+                        "kind": "secret",
+                        "write_only": true,
+                    }))?
+                );
                 return Ok(());
             }
             let value = client
@@ -36,10 +44,15 @@ pub(super) async fn settings(
             if json_output {
                 return output::json(&value);
             }
-            match &value {
-                Value::String(text) => println!("{text}"),
-                other => println!("{}", serde_json::to_string_pretty(other)?),
-            }
+            print!(
+                "{}",
+                output::value_table(&json!({
+                    "scope": scope,
+                    "name": name,
+                    "kind": "config",
+                    "value": value,
+                }))?
+            );
         }
         SettingsCommands::Set {
             scope,
@@ -131,13 +144,15 @@ fn resolve_set_value(inline: Option<&str>, file: Option<&Path>) -> Result<String
 }
 
 fn print_settings(entries: &[runinator_models::settings::SettingSummary]) {
-    println!("{:<8} {:<20} name", "kind", "scope");
-    for entry in entries {
-        println!(
-            "{:<8} {:<20} {}",
-            entry.kind.as_str(),
-            output::truncate(&entry.scope, 20),
-            entry.name
-        );
-    }
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.kind.as_str().to_string(),
+                output::truncate(&entry.scope, 20),
+                entry.name.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!("{}", output::table(&["kind", "scope", "name"], &rows));
 }
