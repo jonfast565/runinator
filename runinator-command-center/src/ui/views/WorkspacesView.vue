@@ -23,334 +23,350 @@
 
       <LoadingPanel v-if="busy && !store.items.length" compact message="Loading workspaces…" />
 
-      <div v-else class="workspace-layout">
-        <aside class="workspace-browser" aria-label="Workspace browser">
-          <div class="workspace-browser-heading">
-            <div>
-              <h2>Saved workspaces</h2>
-              <p>
-                {{ filtered.length }} on page {{ page + 1 }}
-                <template v-if="app.normalizedSearch"> · filtered</template>
-              </p>
+      <SplitPane
+        v-else
+        class="workspace-layout"
+        storage-key="command-center.workspaces.split"
+        :initial-first-pct="27"
+        :min-first="280"
+        :min-second="560"
+        collapsible-first
+        first-label="Saved workspaces"
+        first-icon="folder"
+      >
+        <template #first>
+          <aside class="workspace-browser" aria-label="Workspace browser">
+            <div class="workspace-browser-heading">
+              <div>
+                <h2>Saved workspaces</h2>
+                <p>
+                  {{ filtered.length }} on page {{ page + 1 }}
+                  <template v-if="app.normalizedSearch"> · filtered</template>
+                </p>
+              </div>
+              <span class="badge status-muted">{{ store.items.length }}</span>
             </div>
-            <span class="badge status-muted">{{ store.items.length }}</span>
-          </div>
 
-          <EmptyState
-            v-if="!filtered.length"
-            compact
-            :icon="store.items.length ? 'search' : 'folder'"
-            :title="store.items.length ? 'No matches on this page' : 'No workspaces yet'"
-            :description="
-              store.items.length
-                ? `No workspace keys match “${app.searchQuery}”.`
-                : 'Attach a keyed workspace to a workflow step to save files and results here.'
-            "
-          />
+            <EmptyState
+              v-if="!filtered.length"
+              compact
+              :icon="store.items.length ? 'search' : 'folder'"
+              :title="store.items.length ? 'No matches on this page' : 'No workspaces yet'"
+              :description="
+                store.items.length
+                  ? `No workspace keys match “${app.searchQuery}”.`
+                  : 'Attach a keyed workspace to a workflow step to save files and results here.'
+              "
+            />
 
-          <ul v-else class="workspace-list">
-            <li v-for="item in filtered" :key="item.id">
+            <ul v-else class="workspace-list">
+              <li v-for="item in filtered" :key="item.id">
+                <button
+                  class="workspace-card"
+                  :class="{ 'is-selected': store.selected?.id === item.id }"
+                  :aria-pressed="store.selected?.id === item.id"
+                  type="button"
+                  @click="select(item)"
+                >
+                  <span class="workspace-card-icon"><Icon name="folder" :size="17" /></span>
+                  <span class="workspace-card-copy">
+                    <strong>{{ item.key }}</strong>
+                    <span>Updated {{ formatDate(item.updated_at) }}</span>
+                  </span>
+                  <span class="workspace-card-meta">
+                    <span class="workspace-version-pill">v{{ item.head_version }}</span>
+                    <Icon name="chevron-right" :size="15" />
+                  </span>
+                </button>
+              </li>
+            </ul>
+
+            <nav class="workspace-pagination" aria-label="Workspace pages">
               <button
-                class="workspace-card"
-                :class="{ 'is-selected': store.selected?.id === item.id }"
-                :aria-pressed="store.selected?.id === item.id"
+                class="btn btn-sm btn-icon"
                 type="button"
-                @click="select(item)"
+                aria-label="Previous workspace page"
+                :disabled="page === 0 || busy"
+                @click="changePage(-1)"
               >
-                <span class="workspace-card-icon"><Icon name="folder" :size="17" /></span>
-                <span class="workspace-card-copy">
-                  <strong>{{ item.key }}</strong>
-                  <span>Updated {{ formatDate(item.updated_at) }}</span>
-                </span>
-                <span class="workspace-card-meta">
-                  <span class="workspace-version-pill">v{{ item.head_version }}</span>
-                  <Icon name="chevron-right" :size="15" />
-                </span>
+                <Icon name="chevron-left" />
               </button>
-            </li>
-          </ul>
-
-          <nav class="workspace-pagination" aria-label="Workspace pages">
-            <button
-              class="btn btn-sm btn-icon"
-              type="button"
-              aria-label="Previous workspace page"
-              :disabled="page === 0 || busy"
-              @click="changePage(-1)"
-            >
-              <Icon name="chevron-left" />
-            </button>
-            <span>Page {{ page + 1 }}</span>
-            <button
-              class="btn btn-sm btn-icon"
-              type="button"
-              aria-label="Next workspace page"
-              :disabled="store.items.length < pageSize || busy"
-              @click="changePage(1)"
-            >
-              <Icon name="chevron-right" />
-            </button>
-          </nav>
-        </aside>
-
-        <section v-if="store.selected" class="workspace-detail" aria-label="Workspace details">
-          <header class="workspace-hero">
-            <div class="workspace-hero-mark" aria-hidden="true">
-              <Icon name="folder" :size="23" />
-            </div>
-            <div class="workspace-hero-copy">
-              <div class="workspace-title-row">
-                <h2>{{ store.selected.key }}</h2>
-                <span class="badge status-muted">{{ permissionLabel }}</span>
-              </div>
-              <p>
-                Head v{{ store.selected.head_version }} · Updated
-                {{ formatDate(store.selected.updated_at) }}
-              </p>
-            </div>
-            <div class="workspace-hero-actions">
-              <button class="btn btn-sm" type="button" @click="copyWorkspaceKey">
-                <Icon :name="copyFeedback ? 'check' : 'copy'" :size="14" />
-                {{ copyFeedback || "Copy key" }}
-              </button>
+              <span>Page {{ page + 1 }}</span>
               <button
-                class="btn btn-sm btn-danger"
+                class="btn btn-sm btn-icon"
                 type="button"
-                :disabled="busy || !canDeleteWorkspace"
-                :title="
-                  canDeleteWorkspace
-                    ? 'Delete this workspace and every saved version'
-                    : 'Only workspace owners can delete the workspace'
-                "
-                @click="remove(null)"
+                aria-label="Next workspace page"
+                :disabled="store.items.length < pageSize || busy"
+                @click="changePage(1)"
               >
-                <Icon name="trash" :size="14" /> Delete
+                <Icon name="chevron-right" />
               </button>
-            </div>
-          </header>
+            </nav>
+          </aside>
+        </template>
 
-          <LoadingPanel
-            v-if="busy && !store.versions.length"
-            compact
-            message="Loading workspace history…"
-          />
-
-          <template v-else-if="snapshot">
-            <section class="workspace-version-bar" aria-label="Selected workspace version">
-              <label>
-                <span>Saved version</span>
-                <select v-model="selectedVersion">
-                  <option
-                    v-for="version in store.versions"
-                    :key="version.version"
-                    :value="version.version"
-                  >
-                    v{{ version.version }} · {{ formatDate(version.created_at) }}
-                  </option>
-                </select>
-              </label>
-              <div class="workspace-version-nav">
-                <button
-                  class="btn btn-sm"
-                  type="button"
-                  :disabled="versionPage === 0 || busy"
-                  @click="changeVersionPage(-1)"
-                >
-                  <Icon name="chevron-left" :size="14" /> Newer
-                </button>
-                <span>History page {{ versionPage + 1 }}</span>
-                <button
-                  class="btn btn-sm"
-                  type="button"
-                  :disabled="store.versions.length < pageSize || busy"
-                  @click="changeVersionPage(1)"
-                >
-                  Older <Icon name="chevron-right" :size="14" />
-                </button>
+        <template #second>
+          <section v-if="store.selected" class="workspace-detail" aria-label="Workspace details">
+            <header class="workspace-hero">
+              <div class="workspace-hero-mark" aria-hidden="true">
+                <Icon name="folder" :size="23" />
               </div>
-            </section>
-
-            <div class="workspace-metrics">
-              <MetricCard label="Files" :value="snapshot.files.length" />
-              <MetricCard label="Compressed size" :value="bytes(snapshot.compressed_bytes)" />
-              <MetricCard label="Attempt" :value="snapshot.attempt" />
-              <MetricCard label="Parent version" :value="`v${String(snapshot.parent_version)}`" />
-            </div>
-
-            <section class="workspace-run-context">
-              <div>
-                <span>Produced by run</span>
-                <strong :title="snapshot.workflow_run_id">{{ snapshot.workflow_run_id }}</strong>
-              </div>
-              <div>
-                <span>Committed</span>
-                <strong>{{ formatDate(snapshot.created_at) }}</strong>
-              </div>
-              <div>
-                <span>Archive SHA-256</span>
-                <strong :title="snapshot.archive_sha256">{{
-                  shortHash(snapshot.archive_sha256)
-                }}</strong>
-              </div>
-              <div class="workspace-version-actions">
-                <button
-                  class="btn btn-sm btn-primary"
-                  type="button"
-                  :disabled="busy"
-                  @click="download()"
-                >
-                  <Icon name="download" :size="14" /> Download archive
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost text-danger-fg"
-                  type="button"
-                  :disabled="busy || !canDeleteVersion"
-                  :title="versionDeleteHint"
-                  @click="remove(snapshot.version)"
-                >
-                  <Icon name="trash" :size="14" /> Delete version
-                </button>
-              </div>
-            </section>
-
-            <div class="workspace-content">
-              <div class="workspace-tabs" role="tablist" aria-label="Workspace version contents">
-                <button
-                  id="workspace-files-tab"
-                  type="button"
-                  role="tab"
-                  :aria-selected="activeTab === 'files'"
-                  :class="{ 'is-active': activeTab === 'files' }"
-                  @click="activeTab = 'files'"
-                >
-                  <Icon name="file" :size="15" /> Files
-                  <span>{{ snapshot.files.length }}</span>
-                </button>
-                <button
-                  id="workspace-results-tab"
-                  type="button"
-                  role="tab"
-                  :aria-selected="activeTab === 'results'"
-                  :class="{ 'is-active': activeTab === 'results' }"
-                  @click="activeTab = 'results'"
-                >
-                  <Icon name="output" :size="15" /> Results
-                  <span>{{ resultCount }}</span>
-                </button>
-              </div>
-
-              <div
-                v-if="activeTab === 'files'"
-                class="workspace-tab-panel"
-                role="tabpanel"
-                aria-labelledby="workspace-files-tab"
-              >
-                <div v-if="snapshot.files.length" class="workspace-file-toolbar">
-                  <label>
-                    <Icon name="search" :size="14" />
-                    <input
-                      v-model.trim="fileQuery"
-                      type="search"
-                      placeholder="Filter files in this version"
-                    />
-                  </label>
-                  <span>{{ visibleFiles.length }} of {{ snapshot.files.length }}</span>
+              <div class="workspace-hero-copy">
+                <div class="workspace-title-row">
+                  <h2>{{ store.selected.key }}</h2>
+                  <span class="badge status-muted">{{ permissionLabel }}</span>
                 </div>
-
-                <EmptyState
-                  v-if="!visibleFiles.length"
-                  compact
-                  :icon="snapshot.files.length ? 'search' : 'file'"
-                  :title="snapshot.files.length ? 'No matching files' : 'No files in this version'"
-                  :description="
-                    snapshot.files.length
-                      ? `No paths match “${fileQuery}”.`
-                      : 'This version contains saved results only.'
+                <p>
+                  Head v{{ store.selected.head_version }} · Updated
+                  {{ formatDate(store.selected.updated_at) }}
+                </p>
+              </div>
+              <div class="workspace-hero-actions">
+                <button class="btn btn-sm" type="button" @click="copyWorkspaceKey">
+                  <Icon :name="copyFeedback ? 'check' : 'copy'" :size="14" />
+                  {{ copyFeedback || "Copy key" }}
+                </button>
+                <button
+                  class="btn btn-sm btn-danger"
+                  type="button"
+                  :disabled="busy || !canDeleteWorkspace"
+                  :title="
+                    canDeleteWorkspace
+                      ? 'Delete this workspace and every saved version'
+                      : 'Only workspace owners can delete the workspace'
                   "
-                />
+                  @click="remove(null)"
+                >
+                  <Icon name="trash" :size="14" /> Delete
+                </button>
+              </div>
+            </header>
 
-                <div v-else class="workspace-files-table-wrap">
-                  <table class="workspace-files-table">
-                    <thead>
-                      <tr>
-                        <th>Path</th>
-                        <th>Size</th>
-                        <th>Digest</th>
-                        <th><span class="sr-only">Actions</span></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="file in visibleFiles" :key="file.path">
-                        <td>
-                          <div class="workspace-file-path">
-                            <Icon :name="file.link_target ? 'link' : 'file'" :size="15" />
-                            <span>
-                              <strong :title="file.path">{{ file.path }}</strong>
-                              <small v-if="file.link_target">→ {{ file.link_target }}</small>
-                              <small v-else-if="file.executable">Executable</small>
-                            </span>
-                          </div>
-                        </td>
-                        <td>{{ bytes(file.size_bytes) }}</td>
-                        <td>
-                          <code :title="file.sha256">{{ shortHash(file.sha256) }}</code>
-                        </td>
-                        <td>
-                          <button
-                            v-if="!file.link_target"
-                            class="btn btn-sm btn-icon"
-                            type="button"
-                            :disabled="busy"
-                            :aria-label="`Download ${file.path}`"
-                            :title="`Download ${file.path}`"
-                            @click="download(file.path)"
-                          >
-                            <Icon name="download" :size="14" />
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+            <LoadingPanel
+              v-if="busy && !store.versions.length"
+              compact
+              message="Loading workspace history…"
+            />
+
+            <template v-else-if="snapshot">
+              <section class="workspace-version-bar" aria-label="Selected workspace version">
+                <label>
+                  <span>Saved version</span>
+                  <select v-model="selectedVersion">
+                    <option
+                      v-for="version in store.versions"
+                      :key="version.version"
+                      :value="version.version"
+                    >
+                      v{{ version.version }} · {{ formatDate(version.created_at) }}
+                    </option>
+                  </select>
+                </label>
+                <div class="workspace-version-nav">
+                  <button
+                    class="btn btn-sm"
+                    type="button"
+                    :disabled="versionPage === 0 || busy"
+                    @click="changeVersionPage(-1)"
+                  >
+                    <Icon name="chevron-left" :size="14" /> Newer
+                  </button>
+                  <span>History page {{ versionPage + 1 }}</span>
+                  <button
+                    class="btn btn-sm"
+                    type="button"
+                    :disabled="store.versions.length < pageSize || busy"
+                    @click="changeVersionPage(1)"
+                  >
+                    Older <Icon name="chevron-right" :size="14" />
+                  </button>
+                </div>
+              </section>
+
+              <div class="workspace-metrics">
+                <MetricCard label="Files" :value="snapshot.files.length" />
+                <MetricCard label="Compressed size" :value="bytes(snapshot.compressed_bytes)" />
+                <MetricCard label="Attempt" :value="snapshot.attempt" />
+                <MetricCard label="Parent version" :value="`v${String(snapshot.parent_version)}`" />
+              </div>
+
+              <section class="workspace-run-context">
+                <div>
+                  <span>Produced by run</span>
+                  <strong :title="snapshot.workflow_run_id">{{ snapshot.workflow_run_id }}</strong>
+                </div>
+                <div>
+                  <span>Committed</span>
+                  <strong>{{ formatDate(snapshot.created_at) }}</strong>
+                </div>
+                <div>
+                  <span>Archive SHA-256</span>
+                  <strong :title="snapshot.archive_sha256">{{
+                    shortHash(snapshot.archive_sha256)
+                  }}</strong>
+                </div>
+                <div class="workspace-version-actions">
+                  <button
+                    class="btn btn-sm btn-primary"
+                    type="button"
+                    :disabled="busy"
+                    @click="download()"
+                  >
+                    <Icon name="download" :size="14" /> Download archive
+                  </button>
+                  <button
+                    class="btn btn-sm btn-ghost text-danger-fg"
+                    type="button"
+                    :disabled="busy || !canDeleteVersion"
+                    :title="versionDeleteHint"
+                    @click="remove(snapshot.version)"
+                  >
+                    <Icon name="trash" :size="14" /> Delete version
+                  </button>
+                </div>
+              </section>
+
+              <div class="workspace-content">
+                <div class="workspace-tabs" role="tablist" aria-label="Workspace version contents">
+                  <button
+                    id="workspace-files-tab"
+                    type="button"
+                    role="tab"
+                    :aria-selected="activeTab === 'files'"
+                    :class="{ 'is-active': activeTab === 'files' }"
+                    @click="activeTab = 'files'"
+                  >
+                    <Icon name="file" :size="15" /> Files
+                    <span>{{ snapshot.files.length }}</span>
+                  </button>
+                  <button
+                    id="workspace-results-tab"
+                    type="button"
+                    role="tab"
+                    :aria-selected="activeTab === 'results'"
+                    :class="{ 'is-active': activeTab === 'results' }"
+                    @click="activeTab = 'results'"
+                  >
+                    <Icon name="output" :size="15" /> Results
+                    <span>{{ resultCount }}</span>
+                  </button>
+                </div>
+
+                <div
+                  v-if="activeTab === 'files'"
+                  class="workspace-tab-panel"
+                  role="tabpanel"
+                  aria-labelledby="workspace-files-tab"
+                >
+                  <div v-if="snapshot.files.length" class="workspace-file-toolbar">
+                    <label>
+                      <Icon name="search" :size="14" />
+                      <input
+                        v-model.trim="fileQuery"
+                        type="search"
+                        placeholder="Filter files in this version"
+                      />
+                    </label>
+                    <span>{{ visibleFiles.length }} of {{ snapshot.files.length }}</span>
+                  </div>
+
+                  <EmptyState
+                    v-if="!visibleFiles.length"
+                    compact
+                    :icon="snapshot.files.length ? 'search' : 'file'"
+                    :title="
+                      snapshot.files.length ? 'No matching files' : 'No files in this version'
+                    "
+                    :description="
+                      snapshot.files.length
+                        ? `No paths match “${fileQuery}”.`
+                        : 'This version contains saved results only.'
+                    "
+                  />
+
+                  <div v-else class="workspace-files-table-wrap">
+                    <table class="workspace-files-table">
+                      <thead>
+                        <tr>
+                          <th>Path</th>
+                          <th>Size</th>
+                          <th>Digest</th>
+                          <th><span class="sr-only">Actions</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="file in visibleFiles" :key="file.path">
+                          <td>
+                            <div class="workspace-file-path">
+                              <Icon :name="file.link_target ? 'link' : 'file'" :size="15" />
+                              <span>
+                                <strong :title="file.path">{{ file.path }}</strong>
+                                <small v-if="file.link_target">→ {{ file.link_target }}</small>
+                                <small v-else-if="file.executable">Executable</small>
+                              </span>
+                            </div>
+                          </td>
+                          <td>{{ bytes(file.size_bytes) }}</td>
+                          <td>
+                            <code :title="file.sha256">{{ shortHash(file.sha256) }}</code>
+                          </td>
+                          <td>
+                            <button
+                              v-if="!file.link_target"
+                              class="btn btn-sm btn-icon"
+                              type="button"
+                              :disabled="busy"
+                              :aria-label="`Download ${file.path}`"
+                              :title="`Download ${file.path}`"
+                              @click="download(file.path)"
+                            >
+                              <Icon name="download" :size="14" />
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div
+                  v-else
+                  class="workspace-tab-panel"
+                  role="tabpanel"
+                  aria-labelledby="workspace-results-tab"
+                >
+                  <EmptyState
+                    v-if="resultCount === 0"
+                    compact
+                    icon="output"
+                    title="No saved results"
+                    description="This version only contains files."
+                  />
+                  <pre v-else class="workspace-results">{{
+                    JSON.stringify(snapshot.results, null, 2)
+                  }}</pre>
                 </div>
               </div>
+            </template>
 
-              <div
-                v-else
-                class="workspace-tab-panel"
-                role="tabpanel"
-                aria-labelledby="workspace-results-tab"
-              >
-                <EmptyState
-                  v-if="resultCount === 0"
-                  compact
-                  icon="output"
-                  title="No saved results"
-                  description="This version only contains files."
-                />
-                <pre v-else class="workspace-results">{{
-                  JSON.stringify(snapshot.results, null, 2)
-                }}</pre>
-              </div>
-            </div>
-          </template>
+            <EmptyState
+              v-else
+              compact
+              icon="folder"
+              title="No committed versions"
+              description="This workspace has not committed a durable snapshot yet."
+            />
+          </section>
 
           <EmptyState
             v-else
-            compact
+            class="workspace-detail-empty"
             icon="folder"
-            title="No committed versions"
-            description="This workspace has not committed a durable snapshot yet."
+            title="Select a workspace"
+            description="Choose a workspace to inspect its version history, files, and saved results."
           />
-        </section>
-
-        <EmptyState
-          v-else
-          class="workspace-detail-empty"
-          icon="folder"
-          title="Select a workspace"
-          description="Choose a workspace to inspect its version history, files, and saved results."
-        />
-      </div>
+        </template>
+      </SplitPane>
     </div>
   </section>
 </template>
@@ -367,6 +383,7 @@ import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 
 const pageSize = 50;
 const store = useWorkspacesStore();
@@ -568,11 +585,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .workspace-layout {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 2.2fr);
   min-height: 0;
   flex: 1;
-  gap: 12px;
   overflow: hidden;
 }
 
