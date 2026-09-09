@@ -203,7 +203,7 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         .merge(agents::routes(pool.clone()))
         .merge(provisioning::routes())
         .merge(artifacts::routes::<T>())
-        .merge(files::routes::<T>())
+        .merge(files::routes(pool.clone()))
         .merge(crate::handlers::workspaces::routes(pool.clone()))
         .merge(notifications::routes(pool.clone()))
         .merge(schedules::routes(pool.clone()))

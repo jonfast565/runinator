@@ -270,7 +270,7 @@ pub async fn download_workflow_file<T: AuthorizationStore + FileStore + RuntimeS
         })
 }
 
-pub fn routes<T: AuthorizationStore + FileStore + RuntimeStore>() -> axum::Router {
+pub fn routes<T: AuthorizationStore + FileStore + RuntimeStore>(pool: Arc<T>) -> axum::Router {
     use axum::routing::{delete, get, post};
     axum::Router::new()
         .route(
@@ -283,6 +283,7 @@ pub fn routes<T: AuthorizationStore + FileStore + RuntimeStore>() -> axum::Route
             "/workflow_files/{id}/content",
             get(download_workflow_file::<T>),
         )
+        .layer(Extension(pool))
 }
 
 const UPLOAD_QUERY: &[ParamDoc] = &[
