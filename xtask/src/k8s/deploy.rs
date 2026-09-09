@@ -333,6 +333,62 @@ pub fn redeploy_grafana(options: GrafanaRedeployOptions) -> Result<()> {
     Ok(())
 }
 
+/// Recreate the default RabbitMQ vhost and reconnect the runtime workloads.
+///
+/// This intentionally preserves PostgreSQL while discarding broker-only, in-flight messages. It
+/// is an emergency action for a confirmed corrupted RabbitMQ message store; callers must require
+/// an explicit acknowledgement before entering this path.
+pub fn recover_rabbitmq(workspace_root: &Path, kube_context: Option<&str>) -> Result<()> {
+    exec::require_tool("kubectl")?;
+    let ctx_args = context_args(kube_context);
+    let exec_in_broker = |rabbitmq_args: &[&str]| -> Result<()> {
+        let mut args = kubectl_args(
+            &ctx_args,
+            &[
+                "exec",
+                "pod/runinator-rabbitmq-0",
+                "--namespace",
+                NAMESPACE,
+                "--",
+                "rabbitmqctl",
+            ],
+        );
+        args.extend_from_slice(rabbitmq_args);
+        exec::run("kubectl", &args, workspace_root)
+    };
+
+    exec_in_broker(&["delete_vhost", "/"])?;
+    exec_in_broker(&["add_vhost", "/"])?;
+    exec_in_broker(&["set_permissions", "-p", "/", "runinator", ".*", ".*", ".*"])?;
+
+    for target in [
+        "deployment/runinator-ws",
+        "deployment/runinator-engine-worker",
+        "deployment/runinator-waker",
+        "deployment/runinator-worker",
+        "deployment/runinator-archiver",
+    ] {
+        let args = kubectl_args(
+            &ctx_args,
+            &["rollout", "restart", target, "--namespace", NAMESPACE],
+        );
+        exec::run("kubectl", &args, workspace_root)?;
+    }
+
+    run_rollout_checks(
+        workspace_root,
+        &ctx_args,
+        &[
+            "deployment/runinator-ws".to_string(),
+            "deployment/runinator-engine-worker".to_string(),
+            "deployment/runinator-waker".to_string(),
+            "deployment/runinator-worker".to_string(),
+            "deployment/runinator-archiver".to_string(),
+        ],
+    );
+    Ok(())
+}
+
 /// Apply only PostgreSQL's Service and StatefulSet from a rendered overlay. Re-applying the
 /// StatefulSet updates its pod template without deleting its PVC. `from_scratch` instead scales
 /// PostgreSQL down and deletes its sole generated data claim before recreating the StatefulSet.

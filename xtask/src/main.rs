@@ -93,6 +93,8 @@ enum K8sCommand {
     RedeployGrafana(K8sGrafanaArgs),
     /// Apply only the PostgreSQL Service and StatefulSet resources.
     RedeployDatabase(K8sDatabaseArgs),
+    /// Rebuild the RabbitMQ default vhost after a confirmed message-store corruption.
+    RecoverRabbitmq(K8sRabbitMqRecoveryArgs),
     /// Tear down the runinator stack from a cluster.
     Delete(K8sDeleteArgs),
 }
@@ -103,6 +105,7 @@ impl K8sCommand {
             Self::Deploy(args) => args.kube_context.as_deref(),
             Self::RedeployGrafana(args) => args.kube_context.as_deref(),
             Self::RedeployDatabase(args) => args.kube_context.as_deref(),
+            Self::RecoverRabbitmq(args) => args.kube_context.as_deref(),
             Self::Delete(args) => args.kube_context.as_deref(),
         }
     }
@@ -112,6 +115,7 @@ impl K8sCommand {
             Self::Deploy(_) => "deploy",
             Self::RedeployGrafana(_) => "redeploy-grafana",
             Self::RedeployDatabase(_) => "redeploy-database",
+            Self::RecoverRabbitmq(_) => "recover-rabbitmq",
             Self::Delete(_) => "delete",
         }
     }
@@ -139,6 +143,16 @@ struct K8sDatabaseArgs {
     /// Runinator state, then re-runs the web-service bootstrap.
     #[arg(long, default_value_t = false)]
     from_scratch: bool,
+}
+
+#[derive(clap::Args)]
+struct K8sRabbitMqRecoveryArgs {
+    /// kubectl context to use; defaults to the current context.
+    #[arg(long)]
+    kube_context: Option<String>,
+    /// Required acknowledgement that the corrupted RabbitMQ vhost's in-flight messages are lost.
+    #[arg(long)]
+    discard_broker_messages: bool,
 }
 
 #[derive(clap::Args)]
@@ -236,6 +250,9 @@ fn run_process() -> anyhow::Result<()> {
                 }
                 K8sCommand::RedeployDatabase(args) => {
                     run_k8s_redeploy_database(&workspace_root, &args)
+                }
+                K8sCommand::RecoverRabbitmq(args) => {
+                    run_k8s_recover_rabbitmq(&workspace_root, &args)
                 }
                 K8sCommand::Delete(args) => run_k8s_delete(&workspace_root, &args),
             };
@@ -471,4 +488,16 @@ fn run_k8s_redeploy_database(
         kube_context: args.kube_context.as_deref(),
         from_scratch: args.from_scratch,
     })
+}
+
+fn run_k8s_recover_rabbitmq(
+    workspace_root: &std::path::Path,
+    args: &K8sRabbitMqRecoveryArgs,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.discard_broker_messages,
+        "refusing RabbitMQ recovery without --discard-broker-messages"
+    );
+    println!("==> Rebuilding RabbitMQ's corrupted default vhost");
+    k8s::deploy::recover_rabbitmq(workspace_root, args.kube_context.as_deref())
 }
