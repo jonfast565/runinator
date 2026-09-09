@@ -177,6 +177,12 @@ and are removed after execution. Expired crash leftovers are swept. The action d
 restore, execution, content scanning, upload and sealing. Unsafe paths, special files, and escaping
 or cyclic relative symlinks are rejected. Symlink restoration currently requires Unix.
 
+Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
+deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops
+further storage reads and prevents receipt issuance. Validation retains a bounded 64 MiB cache of
+physical records in addition to its 48 MiB logical-object cache, so shared compression records do
+not require a new blob read for every member.
+
 Retained versions, pending valid receipts and active transfers are explicit collection roots;
 parent revision metadata does not retain ancestor contents. Collection uses fenced SQL leases,
 rebuilds the logical index atomically and defers old-pack deletion while readers hold renewable

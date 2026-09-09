@@ -64,6 +64,7 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
                 workspace,
                 runtime: tokio::runtime::Handle::current(),
                 reader: None,
+                records: runinator_workspace::storage::cache::ByteCache::new(64 * 1024 * 1024),
             },
             48 * 1024 * 1024,
         )
@@ -166,7 +167,12 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         if checkout.access != WorkspaceAccess::Write {
             return Err(WORKSPACE_INVALID.error("read-only checkout cannot save"));
         }
-        let store = self.objects(checkout.workspace_id);
+        let remaining = (checkout.leased_until - Utc::now())
+            .to_std()
+            .map_err(|_| WORKSPACE_CONFLICT.error("checkout lease expired before validation"))?;
+        let deadline = tokio::time::Instant::now() + remaining;
+        let guard = super::workspace_validation::ValidationGuard::new();
+        let store = guard.store(self.objects(checkout.workspace_id));
         let revision_id: storage::Id = request.revision_id.parse()?;
         let parent = if checkout.base_version > 0 {
             Some(
@@ -179,22 +185,26 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             None
         };
         let limits = checkout.limits;
-        let usage = tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
-            let scratch = tempfile::tempdir()?;
-            let revision: Revision = load(&store, revision_id, Kind::Revision)?;
-            if revision.parent != parent {
-                return Err(WORKSPACE_CONFLICT.error("revision has a different base"));
-            }
-            storage::gc::verify_roots(&store, &[revision_id], scratch.path(), false)?;
-            let view = View::new(&store, revision_id)?;
-            let usage = runinator_workspace::revision::usage(&view)?;
-            limits.check(usage)?;
-            // validate named values and all portable links before issuing a receipt.
-            runinator_workspace::revision::validate_results(&view)?;
-            runinator_workspace::revision::validate_links(&view)?;
-            Ok(usage)
-        })
-        .await??;
+        let usage = tokio::time::timeout_at(
+            deadline,
+            tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
+                let scratch = tempfile::tempdir()?;
+                let revision: Revision = load(&store, revision_id, Kind::Revision)?;
+                if revision.parent != parent {
+                    return Err(WORKSPACE_CONFLICT.error("revision has a different base"));
+                }
+                storage::gc::verify_roots(&store, &[revision_id], scratch.path(), false)?;
+                let view = View::new(&store, revision_id)?;
+                let usage = runinator_workspace::revision::usage(&view)?;
+                limits.check(usage)?;
+                // validate named values and all portable links before issuing a receipt.
+                runinator_workspace::revision::validate_results(&view)?;
+                runinator_workspace::revision::validate_links(&view)?;
+                Ok(usage)
+            }),
+        )
+        .await
+        .map_err(|_| WORKSPACE_CONFLICT.error("checkout lease expired during validation"))???;
         let snapshot = WorkspaceSnapshot {
             workspace_id: checkout.workspace_id,
             version: checkout

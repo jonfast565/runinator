@@ -85,6 +85,17 @@ async fn request_timeout(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    let workspace_seal = request.method() == axum::http::Method::POST
+        && request
+            .uri()
+            .path()
+            .strip_prefix("/workspaces/checkouts/")
+            .and_then(|path| path.strip_suffix("/seal"))
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
+    // authenticated sealing is bounded by the engine's checkout lease and worker action deadline.
+    if workspace_seal {
+        return next.run(request).await;
+    }
     let archive_upload = request.method() == axum::http::Method::PUT
         && request
             .uri()

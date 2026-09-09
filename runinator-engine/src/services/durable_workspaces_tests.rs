@@ -116,6 +116,22 @@ async fn packs_are_validated_before_receipt_and_receipts_do_not_publish() {
     for pack in packs {
         service.upload_pack(checkout.id, pack).await.unwrap();
     }
+    let objects = service.objects(id);
+    let verified_revision = revision_id.parse().unwrap();
+    tokio::task::spawn_blocking(move || {
+        use runinator_workspace::storage::{gc, store::ReadStore};
+        let scratch = tempfile::tempdir().unwrap();
+        // bypass the logical cache to exercise shared physical records across verification passes.
+        gc::verify_roots(&objects.inner, &[verified_revision], scratch.path(), false).unwrap();
+        let first = objects.inner.records.stats().unwrap();
+        objects.inner.get(verified_revision).unwrap();
+        let second = objects.inner.records.stats().unwrap();
+        assert_eq!(second.misses, first.misses);
+        assert!(second.hits > first.hits);
+        assert!(second.resident_bytes <= objects.inner.records.capacity());
+    })
+    .await
+    .unwrap();
     let receipt = service
         .seal(
             checkout.id,

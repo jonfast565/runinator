@@ -78,6 +78,7 @@ mod workspace_content;
 mod workspace_objects;
 mod workspace_retention;
 mod workspace_stream;
+mod workspace_validation;
 pub use durable_workspaces::{WorkspaceContent, WorkspaceService, run_workspace_storage_cleanup};
 
 mod adapter_deliveries;

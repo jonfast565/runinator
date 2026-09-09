@@ -88,3 +88,74 @@ async fn workspace_archive_upload_uses_its_transfer_deadline() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn workspace_seal_uses_its_checkout_deadline_only_for_the_exact_post_route() {
+    let router = Router::new().route(
+        "/workspaces/checkouts/{id}/seal",
+        axum::routing::any(|| async {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            "sealed"
+        }),
+    );
+    let router = apply_overload_protection(router, enabled_config(Duration::from_millis(5), 8));
+    for (method, id, expected) in [
+        ("POST", uuid::Uuid::new_v4().to_string(), StatusCode::OK),
+        (
+            "GET",
+            uuid::Uuid::new_v4().to_string(),
+            StatusCode::REQUEST_TIMEOUT,
+        ),
+        ("POST", "invalid".into(), StatusCode::REQUEST_TIMEOUT),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/workspaces/checkouts/{id}/seal"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+}
+
+#[tokio::test]
+async fn workspace_seal_retains_the_concurrency_cap() {
+    let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handler_entered = entered.clone();
+    let handler_release = release.clone();
+    let router = Router::new().route(
+        "/workspaces/checkouts/{id}/seal",
+        axum::routing::post(move || {
+            let entered = handler_entered.clone();
+            let release = handler_release.clone();
+            async move {
+                entered.notify_one();
+                release.notified().await;
+                "sealed"
+            }
+        }),
+    );
+    let router = apply_overload_protection(router, enabled_config(Duration::from_millis(5), 1));
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/workspaces/checkouts/{}/seal",
+                uuid::Uuid::new_v4()
+            ))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let first = tokio::spawn(router.clone().oneshot(request()));
+    entered.notified().await;
+    let overloaded = router.oneshot(request()).await.unwrap();
+    assert_eq!(overloaded.status(), StatusCode::SERVICE_UNAVAILABLE);
+    release.notify_one();
+    assert_eq!(first.await.unwrap().unwrap().status(), StatusCode::OK);
+}

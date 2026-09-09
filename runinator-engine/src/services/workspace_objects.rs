@@ -13,6 +13,7 @@ pub struct SharedObjects<T: DurableWorkspaceStore> {
     pub workspace: uuid::Uuid,
     pub runtime: tokio::runtime::Handle,
     pub reader: Option<ReaderGuard<T>>,
+    pub records: storage::cache::ByteCache,
 }
 
 impl<T: DurableWorkspaceStore> SharedObjects<T> {
@@ -22,22 +23,41 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
             .await?
             .ok_or_else(|| Box::new(storage::Error::NotFound(id.to_string())) as SendableError)
     }
-    async fn read(&self, id: Id) -> Result<Object, SendableError> {
+    fn read(&self, id: Id) -> storage::Result<Object> {
         if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
-            return Err(storage::Error::Conflict.into());
+            return Err(storage::Error::Conflict);
         }
+        let location = self
+            .runtime
+            .block_on(self.location(id))
+            .map_err(storage_error)?;
+        let key = Id::sha256(
+            format!("{}:{}:{}", location.pack, location.offset, location.length).as_bytes(),
+        );
+        if location.length > storage::codec::MAX_OBJECT as u64 + storage::record::HEADER_LEN + 65536
+        {
+            return Err(storage::Error::Corrupt("oversized physical record".into()));
+        }
+        let bytes = self
+            .records
+            .get_or_load(key, location.length as usize, || {
+                self.runtime
+                    .block_on(self.read_record(&location))
+                    .map_err(storage_error)
+            })?;
+        storage::record::decode_range(&bytes, id, location.member)
+    }
+    async fn read_record(
+        &self,
+        location: &WorkspaceObjectLocation,
+    ) -> Result<Vec<u8>, SendableError> {
         use tokio::io::AsyncReadExt;
-        let location = self.location(id).await?;
         let uri = crate::artifact_storage::workspace_pack_uri(self.workspace, &location.pack)?;
         let end = location
             .offset
             .checked_add(location.length)
             .and_then(|n| n.checked_sub(1))
             .ok_or_else(|| storage::Error::Corrupt("invalid object range".into()))?;
-        if location.length > storage::codec::MAX_OBJECT as u64 + storage::record::HEADER_LEN + 65536
-        {
-            return Err(storage::Error::Corrupt("oversized physical record".into()).into());
-        }
         let content = crate::artifact_storage::open_artifact(
             &self.blobs,
             &uri,
@@ -53,7 +73,7 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
             .take(location.length + 1)
             .read_to_end(&mut bytes)
             .await?;
-        Ok(storage::record::decode_range(&bytes, id, location.member)?)
+        Ok(bytes)
     }
 }
 
@@ -81,7 +101,7 @@ impl<T: DurableWorkspaceStore> ReadStore for SharedObjects<T> {
         })
     }
     fn get(&self, id: Id) -> storage::Result<Object> {
-        self.runtime.block_on(self.read(id)).map_err(storage_error)
+        self.read(id)
     }
     fn contains(&self, id: Id) -> storage::Result<bool> {
         self.runtime
