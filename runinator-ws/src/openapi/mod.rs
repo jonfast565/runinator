@@ -980,6 +980,8 @@ mod policy_tests {
             ("get", "/openapi.json"),
             ("get", "/docs"),
             ("get", "/calendar/{token}/runinator.ics"),
+            // opaque, expiring capability issued after workspace authorization.
+            ("get", "/workspace-downloads/{ticket}"),
         ]);
         assert_eq!(actual, expected);
     }

@@ -2518,25 +2518,106 @@ export function fetchWorkspaceVersions(workspaceId: string, offset = 0) {
   });
 }
 
+export function fetchWorkspaceDiff(
+  workspaceId: string,
+  before: number,
+  after: number,
+  cursor: string | null = null,
+) {
+  return command<import("../domain/models/workspaces").WorkspaceDiff>("workspace_diff", {
+    workspaceId,
+    before,
+    after,
+    cursor,
+  });
+}
+
+export function fetchWorkspaceDirectory(
+  workspaceId: string,
+  version: number,
+  path = "",
+  cursor: string | null = null,
+  results = false,
+) {
+  return command<import("../domain/models/workspaces").WorkspaceDirectory>("workspace_directory", {
+    workspaceId,
+    version,
+    path,
+    cursor,
+    results,
+  });
+}
+
+function decodeWorkspacePreview(bytes: Uint8Array): string {
+  let text: string;
+
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+
+    if (text.includes("\0")) {
+      return "Binary content. Download the file to inspect it.";
+    }
+  } catch {
+    return "Binary or non-UTF-8 content. Download the file to inspect it.";
+  }
+
+  return bytes.length === 1048576
+    ? "Preview limited to the first 1 MiB; download for the complete content.\n\n" + text
+    : text || "(empty file)";
+}
+
+export async function previewWorkspaceFile(
+  workspaceId: string,
+  version: number,
+  path: string,
+  result = false,
+) {
+  if (isTauriRuntime()) {
+    const bytes = await command<number[]>("workspace_preview", {
+      workspaceId,
+      version,
+      path,
+      result,
+    });
+    return decodeWorkspacePreview(new Uint8Array(bytes));
+  }
+
+  const query = result
+    ? `name=${encodeURIComponent(path)}&preview=true`
+    : `path=${encodeURIComponent(path)}&length=1048576`;
+  const blob = await downloadBinary(
+    `workspaces/${encodeURIComponent(workspaceId)}/versions/${String(version)}/${result ? "result" : "content"}?${query}`,
+  );
+  return decodeWorkspacePreview(new Uint8Array(await blob.arrayBuffer()));
+}
+
 export function deleteDurableWorkspace(workspaceId: string, version: number | null = null) {
   return command<null>("delete_durable_workspace", { workspaceId, version });
 }
 
-export function downloadWorkspaceVersion(
+export async function downloadWorkspaceVersion(
   workspaceId: string,
   version: number,
   path: string | null = null,
-) {
+  result = false,
+  transferId: string | null = null,
+): Promise<string | null> {
   if (isTauriRuntime()) {
-    return command<number[]>("download_workspace_version", { workspaceId, version, path }).then(
-      (bytes) => new Blob([new Uint8Array(bytes)]),
-    );
+    await command<null>("download_workspace_version", {
+      workspaceId,
+      version,
+      path,
+      result,
+      transferId,
+    });
+    return null;
   }
 
-  const query = path === null ? "" : `?path=${encodeURIComponent(path)}`;
-  return downloadBinary(
-    `workspaces/${encodeURIComponent(workspaceId)}/versions/${String(version)}/content${query}`,
+  const ticket = await fetchIngressJson<{ id: string }>(
+    `workspaces/${encodeURIComponent(workspaceId)}/versions/${String(version)}/downloads`,
+    { method: "POST", body: JSON.stringify({ path, result, transfer_id: transferId }) },
   );
+  return `${apiBaseUrl()}/workspace-downloads/${encodeURIComponent(ticket.id)}`;
 }
 
 export function fetchAdapterDeliveries(adapterId: string) {
@@ -2586,4 +2667,74 @@ export function setOrchestrationDebugControl(pipelineId: string, paused: boolean
     method: "PUT",
     body: JSON.stringify({ paused, steps }),
   });
+}
+
+export function createWorkspaceTransfer(
+  workspaceId: string,
+  version: number,
+  importing = false,
+  filesystem = false,
+) {
+  return command<import("../domain/models/workspaces").WorkspaceTransfer>(
+    "create_workspace_transfer",
+    { workspaceId, version, importing, filesystem },
+  );
+}
+
+export function fetchWorkspaceTransfer(id: string) {
+  return command<import("../domain/models/workspaces").WorkspaceTransfer>("workspace_transfer", {
+    id,
+  });
+}
+
+export function cancelWorkspaceTransfer(id: string) {
+  return command<null>("cancel_workspace_transfer", { id });
+}
+
+export async function importWorkspaceArchive(key: string, file: File | null = null) {
+  if (isTauriRuntime()) {
+    return command<import("../domain/models/workspaces").WorkspaceTransfer | null>(
+      "import_workspace_archive",
+      { key },
+    );
+  }
+
+  if (!file) {
+    throw new Error("Choose an OCI layout tar archive");
+  }
+
+  const workspace = await fetchIngressJson<{ id: string }>("workspaces", {
+    method: "POST",
+    body: JSON.stringify({ key }),
+  });
+  const job = await createWorkspaceTransfer(workspace.id, 0, true);
+  const token = httpAuthToken();
+  const response = await fetch(
+    `${apiBaseUrl()}/workspace-transfers/${encodeURIComponent(job.id)}/content`,
+    {
+      method: "PUT",
+      body: file,
+      headers: token ? { authorization: `Bearer ${token}` } : undefined,
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Workspace upload failed (${String(response.status)})`);
+  }
+
+  return response.json() as Promise<import("../domain/models/workspaces").WorkspaceTransfer>;
+}
+
+export function fetchWorkspaceSnapshot(workspaceId: string, version: number) {
+  return command<import("../domain/models/workspaces").WorkspaceSnapshot>("workspace_snapshot", {
+    workspaceId,
+    version,
+  });
+}
+
+export function createDurableWorkspace(key: string) {
+  return command<import("../domain/models/workspaces").DurableWorkspace>(
+    "create_durable_workspace",
+    { key },
+  );
 }

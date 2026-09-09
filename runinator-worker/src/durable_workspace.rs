@@ -12,6 +12,7 @@ pub struct ActiveWorkspace {
     directory: Option<tempfile::TempDir>,
     path: std::path::PathBuf,
     results: std::collections::BTreeMap<String, Value>,
+    objects: std::sync::Arc<super::workspace_objects::WorkerObjects>,
 }
 
 impl ActiveWorkspace {
@@ -19,40 +20,37 @@ impl ActiveWorkspace {
         api: &AsyncApiClient<StaticLocator>,
         value: &Value,
         replica_id: uuid::Uuid,
+        deadline: std::time::Instant,
     ) -> Result<Self, SendableError> {
         let execution: WorkspaceExecution = value.decode()?;
-        let bytes = Some({
-            let mut retries = 0;
-            loop {
-                match api
-                    .download_workspace_checkout(execution.checkout.id, replica_id)
-                    .await
-                {
-                    Ok(bytes) => break bytes,
-                    Err(_) if retries < 20 => {
-                        retries += 1;
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-        });
-        let digest = execution
+        let expires = execution.checkout.leased_until.timestamp();
+        let root = cache_root()?;
+        let objects = std::sync::Arc::new(super::workspace_objects::WorkerObjects::new(
+            api.clone(),
+            execution.checkout.id,
+            replica_id,
+            deadline,
+        )?);
+        let revision_id = execution
             .snapshot
             .as_ref()
-            .map(|snapshot| snapshot.archive_sha256.clone());
-        let expires = execution.checkout.leased_until.timestamp();
+            .map(|snapshot| snapshot.revision_id.clone());
+        let reader = objects.clone();
         let (directory, results) =
             tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
-                let root = cache_root()?;
                 std::fs::create_dir_all(&root)?;
                 let directory = tempfile::Builder::new()
                     .prefix(&format!("lease-{expires}-"))
                     .tempdir_in(root)?;
-                let results = if let (Some(bytes), Some(digest)) = (bytes, digest) {
-                    runinator_workspace::unpack(&bytes, directory.path(), &digest)?
+                let results = if let Some(revision) = revision_id {
+                    let view = runinator_workspace::storage::view::View::new(
+                        reader.as_ref(),
+                        revision.parse()?,
+                    )?;
+                    runinator_workspace::revision::materialize(&view, directory.path())?;
+                    runinator_workspace::revision::read_results(&view)?
                 } else {
-                    std::collections::BTreeMap::new()
+                    Default::default()
                 };
                 Ok((directory, results))
             })
@@ -63,6 +61,7 @@ impl ActiveWorkspace {
             path: directory.path().to_owned(),
             directory: Some(directory),
             results,
+            objects,
         })
     }
     pub fn results(&self) -> &std::collections::BTreeMap<String, Value> {
@@ -103,29 +102,75 @@ impl ActiveWorkspace {
             results.insert(name.clone(), value);
         }
         let root = self.path.as_path().to_owned();
-        let packed =
-            tokio::task::spawn_blocking(move || runinator_workspace::pack(&root, &results))
-                .await??;
-        let snapshot = api
-            .upload_workspace_snapshot(self.execution.checkout.id, self.replica_id, packed.bytes)
-            .await?;
+        let objects = self.objects.clone();
+        let limits = self.execution.checkout.limits;
+        let parent = self
+            .execution
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.revision_id.clone());
+        let revision_id = tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
+            use runinator_workspace::storage::{packs, staging::Staging};
+            let scratch = tempfile::tempdir()?;
+            let stage = super::workspace_objects::CheckedStore {
+                inner: Staging::new(objects.as_ref(), scratch.path())?,
+                deadline: objects.clone(),
+            };
+            let parent = parent.map(|value| value.parse()).transpose()?;
+            let (edit, _) = runinator_workspace::revision::capture_from(
+                stage,
+                parent,
+                &root,
+                &results,
+                limits,
+                scratch.path(),
+            )?;
+            let revision = edit.finish("provider workspace", parent)?;
+            packs::seal(
+                &edit.store,
+                objects.as_ref(),
+                revision,
+                scratch.path(),
+                |pack| objects.upload(std::fs::read(pack.path)?),
+            )?;
+            Ok(revision.to_string())
+        })
+        .await??;
+        let receipt = tokio::time::timeout(
+            self.objects.remaining()?,
+            api.seal_workspace(self.execution.checkout.id, self.replica_id, revision_id),
+        )
+        .await??;
         Ok(Some(WorkspaceCommit {
-            checkout: self.execution.checkout.clone(),
-            snapshot,
+            checkout: receipt.checkout,
+            snapshot: receipt.snapshot,
+            receipt_id: receipt.id,
         }))
     }
-    pub fn rebind_cached_commit(
+    pub async fn rebind_cached_commit(
         &self,
-        mut commit: WorkspaceCommit,
+        api: &AsyncApiClient<StaticLocator>,
+        commit: WorkspaceCommit,
     ) -> Result<WorkspaceCommit, SendableError> {
         if commit.snapshot.workspace_id != self.execution.checkout.workspace_id
             || commit.snapshot.parent_version != self.execution.checkout.base_version
         {
             return Err(WORKSPACE_INVALID.error("cached workspace snapshot has a different base"));
         }
-        commit.checkout = self.execution.checkout.clone();
-        commit.snapshot.attempt = self.execution.checkout.attempt;
-        Ok(commit)
+        let receipt = tokio::time::timeout(
+            self.objects.remaining()?,
+            api.seal_workspace(
+                self.execution.checkout.id,
+                self.replica_id,
+                commit.snapshot.revision_id,
+            ),
+        )
+        .await??;
+        Ok(WorkspaceCommit {
+            checkout: receipt.checkout,
+            snapshot: receipt.snapshot,
+            receipt_id: receipt.id,
+        })
     }
     pub fn reference(&self, commit: Option<&WorkspaceCommit>) -> Value {
         runinator_models::json!({"key": self.execution.key, "version": commit.map_or(self.execution.checkout.base_version, |commit| commit.snapshot.version)})

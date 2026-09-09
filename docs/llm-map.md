@@ -75,3 +75,9 @@ When adding or renaming shared fields, inspect:
   `runinator-command-center/src/core/services/workflows/index.ts` and its focused service modules,
   `runinator-command-center/src/core/workflow/` for graph/data transforms, and
   `runinator-command-center/src/ui/adapters/pinia/workflows/index.ts` for the presentation adapter.
+
+- Durable file/result workspaces: `runinator-workspace-storage` (immutable algorithms),
+  `runinator-workspace` (filesystem and named results), engine `services/workspace_*` (shared data
+  plane, publication, retention and transfers), store `roles/durable_workspaces.rs`, database
+  `operations/{durable_workspaces,workspace_retention,workspace_transfers}.rs`, and
+  `docs/durable-workspaces.md`. Read both workspace crates' scoped guides before editing.

@@ -1443,6 +1443,7 @@ pub async fn run_workflow_effect_dispatcher<
         + runinator_store::RuntimeStore,
 >(
     db: Arc<T>,
+    workspace_limits: runinator_models::workspaces::WorkspaceLimits,
     broker: Arc<dyn Broker>,
     publisher: crate::events::EventSender,
     instance: String,
@@ -1469,6 +1470,7 @@ pub async fn run_workflow_effect_dispatcher<
                     match crate::repository::durable_workspaces::prepare_dispatch(
                         db.as_ref(),
                         &mut dispatch.command,
+                        workspace_limits,
                     )
                     .await
                     {

@@ -54,6 +54,7 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     );
     let (run_id, effect_id) = waiting_effect(db, workflow).await;
     let request = WorkspaceAcquire {
+        limits: WorkspaceLimits::default(),
         workspace_id: identity.id,
         workflow_run_id: run_id,
         effect_id,
@@ -107,17 +108,24 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
         workspace_id: identity.id,
         version: 1,
         parent_version: 0,
-        workflow_run_id: run_id,
-        effect_id,
-        attempt: 0,
-        archive_uri: format!("blob://run-artifacts/runs/{run_id}/workspace.tar.gz"),
-        archive_sha256: "abc".into(),
-        compressed_bytes: 42,
-        files: vec![],
-        results: BTreeMap::from([("answer".into(), json!(42))]),
+        origin: WorkspaceOrigin::Workflow {
+            workflow_run_id: run_id,
+            effect_id,
+            attempt: 0,
+        },
+        revision_id: "a".repeat(64),
+        usage: WorkspaceUsage::default(),
+        limits: checkout.limits,
         created_at: now,
     };
+    let receipt = WorkspaceReceipt {
+        id: Uuid::now_v7(),
+        checkout: checkout.clone(),
+        snapshot: snapshot.clone(),
+    };
+    db.save_workspace_receipt(receipt.clone()).await.unwrap();
     let commit = WorkspaceCommit {
+        receipt_id: receipt.id,
         checkout: checkout.clone(),
         snapshot,
     };
@@ -130,6 +138,20 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
         settled_at: Utc::now(),
         workspace: Some(commit),
     };
+    let mut forged = commit.clone();
+    forged.receipt_id = Uuid::now_v7();
+    assert!(
+        db.settle_workflow_effect_with_workspace(settlement(forged))
+            .await
+            .is_err()
+    );
+    let mut tampered = commit.clone();
+    tampered.snapshot.revision_id = "b".repeat(64);
+    assert!(
+        db.settle_workflow_effect_with_workspace(settlement(tampered))
+            .await
+            .is_err()
+    );
     let mut stale = commit.clone();
     stale.checkout.fence += 1;
     assert!(
@@ -208,6 +230,86 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     db.update_workflow_run_status(run_id, WorkflowStatus::Succeeded, None, None, None)
         .await
         .unwrap();
+    let reader = db.pin_workspace_reader(identity.id, 1).await.unwrap();
+    assert!(
+        db.delete_durable_workspace(identity.id, None)
+            .await
+            .is_err()
+    );
+    assert!(db.renew_workspace_reader(reader.clone()).await.unwrap());
+    db.release_workspace_reader(reader.id).await.unwrap();
+    assert!(!db.renew_workspace_reader(reader).await.unwrap());
+    let export = WorkspaceTransfer {
+        filesystem: false,
+        id: Uuid::now_v7(),
+        workspace_id: identity.id,
+        version: 1,
+        importing: false,
+        state: "queued".into(),
+        token: Uuid::nil(),
+        bytes_processed: 0,
+        archive_uri: None,
+        error: None,
+        limits: WorkspaceLimits::default(),
+        created_at: now,
+        expires_at: now + Duration::hours(1),
+    };
+    db.create_workspace_transfer(export.clone()).await.unwrap();
+    assert!(
+        db.delete_durable_workspace(identity.id, None)
+            .await
+            .is_err()
+    );
+    let running = db
+        .claim_workspace_transfer(export.id, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        db.claim_workspace_transfer(export.id, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.progress_workspace_transfer(running.clone(), 100)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db.fetch_workspace_transfer(export.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .bytes_processed,
+        100
+    );
+    assert!(db.cancel_workspace_transfer(export.id).await.unwrap());
+    assert!(
+        !db.progress_workspace_transfer(running.clone(), 101)
+            .await
+            .unwrap()
+    );
+    assert!(
+        db.finish_workspace_transfer(
+            running,
+            "ready".into(),
+            Some("blob://workspaces/unused".into()),
+            None,
+            None
+        )
+        .await
+        .is_err()
+    );
+    let gc = db.claim_workspace_gc(identity.id).await.unwrap().unwrap();
+    assert_eq!(gc.roots, vec!["a".repeat(64)]);
+    assert!(db.claim_workspace_gc(identity.id).await.unwrap().is_none());
+    let mut stale_gc = gc.clone();
+    stale_gc.fence += 1;
+    assert!(db.finish_workspace_gc(stale_gc, false).await.is_err());
+    assert!(db.renew_workspace_gc(gc.clone()).await.unwrap());
+    db.finish_workspace_gc(gc.clone(), false).await.unwrap();
+    assert!(db.finish_workspace_gc(gc, false).await.is_err());
     assert!(
         db.delete_durable_workspace(identity.id, None)
             .await
@@ -228,6 +330,99 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     assert_eq!(db.pending_workspace_cleanup().await.unwrap().len(), 1);
     db.finish_workspace_cleanup(identity.id, 1).await.unwrap();
     assert!(db.pending_workspace_cleanup().await.unwrap().is_empty());
+    let mut imported = identity.clone();
+    imported.id = Uuid::now_v7();
+    imported.key = "parity/imported-workspace".into();
+    let ownership = ResourceOwnership {
+        resource_type: ResourceType::Workspace,
+        resource_id: imported.id,
+        tenant: ScopeRef::PLATFORM,
+        owner: ScopeRef::PLATFORM,
+        created_by: None,
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    };
+    db.create_durable_workspace(imported.clone(), ownership)
+        .await
+        .unwrap();
+    let importing = WorkspaceTransfer {
+        filesystem: false,
+        id: Uuid::now_v7(),
+        workspace_id: imported.id,
+        version: 0,
+        importing: true,
+        state: "uploading".into(),
+        token: Uuid::nil(),
+        bytes_processed: 0,
+        archive_uri: None,
+        error: None,
+        limits: WorkspaceLimits::default(),
+        created_at: now,
+        expires_at: now + Duration::hours(1),
+    };
+    db.create_workspace_transfer(importing.clone())
+        .await
+        .unwrap();
+    assert!(db.claim_workspace_gc(imported.id).await.unwrap().is_none());
+    let upload = db
+        .claim_workspace_transfer(importing.id, true)
+        .await
+        .unwrap()
+        .unwrap();
+    db.finish_workspace_transfer(
+        upload,
+        "queued".into(),
+        Some("blob://runinator-workspaces/source".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let working = db
+        .claim_workspace_transfer(importing.id, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let snapshot = WorkspaceSnapshot {
+        workspace_id: imported.id,
+        version: 1,
+        parent_version: 0,
+        origin: WorkspaceOrigin::Import {
+            transfer_id: importing.id,
+            format: "oci".into(),
+        },
+        revision_id: "b".repeat(64),
+        usage: WorkspaceUsage::default(),
+        limits: importing.limits,
+        created_at: now,
+    };
+    db.finish_workspace_transfer(
+        working.clone(),
+        "ready".into(),
+        None,
+        Some(snapshot.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.fetch_durable_workspace(imported.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .head_version,
+        1
+    );
+    assert_eq!(
+        db.fetch_workspace_snapshot(imported.id, 1).await.unwrap(),
+        Some(snapshot.clone())
+    );
+    assert!(
+        db.finish_workspace_transfer(working, "ready".into(), None, Some(snapshot), None)
+            .await
+            .is_err()
+    );
 }
 
 async fn waiting_effect<T: DatabaseImpl + WorkflowVmStore>(

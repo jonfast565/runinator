@@ -30,3 +30,4 @@ pub use provider_repository::{ProviderFactory, default_provider_factory, resolve
 pub use worker::{WorkerRuntime, load_libraries, start_worker_loop};
 
 mod durable_workspace;
+mod workspace_objects;

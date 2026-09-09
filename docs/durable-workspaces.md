@@ -141,23 +141,87 @@ Checkout fences reject expired or superseded attempts. Failure, timeout, or canc
 publish a version. Retries restore their original committed base. Use an effect-specific
 idempotency key for writes; cached mutations cannot be replayed under another effect's identity.
 
-Snapshot bytes are gzip-compressed tar archives in the `runinator-workspaces` object-store bucket.
-They include `files/` and `results.json`; checksums, file sizes, executable flags, and relative link
-metadata are retained. Limits are 512 MiB compressed, 2 GiB expanded, 100,000 archive entries, and
-16 MiB of named results. Unsafe paths, special files, duplicate archive paths, and escaping or
-cyclic symlinks are rejected. Symlink restoration currently requires Unix.
+`runinator-workspace-storage` owns the immutable storage algorithms. `runinator-workspace`
+adds canonical named results, OCI transfers, and provider-directory reconciliation. Workers scan
+file contents even when timestamps match; unchanged inode identities and hard-link groups are
+preserved. Files use size-selected logical pages, FastCDC chunks, holes, tiny-object blocks, and
+bounded dictionary/delta compression groups. Repacking preserves typed BLAKE3 logical IDs.
+Namespace and path-projection roots change together. New objects live in bounded packs in the
+`runinator-workspaces` blob bucket; SQL maps workspace-scoped logical IDs to validated pack ranges.
+No replica-local repository ref or index is authoritative.
 
-Expanded worker copies live under the platform application-data `portable-workspaces` directory.
-They are removed after execution. A minute-based sweeper removes expired copies left by crashes.
-The checkout lease covers the action timeout plus five minutes for transfer and settlement.
-Unused uploaded archives are collected after 24 hours once their effect is terminal. Committed
-versions are retained until explicitly deleted; this feature introduces no automatic version
-retention limit.
+Uploading objects does not publish a version. The server validates the selected closure, namespace,
+results, links, parent and frozen limits, then issues a checkout/fence/effect/attempt-bound receipt.
+Successful effect settlement consumes that exact receipt and publishes the head atomically. A
+forged receipt, changed snapshot, expired checkout or losing attempt cannot publish.
+
+Both `runinator-ws` and `runinator-engine-worker` accept positive integer settings:
+
+| Environment variable | CLI option | Default |
+| --- | --- | --- |
+| `RUNINATOR_WORKSPACE_MAX_BYTES` | `--workspace-max-bytes` | 137438953472 (128 GiB) |
+| `RUNINATOR_WORKSPACE_MAX_ENTRIES` | `--workspace-max-entries` | 100000 |
+| `RUNINATOR_WORKSPACE_MAX_RESULTS_BYTES` | `--workspace-max-results-bytes` | 16777216 (16 MiB) |
+
+Policy is frozen into a checkout or import job. Total logical bytes count each distinct regular-file
+inode once, including holes, plus the canonical named-results map. Entries count every namespace
+name except the root, including directories and aliases. Named results are individually paged and
+may exceed a single object when the result policy permits. Provider execution resolves results into
+memory; increasing that policy also increases provider memory requirements. Configure both hosts
+consistently. The supervisor example and Kubernetes common ConfigMap carry these defaults.
+Provision enough object-store and worker scratch capacity for retained data and temporary copies;
+logical policy does not resize a persistent volume.
+
+Expanded worker copies live under the platform application-data `portable-workspaces` directory
+and are removed after execution. Expired crash leftovers are swept. The action deadline covers
+restore, execution, content scanning, upload and sealing. Unsafe paths, special files, and escaping
+or cyclic relative symlinks are rejected. Symlink restoration currently requires Unix.
+
+Retained versions, pending valid receipts and active transfers are explicit collection roots;
+parent revision metadata does not retain ancestor contents. Collection uses fenced SQL leases,
+rebuilds the logical index atomically and defers old-pack deletion while readers hold renewable
+leases. Active imports and writers exclude collection. Unreferenced uploads are swept after 24
+hours. Versions are retained until explicitly deleted; there is no automatic history limit.
+
+## Archive transfers
+
+Native OCI layout tar exports preserve the selected revision's filesystem and named results.
+Conventional OCI exports contain a filesystem checkpoint only. Conventional imports apply whiteouts
+and layers in order and start with empty named results. Imports accept exactly one manifest;
+select one manifest before uploading a multi-platform layout. Imports require an unused workspace
+key and publish version 1 with explicit import provenance, never fabricated workflow identifiers.
+
+Transfers are durable jobs with progress, cancellation, lease fencing and seven-day expiry. A
+replica can reclaim an interrupted job. Uploads and downloads stream; archive bytes live in shared
+blob storage. Buffers and packs are bounded. Expanded OCI layers and archive staging have a checked
+budget derived from the frozen policy. Native exports use bounded scratch packs; conventional
+exports stage a filesystem tar checkpoint. Transfer uploads use a 60-second idle-read deadline;
+ordinary API requests keep their existing request timeout.
+
+```sh
+runinatorctl workspaces list
+runinatorctl workspaces versions WORKSPACE_UUID
+runinatorctl workspaces ls WORKSPACE_UUID 1 --results
+runinatorctl workspaces cat WORKSPACE_UUID 1 report.txt
+runinatorctl workspaces diff WORKSPACE_UUID 1 2
+runinatorctl workspaces import new-key workspace.oci.tar
+runinatorctl workspaces export WORKSPACE_UUID 1
+runinatorctl workspaces export WORKSPACE_UUID 1 --filesystem
+runinatorctl workspaces job TRANSFER_UUID
+runinatorctl workspaces download TRANSFER_UUID workspace.oci.tar
+runinatorctl workspaces cancel TRANSFER_UUID
+```
+
+`cat` is a bounded preview (at most 1 MiB). Directory/results/diff responses include continuation
+cursors bound to immutable roots. Use `--cursor` to continue. Native CLI commands, console parsing,
+MCP schemas and WASM catalog data derive from the same command tree.
 
 ## Inspecting and deleting
 
-Command Center's **Workspaces** view lists keys, version history, producing run/attempt, saved
-results, and the file manifest. Download a compressed version or individual regular files. Pipeline
+Command Center's **Workspaces** view lists keys, version history, producing run/attempt, paged
+results, directories and diffs. Preview files or download individual files/results; archive downloads
+create durable export jobs. Browser downloads use short-lived resource-scoped tickets and desktop
+downloads stream directly to a selected file. Pipeline
 defaults also include a JSON workspace-binding editor; member overrides can be authored in REXRAP.
 
 Backend permissions use the existing resource ownership registry: view permits inspection and
@@ -175,3 +239,25 @@ with `?path=relative/file`. Worker transfer uses `/workspaces/checkouts/{checkou
 assigned `replica_id`. Shared payloads live in `runinator-models`; the store contract and SQL live
 in `runinator-store` and `runinator-database`. Engine repository services own orchestration and
 blob operations. `runinator-workspace` owns archive and result-reference handling.
+
+## New-format cutover
+
+The previous gzip archive format has no compatibility path. This release requires an empty durable
+workspace registry before admission resumes. The repository's PostgreSQL/FsBlob Kubernetes stack
+has a restartable cutover command under the ordinary deployment lease:
+
+```sh
+cargo run -p xtask -- k8s reset-workspaces --discard-workspaces
+cargo run -p xtask -- k8s deploy
+cargo run -p xtask -- k8s reset-workspaces --resume
+```
+
+First cancel workspace-dependent runs through the normal run/pipeline API; the reset preflight
+reports and refuses active dependencies. It records replica counts and phases in the
+`runinator-workspace-storage-cutover` ConfigMap, quiesces service/worker deployments, rechecks
+active dependencies, erases only durable workspace tables and workspace grants/ownership, then
+clears only the durable-workspace blob bucket. Workflow definitions, runs, artifacts, credentials,
+other buckets and worker user directories are untouched. A repeated interrupted reset resumes
+safely; a completed ledger refuses another erase so newly created workspaces cannot be deleted by
+an accidental retry. Resume recorded replicas only after deploying the new storage code. External
+object stores require an equivalent scoped maintenance procedure; the command refuses them.

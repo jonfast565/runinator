@@ -9,6 +9,16 @@ use runinator_db_cli::DatabaseBackend;
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 pub(crate) struct CliArgs {
+    /// Maximum logical workspace bytes, including named results and sparse holes.
+    #[arg(long, env = "RUNINATOR_WORKSPACE_MAX_BYTES", default_value_t = 128 * 1024 * 1024 * 1024, value_parser = clap::value_parser!(u64).range(1..))]
+    pub workspace_max_bytes: u64,
+    /// Maximum directory entries, including aliases, excluding the root.
+    #[arg(long, env = "RUNINATOR_WORKSPACE_MAX_ENTRIES", default_value_t = 100_000, value_parser = clap::value_parser!(u64).range(1..))]
+    pub workspace_max_entries: u64,
+    /// Maximum canonical JSON bytes in named results.
+    #[arg(long, env = "RUNINATOR_WORKSPACE_MAX_RESULTS_BYTES", default_value_t = 16 * 1024 * 1024, value_parser = clap::value_parser!(u64).range(1..))]
+    pub workspace_max_results_bytes: u64,
+
     /// Show a local full-screen runtime dashboard instead of streaming logs to stdout.
     #[arg(long, env = "RUNINATOR_TUI", default_value_t = false)]
     pub tui: bool,

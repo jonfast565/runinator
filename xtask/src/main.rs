@@ -87,6 +87,8 @@ struct LocalUpArgs {
 
 #[derive(Subcommand)]
 enum K8sCommand {
+    /// Quiesce and erase only durable workspace state for the new format cutover.
+    ResetWorkspaces(K8sWorkspaceResetArgs),
     /// Build (unless --skip-build) and apply the runinator stack to a cluster.
     Deploy(K8sDeployArgs),
     /// Apply only the Grafana dashboard, datasource, provider, deployment, and service resources.
@@ -102,6 +104,7 @@ enum K8sCommand {
 impl K8sCommand {
     fn kube_context(&self) -> Option<&str> {
         match self {
+            Self::ResetWorkspaces(args) => args.kube_context.as_deref(),
             Self::Deploy(args) => args.kube_context.as_deref(),
             Self::RedeployGrafana(args) => args.kube_context.as_deref(),
             Self::RedeployDatabase(args) => args.kube_context.as_deref(),
@@ -112,6 +115,7 @@ impl K8sCommand {
 
     fn operation(&self) -> &'static str {
         match self {
+            Self::ResetWorkspaces(_) => "reset-workspaces",
             Self::Deploy(_) => "deploy",
             Self::RedeployGrafana(_) => "redeploy-grafana",
             Self::RedeployDatabase(_) => "redeploy-database",
@@ -119,6 +123,16 @@ impl K8sCommand {
             Self::Delete(_) => "delete",
         }
     }
+}
+
+#[derive(clap::Args)]
+struct K8sWorkspaceResetArgs {
+    #[arg(long)]
+    kube_context: Option<String>,
+    #[arg(long, conflicts_with = "resume")]
+    discard_workspaces: bool,
+    #[arg(long)]
+    resume: bool,
 }
 
 #[derive(clap::Args)]
@@ -244,6 +258,17 @@ fn run_process() -> anyhow::Result<()> {
             )?;
 
             let result = match command {
+                K8sCommand::ResetWorkspaces(args) => {
+                    anyhow::ensure!(
+                        args.discard_workspaces || args.resume,
+                        "pass --discard-workspaces to erase durable workspaces, or --resume after deploying the new format"
+                    );
+                    k8s::workspace_reset::reset(
+                        &workspace_root,
+                        args.kube_context.as_deref(),
+                        args.resume,
+                    )
+                }
                 K8sCommand::Deploy(args) => run_k8s_deploy(&workspace_root, &args),
                 K8sCommand::RedeployGrafana(args) => {
                     run_k8s_redeploy_grafana(&workspace_root, &args)

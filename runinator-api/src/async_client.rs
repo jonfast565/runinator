@@ -1482,11 +1482,32 @@ where
         Ok(response.json::<ArtifactContentResponse>().await?)
     }
 
+    pub async fn create_durable_workspace(
+        &self,
+        key: &str,
+    ) -> Result<runinator_models::workspaces::DurableWorkspace> {
+        let url = self.build_url("/workspaces").await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&serde_json::json!({"key":key})),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
     pub async fn list_durable_workspaces(
         &self,
         offset: i64,
     ) -> Result<Vec<runinator_models::workspaces::WorkspaceView>> {
         self.get_json_path(&format!("/workspaces?limit=50&offset={offset}"))
+            .await
+    }
+    pub async fn workspace_snapshot(
+        &self,
+        workspace: Uuid,
+        version: i64,
+    ) -> Result<runinator_models::workspaces::WorkspaceSnapshot> {
+        self.get_json_path(&format!("/workspaces/{workspace}/versions/{version}"))
             .await
     }
     pub async fn workspace_versions(
@@ -1509,55 +1530,237 @@ where
         Self::handle_response(url, response).await?;
         Ok(())
     }
-    pub async fn download_workspace_version(
+    pub async fn workspace_object(
         &self,
-        id: Uuid,
-        version: i64,
-        path: Option<String>,
-    ) -> Result<Vec<u8>> {
-        let mut url = self
-            .build_url(&format!("/workspaces/{id}/versions/{version}/content"))
-            .await?;
-        if let Some(path) = path {
-            url.query_pairs_mut().append_pair("path", &path);
-        }
-        let response = self.send(self.http_get(url.clone())).await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.bytes().await?.to_vec())
-    }
-
-    /// Restore the immutable version assigned by the engine to this checkout.
-    pub async fn download_workspace_checkout(&self, id: Uuid, replica_id: Uuid) -> Result<Vec<u8>> {
+        checkout: Uuid,
+        replica: Uuid,
+        id: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let url = self
             .build_url(&format!(
-                "/workspaces/checkouts/{id}/content?replica_id={replica_id}"
+                "/workspaces/checkouts/{checkout}/objects/{id}?replica_id={replica}"
             ))
             .await?;
         let response = self.send(self.http_get(url.clone())).await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         let response = Self::handle_response(url, response).await?;
-        Ok(response.bytes().await?.to_vec())
+        Ok(Some(response.bytes().await?.to_vec()))
     }
-
-    pub async fn upload_workspace_snapshot(
+    pub async fn upload_workspace_pack(
         &self,
-        id: Uuid,
-        replica_id: Uuid,
+        checkout: Uuid,
+        replica: Uuid,
         bytes: Vec<u8>,
-    ) -> Result<runinator_models::workspaces::WorkspaceSnapshot> {
+    ) -> Result<()> {
         let url = self
             .build_url(&format!(
-                "/workspaces/checkouts/{id}/content?replica_id={replica_id}"
+                "/workspaces/checkouts/{checkout}/packs?replica_id={replica}"
             ))
             .await?;
         let response = self
             .send(
                 self.http_post(url.clone())
-                    .header(reqwest::header::CONTENT_TYPE, "application/gzip")
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        "application/vnd.runinator.workspace.pack.v1",
+                    )
                     .body(bytes),
             )
             .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json().await?)
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+    pub async fn seal_workspace(
+        &self,
+        checkout: Uuid,
+        replica: Uuid,
+        revision_id: String,
+    ) -> Result<runinator_models::workspaces::WorkspaceReceipt> {
+        let url = self
+            .build_url(&format!(
+                "/workspaces/checkouts/{checkout}/seal?replica_id={replica}"
+            ))
+            .await?;
+        let response = self
+            .send(
+                self.http_post(url.clone())
+                    .json(&runinator_models::workspaces::WorkspaceSeal { revision_id }),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_directory(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        path: &str,
+        cursor: Option<&str>,
+    ) -> Result<runinator_models::workspaces::WorkspaceDirectory> {
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/entries"
+            ))
+            .await?;
+        url.query_pairs_mut().append_pair("path", path);
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+
+    pub async fn workspace_results(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        cursor: Option<&str>,
+    ) -> Result<runinator_models::workspaces::WorkspaceDirectory> {
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/results"
+            ))
+            .await?;
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_diff(
+        &self,
+        workspace: Uuid,
+        before: i64,
+        after: i64,
+        cursor: Option<&str>,
+    ) -> Result<runinator_models::workspaces::WorkspaceDiff> {
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{after}/diff?before={before}"
+            ))
+            .await?;
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn create_workspace_transfer(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        importing: bool,
+        filesystem: bool,
+    ) -> Result<runinator_models::workspaces::WorkspaceTransfer> {
+        let url = self
+            .build_url(&format!("/workspaces/{workspace}/transfers"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(&serde_json::json!({"version":version,"importing":importing,"filesystem":filesystem}))).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_transfer(
+        &self,
+        id: Uuid,
+    ) -> Result<runinator_models::workspaces::WorkspaceTransfer> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}"))
+            .await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn cancel_workspace_transfer(&self, id: Uuid) -> Result<()> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}"))
+            .await?;
+        let response = self.send(self.http_delete(url.clone())).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+    pub async fn workspace_transfer_stream(&self, id: Uuid) -> Result<reqwest::Response> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}/content"))
+            .await?;
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .timeout(Duration::from_secs(7 * 24 * 60 * 60)),
+            )
+            .await?;
+        Self::handle_response(url, response).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn upload_workspace_transfer(
+        &self,
+        id: Uuid,
+        file: tokio::fs::File,
+    ) -> Result<runinator_models::workspaces::WorkspaceTransfer> {
+        let url = self
+            .build_url(&format!("/workspace-transfers/{id}/content"))
+            .await?;
+        let body = reqwest::Body::from(file);
+        let response = self
+            .send(
+                self.http_put(url.clone())
+                    .timeout(Duration::from_secs(7 * 24 * 60 * 60))
+                    .body(body),
+            )
+            .await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
+    pub async fn workspace_download_stream(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        path: Option<&str>,
+        result: bool,
+    ) -> Result<reqwest::Response> {
+        let route = if result { "result" } else { "content" };
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/{route}"
+            ))
+            .await?;
+        if let Some(path) = path {
+            url.query_pairs_mut()
+                .append_pair(if result { "name" } else { "path" }, path);
+        }
+        let response = self
+            .send(
+                self.http_get(url.clone())
+                    .timeout(Duration::from_secs(7 * 24 * 60 * 60)),
+            )
+            .await?;
+        Self::handle_response(url, response).await
+    }
+    pub async fn workspace_preview(
+        &self,
+        workspace: Uuid,
+        version: i64,
+        path: &str,
+        result: bool,
+    ) -> Result<Vec<u8>> {
+        let route = if result { "result" } else { "content" };
+        let mut url = self
+            .build_url(&format!(
+                "/workspaces/{workspace}/versions/{version}/{route}"
+            ))
+            .await?;
+        if result {
+            url.query_pairs_mut()
+                .append_pair("name", path)
+                .append_pair("preview", "true");
+        } else {
+            url.query_pairs_mut()
+                .append_pair("path", path)
+                .append_pair("length", "1048576");
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response)
+            .await?
+            .bytes()
+            .await?
+            .to_vec())
     }
 
     // ---- packaged functions ----

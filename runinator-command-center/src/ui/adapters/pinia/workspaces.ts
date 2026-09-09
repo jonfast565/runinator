@@ -7,12 +7,32 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
   return {
     items: computed(() => state.value.items),
     selected: computed(() => state.value.selected),
+    pinnedSnapshot: computed(() => state.value.pinnedSnapshot),
     versions: computed(() => state.value.versions),
+    directory: computed(() => state.value.directory),
+    results: computed(() => state.value.results),
+    transfer: computed(() => state.value.transfer),
+    importArchive: (...args: Parameters<typeof workspacesService.importArchive>) =>
+      workspacesService.importArchive(...args),
+    cancelTransfer: (...args: Parameters<typeof workspacesService.cancelTransfer>) =>
+      workspacesService.cancelTransfer(...args),
+    diff: computed(() => state.value.diff),
+    compare: (...args: Parameters<typeof workspacesService.compare>) =>
+      workspacesService.compare(...args),
+    preview: computed(() => state.value.preview),
+    browse: (...args: Parameters<typeof workspacesService.browse>) =>
+      workspacesService.browse(...args),
+    clearPreview: (...args: Parameters<typeof workspacesService.clearPreview>) => {
+      workspacesService.clearPreview(...args);
+    },
+    previewFile: (...args: Parameters<typeof workspacesService.previewFile>) =>
+      workspacesService.previewFile(...args),
     refresh: (offset = 0) => workspacesService.refresh(offset),
-    select: (selected: Parameters<typeof workspacesService.select>[0], offset = 0) =>
-      workspacesService.select(selected, offset),
+    select: (...args: Parameters<typeof workspacesService.select>) =>
+      workspacesService.select(...args),
     remove: (id: string, version: number | null = null) => workspacesService.remove(id, version),
-    download: workspacesService.download,
+    download: (...args: Parameters<typeof workspacesService.download>) =>
+      workspacesService.download(...args),
     clear: () => {
       workspacesService.clear();
     },

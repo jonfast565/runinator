@@ -20,3 +20,5 @@ pub mod workflow_vm;
 pub mod workspaces;
 
 pub mod adapter_control;
+
+mod workspace_transfers;

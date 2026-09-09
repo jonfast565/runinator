@@ -122,28 +122,46 @@ pub async fn delete_artifact_checked(
     }
 }
 
-/// Snapshot uploads are content-addressed within their producing effect.
-pub async fn put_workspace_snapshot(
+pub fn workspace_pack_uri(workspace: Uuid, pack: &str) -> Result<String, SendableError> {
+    let (scope, digest) = pack
+        .split_once('/')
+        .ok_or_else(|| runinator_models::errors::WORKSPACE_INVALID.error("invalid pack key"))?;
+    if Uuid::parse_str(scope).is_err()
+        || digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(runinator_models::errors::WORKSPACE_INVALID.error("invalid pack key"));
+    }
+    Ok(blob_uri(
+        runinator_blob_core::WORKSPACE_BUCKET,
+        &ObjectKey::parse(&format!("native/{workspace}/{pack}.pack"))?,
+    ))
+}
+
+pub async fn put_workspace_pack(
     store: &Arc<dyn BlobStore>,
-    effect_id: Uuid,
+    workspace: Uuid,
+    scope: Uuid,
     bytes: Vec<u8>,
 ) -> Result<String, SendableError> {
-    let digest = runinator_blob_core::sha256_hex(&bytes);
-    let key = ObjectKey::parse(&format!("effects/{effect_id}/{digest}.tar.gz"))
-        .map_err(|error| ARTIFACT_STORE_FAILED.error(error))?;
+    let digest = format!("{scope}/{}", runinator_blob_core::sha256_hex(&bytes));
+    let uri = workspace_pack_uri(workspace, &digest)?;
+    let (_, key) =
+        parse_blob_uri(&uri).ok_or_else(|| ARTIFACT_STORE_FAILED.error("invalid pack URI"))?;
     store
         .put(
             runinator_blob_core::WORKSPACE_BUCKET,
             &key,
             bytes,
             PutOptions {
-                content_type: Some("application/gzip".into()),
+                content_type: Some("application/vnd.runinator.workspace.pack.v1".into()),
                 ..Default::default()
             },
         )
-        .await
-        .map_err(|error| ARTIFACT_STORE_FAILED.error(error))?;
-    Ok(blob_uri(runinator_blob_core::WORKSPACE_BUCKET, &key))
+        .await?;
+    Ok(digest)
 }
 
 pub async fn workspace_upload_page(
@@ -162,4 +180,109 @@ pub async fn workspace_upload_page(
         )
         .await
         .map_err(|error| ARTIFACT_STORE_FAILED.error(error))
+}
+
+pub async fn workspace_native_upload_page(
+    store: &Arc<dyn BlobStore>,
+    cursor: Option<String>,
+) -> Result<runinator_blob_core::ListResponse, SendableError> {
+    Ok(store
+        .list(
+            runinator_blob_core::WORKSPACE_BUCKET,
+            &runinator_blob_core::ListRequest {
+                prefix: Some("native/".into()),
+                continuation_token: cursor,
+                max_keys: Some(1000),
+                ..Default::default()
+            },
+        )
+        .await?)
+}
+
+pub async fn workspace_transfer_upload_page(
+    store: &Arc<dyn BlobStore>,
+    cursor: Option<String>,
+) -> Result<runinator_blob_core::ListResponse, SendableError> {
+    Ok(store
+        .list(
+            runinator_blob_core::WORKSPACE_BUCKET,
+            &runinator_blob_core::ListRequest {
+                prefix: Some("transfers/".into()),
+                continuation_token: cursor,
+                max_keys: Some(1000),
+                ..Default::default()
+            },
+        )
+        .await?)
+}
+
+/// Stream a transfer archive to shared storage with bounded multipart buffers.
+pub async fn put_workspace_transfer<R: AsyncRead + Send + Unpin>(
+    store: &Arc<dyn BlobStore>,
+    id: Uuid,
+    token: Uuid,
+    mut reader: R,
+    limit: u64,
+    idle_timeout: Option<std::time::Duration>,
+) -> Result<String, SendableError> {
+    use runinator_blob_core::{CompletedPart, WORKSPACE_BUCKET};
+    use tokio::io::AsyncReadExt;
+    let key = ObjectKey::parse(&format!("transfers/{id}/{token}.oci.tar"))?;
+    let upload = store
+        .create_multipart(WORKSPACE_BUCKET, &key, PutOptions::default())
+        .await?;
+    let result = async {
+        let mut total = 0u64;
+        let mut parts = Vec::new();
+        loop {
+            let mut bytes = vec![0; 64 * 1024 * 1024];
+            let mut filled = 0;
+            while filled < bytes.len() {
+                let n = if let Some(timeout) = idle_timeout {
+                    tokio::time::timeout(timeout, reader.read(&mut bytes[filled..])).await??
+                } else {
+                    reader.read(&mut bytes[filled..]).await?
+                };
+                if n == 0 {
+                    break;
+                }
+                filled += n;
+                total = total.checked_add(n as u64).ok_or_else(|| {
+                    runinator_models::errors::WORKSPACE_LIMIT.error("transfer size overflow")
+                })?;
+                if total > limit {
+                    return Err(runinator_models::errors::WORKSPACE_LIMIT
+                        .error("archive exceeds transfer budget"));
+                }
+            }
+            if filled == 0 && !parts.is_empty() {
+                break;
+            }
+            bytes.truncate(filled);
+            let number = u32::try_from(parts.len() + 1)?;
+            if number > runinator_blob_core::MAX_PART_NUMBER {
+                return Err(runinator_models::errors::WORKSPACE_LIMIT
+                    .error("archive exceeds object-store multipart capacity"));
+            }
+            let etag = store
+                .upload_part(WORKSPACE_BUCKET, &key, &upload, number, bytes)
+                .await?;
+            parts.push(CompletedPart {
+                part_number: number,
+                etag,
+            });
+            if filled < 64 * 1024 * 1024 {
+                break;
+            }
+        }
+        store
+            .complete_multipart(WORKSPACE_BUCKET, &key, &upload, &parts)
+            .await?;
+        Ok::<_, SendableError>(blob_uri(WORKSPACE_BUCKET, &key))
+    }
+    .await;
+    if result.is_err() {
+        let _ = store.abort_multipart(WORKSPACE_BUCKET, &key, &upload).await;
+    }
+    result
 }

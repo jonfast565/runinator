@@ -27,6 +27,128 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn create_workspace_download(
+        &self,
+        download: WorkspaceDownload,
+    ) -> Result<(), SendableError> {
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render(
+            "UPDATE durable_workspaces SET revision = revision WHERE id = ? AND deleted_at IS NULL",
+        ))
+        .bind(download.workspace_id)
+        .execute(&mut *tx)
+        .await?;
+        let present: Option<i64> = sqlx::query_scalar(&self.render("SELECT version FROM workspace_snapshots WHERE workspace_id = ? AND version = ? AND deleted_at IS NULL"))
+            .bind(download.workspace_id).bind(download.version).fetch_optional(&mut *tx).await?;
+        if present.is_none() {
+            return Err(runinator_models::errors::WORKSPACE_MISSING.error("version not found"));
+        }
+        sqlx::query(&self.render("INSERT INTO workspace_downloads (id, workspace_id, version, expires_at, download_json) VALUES (?, ?, ?, ?, ?)"))
+            .bind(download.id).bind(download.workspace_id).bind(download.version).bind(download.expires_at.timestamp()).bind(serde_json::to_string(&download)?).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    async fn fetch_workspace_download(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<WorkspaceDownload>, SendableError> {
+        let json: Option<String> = sqlx::query_scalar(&self.render(
+            "SELECT download_json FROM workspace_downloads WHERE id = ? AND expires_at > ?",
+        ))
+        .bind(id)
+        .bind(Utc::now().timestamp())
+        .fetch_optional(self.pool())
+        .await?;
+        json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+    async fn stage_workspace_objects(
+        &self,
+        checkout: WorkspaceCheckout,
+        objects: Vec<WorkspaceObjectLocation>,
+    ) -> Result<(), SendableError> {
+        if objects.len() > 1000 {
+            return Err(
+                runinator_models::errors::WORKSPACE_INVALID.error("object batch exceeds 1000")
+            );
+        }
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render(
+            "UPDATE durable_workspaces SET revision = revision + 1 WHERE id = ? AND deleted_at IS NULL",
+        ))
+        .bind(checkout.workspace_id)
+        .execute(&mut *tx)
+        .await?;
+        let stored: Option<String> = sqlx::query_scalar(&self.render("SELECT checkout_json FROM workspace_checkouts WHERE id = ? AND fence = ? AND writer = 1 AND leased_until > ?"))
+            .bind(checkout.id).bind(checkout.fence).bind(Utc::now().timestamp()).fetch_optional(&mut *tx).await?;
+        if stored
+            .as_deref()
+            .map(serde_json::from_str::<WorkspaceCheckout>)
+            .transpose()?
+            .as_ref()
+            != Some(&checkout)
+        {
+            return Err(runinator_models::errors::WORKSPACE_CONFLICT
+                .error("checkout is no longer writable"));
+        }
+        let sql = if self.dialect() == SqlDialect::MariaDb {
+            "INSERT INTO workspace_objects (workspace_id, object_id, pack_id, location_json, created_at) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE object_id = object_id"
+        } else {
+            "INSERT INTO workspace_objects (workspace_id, object_id, pack_id, location_json, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (workspace_id, object_id) DO NOTHING"
+        };
+        for object in objects {
+            sqlx::query(&self.render(sql))
+                .bind(checkout.workspace_id)
+                .bind(object.id.as_str())
+                .bind(object.pack.as_str())
+                .bind(serde_json::to_string(&object)?)
+                .bind(Utc::now().timestamp())
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+    async fn fetch_workspace_object(
+        &self,
+        workspace_id: Uuid,
+        id: String,
+    ) -> Result<Option<WorkspaceObjectLocation>, SendableError> {
+        let json: Option<String> = sqlx::query_scalar(&self.render(
+            "SELECT location_json FROM workspace_objects WHERE workspace_id = ? AND object_id = ?",
+        ))
+        .bind(workspace_id)
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await?;
+        json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+    async fn save_workspace_receipt(&self, receipt: WorkspaceReceipt) -> Result<(), SendableError> {
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render(
+            "UPDATE durable_workspaces SET revision = revision WHERE id = ? AND deleted_at IS NULL",
+        ))
+        .bind(receipt.checkout.workspace_id)
+        .execute(&mut *tx)
+        .await?;
+        let stored: Option<String> = sqlx::query_scalar(&self.render("SELECT checkout_json FROM workspace_checkouts WHERE id = ? AND fence = ? AND writer = 1 AND leased_until > ?"))
+            .bind(receipt.checkout.id).bind(receipt.checkout.fence).bind(Utc::now().timestamp()).fetch_optional(&mut *tx).await?;
+        if stored
+            .as_deref()
+            .map(serde_json::from_str::<WorkspaceCheckout>)
+            .transpose()?
+            .as_ref()
+            != Some(&receipt.checkout)
+        {
+            return Err(runinator_models::errors::WORKSPACE_CONFLICT
+                .error("checkout expired during validation"));
+        }
+        sqlx::query(&self.render("INSERT INTO workspace_receipts (id, workspace_id, checkout_id, fence, receipt_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"))
+            .bind(receipt.id).bind(receipt.checkout.workspace_id).bind(receipt.checkout.id).bind(receipt.checkout.fence).bind(serde_json::to_string(&receipt)?).bind(Utc::now().timestamp()).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
     async fn create_durable_workspace(
         &self,
         workspace: DurableWorkspace,
@@ -178,6 +300,18 @@ where
                 return Ok(WorkspaceAcquisition::Missing);
             }
         }
+        let importing: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_transfers WHERE workspace_id = ? AND importing = 1 AND state IN ('uploading', 'receiving', 'queued', 'running') AND expires_at > ?"))
+            .bind(request.workspace_id).bind(Utc::now().timestamp()).fetch_one(&mut *tx).await?;
+        if importing > 0 {
+            return Ok(WorkspaceAcquisition::Busy);
+        }
+        if request.access == WorkspaceAccess::Write {
+            let collecting: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_gc_state WHERE workspace_id = ? AND lease_until > ?"))
+                .bind(request.workspace_id).bind(Utc::now().timestamp()).fetch_one(&mut *tx).await?;
+            if collecting > 0 {
+                return Ok(WorkspaceAcquisition::Busy);
+            }
+        }
         if request.access == WorkspaceAccess::Write {
             let count: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_checkouts WHERE workspace_id = ? AND writer = 1 AND leased_until > ?"))
                 .bind(request.workspace_id).bind(request.now.timestamp()).fetch_one(&mut *tx).await?;
@@ -189,6 +323,7 @@ where
         sqlx::query(&self.render("DELETE FROM workspace_checkouts WHERE workspace_id = ? AND effect_id = ? AND attempt = ? AND leased_until <= ?"))
             .bind(request.workspace_id).bind(request.effect_id).bind(i64::from(request.attempt)).bind(request.now.timestamp()).execute(&mut *tx).await?;
         let checkout = WorkspaceCheckout {
+            limits: request.limits.validate()?,
             id: Uuid::now_v7(),
             workspace_id: request.workspace_id,
             workflow_run_id: request.workflow_run_id,
@@ -267,6 +402,31 @@ where
             return Err(runinator_models::errors::WORKSPACE_CONFLICT
                 .error("cannot delete the current head"));
         }
+        let transfers: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_transfers WHERE workspace_id = ? AND expires_at > ? AND state IN ('uploading', 'receiving', 'queued', 'running') AND (? IS NULL OR version = ?)"))
+            .bind(id).bind(Utc::now().timestamp()).bind(version).bind(version).fetch_one(&mut *tx).await?;
+        if transfers > 0 {
+            return Err(runinator_models::errors::WORKSPACE_CONFLICT
+                .error("workspace has an active transfer"));
+        }
+        let collecting: i64 = sqlx::query_scalar(&self.render(
+            "SELECT COUNT(*) FROM workspace_gc_state WHERE workspace_id = ? AND lease_until > ?",
+        ))
+        .bind(id)
+        .bind(Utc::now().timestamp())
+        .fetch_one(&mut *tx)
+        .await?;
+        let reading: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_readers WHERE workspace_id = ? AND lease_until > ? AND (? IS NULL OR version = ?)"))
+            .bind(id).bind(Utc::now().timestamp()).bind(version).bind(version).fetch_one(&mut *tx).await?;
+        if collecting > 0 || reading > 0 {
+            return Err(runinator_models::errors::WORKSPACE_CONFLICT
+                .error("workspace has an active reader or collection"));
+        }
+        let readers: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_downloads WHERE workspace_id = ? AND expires_at > ? AND (? IS NULL OR version = ?)"))
+            .bind(id).bind(Utc::now().timestamp()).bind(version).bind(version).fetch_one(&mut *tx).await?;
+        if readers > 0 {
+            return Err(runinator_models::errors::WORKSPACE_CONFLICT
+                .error("version has an active download"));
+        }
         let active: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_checkouts WHERE workspace_id = ? AND leased_until > ? AND (? IS NULL OR base_version = ?)"))
             .bind(id).bind(Utc::now().timestamp()).bind(version).bind(version).fetch_one(&mut *tx).await?;
         if active > 0 {
@@ -300,6 +460,24 @@ where
             .bind(Utc::now().timestamp() - 86400).execute(self.pool()).await?;
         sqlx::query(&self.render("DELETE FROM workspace_pins WHERE workflow_run_id NOT IN (SELECT r.id FROM workflow_runs r LEFT JOIN pipeline_runs p ON p.id = r.pipeline_run_id WHERE r.finished_at IS NULL OR (p.id IS NOT NULL AND p.finished_at IS NULL))"))
             .execute(self.pool()).await?;
+        let cutoff = (Utc::now() - chrono::Duration::days(7)).timestamp();
+        for table in [
+            "workspace_readers",
+            "workspace_downloads",
+            "workspace_transfers",
+        ] {
+            let column = if table == "workspace_readers" {
+                "lease_until"
+            } else {
+                "expires_at"
+            };
+            sqlx::query(&self.render(&format!("DELETE FROM {table} WHERE {column} < ?")))
+                .bind(cutoff)
+                .execute(self.pool())
+                .await?;
+        }
+        sqlx::query(&self.render("DELETE FROM workspace_receipts WHERE created_at < ? AND checkout_id NOT IN (SELECT id FROM workspace_checkouts WHERE leased_until > ?)"))
+            .bind(cutoff).bind(Utc::now().timestamp()).execute(self.pool()).await?;
         Ok(())
     }
     async fn pending_workspace_cleanup(&self) -> Result<Vec<WorkspaceSnapshot>, SendableError> {
@@ -315,7 +493,7 @@ where
         Ok(())
     }
     async fn workspace_references_archive(&self, uri: String) -> Result<bool, SendableError> {
-        let count: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_snapshots WHERE archive_uri = ? AND snapshot_json <> 'null'"))
+        let count: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_snapshots WHERE revision_id = ? AND snapshot_json <> 'null'"))
             .bind(uri).fetch_one(self.pool()).await?;
         Ok(count > 0)
     }

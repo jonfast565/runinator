@@ -1,3 +1,5 @@
+#![cfg(feature = "http")]
+
 use chrono::Utc;
 use reqwest::Url;
 use runinator_broker::{

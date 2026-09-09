@@ -32,12 +32,14 @@ use crate::settings::{ServerSettingsHandle, run_server_settings_refresher};
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
     pub max_concurrent_ingress: usize,
+    pub workspace_limits: runinator_models::workspaces::WorkspaceLimits,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             max_concurrent_ingress: 16,
+            workspace_limits: Default::default(),
         }
     }
 }
@@ -46,6 +48,7 @@ impl EngineConfig {
     pub fn normalized(self) -> Self {
         Self {
             max_concurrent_ingress: self.max_concurrent_ingress.max(1),
+            workspace_limits: self.workspace_limits,
         }
     }
 }
@@ -222,6 +225,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     ));
     loops.spawn(run_workflow_effect_dispatcher(
         pool.clone(),
+        config.workspace_limits,
         broker.clone(),
         publisher.clone(),
         instance.clone(),
@@ -303,6 +307,7 @@ mod tests {
         assert_eq!(
             EngineConfig {
                 max_concurrent_ingress: 0,
+                ..Default::default()
             }
             .normalized()
             .max_concurrent_ingress,

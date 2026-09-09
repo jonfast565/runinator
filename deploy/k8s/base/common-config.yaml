@@ -4,6 +4,10 @@ metadata:
   name: runinator-common
   namespace: runinator
 data:
+  # policy is frozen into each checkout or import; sizes are logical bytes.
+  RUNINATOR_WORKSPACE_MAX_BYTES: "137438953472"
+  RUNINATOR_WORKSPACE_MAX_ENTRIES: "100000"
+  RUNINATOR_WORKSPACE_MAX_RESULTS_BYTES: "16777216"
   RUNINATOR_LOG: "info"
   RUST_BACKTRACE: "1"
   WS_API_BASE_URL: "http://runinator-ws.runinator.svc.cluster.local:8080/"

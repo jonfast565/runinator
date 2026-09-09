@@ -1629,5 +1629,8 @@ mod workflow_vm;
 mod workspaces;
 
 mod durable_workspaces;
+mod workspace_retention;
 
 mod adapter_control;
+
+mod workspace_transfers;

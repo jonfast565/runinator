@@ -13,6 +13,21 @@
         </button>
       </PanelHeader>
 
+      <form class="workspace-run-context" @submit.prevent="importArchive">
+        <label
+          >Import into unused key <input v-model="importKey" placeholder="workspace-key" required
+        /></label>
+        <input
+          v-if="!desktopRuntime"
+          type="file"
+          accept=".tar"
+          aria-label="OCI layout archive"
+          @change="chooseArchive"
+        />
+        <button class="btn btn-sm" type="submit" :disabled="busy || !importKey.trim()">
+          Import OCI archive
+        </button>
+      </form>
       <div v-if="error" class="workspace-error" role="alert">
         <Icon name="alert" />
         <span>{{ error }}</span>
@@ -21,6 +36,17 @@
         </button>
       </div>
 
+      <div
+        v-if="store.transfer && ['queued', 'running'].includes(store.transfer.state)"
+        class="workspace-run-context"
+        role="status"
+      >
+        <span
+          >{{ store.transfer.importing ? "Import" : "Export" }} {{ store.transfer.state }} ·
+          {{ bytes(store.transfer.bytes_processed) }} transferred</span
+        >
+        <button class="btn btn-sm" @click="store.cancelTransfer()">Cancel transfer</button>
+      </div>
       <LoadingPanel v-if="busy && !store.items.length" compact message="Loading workspaces…" />
 
       <SplitPane
@@ -153,6 +179,9 @@
                 <label>
                   <span>Saved version</span>
                   <select v-model="selectedVersion">
+                    <option v-if="store.pinnedSnapshot" :value="store.pinnedSnapshot.version">
+                      v{{ store.pinnedSnapshot.version }} · Pinned
+                    </option>
                     <option
                       v-for="version in store.versions"
                       :key="version.version"
@@ -184,25 +213,43 @@
               </section>
 
               <div class="workspace-metrics">
-                <MetricCard label="Files" :value="snapshot.files.length" />
-                <MetricCard label="Compressed size" :value="bytes(snapshot.compressed_bytes)" />
-                <MetricCard label="Attempt" :value="snapshot.attempt" />
+                <MetricCard label="Entries" :value="snapshot.usage.entries" />
+                <MetricCard label="Logical size" :value="bytes(snapshot.usage.logical_bytes)" />
+                <MetricCard
+                  label="Attempt"
+                  :value="
+                    snapshot.origin.kind === 'workflow' ? snapshot.origin.attempt : 'Imported'
+                  "
+                />
                 <MetricCard label="Parent version" :value="`v${String(snapshot.parent_version)}`" />
               </div>
 
               <section class="workspace-run-context">
                 <div>
-                  <span>Produced by run</span>
-                  <strong :title="snapshot.workflow_run_id">{{ snapshot.workflow_run_id }}</strong>
+                  <span>{{
+                    snapshot.origin.kind === "workflow" ? "Produced by run" : "Import transfer"
+                  }}</span>
+                  <strong
+                    :title="
+                      snapshot.origin.kind === 'workflow'
+                        ? snapshot.origin.workflow_run_id
+                        : snapshot.origin.transfer_id
+                    "
+                    >{{
+                      snapshot.origin.kind === "workflow"
+                        ? snapshot.origin.workflow_run_id
+                        : snapshot.origin.transfer_id
+                    }}</strong
+                  >
                 </div>
                 <div>
                   <span>Committed</span>
                   <strong>{{ formatDate(snapshot.created_at) }}</strong>
                 </div>
                 <div>
-                  <span>Archive SHA-256</span>
-                  <strong :title="snapshot.archive_sha256">{{
-                    shortHash(snapshot.archive_sha256)
+                  <span>Revision</span>
+                  <strong :title="snapshot.revision_id">{{
+                    shortHash(snapshot.revision_id)
                   }}</strong>
                 </div>
                 <div class="workspace-version-actions">
@@ -226,6 +273,54 @@
                 </div>
               </section>
 
+              <section class="workspace-run-context">
+                <label
+                  >Compare with
+                  <select v-model="compareVersion">
+                    <option :value="null">Choose version</option>
+                    <option
+                      v-for="version in store.versions"
+                      :key="version.version"
+                      :value="version.version"
+                    >
+                      v{{ version.version }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  class="btn btn-sm"
+                  :disabled="compareVersion === null || busy"
+                  @click="compare()"
+                >
+                  Compare
+                </button>
+                <button
+                  class="btn btn-sm"
+                  :disabled="!store.diff?.next_cursor || busy"
+                  @click="compare(store.diff?.next_cursor ?? null)"
+                >
+                  Next changes
+                </button>
+                <div v-if="store.diff">
+                  <p v-for="(change, index) in store.diff.changes" :key="index">
+                    {{
+                      change.before === null
+                        ? "Added"
+                        : change.after === null
+                          ? "Deleted"
+                          : "Modified"
+                    }}
+                    {{ change.result ? "result: " : "" }}{{ change.path || "/" }}
+                  </p>
+                  <p v-if="!store.diff.changes.length">
+                    {{
+                      store.diff.next_cursor
+                        ? "Continue to remaining changes."
+                        : "No further changes."
+                    }}
+                  </p>
+                </div>
+              </section>
               <div class="workspace-content">
                 <div class="workspace-tabs" role="tablist" aria-label="Workspace version contents">
                   <button
@@ -234,10 +329,13 @@
                     role="tab"
                     :aria-selected="activeTab === 'files'"
                     :class="{ 'is-active': activeTab === 'files' }"
-                    @click="activeTab = 'files'"
+                    @click="
+                      activeTab = 'files';
+                      store.clearPreview();
+                    "
                   >
                     <Icon name="file" :size="15" /> Files
-                    <span>{{ snapshot.files.length }}</span>
+                    <span>{{ snapshot.usage.entries }}</span>
                   </button>
                   <button
                     id="workspace-results-tab"
@@ -245,7 +343,10 @@
                     role="tab"
                     :aria-selected="activeTab === 'results'"
                     :class="{ 'is-active': activeTab === 'results' }"
-                    @click="activeTab = 'results'"
+                    @click="
+                      activeTab = 'results';
+                      store.clearPreview();
+                    "
                   >
                     <Icon name="output" :size="15" /> Results
                     <span>{{ resultCount }}</span>
@@ -258,27 +359,35 @@
                   role="tabpanel"
                   aria-labelledby="workspace-files-tab"
                 >
-                  <div v-if="snapshot.files.length" class="workspace-file-toolbar">
+                  <div class="workspace-file-toolbar">
+                    <button
+                      class="btn btn-sm"
+                      :disabled="!directoryPath || busy"
+                      @click="openDirectory(directoryPath.split('/').slice(0, -1).join('/'))"
+                    >
+                      Parent
+                    </button>
+                    <span>{{ directoryPath || "/" }}</span>
                     <label>
                       <Icon name="search" :size="14" />
                       <input
                         v-model.trim="fileQuery"
                         type="search"
-                        placeholder="Filter files in this version"
+                        placeholder="Filter this directory page"
                       />
                     </label>
-                    <span>{{ visibleFiles.length }} of {{ snapshot.files.length }}</span>
+                    <span>{{ visibleFiles.length }} of {{ snapshot.usage.entries }}</span>
                   </div>
 
                   <EmptyState
                     v-if="!visibleFiles.length"
                     compact
-                    :icon="snapshot.files.length ? 'search' : 'file'"
+                    :icon="snapshot.usage.entries ? 'search' : 'file'"
                     :title="
-                      snapshot.files.length ? 'No matching files' : 'No files in this version'
+                      snapshot.usage.entries ? 'No matching files' : 'No files in this version'
                     "
                     :description="
-                      snapshot.files.length
+                      snapshot.usage.entries
                         ? `No paths match “${fileQuery}”.`
                         : 'This version contains saved results only.'
                     "
@@ -295,12 +404,31 @@
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-for="file in visibleFiles" :key="file.path">
+                        <tr v-for="file in visibleFiles" :key="file.name">
                           <td>
                             <div class="workspace-file-path">
-                              <Icon :name="file.link_target ? 'link' : 'file'" :size="15" />
+                              <Icon
+                                :name="
+                                  file.kind === 'directory'
+                                    ? 'folder'
+                                    : file.link_target
+                                      ? 'link'
+                                      : 'file'
+                                "
+                                :size="15"
+                              />
                               <span>
-                                <strong :title="file.path">{{ file.path }}</strong>
+                                <button
+                                  class="btn btn-sm btn-ghost"
+                                  :disabled="file.kind === 'symlink' || busy"
+                                  @click="
+                                    file.kind === 'directory'
+                                      ? openDirectory(childPath(file.name))
+                                      : preview(childPath(file.name))
+                                  "
+                                >
+                                  {{ file.name }}
+                                </button>
                                 <small v-if="file.link_target">→ {{ file.link_target }}</small>
                                 <small v-else-if="file.executable">Executable</small>
                               </span>
@@ -308,17 +436,17 @@
                           </td>
                           <td>{{ bytes(file.size_bytes) }}</td>
                           <td>
-                            <code :title="file.sha256">{{ shortHash(file.sha256) }}</code>
+                            <code :title="file.content_id">{{ shortHash(file.content_id) }}</code>
                           </td>
                           <td>
                             <button
-                              v-if="!file.link_target"
+                              v-if="file.kind === 'file'"
                               class="btn btn-sm btn-icon"
                               type="button"
                               :disabled="busy"
-                              :aria-label="`Download ${file.path}`"
-                              :title="`Download ${file.path}`"
-                              @click="download(file.path)"
+                              :aria-label="`Download ${file.name}`"
+                              :title="`Download ${file.name}`"
+                              @click="download(childPath(file.name))"
                             >
                               <Icon name="download" :size="14" />
                             </button>
@@ -327,6 +455,14 @@
                       </tbody>
                     </table>
                   </div>
+                  <button
+                    class="btn btn-sm"
+                    :disabled="!store.directory?.next_cursor || busy"
+                    @click="openDirectory(directoryPath, store.directory?.next_cursor ?? null)"
+                  >
+                    Next entries
+                  </button>
+                  <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
                 </div>
 
                 <div
@@ -342,9 +478,35 @@
                     title="No saved results"
                     description="This version only contains files."
                   />
-                  <pre v-else class="workspace-results">{{
-                    JSON.stringify(snapshot.results, null, 2)
-                  }}</pre>
+                  <div
+                    v-for="result in store.results?.entries ?? []"
+                    :key="result.name"
+                    class="workspace-file-toolbar"
+                  >
+                    <span>{{ result.name }} · {{ bytes(result.size_bytes) }}</span>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="busy"
+                      @click="preview(result.name, true)"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="busy"
+                      @click="downloadResult(result.name)"
+                    >
+                      Download
+                    </button>
+                  </div>
+                  <button
+                    class="btn btn-sm"
+                    :disabled="!store.results?.next_cursor || busy"
+                    @click="loadResults(store.results?.next_cursor ?? null)"
+                  >
+                    Next results
+                  </button>
+                  <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
                 </div>
               </div>
             </template>
@@ -372,12 +534,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { isTauriRuntime } from "../../core/api/runtime";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { DurableWorkspace } from "../../core/domain/models/workspaces";
 import { formatDate } from "../../core/utils/format";
 import { useWorkspacesStore } from "../adapters/pinia/workspaces";
 import { useAppStore } from "../adapters/pinia/app";
-import { downloadBlob } from "../adapters/browser/files";
+import { downloadUrl } from "../adapters/browser/files";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
@@ -388,6 +551,19 @@ import SplitPane from "../components/shared/SplitPane.vue";
 const pageSize = 50;
 const store = useWorkspacesStore();
 const app = useAppStore();
+const importKey = ref("");
+const importFile = ref<File | null>(null);
+const desktopRuntime = isTauriRuntime();
+
+function chooseArchive(event: Event) {
+  importFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+async function importArchive() {
+  await operation(() => store.importArchive(importKey.value.trim(), importFile.value));
+  await refresh();
+}
+
 const busy = ref(false);
 const error = ref("");
 const page = ref(0);
@@ -395,26 +571,30 @@ const versionPage = ref(0);
 const selectedVersion = ref<number | null>(null);
 const activeTab = ref<"files" | "results">("files");
 const fileQuery = ref("");
+const directoryPath = ref("");
+const compareVersion = ref<number | null>(null);
 const copyFeedback = ref("");
 let copyReset: ReturnType<typeof setTimeout> | undefined;
 
 const filtered = computed(() =>
   store.items.filter((item) => item.key.toLowerCase().includes(app.normalizedSearch)),
 );
-const snapshot = computed(() =>
-  store.versions.find((version) => version.version === selectedVersion.value),
+const snapshot = computed(
+  () =>
+    store.versions.find((version) => version.version === selectedVersion.value) ??
+    (store.pinnedSnapshot?.version === selectedVersion.value ? store.pinnedSnapshot : null),
 );
 const visibleFiles = computed(() => {
   const query = fileQuery.value.toLowerCase();
   return query
-    ? (snapshot.value?.files ?? []).filter((file) =>
-        [file.path, file.link_target ?? "", file.sha256].some((value) =>
+    ? (store.directory?.entries ?? []).filter((file) =>
+        [file.name, file.link_target ?? "", file.content_id].some((value) =>
           value.toLowerCase().includes(query),
         ),
       )
-    : (snapshot.value?.files ?? []);
+    : (store.directory?.entries ?? []);
 });
-const resultCount = computed(() => Object.keys(snapshot.value?.results ?? {}).length);
+const resultCount = computed(() => store.results?.entries.length ?? 0);
 const canDeleteWorkspace = computed(() => store.selected?.permission === "own");
 const canDeleteVersion = computed(
   () =>
@@ -478,13 +658,21 @@ function resetVersionView() {
 async function refresh() {
   await operation(async () => {
     const selectedId = store.selected?.id;
+    const pinned = selectedVersion.value;
     await store.refresh(page.value * pageSize);
     const next =
       store.items.find((item) => item.id === selectedId) ??
       (store.items.length ? store.items[0] : null);
     versionPage.value = 0;
-    await store.select(next);
+    await store.select(next, 0, next?.id === selectedId ? pinned : null);
     resetVersionView();
+
+    if (
+      store.pinnedSnapshot?.version === pinned ||
+      store.versions.some((item) => item.version === pinned)
+    ) {
+      selectedVersion.value = pinned;
+    }
   });
 }
 
@@ -541,13 +729,95 @@ async function download(path: string | null = null) {
   }
 
   await operation(async () => {
-    const blob = await store.download(selected.id, version.version, path);
-    downloadBlob(
-      path?.split("/").pop() ?? `${selected.key}-v${String(version.version)}.tar.gz`,
-      blob,
+    const url = await store.download(selected.id, version.version, path);
+
+    if (!url) {
+      return;
+    }
+
+    downloadUrl(
+      path?.split("/").pop() ?? `${selected.key}-v${String(version.version)}.oci.tar`,
+      url,
     );
   });
 }
+
+async function compare(cursor: string | null = null) {
+  const selected = store.selected;
+  const version = selectedVersion.value;
+  const before = compareVersion.value;
+
+  if (!selected || version === null || before === null) {
+    return;
+  }
+
+  await operation(() => store.compare(selected.id, before, version, cursor));
+}
+
+function childPath(name: string) {
+  return directoryPath.value ? `${directoryPath.value}/${name}` : name;
+}
+
+async function openDirectory(path: string, cursor: string | null = null) {
+  const selected = store.selected;
+  const version = selectedVersion.value;
+
+  if (!selected || version === null) {
+    return;
+  }
+
+  directoryPath.value = path;
+  await operation(() => store.browse(selected.id, version, path, cursor));
+}
+
+async function loadResults(cursor: string | null = null) {
+  const selected = store.selected;
+  const version = selectedVersion.value;
+
+  if (!selected || version === null) {
+    return;
+  }
+
+  await operation(() => store.browse(selected.id, version, "", cursor, true));
+}
+
+async function preview(path: string, result = false) {
+  const selected = store.selected;
+  const version = selectedVersion.value;
+
+  if (!selected || version === null) {
+    return;
+  }
+
+  await operation(() => store.previewFile(selected.id, version, path, result));
+}
+
+async function downloadResult(name: string) {
+  const selected = store.selected;
+  const version = selectedVersion.value;
+
+  if (!selected || version === null) {
+    return;
+  }
+
+  await operation(async () => {
+    const url = await store.download(selected.id, version, name, true);
+
+    if (url) {
+      downloadUrl(`${name}.json`, url);
+    }
+  });
+}
+
+watch(
+  () => snapshot.value?.revision_id,
+  async (revision) => {
+    if (revision) {
+      await openDirectory("");
+      await loadResults();
+    }
+  },
+);
 
 async function remove(version: number | null) {
   const selected = store.selected;

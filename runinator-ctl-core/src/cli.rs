@@ -198,6 +198,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: FunctionCommands,
     },
+    /// Browse durable revisions and transfer native or OCI workspace archives.
+    Workspaces {
+        #[command(subcommand)]
+        command: WorkspaceCommands,
+    },
     /// Inspect and run pipelines. Pipeline *shape* is pack-managed (an `.rrx` pipeline block, applied by
     /// `workflows apply`); these verbs read and drive what a pack defined.
     Pipelines {
@@ -1229,4 +1234,63 @@ pub enum ProviderCommands {
     List,
     /// Show one provider by name.
     Show { name: String },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorkspaceCommands {
+    /// List accessible workspace keys.
+    List {
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
+    },
+    /// Create an empty workspace key.
+    Create { key: String },
+    /// Page immutable version summaries.
+    Versions {
+        workspace: Uuid,
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
+    },
+    /// Page a directory or named results.
+    Ls {
+        workspace: Uuid,
+        version: i64,
+        #[arg(default_value = "")]
+        path: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        results: bool,
+    },
+    /// Read at most 1 MiB of a file or JSON result.
+    Cat {
+        workspace: Uuid,
+        version: i64,
+        path: String,
+        #[arg(long)]
+        result: bool,
+    },
+    /// Page changed paths between two immutable versions.
+    Diff {
+        workspace: Uuid,
+        before: i64,
+        after: i64,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// Upload an OCI layout tar into an unused workspace key and enqueue validation.
+    Import { key: String, archive: PathBuf },
+    /// Enqueue an export of a selected native revision, including its named results.
+    Export {
+        workspace: Uuid,
+        version: i64,
+        #[arg(long)]
+        filesystem: bool,
+    },
+    /// Inspect durable transfer progress.
+    Job { id: Uuid },
+    /// Cancel a queued or running transfer.
+    Cancel { id: Uuid },
+    /// Stream a completed export to a new local file.
+    Download { id: Uuid, destination: PathBuf },
 }

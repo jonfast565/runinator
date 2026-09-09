@@ -493,14 +493,229 @@ pub async fn delete_durable_workspace(
 }
 #[tauri::command]
 pub async fn download_workspace_version(
+    app: AppHandle,
     state: State<'_, CommandCenterState>,
     workspace_id: Uuid,
     version: i64,
     path: Option<String>,
+    result: bool,
+    transfer_id: Option<Uuid>,
+) -> CommandResult<()> {
+    use tauri_plugin_dialog::DialogExt;
+    use tokio::io::AsyncWriteExt;
+    let filename = path
+        .as_deref()
+        .and_then(|path| path.rsplit('/').next())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("workspace-v{version}.oci.tar"));
+    let destination = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_file_name(&filename)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let Some(destination) = destination else {
+        return Ok(());
+    };
+    let destination = destination
+        .into_path()
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let temporary = destination.with_extension(format!("{}.partial", Uuid::new_v4()));
+    let client = execution_profile_client(&state).await?;
+    let result = async {
+        let mut response = if let Some(id) = transfer_id {
+            client.workspace_transfer_stream(id).await
+        } else {
+            client
+                .workspace_download_stream(workspace_id, version, path.as_deref(), result)
+                .await
+        }
+        .map_err(api_error)?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .await
+            .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+        while let Some(bytes) = response
+            .chunk()
+            .await
+            .map_err(|error| CommandError::Unexpected(error.to_string()))?
+        {
+            file.write_all(&bytes)
+                .await
+                .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+        }
+        file.sync_all()
+            .await
+            .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+        drop(file);
+        tokio::fs::rename(&temporary, destination)
+            .await
+            .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(temporary).await;
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn workspace_directory(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    version: i64,
+    path: String,
+    cursor: Option<String>,
+    results: bool,
+) -> CommandResult<Value> {
+    let client = execution_profile_client(&state).await?;
+    let page = if results {
+        client
+            .workspace_results(workspace_id, version, cursor.as_deref())
+            .await
+    } else {
+        client
+            .workspace_directory(workspace_id, version, &path, cursor.as_deref())
+            .await
+    };
+    json_value(page.map_err(api_error)?)
+}
+#[tauri::command]
+pub async fn workspace_preview(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    version: i64,
+    path: String,
+    result: bool,
 ) -> CommandResult<Vec<u8>> {
     execution_profile_client(&state)
         .await?
-        .download_workspace_version(workspace_id, version, path)
+        .workspace_preview(workspace_id, version, &path, result)
+        .await
+        .map_err(api_error)
+}
+
+#[tauri::command]
+pub async fn workspace_diff(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    before: i64,
+    after: i64,
+    cursor: Option<String>,
+) -> CommandResult<Value> {
+    json_value(
+        execution_profile_client(&state)
+            .await?
+            .workspace_diff(workspace_id, before, after, cursor.as_deref())
+            .await
+            .map_err(api_error)?,
+    )
+}
+
+#[tauri::command]
+pub async fn create_workspace_transfer(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    version: i64,
+    importing: bool,
+    filesystem: bool,
+) -> CommandResult<runinator_models::workspaces::WorkspaceTransfer> {
+    execution_profile_client(&state)
+        .await?
+        .create_workspace_transfer(workspace_id, version, importing, filesystem)
+        .await
+        .map_err(api_error)
+}
+#[tauri::command]
+pub async fn workspace_transfer(
+    state: State<'_, CommandCenterState>,
+    id: Uuid,
+) -> CommandResult<runinator_models::workspaces::WorkspaceTransfer> {
+    execution_profile_client(&state)
+        .await?
+        .workspace_transfer(id)
+        .await
+        .map_err(api_error)
+}
+#[tauri::command]
+pub async fn cancel_workspace_transfer(
+    state: State<'_, CommandCenterState>,
+    id: Uuid,
+) -> CommandResult<()> {
+    execution_profile_client(&state)
+        .await?
+        .cancel_workspace_transfer(id)
+        .await
+        .map_err(api_error)
+}
+
+#[tauri::command]
+pub async fn import_workspace_archive(
+    app: AppHandle,
+    state: State<'_, CommandCenterState>,
+    key: String,
+) -> CommandResult<Option<runinator_models::workspaces::WorkspaceTransfer>> {
+    use tauri_plugin_dialog::DialogExt;
+    let source = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("OCI layout tar", &["tar"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let source = source
+        .into_path()
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let file = tokio::fs::File::open(source)
+        .await
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let client = execution_profile_client(&state).await?;
+    let workspace = client
+        .create_durable_workspace(&key)
+        .await
+        .map_err(api_error)?;
+    let job = client
+        .create_workspace_transfer(workspace.id, 0, true, false)
+        .await
+        .map_err(api_error)?;
+    Ok(Some(
+        client
+            .upload_workspace_transfer(job.id, file)
+            .await
+            .map_err(api_error)?,
+    ))
+}
+
+#[tauri::command]
+pub async fn workspace_snapshot(
+    state: State<'_, CommandCenterState>,
+    workspace_id: Uuid,
+    version: i64,
+) -> CommandResult<runinator_models::workspaces::WorkspaceSnapshot> {
+    execution_profile_client(&state)
+        .await?
+        .workspace_snapshot(workspace_id, version)
+        .await
+        .map_err(api_error)
+}
+
+#[tauri::command]
+pub async fn create_durable_workspace(
+    state: State<'_, CommandCenterState>,
+    key: String,
+) -> CommandResult<runinator_models::workspaces::DurableWorkspace> {
+    execution_profile_client(&state)
+        .await?
+        .create_durable_workspace(&key)
         .await
         .map_err(api_error)
 }

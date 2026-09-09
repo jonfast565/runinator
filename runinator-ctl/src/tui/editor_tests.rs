@@ -110,7 +110,7 @@ fn a_submitted_line_joins_the_history_once() {
 #[test]
 fn tab_completes_a_lone_candidate_and_lists_several() {
     let mut editor = PromptEditor::default();
-    type_line(&mut editor, ":work");
+    type_line(&mut editor, ":workf");
     editor.handle(key(KeyCode::Tab));
 
     assert_eq!(editor.buffer(), ":workflows ");
@@ -152,7 +152,7 @@ fn typing_a_command_shows_its_next_open_ended_argument_hint() {
 #[test]
 fn completing_a_command_refreshes_the_hint_for_its_next_argument() {
     let mut editor = PromptEditor::default();
-    type_line(&mut editor, ":work");
+    type_line(&mut editor, ":workf");
     editor.handle(key(KeyCode::Tab));
 
     // The command itself is complete; its subcommands are still candidates, not a hint.

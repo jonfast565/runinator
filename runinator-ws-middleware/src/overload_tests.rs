@@ -64,3 +64,27 @@ async fn disabled_config_is_passthrough() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn workspace_archive_upload_uses_its_transfer_deadline() {
+    let id = uuid::Uuid::new_v4();
+    let router = Router::new().route(
+        "/workspace-transfers/{id}/content",
+        axum::routing::put(|| async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            "uploaded"
+        }),
+    );
+    let router = apply_overload_protection(router, enabled_config(Duration::from_millis(5), 8));
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/workspace-transfers/{id}/content"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}

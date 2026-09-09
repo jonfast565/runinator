@@ -103,6 +103,7 @@ impl Default for CorsConfig {
     }
 }
 pub struct RouterDependencies<T> {
+    pub workspace_limits: runinator_models::workspaces::WorkspaceLimits,
     pub pool: Arc<T>,
     pub events: EventSender,
     pub broker: Arc<dyn Broker>,
@@ -117,6 +118,7 @@ pub struct RouterDependencies<T> {
 
 pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Router {
     let RouterDependencies {
+        workspace_limits,
         pool,
         events,
         broker,
@@ -147,10 +149,10 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         events.embedded_engine_signals(),
     ));
     let function_packages = Arc::new(FunctionPackages::new(pool.clone(), blobs.clone()));
-    let workspace_service = Arc::new(runinator_engine::services::WorkspaceService::new(
-        pool.clone(),
-        blobs.clone(),
-    ));
+    let workspace_service = Arc::new(
+        runinator_engine::services::WorkspaceService::new(pool.clone(), blobs.clone())
+            .with_limits(workspace_limits),
+    );
     let workflow_files = Arc::new(WorkflowFiles::new(pool.clone(), blobs.clone()));
     let automation_operations = Arc::new(AutomationOperations::new(pool.clone()));
     let scheduling_operations = Arc::new(SchedulingOperations::new(

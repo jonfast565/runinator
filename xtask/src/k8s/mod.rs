@@ -8,3 +8,5 @@ pub mod yaml_docs;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+pub mod workspace_reset;

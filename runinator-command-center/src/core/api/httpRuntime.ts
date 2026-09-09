@@ -808,6 +808,59 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `workspaces?limit=50&offset=${String(arg(args, "offset"))}`,
   },
+  workspace_diff: {
+    method: "GET",
+    path: (args) => {
+      const query = new URLSearchParams({ before: String(arg(args, "before")) });
+      const cursor = arg(args, "cursor");
+
+      if (typeof cursor === "string") {
+        query.set("cursor", cursor);
+      }
+
+      return `workspaces/${escape(arg(args, "workspaceId"))}/versions/${String(arg(args, "after"))}/diff?${query.toString()}`;
+    },
+  },
+  create_durable_workspace: {
+    method: "POST",
+    path: () => "workspaces",
+    body: (args) => ({ key: arg(args, "key") }),
+  },
+  create_workspace_transfer: {
+    method: "POST",
+    path: (args) => `workspaces/${escape(arg(args, "workspaceId"))}/transfers`,
+    body: (args) => ({
+      version: arg(args, "version"),
+      importing: arg(args, "importing"),
+      filesystem: arg(args, "filesystem"),
+    }),
+  },
+  workspace_transfer: {
+    method: "GET",
+    path: (args) => `workspace-transfers/${escape(arg(args, "id"))}`,
+  },
+  cancel_workspace_transfer: {
+    method: "DELETE",
+    path: (args) => `workspace-transfers/${escape(arg(args, "id"))}`,
+  },
+  workspace_directory: {
+    method: "GET",
+    path: (args) => {
+      const query = new URLSearchParams({ path: typeof args?.path === "string" ? args.path : "" });
+      const cursor = arg(args, "cursor");
+
+      if (typeof cursor === "string") {
+        query.set("cursor", cursor);
+      }
+
+      return `workspaces/${escape(arg(args, "workspaceId"))}/versions/${String(arg(args, "version"))}/${arg(args, "results") ? "results" : "entries"}?${query.toString()}`;
+    },
+  },
+  workspace_snapshot: {
+    method: "GET",
+    path: (args) =>
+      `workspaces/${escape(arg(args, "workspaceId"))}/versions/${String(arg(args, "version"))}`,
+  },
   workspace_versions: {
     method: "GET",
     path: (args) =>

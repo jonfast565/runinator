@@ -45,7 +45,16 @@ async fn run_process() -> Result<(), SendableError> {
 
     let args = CliArgs::parse();
 
+    let workspace_limits = runinator_models::workspaces::WorkspaceLimits {
+        max_bytes: args.workspace_max_bytes,
+        max_entries: args.workspace_max_entries,
+        max_results_bytes: args.workspace_max_results_bytes,
+    }
+    .validate()?;
     let CliArgs {
+        workspace_max_bytes: _,
+        workspace_max_entries: _,
+        workspace_max_results_bytes: _,
         tui,
         database,
         sqlite_path,
@@ -155,7 +164,10 @@ async fn run_process() -> Result<(), SendableError> {
             broker.clone(),
             instance.clone(),
             attributes.clone(),
-            max_concurrent_ingress,
+            EngineConfig {
+                max_concurrent_ingress,
+                workspace_limits,
+            },
             notify.clone(),
         )
         .await?;
@@ -172,7 +184,7 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
     instance: String,
     attributes: Value,
-    max_concurrent_ingress: usize,
+    engine_config: EngineConfig,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     let replica_id = Uuid::now_v7();
@@ -232,9 +244,7 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
         publisher,
         None,
         instance,
-        EngineConfig {
-            max_concurrent_ingress,
-        },
+        engine_config,
         shutdown,
     )
     .await;

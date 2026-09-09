@@ -72,6 +72,12 @@ mod run_operations_tests;
 mod workflow_authoring_tests;
 
 mod durable_workspaces;
+#[cfg(test)]
+mod durable_workspaces_tests;
+mod workspace_content;
+mod workspace_objects;
+mod workspace_retention;
+mod workspace_stream;
 pub use durable_workspaces::{WorkspaceContent, WorkspaceService, run_workspace_storage_cleanup};
 
 mod adapter_deliveries;
@@ -82,3 +88,9 @@ mod workflow_ingress;
 pub use workflow_ingress::{
     WorkflowIngressContext, WorkflowIngressStore, process_workflow_ingress,
 };
+
+mod workspace_transfers;
+
+pub use workspace_transfers::run_workspace_transfers;
+
+mod workspace_cursor;

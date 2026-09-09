@@ -13,7 +13,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use tower::{ServiceBuilder, limit::GlobalConcurrencyLimitLayer, load_shed::LoadShedLayer};
-use tower_http::timeout::TimeoutLayer;
 
 #[cfg(test)]
 #[path = "overload_tests.rs"]
@@ -56,9 +55,9 @@ pub fn apply_overload_protection(router: Router, config: OverloadConfig) -> Rout
         .layer(GlobalConcurrencyLimitLayer::new(
             config.max_concurrent_requests,
         ))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
+        .layer(axum::middleware::from_fn_with_state(
             config.request_timeout,
+            request_timeout,
         ));
     router.layer(overload)
 }
@@ -79,4 +78,28 @@ async fn handle_overload_error(error: BoxError) -> Response {
         "internal middleware error",
     )
         .into_response()
+}
+
+async fn request_timeout(
+    axum::extract::State(default): axum::extract::State<Duration>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let archive_upload = request.method() == axum::http::Method::PUT
+        && request
+            .uri()
+            .path()
+            .strip_prefix("/workspace-transfers/")
+            .and_then(|path| path.strip_suffix("/content"))
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
+    // transfer uploads retain the concurrency cap and enforce a separate idle-read timeout.
+    let timeout = if archive_upload {
+        Duration::from_secs(7 * 24 * 60 * 60)
+    } else {
+        default
+    };
+    match tokio::time::timeout(timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => StatusCode::REQUEST_TIMEOUT.into_response(),
+    }
 }

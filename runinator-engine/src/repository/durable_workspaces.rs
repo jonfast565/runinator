@@ -14,6 +14,7 @@ use runinator_store::{
 pub async fn prepare_dispatch<T: RuntimeStore + AuthStore + RbacStore + DurableWorkspaceStore>(
     db: &T,
     command: &mut runinator_comm::EffectCommand,
+    limits: WorkspaceLimits,
 ) -> Result<bool, SendableError> {
     let WorkflowEffectRequest::Action {
         workspace_affinity: Some(value),
@@ -91,6 +92,7 @@ pub async fn prepare_dispatch<T: RuntimeStore + AuthStore + RbacStore + DurableW
         .max(1);
     let acquisition = db
         .acquire_workspace_checkout(WorkspaceAcquire {
+            limits,
             workspace_id: workspace.id,
             workflow_run_id: command.workflow_run_id,
             effect_id: command.effect_id,

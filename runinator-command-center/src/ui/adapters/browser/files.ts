@@ -41,3 +41,13 @@ export function pickFileFromBrowser(): Promise<File | null> {
     input.click();
   });
 }
+
+export function downloadUrl(fileName: string, url: string) {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = "noreferrer";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}

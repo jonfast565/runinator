@@ -14,6 +14,7 @@ use runinator_models::{
     ingress_control::ExternalIngressGateMode,
 };
 use runinator_store::roles::OrchestrationStore;
+use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::{
     models::ApiResponse,
     openapi::docs::{EndpointDoc, Example, endpoint, json_body},
@@ -89,7 +90,7 @@ pub async fn set_inspection<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(request): Json<InspectionRequest>,
+    ValidatedJson(request): ValidatedJson<InspectionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::Run).await {
         return reply;
@@ -156,7 +157,7 @@ pub async fn set_debug_control<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
-    Json(control): Json<OrchestrationDebugControl>,
+    ValidatedJson(control): ValidatedJson<OrchestrationDebugControl>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(id, Permission::Run)
@@ -290,3 +291,10 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::OrchestrationDebugControl
     ),
 ];
+
+impl runinator_models::validation::Validate for InspectionRequest {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        // the enum has no unconstrained fields.
+        Ok(())
+    }
+}

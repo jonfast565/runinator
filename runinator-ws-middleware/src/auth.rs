@@ -94,7 +94,8 @@ impl<T: AuthStore + RbacStore + RuntimeStore> runinator_auth::CredentialStore fo
 
 /// paths reachable without a credential.
 fn is_public_path(path: &str) -> bool {
-    path.starts_with("/webhooks/orchestration/")
+    path.starts_with("/workspace-downloads/")
+        || path.starts_with("/webhooks/orchestration/")
         || path.starts_with("/calendar/")
         || matches!(
             path,

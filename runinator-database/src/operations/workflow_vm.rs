@@ -1791,15 +1791,40 @@ where
                 || checkout.attempt != attempt
                 || checkout.workflow_run_id != effect.workflow_run_id
                 || snapshot.workspace_id != checkout.workspace_id
-                || snapshot.effect_id != effect_id
-                || snapshot.attempt != attempt
-                || snapshot.workflow_run_id != effect.workflow_run_id
+                || snapshot.origin
+                    != (WorkspaceOrigin::Workflow {
+                        workflow_run_id: effect.workflow_run_id,
+                        effect_id,
+                        attempt,
+                    })
                 || snapshot.parent_version != checkout.base_version
                 || snapshot.version != checkout.base_version + 1
             {
                 return Err(
                     WORKSPACE_CONFLICT.error("snapshot does not match the successful execution")
                 );
+            }
+            let receipt: Option<String> = sqlx::query_scalar(&self.render("SELECT receipt_json FROM workspace_receipts WHERE id = ? AND checkout_id = ? AND fence = ? AND consumed = 0"))
+                .bind(commit.receipt_id).bind(checkout.id).bind(checkout.fence).fetch_optional(&mut *tx).await?;
+            let receipt = receipt
+                .as_deref()
+                .map(serde_json::from_str::<WorkspaceReceipt>)
+                .transpose()?;
+            if receipt.as_ref().is_none_or(|receipt| {
+                &receipt.checkout != checkout || &receipt.snapshot != snapshot
+            }) {
+                return Err(WORKSPACE_CONFLICT.error(
+                    "workspace receipt is missing or does not match the validated snapshot",
+                ));
+            }
+            let consumed = sqlx::query(&self.render(
+                "UPDATE workspace_receipts SET consumed = 1 WHERE id = ? AND consumed = 0",
+            ))
+            .bind(commit.receipt_id)
+            .execute(&mut *tx)
+            .await?;
+            if consumed.affected() != 1 {
+                return Err(WORKSPACE_CONFLICT.error("workspace receipt was already consumed"));
             }
             let locked = sqlx::query(&self.render("UPDATE durable_workspaces SET revision = revision + 1 WHERE id = ? AND head_version = ? AND deleted_at IS NULL"))
                 .bind(checkout.workspace_id).bind(checkout.base_version).execute(&mut *tx).await?;
@@ -1818,9 +1843,9 @@ where
             {
                 return Err(WORKSPACE_CONFLICT.error("checkout expired or was replaced"));
             }
-            sqlx::query(&self.render("INSERT INTO workspace_snapshots (workspace_id, version, effect_id, attempt, archive_uri, snapshot_json, workflow_run_id) VALUES (?, ?, ?, ?, ?, ?, ?)"))
+            sqlx::query(&self.render("INSERT INTO workspace_snapshots (workspace_id, version, effect_id, attempt, revision_id, snapshot_json, workflow_run_id) VALUES (?, ?, ?, ?, ?, ?, ?)"))
                 .bind(snapshot.workspace_id).bind(snapshot.version).bind(effect_id).bind(i64::from(attempt))
-                .bind(snapshot.archive_uri.as_str()).bind(serde_json::to_string(snapshot)?).bind(snapshot.workflow_run_id).execute(&mut *tx).await?;
+                .bind(snapshot.revision_id.as_str()).bind(serde_json::to_string(snapshot)?).bind(effect.workflow_run_id).execute(&mut *tx).await?;
             self.pin_workspace_version(
                 &mut tx,
                 snapshot.workspace_id,

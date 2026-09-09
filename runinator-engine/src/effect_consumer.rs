@@ -173,30 +173,23 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
             continue;
         }
 
-        if let Some(commit) = &delivery.result.workspace_commit {
-            let expected = format!(
-                "blob://{}/effects/{}/{}.tar.gz",
-                runinator_blob_core::WORKSPACE_BUCKET,
-                delivery.result.effect_id,
-                commit.snapshot.archive_sha256
-            );
-            if commit.snapshot.archive_sha256.len() != 64
-                || !commit
-                    .snapshot
-                    .archive_sha256
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit())
-                || commit.snapshot.archive_uri != expected
-            {
-                let error = runinator_models::errors::WORKSPACE_INVALID
-                    .error("snapshot archive does not belong to the producing effect");
-                delivery.result.kind = EffectResultKind::Status {
-                    status: WorkflowEffectStatus::Rejected,
-                    output: None,
-                    message: Some(error.to_string()),
-                };
-                delivery.result.workspace_commit = None;
-            }
+        if let Some(commit) = &delivery.result.workspace_commit
+            && (commit
+                .snapshot
+                .revision_id
+                .parse::<runinator_workspace::storage::Id>()
+                .is_err()
+                || commit.checkout.effect_id != delivery.result.effect_id
+                || commit.receipt_id.is_nil())
+        {
+            let error = runinator_models::errors::WORKSPACE_INVALID
+                .error("invalid workspace receipt reference");
+            delivery.result.kind = EffectResultKind::Status {
+                status: WorkflowEffectStatus::Rejected,
+                output: None,
+                message: Some(error.to_string()),
+            };
+            delivery.result.workspace_commit = None;
         }
         let settled = match &delivery.result.kind {
             EffectResultKind::Status {

@@ -35,6 +35,10 @@ use crate::{HANDLER_CRATES, workspace_root};
 /// the list against those directories rather than trusting it.
 const ROUTER_SOURCES: &[(&str, &str)] = &[
     (
+        "runinator-ws-runtime/handlers/workspace_transfers",
+        include_str!("../../../runinator-ws-runtime/src/handlers/workspace_transfers.rs"),
+    ),
+    (
         "runinator-ws-runtime/handlers/workspaces",
         include_str!("../../../runinator-ws-runtime/src/handlers/workspaces.rs"),
     ),

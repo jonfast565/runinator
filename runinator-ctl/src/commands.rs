@@ -77,6 +77,7 @@ pub async fn run_command(
         Commands::Login | Commands::Logout => Err(err(
             "login and logout must be handled before command dispatch",
         )),
+        Commands::Workspaces { command } => workspaces::run(client, command).await,
         Commands::Status => status::status(client, json_output).await,
         Commands::Workflows { command } => workflows::workflows(client, command, json_output).await,
         Commands::Runs { command } => runs::runs(client, command, json_output).await,
@@ -472,3 +473,5 @@ fn value_display(value: &Value, key: &str) -> String {
         _ => "-".into(),
     }
 }
+
+mod workspaces;

@@ -198,3 +198,13 @@ Keep dependency direction from service and execution crates toward shared contra
 - Keep reusable container execution in `runinator-sandbox`, provider loading in `runinator-plugin`, and binary startup/configuration in the platform and bootstrap crates.
 
 This separation lets the default local supervisor stack use one embedded engine with SQLite and the built-in broker, while production can independently scale web-service, engine, worker, waker, broker, database, and object-store replicas without changing workflow semantics.
+
+### Durable workspace storage
+
+`runinator-workspace-storage` owns immutable object algorithms, namespace/projection radix trees,
+paged files, packs, validation, and Merkle diffs. `runinator-workspace` adds named results and
+filesystem/OCI materialization. The engine owns shared BlobStore access, workspace-scoped SQL
+locations, receipts, effect-atomic publication, fenced GC, transfer jobs, and read leases. Workers
+materialize isolated directories and submit validated roots; command-center/API clients browse
+immutable versions with bounded pages and ranges. See `docs/durable-workspaces.md` for limits,
+retention, transfer commands and the no-compatibility cutover.

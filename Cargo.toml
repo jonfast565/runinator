@@ -26,6 +26,7 @@ members = [
     "runinator-engine-worker",
     "runinator-worker",
     "runinator-workspace",
+    "runinator-workspace-storage",
     "runinator-provider-workspace",
     "runinator-desktop-agent",
     "runinator-ctl-core",
@@ -80,4 +81,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.18.670"
+version = "0.19.673"

@@ -33,7 +33,16 @@ async fn run_process() -> Result<(), SendableError> {
 
     let args = CliArgs::parse();
 
+    let workspace_limits = runinator_models::workspaces::WorkspaceLimits {
+        max_bytes: args.workspace_max_bytes,
+        max_entries: args.workspace_max_entries,
+        max_results_bytes: args.workspace_max_results_bytes,
+    }
+    .validate()?;
     let CliArgs {
+        workspace_max_bytes: _,
+        workspace_max_entries: _,
+        workspace_max_results_bytes: _,
         tui,
         port,
         database,
@@ -275,6 +284,7 @@ async fn run_process() -> Result<(), SendableError> {
             overload: overload_options,
             run_engine,
             max_concurrent_ingress,
+            workspace_limits,
         })
         .await?;
     });

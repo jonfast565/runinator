@@ -1,6 +1,7 @@
 // every command the console answers, and the two that describe the console itself.
 
 import { done, table, text } from "./format";
+import { workspaceCommands } from "./commands/workspaces";
 import { functionCommands } from "./commands/functions";
 import {
   agentCommands,
@@ -73,6 +74,7 @@ export const COMMANDS: ConsoleCommand[] = [
   ...triggerCommands,
   ...freezeCommands,
   ...functionCommands,
+  ...workspaceCommands,
   ...settingsCommands,
   ...rexrapCommands,
   ...nodeCommands,

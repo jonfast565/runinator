@@ -388,6 +388,9 @@ jobs:
       - name: Test runinator-ctl
         run: cargo test -p runinator-ctl
 
+      - name: Test portable workspace storage
+        run: cargo test -p runinator-workspace-storage -p runinator-workspace
+
   command-center:
     name: Command Center
     runs-on: ubuntu-latest

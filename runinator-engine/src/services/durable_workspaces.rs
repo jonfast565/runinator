@@ -10,8 +10,9 @@ use runinator_store::roles::DurableWorkspaceStore;
 
 /// Management and data-plane storage; handlers never reach the persistence store directly.
 pub struct WorkspaceService<T> {
-    store: std::sync::Arc<T>,
-    blobs: std::sync::Arc<dyn runinator_blob_core::BlobStore>,
+    pub(super) store: std::sync::Arc<T>,
+    pub(super) limits: WorkspaceLimits,
+    pub(super) blobs: std::sync::Arc<dyn runinator_blob_core::BlobStore>,
 }
 
 impl<T: DurableWorkspaceStore> WorkspaceService<T> {
@@ -19,7 +20,15 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         store: std::sync::Arc<T>,
         blobs: std::sync::Arc<dyn runinator_blob_core::BlobStore>,
     ) -> Self {
-        Self { store, blobs }
+        Self {
+            store,
+            blobs,
+            limits: WorkspaceLimits::default(),
+        }
+    }
+    pub fn with_limits(mut self, limits: WorkspaceLimits) -> Self {
+        self.limits = limits;
+        self
     }
     pub async fn list(
         &self,
@@ -48,7 +57,7 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         self.store
             .fetch_workspace_snapshot(id, version)
             .await?
-            .ok_or_else(|| WORKSPACE_INVALID.error("version not found"))
+            .ok_or_else(|| runinator_models::errors::WORKSPACE_MISSING.error("version not found"))
     }
     pub async fn create(
         &self,
@@ -66,80 +75,6 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             .await?
             .ok_or_else(|| WORKSPACE_CONFLICT.error("checkout is no longer active"))
     }
-    pub async fn open(
-        &self,
-        id: uuid::Uuid,
-        version: i64,
-    ) -> Result<crate::artifact_storage::ArtifactContent, SendableError> {
-        let snapshot = self.snapshot(id, version).await?;
-        crate::artifact_storage::open_artifact(&self.blobs, &snapshot.archive_uri, None).await
-    }
-    pub async fn upload(
-        &self,
-        id: uuid::Uuid,
-        bytes: Vec<u8>,
-    ) -> Result<WorkspaceSnapshot, SendableError> {
-        let checkout = self.checkout(id).await?;
-        if checkout.access != WorkspaceAccess::Write {
-            return Err(WORKSPACE_INVALID.error("read-only checkout cannot save"));
-        }
-        let (bytes, packed, results) =
-            tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
-                let directory = tempfile::tempdir()?;
-                let results = runinator_workspace::unpack(
-                    &bytes,
-                    directory.path(),
-                    &runinator_workspace::digest(&bytes),
-                )?;
-                let packed = runinator_workspace::pack(directory.path(), &results)?;
-                Ok((bytes, packed, results))
-            })
-            .await??;
-        let archive_sha256 = runinator_workspace::digest(&bytes);
-        let compressed_bytes = bytes.len() as u64;
-        let uri =
-            crate::artifact_storage::put_workspace_snapshot(&self.blobs, checkout.effect_id, bytes)
-                .await?;
-        Ok(WorkspaceSnapshot {
-            workspace_id: checkout.workspace_id,
-            version: checkout.base_version + 1,
-            parent_version: checkout.base_version,
-            workflow_run_id: checkout.workflow_run_id,
-            effect_id: checkout.effect_id,
-            attempt: checkout.attempt,
-            archive_uri: uri,
-            archive_sha256,
-            compressed_bytes,
-            files: packed.files,
-            results,
-            created_at: Utc::now(),
-        })
-    }
-    pub async fn file(
-        &self,
-        id: uuid::Uuid,
-        version: i64,
-        path: String,
-    ) -> Result<Vec<u8>, SendableError> {
-        use tokio::io::AsyncReadExt;
-        let snapshot = self.snapshot(id, version).await?;
-        if !snapshot
-            .files
-            .iter()
-            .any(|file| file.path == path && file.link_target.is_none())
-        {
-            return Err(WORKSPACE_INVALID.error("regular file not found"));
-        }
-        let mut content = self.open(id, version).await?;
-        let mut bytes = Vec::new();
-        content.body.read_to_end(&mut bytes).await?;
-        tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
-            let directory = tempfile::tempdir()?;
-            runinator_workspace::unpack(&bytes, directory.path(), &snapshot.archive_sha256)?;
-            Ok(std::fs::read(directory.path().join(path))?)
-        })
-        .await?
-    }
     pub async fn delete(
         &self,
         id: uuid::Uuid,
@@ -154,8 +89,7 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
     pub async fn cleanup(&self) -> Result<(), SendableError> {
         self.store.prune_workspace_leases().await?;
         for snapshot in self.store.pending_workspace_cleanup().await? {
-            crate::artifact_storage::delete_artifact_checked(&self.blobs, &snapshot.archive_uri)
-                .await?;
+            // objects remain addressable until generation-fenced collection has marked retained roots.
             self.store
                 .finish_workspace_cleanup(snapshot.workspace_id, snapshot.version)
                 .await?;
@@ -213,10 +147,26 @@ pub async fn run_workspace_storage_cleanup<
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) {
     let mut cursor = None;
+    let mut native_cursor = None;
+    let mut transfer_cursor = None;
     loop {
+        match service
+            .cleanup_transfer_archives(transfer_cursor.take())
+            .await
+        {
+            Ok(next) => transfer_cursor = next,
+            Err(error) => tracing::warn!(%error, "workspace transfer cleanup will retry"),
+        }
         match service.cleanup_orphans(cursor.take()).await {
             Ok(next) => cursor = next,
             Err(error) => tracing::warn!(%error, "workspace orphan cleanup will retry"),
+        }
+        match service.cleanup_native_orphans(native_cursor.take()).await {
+            Ok(next) => native_cursor = next,
+            Err(error) => tracing::warn!(%error, "native workspace orphan cleanup will retry"),
+        }
+        if let Err(error) = service.collect_workspaces().await {
+            tracing::warn!(%error, "workspace collection will retry");
         }
         if let Err(error) = service.cleanup().await {
             tracing::warn!(%error, "workspace storage cleanup will retry");

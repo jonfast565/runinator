@@ -498,14 +498,27 @@ async fn process_provider_effect(
             warn!(effect_id = %command.effect_id, %error, "failed to publish effect executor claim");
         }
     }
+    let workspace_remaining = remaining_action_timeout(
+        timeout_seconds.unwrap_or(runinator_models::workflow_vm::DEFAULT_ACTION_TIMEOUT_SECONDS),
+        expires_at,
+        chrono::Utc::now(),
+    )
+    .unwrap_or(0);
+    let workspace_deadline =
+        std::time::Instant::now() + Duration::from_secs(workspace_remaining.max(0) as u64);
     let portable_workspace = if let Some(value) = workspace_affinity
         .as_ref()
         .filter(|value| value.get("key").is_some())
     {
         let restored = match executor_replica_id {
             Some(replica_id) => {
-                crate::durable_workspace::ActiveWorkspace::restore(&api_client, value, replica_id)
-                    .await
+                crate::durable_workspace::ActiveWorkspace::restore(
+                    &api_client,
+                    value,
+                    replica_id,
+                    workspace_deadline,
+                )
+                .await
             }
             None => Err(runinator_models::errors::WORKSPACE_INVALID
                 .error("portable workspace requires a registered worker")),
@@ -675,12 +688,15 @@ async fn process_provider_effect(
                 && let Some(workspace) = &portable_workspace
             {
                 let restored = if let Some(commit) = recorded.workspace_commit {
-                    if commit.snapshot.effect_id != command.effect_id {
+                    if commit.snapshot.origin.effect_id() != Some(command.effect_id) {
                         Err(runinator_models::errors::WORKSPACE_INVALID.error(
                             "a workspace write requires an idempotency key unique to its effect",
                         ))
                     } else {
-                        workspace.rebind_cached_commit(commit).map(Some)
+                        workspace
+                            .rebind_cached_commit(&api_client, commit)
+                            .await
+                            .map(Some)
                     }
                 } else {
                     workspace

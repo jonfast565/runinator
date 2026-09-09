@@ -145,8 +145,65 @@ pub const WORKSPACE_INVALID: ErrorDescriptor = ErrorDescriptor::new(
     "workspace.invalid",
     "Workspace content or reference is invalid",
 );
+pub const WORKSPACE_IO: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE004",
+    "workspace.io",
+    "Workspace storage I/O failure",
+);
+pub const WORKSPACE_JSON: ErrorDescriptor =
+    ErrorDescriptor::new("WORKSPACE005", "workspace.json", "Invalid workspace JSON");
+pub const WORKSPACE_CORRUPT: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE006",
+    "workspace.corrupt",
+    "Corrupt workspace storage",
+);
+pub const WORKSPACE_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE007",
+    "workspace.missing",
+    "Workspace object not found",
+);
+pub const WORKSPACE_EXISTS: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE008",
+    "workspace.exists",
+    "Workspace path already exists",
+);
+pub const WORKSPACE_BUSY: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE009",
+    "workspace.busy",
+    "Workspace storage is busy",
+);
+pub const WORKSPACE_CACHE_FULL: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE010",
+    "workspace.cache_full",
+    "Workspace cache budget exhausted",
+);
+pub const WORKSPACE_POISONED: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE011",
+    "workspace.poisoned",
+    "Workspace storage synchronization failed",
+);
+pub const WORKSPACE_COMMIT_UNCERTAIN: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE012",
+    "workspace.commit_uncertain",
+    "Workspace publication outcome is uncertain",
+);
+pub const WORKSPACE_LIMIT: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKSPACE013",
+    "workspace.limit",
+    "Workspace limit exceeded",
+);
 pub const WORKSPACE_DICTIONARY: &[ErrorDescriptor] = &[
     WORKSPACE_COMMIT_UNSUPPORTED,
     WORKSPACE_CONFLICT,
     WORKSPACE_INVALID,
+    WORKSPACE_IO,
+    WORKSPACE_JSON,
+    WORKSPACE_CORRUPT,
+    WORKSPACE_MISSING,
+    WORKSPACE_EXISTS,
+    WORKSPACE_BUSY,
+    WORKSPACE_CACHE_FULL,
+    WORKSPACE_POISONED,
+    WORKSPACE_COMMIT_UNCERTAIN,
+    WORKSPACE_LIMIT,
 ];

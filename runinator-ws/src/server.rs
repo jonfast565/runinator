@@ -48,6 +48,7 @@ pub struct WebserverRuntime<T> {
     pub overload: crate::overload::OverloadConfig,
     pub run_engine: bool,
     pub max_concurrent_ingress: usize,
+    pub workspace_limits: runinator_models::workspaces::WorkspaceLimits,
 }
 
 pub async fn run_webserver<T: DatabaseImpl>(
@@ -67,6 +68,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         overload,
         run_engine,
         max_concurrent_ingress,
+        workspace_limits,
     } = runtime;
     crate::stability::init_metrics();
     info!("artifact storage backend: {}", blobs.backend());
@@ -184,6 +186,13 @@ pub async fn run_webserver<T: DatabaseImpl>(
         )),
         notify.clone(),
     ));
+    background.spawn(runinator_engine::services::run_workspace_transfers(
+        Arc::new(
+            runinator_engine::services::WorkspaceService::new(pool.clone(), blobs.clone())
+                .with_limits(workspace_limits),
+        ),
+        notify.clone(),
+    ));
     // run the durable orchestration engine in-process unless a standalone engine worker owns it.
     // the engine publishes UI events onto the broker; this replica's event consumer above fans them
     // out to WebSocket clients either way.
@@ -204,6 +213,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
                 engine_instance,
                 EngineConfig {
                     max_concurrent_ingress,
+                    workspace_limits,
                 },
                 engine_shutdown,
             )
@@ -248,6 +258,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         info!("on-demand node provisioning is ENABLED");
     }
     let app = build_router(RouterDependencies {
+        workspace_limits,
         pool,
         events: bus,
         broker,

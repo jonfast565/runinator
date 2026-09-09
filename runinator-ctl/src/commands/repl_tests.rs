@@ -348,7 +348,10 @@ fn completes_only_command_lines() {
     assert!(complete("1 + ").options.is_empty());
 
     let offered = complete(":work").options;
-    assert_eq!(offered, vec!["workflows".to_string()]);
+    assert_eq!(
+        offered,
+        vec!["workflows".to_string(), "workspaces".to_string()]
+    );
 
     let subcommands = complete(":workflows ").options;
     assert!(subcommands.contains(&"apply".to_string()));

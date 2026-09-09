@@ -128,3 +128,6 @@ pub struct NewWorkspaceLease {
 #[path = "workspace_contents.rs"]
 mod contents;
 pub use contents::*;
+#[path = "workspace_limits.rs"]
+mod limits;
+pub use limits::*;

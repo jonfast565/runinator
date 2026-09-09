@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+futures-util = "0.3"
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"

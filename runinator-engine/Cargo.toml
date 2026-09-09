@@ -4,6 +4,8 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+base64 = "0.22"
+zstd = "0.13"
 tempfile = "3"
 runinator-workspace = { path = "../runinator-workspace" }
 log = "0.4"

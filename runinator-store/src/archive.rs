@@ -310,6 +310,14 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("durable_workspaces", ExplicitLifecycle),
     table_policy!("workspace_snapshots", ExplicitLifecycle),
     table_policy!("workspace_checkouts", ServiceRetention),
+    table_policy!("workspace_objects", ExplicitLifecycle),
+    table_policy!("workspace_receipts", ServiceRetention),
+    table_policy!("workspace_downloads", ServiceRetention),
+    table_policy!("workspace_gc_state", ServiceRetention),
+    table_policy!("workspace_gc_objects", ServiceRetention),
+    table_policy!("workspace_retired_packs", ServiceRetention),
+    table_policy!("workspace_readers", ServiceRetention),
+    table_policy!("workspace_transfers", ServiceRetention),
     table_policy!("workspace_pins", ServiceRetention),
 ];
 

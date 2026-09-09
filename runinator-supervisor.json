@@ -51,7 +51,10 @@
         "RUNINATOR_PROVISIONER_SUPERVISOR_WAKER": "{\"command\":\"./target/debug/runinator-waker\",\"args\":[\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\"]}",
         "RUNINATOR_BLOB_ENDPOINT": "http://127.0.0.1:9100/",
         "RUNINATOR_ADAPTER_HOST_URL": "http://127.0.0.1:8790",
-        "RUNINATOR_ADAPTER_HOST_TOKEN": "localdev.runinator-local-dev-adapter-host-token"
+        "RUNINATOR_ADAPTER_HOST_TOKEN": "localdev.runinator-local-dev-adapter-host-token",
+        "RUNINATOR_WORKSPACE_MAX_BYTES": "137438953472",
+        "RUNINATOR_WORKSPACE_MAX_ENTRIES": "100000",
+        "RUNINATOR_WORKSPACE_MAX_RESULTS_BYTES": "16777216"
       },
       "args": [
         "scripts/start-local-web-service.sh",
