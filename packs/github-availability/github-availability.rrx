@@ -3,7 +3,7 @@ language rexrap-1
 package {
   {
     "name": "GitHub Availability Test Pack",
-    "version": 1
+    "version": 2
   }
 }
 
@@ -16,7 +16,7 @@ workflow "GitHub Availability" v1 {
         @id("github_user")
         @timeout(30s)
         @retry(1)
-        @runner("desktop")
+        @runner("kubernetes")
         @profile("github-default")
         github_cli.api(endpoint: "user")
             routes {
@@ -65,7 +65,7 @@ tests {
         }
       },
       {
-        "name": "an unavailable desktop integration fails",
+        "name": "an unavailable Kubernetes worker integration fails",
         "mocks": {
           "github_user": { "status": "failed" }
         },
