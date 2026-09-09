@@ -124,6 +124,24 @@ where
         json.map(|value| serde_json::from_str(&value).map_err(Into::into))
             .transpose()
     }
+    async fn workspace_pack_objects(
+        &self,
+        workspace_id: Uuid,
+        pack: String,
+        after: Option<String>,
+    ) -> Result<Vec<WorkspaceObjectLocation>, SendableError> {
+        let rows: Vec<String> = sqlx::query_scalar(&self.render(
+            "SELECT location_json FROM workspace_objects WHERE workspace_id = ? AND pack_id = ? AND object_id > ? ORDER BY object_id LIMIT 1000",
+        ))
+        .bind(workspace_id)
+        .bind(pack)
+        .bind(after.unwrap_or_default())
+        .fetch_all(self.pool())
+        .await?;
+        rows.into_iter()
+            .map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .collect()
+    }
     async fn save_workspace_receipt(&self, receipt: WorkspaceReceipt) -> Result<(), SendableError> {
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(

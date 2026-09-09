@@ -16,6 +16,10 @@ Workers deduplicate outgoing packs against their verified local cache of remote 
 absent from that cache are included, avoiding one API request per new object; the engine still
 validates uploaded packs and the complete revision before publication.
 
+`record::read_indexed` uses a bounded decoded-record cache for local immutable packs. Shared
+compression containers are verified once while resident; each requested member still has its
+logical identity checked. This avoids rereading and hashing the full container for every chunk.
+
 `Repository` is a Unix filesystem reference implementation used by examples and tests. Runinator's
 cluster uses engine-owned blob access, SQL object locations, validated receipts and fenced
 publication. This crate must not depend on service, HTTP, SQL or broker implementations.

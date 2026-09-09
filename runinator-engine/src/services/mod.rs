@@ -77,6 +77,9 @@ mod durable_workspaces_tests;
 mod workspace_content;
 mod workspace_objects;
 mod workspace_retention;
+#[cfg(test)]
+mod workspace_seal_benchmark;
+mod workspace_seal_objects;
 mod workspace_stream;
 mod workspace_validation;
 pub use durable_workspaces::{WorkspaceContent, WorkspaceService, run_workspace_storage_cleanup};

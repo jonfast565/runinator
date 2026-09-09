@@ -385,6 +385,47 @@ fn tiny_block_preserves_leaf_ids_and_expands_on_pack_import() -> Result<()> {
         2
     );
     assert_eq!(imported, expected);
+    let cache = ByteCache::new(1024 * 1024);
+    let length = pack.as_file().metadata()?.len() - 8;
+    for (slot, (id, bytes)) in expected.iter().enumerate() {
+        let location = Location {
+            id: *id,
+            pack: Id::default(),
+            offset: 8,
+            length,
+            member: slot as u32,
+        };
+        assert_eq!(
+            record::read_indexed(pack.as_file(), location, &cache)?
+                .bytes
+                .as_slice(),
+            bytes
+        );
+        assert!(
+            record::read_indexed(
+                pack.as_file(),
+                Location {
+                    id: Id::default(),
+                    ..location
+                },
+                &cache
+            )
+            .is_err()
+        );
+        assert!(
+            record::read_indexed(
+                pack.as_file(),
+                Location {
+                    length: length - 1,
+                    ..location
+                },
+                &cache
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(cache.stats()?.misses, 1);
+    assert!(cache.stats()?.hits >= 1);
     assert!(pack.as_file().metadata()?.len() < 8 + 2 * record::HEADER_LEN + raw.len() as u64);
     Ok(())
 }

@@ -172,7 +172,10 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             .map_err(|_| WORKSPACE_CONFLICT.error("checkout lease expired before validation"))?;
         let deadline = tokio::time::Instant::now() + remaining;
         let guard = super::workspace_validation::ValidationGuard::new();
-        let store = guard.store(self.objects(checkout.workspace_id));
+        let objects = super::workspace_seal_objects::SealObjects::new(
+            self.objects(checkout.workspace_id).inner,
+        );
+        let store = guard.store(objects);
         let revision_id: storage::Id = request.revision_id.parse()?;
         let parent = if checkout.base_version > 0 {
             Some(

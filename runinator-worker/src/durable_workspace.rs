@@ -136,9 +136,15 @@ impl ActiveWorkspace {
             Ok(revision.to_string())
         })
         .await??;
+        let remaining = self.objects.remaining()?;
         let receipt = tokio::time::timeout(
-            self.objects.remaining()?,
-            api.seal_workspace(self.execution.checkout.id, self.replica_id, revision_id),
+            remaining,
+            api.seal_workspace(
+                self.execution.checkout.id,
+                self.replica_id,
+                revision_id,
+                remaining,
+            ),
         )
         .await??;
         Ok(Some(WorkspaceCommit {
@@ -157,12 +163,14 @@ impl ActiveWorkspace {
         {
             return Err(WORKSPACE_INVALID.error("cached workspace snapshot has a different base"));
         }
+        let remaining = self.objects.remaining()?;
         let receipt = tokio::time::timeout(
-            self.objects.remaining()?,
+            remaining,
             api.seal_workspace(
                 self.execution.checkout.id,
                 self.replica_id,
                 commit.snapshot.revision_id,
+                remaining,
             ),
         )
         .await??;

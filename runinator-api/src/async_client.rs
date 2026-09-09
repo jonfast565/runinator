@@ -1577,6 +1577,7 @@ where
         checkout: Uuid,
         replica: Uuid,
         revision_id: String,
+        timeout: Duration,
     ) -> Result<runinator_models::workspaces::WorkspaceReceipt> {
         let url = self
             .build_url(&format!(
@@ -1586,6 +1587,7 @@ where
         let response = self
             .send(
                 self.http_post(url.clone())
+                    .timeout(timeout)
                     .json(&runinator_models::workspaces::WorkspaceSeal { revision_id }),
             )
             .await?;
@@ -3020,6 +3022,10 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_seal_tests.rs"]
+mod workspace_seal_tests;
 
 #[cfg(test)]
 mod resilience_tests {

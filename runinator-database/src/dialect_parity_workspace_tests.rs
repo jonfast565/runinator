@@ -79,6 +79,48 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
             checkout: checkout.clone()
         }
     );
+    let objects: Vec<_> = (0..1001)
+        .map(|n| WorkspaceObjectLocation {
+            id: format!("{n:064x}"),
+            pack: "registered-pack".into(),
+            kind: 1,
+            raw_len: 1,
+            offset: n,
+            length: 1,
+            member: u32::MAX,
+        })
+        .collect();
+    for batch in objects.chunks(1000) {
+        db.stage_workspace_objects(checkout.clone(), batch.to_vec())
+            .await
+            .unwrap();
+    }
+    let first = db
+        .workspace_pack_objects(identity.id, "registered-pack".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(first, objects[..1000]);
+    let second = db
+        .workspace_pack_objects(
+            identity.id,
+            "registered-pack".into(),
+            first.last().map(|o| o.id.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second, objects[1000..]);
+    assert!(
+        db.workspace_pack_objects(identity.id, "different-pack".into(), None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        db.workspace_pack_objects(Uuid::now_v7(), "registered-pack".into(), None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let competing = WorkspaceAcquire {
         effect_id: Uuid::now_v7(),
         ..request.clone()

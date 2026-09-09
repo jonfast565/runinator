@@ -77,7 +77,7 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
     }
 }
 
-fn storage_error(error: SendableError) -> storage::Error {
+pub(super) fn storage_error(error: SendableError) -> storage::Error {
     match error.downcast::<storage::Error>() {
         Ok(error) => *error,
         Err(error) => storage::Error::Io(std::io::Error::other(error)),

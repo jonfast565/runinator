@@ -8,6 +8,9 @@ use crate::{
     store::{Object, ObjectInfo},
 };
 use std::{fs::File, io::Write, sync::Arc};
+#[cfg(test)]
+#[path = "record_tests.rs"]
+mod tests;
 pub const HEADER_LEN: u64 = 96;
 pub const PACK_MAGIC: &[u8; 8] = b"RNWPACK1";
 const RECORD_MAGIC: &[u8; 8] = b"RNWREC01";
@@ -120,6 +123,37 @@ pub fn decode_range(bytes: &[u8], expected: Id, member: u32) -> Result<Object> {
         return Err(corrupt("record range length mismatch"));
     }
     let object = decode_payload(h, bytes[96..].to_vec())?;
+    resolve_member(h, object, expected, member)
+}
+
+/// Read an indexed member while verifying and decoding its shared physical container once.
+pub fn read_indexed(
+    file: &File,
+    location: crate::index::Location,
+    cache: &crate::cache::ByteCache,
+) -> Result<Object> {
+    let h = header(file, location.offset)?;
+    if h.record_len()? != location.length {
+        return Err(corrupt("record range length mismatch"));
+    }
+    let object = if location.member == crate::index::STANDALONE {
+        read(file, location.offset, Some(location.id))?.1
+    } else {
+        // bind the cached decoded bytes to every validated physical header field.
+        let key = Id::sha256(&h.encode());
+        let bytes = cache.get_or_load(key, h.raw_len as usize, || {
+            let (_, object) = read(file, location.offset, Some(h.id))?;
+            Ok((*object.bytes).clone())
+        })?;
+        Object {
+            kind: h.kind,
+            bytes,
+        }
+    };
+    resolve_member(h, object, location.id, location.member)
+}
+
+fn resolve_member(h: Header, object: Object, expected: Id, member: u32) -> Result<Object> {
     if member == crate::index::STANDALONE {
         if h.id != expected || matches!(h.kind, Kind::TinyBlock | Kind::ChunkBlock) {
             return Err(corrupt("logical record mismatch"));

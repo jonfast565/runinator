@@ -179,9 +179,21 @@ or cyclic relative symlinks are rejected. Symlink restoration currently requires
 
 Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
 deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops
-further storage reads and prevents receipt issuance. Validation retains a bounded 64 MiB cache of
-physical records in addition to its 48 MiB logical-object cache, so shared compression records do
-not require a new blob read for every member.
+further storage reads and prevents receipt issuance. The client's seal request uses the worker's
+remaining action budget rather than its generic 60-second API timeout.
+
+Seal validation loads registered object locations in pages of 1,000 and reads from disposable local
+pack copies, avoiding a SQL lookup and remote blob request for every object. It retains at most
+eight packs of at most 80 MiB each, disk-backed location indexes, a 48 MiB logical-object cache, and
+a 64 MiB decoded-record cache. Shared compression blocks are verified and decoded once while
+resident, rather than once per logical member.
+Only registered locations are indexed; reading each reachable object still checks its identity,
+and the complete graph, usage, results, and portable links are validated before receipt issuance.
+
+Run the controlled local comparison with
+`cargo test -p runinator-engine compare_seal_validation_backends -- --ignored --nocapture`.
+It validates the same registered packs through both readers and reports elapsed time and the new
+reader's database/blob call counts. The fixture contains 1,001 files and about 36 MiB of data.
 
 Retained versions, pending valid receipts and active transfers are explicit collection roots;
 parent revision metadata does not retain ancestor contents. Collection uses fenced SQL leases,
