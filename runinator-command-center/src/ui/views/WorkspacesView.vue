@@ -604,8 +604,10 @@ onBeforeUnmount(() => {
 
 .workspace-browser,
 .workspace-detail {
+  width: 100%;
   min-width: 0;
   min-height: 0;
+  flex: 1 1 auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--surface-subtle);
@@ -1067,7 +1069,9 @@ onBeforeUnmount(() => {
 }
 
 .workspace-detail-empty {
+  width: 100%;
   min-height: 260px;
+  flex: 1 1 auto;
   border: 1px dashed var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-subtle);
