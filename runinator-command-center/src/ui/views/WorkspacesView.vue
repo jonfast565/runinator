@@ -93,7 +93,7 @@
           </nav>
         </aside>
 
-        <main v-if="store.selected" class="workspace-detail">
+        <section v-if="store.selected" class="workspace-detail" aria-label="Workspace details">
           <header class="workspace-hero">
             <div class="workspace-hero-mark" aria-hidden="true">
               <Icon name="folder" :size="23" />
@@ -341,7 +341,7 @@
             title="No committed versions"
             description="This workspace has not committed a durable snapshot yet."
           />
-        </main>
+        </section>
 
         <EmptyState
           v-else
