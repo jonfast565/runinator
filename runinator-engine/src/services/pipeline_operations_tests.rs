@@ -426,3 +426,71 @@ async fn a_pinned_pipeline_start_snapshots_the_requested_revision() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn rexrap_source_replaces_the_pipeline_surface_without_losing_unrelated_metadata() {
+    let (db, path) = test_db().await;
+    let workflow = db.upsert_workflow(&member_workflow()).await.unwrap();
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = PipelineOperations::new(
+        db.clone(),
+        broker.clone(),
+        UiEventPublisher::new(broker),
+        None,
+    );
+    let mut initial = pipeline();
+    initial.metadata = json!({ "release": 1 });
+    initial.defaults.links_enabled_by_default = false;
+    initial.defaults.default_parameters = json!({ "release": "stable" });
+    initial.defaults.default_failure_mode =
+        runinator_models::pipelines::PipelineMemberFailureMode::Inquire;
+    let initial = service.save(&initial).await.unwrap();
+    let pipeline_id = initial.id.unwrap();
+    let source = r#"
+pipeline "updated surface" {
+    key service_boundary
+    namespace runinator.tests
+
+    ingress scope "correlations" {
+        on "created" when unbound
+            -> start
+    }
+
+    workflow "runinator.tests.pipeline_member" on_failure continue
+}
+"#;
+
+    let saved = service
+        .update_from_rexrap(pipeline_id, source)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.id, Some(pipeline_id));
+    assert_eq!(saved.name, "updated surface");
+    assert_eq!(saved.graph.members[0].workflow_id, workflow.id.unwrap());
+    assert!(!saved.defaults.links_enabled_by_default);
+    assert_eq!(
+        saved.defaults.default_parameters.get("release"),
+        Some(&Value::from("stable"))
+    );
+    assert_eq!(
+        saved.defaults.default_failure_mode,
+        runinator_models::pipelines::PipelineMemberFailureMode::Inquire
+    );
+    assert_eq!(
+        saved.metadata.get("release").and_then(Value::as_i64),
+        Some(1)
+    );
+    assert_eq!(
+        saved
+            .metadata
+            .pointer("/ingress/scope")
+            .and_then(Value::as_str),
+        Some("correlations")
+    );
+
+    let rendered = service.rexrap_source(pipeline_id).await.unwrap().unwrap();
+    assert!(rendered.contains("pipeline \"updated surface\""));
+    assert!(rendered.contains("ingress scope \"correlations\""));
+    let _ = std::fs::remove_file(path);
+}

@@ -62,6 +62,7 @@ import { useAppStore } from "../../../ui/adapters/pinia/app";
 import type {
   CredentialSummary,
   ProviderMetadata,
+  RexRapDocumentKind,
   RexRapSettingRef,
 } from "../../../core/domain/models";
 import type { CodeMirrorHostOptions } from "../../adapters/codemirror/text-editor-host";
@@ -73,6 +74,7 @@ const props = defineProps<{
   providers?: ProviderMetadata[];
   settings?: CredentialSummary[];
   sourcePath?: string | null;
+  document?: RexRapDocumentKind;
 }>();
 
 const emit = defineEmits<{
@@ -174,6 +176,7 @@ onMounted(() => {
       providers: () => props.providers ?? [],
       settings: settingRefs,
       sourcePath: props.sourcePath,
+      document: props.document,
     },
   };
 

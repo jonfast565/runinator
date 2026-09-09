@@ -97,6 +97,18 @@ impl runinator_models::validation::Validate for PipelineEnableRequest {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PipelineRexRapRequest {
+    pub source: String,
+}
+
+impl runinator_models::validation::Validate for PipelineRexRapRequest {
+    fn validate(&self) -> Result<(), runinator_models::validation::ValidationError> {
+        runinator_models::validation::required_text("source", &self.source, 2 * 1024 * 1024)?;
+        runinator_models::validation::bounded_text("source", &self.source, 2 * 1024 * 1024)
+    }
+}
+
 pub async fn get_pipeline_revisions<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
@@ -191,6 +203,56 @@ pub async fn update_pipeline<
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
         Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
         Err(err) => bad_request(err.to_string()),
+    }
+}
+
+/// The textual source shown alongside the canvas. It contains the pipeline and REXRAP-managed
+/// triggers; manually configured triggers are intentionally not rewritten by source edits.
+pub async fn get_pipeline_rexrap<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::View)
+        .await
+    {
+        return reply;
+    }
+    match service.rexrap_source(pipeline_id).await {
+        Ok(Some(source)) => (StatusCode::OK, Json(ApiResponse::JsonValue(source.into()))),
+        Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+/// Compile a complete single-pipeline REXRAP document and atomically replace its source-managed
+/// graph, orchestration metadata, and managed triggers.
+pub async fn update_pipeline_rexrap<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_id): Path<Uuid>,
+    ValidatedJson(request): ValidatedJson<PipelineRexRapRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
+    match service
+        .update_from_rexrap(pipeline_id, &request.source)
+        .await
+    {
+        Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
+        Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
+        Err(error) => bad_request(error.to_string()),
     }
 }
 
@@ -897,6 +959,12 @@ pub fn routes<
         .route(
             "/pipelines/{id}/enabled",
             post(set_enabled::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/rexrap",
+            get(get_pipeline_rexrap::<T>)
+                .put(update_pipeline_rexrap::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/pipelines/{id}/revisions",

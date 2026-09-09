@@ -136,6 +136,32 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         self.save(&pipeline).await.map(Some)
     }
 
+    /// Returns the portable REXRAP source for the selected pipeline and its REXRAP-managed
+    /// triggers. Manual triggers deliberately remain outside this authored surface.
+    pub async fn rexrap_source(&self, pipeline_id: Uuid) -> Result<Option<String>, SendableError> {
+        let Some(pipeline) = self.fetch(pipeline_id).await? else {
+            return Ok(None);
+        };
+        let triggers = self.list_triggers(pipeline_id).await?;
+        Ok(Some(repository::pipeline_to_rexrap(&pipeline, &triggers)))
+    }
+
+    /// Compiles and applies a single-pipeline REXRAP document, retaining the existing durable
+    /// identity and notifying other command-center clients after the new revision is stored.
+    pub async fn update_from_rexrap(
+        &self,
+        pipeline_id: Uuid,
+        source: &str,
+    ) -> Result<Option<Pipeline>, SendableError> {
+        let saved =
+            repository::update_pipeline_from_rexrap(self.store.as_ref(), pipeline_id, source)
+                .await?;
+        if let Some(pipeline) = &saved {
+            emit_workflows_changed(&self.events, pipeline.org_id);
+        }
+        Ok(saved)
+    }
+
     /// Sets the admission gate without requiring clients to resubmit the pipeline graph.
     pub async fn set_enabled(
         &self,

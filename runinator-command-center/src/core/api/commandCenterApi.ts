@@ -65,6 +65,7 @@ import type {
   User,
   RexRapCompletionRequest,
   RexRapCompletionResponse,
+  RexRapDocumentKind,
   RexRapDiagnostic,
   RexRapHoverRequest,
   RexRapHoverResponse,
@@ -680,8 +681,16 @@ export async function compileRexRap(source: string, enabled: boolean) {
   return command<WorkflowDefinition>("compile_rexrap", { source, enabled });
 }
 
-export async function analyzeRexRap(source: string, sourcePath?: string | null) {
-  return command<RexRapDiagnostic[]>("analyze_rexrap", { source, sourcePath: sourcePath ?? null });
+export async function analyzeRexRap(
+  source: string,
+  sourcePath?: string | null,
+  document: RexRapDocumentKind = "workflow",
+) {
+  return command<RexRapDiagnostic[]>("analyze_rexrap", {
+    source,
+    sourcePath: sourcePath ?? null,
+    document,
+  });
 }
 
 export async function completeRexRap(request: RexRapCompletionRequest) {
@@ -692,8 +701,8 @@ export async function hoverRexRap(request: RexRapHoverRequest) {
   return command<RexRapHoverResponse | null>("hover_rexrap", { request });
 }
 
-export async function formatRexRap(source: string) {
-  return command<string>("format_rexrap", { source });
+export async function formatRexRap(source: string, document: RexRapDocumentKind = "workflow") {
+  return command<string>("format_rexrap", { source, document });
 }
 
 export async function decompileToRexRap(workflow: WorkflowDefinition) {
@@ -799,6 +808,14 @@ export async function fetchPipeline(pipelineId: string) {
 
 export async function savePipeline(pipeline: Pipeline) {
   return command<Pipeline>("save_pipeline", { pipeline });
+}
+
+export async function fetchPipelineRexRap(pipelineId: string) {
+  return command<string>("fetch_pipeline_rexrap", { pipelineId });
+}
+
+export async function savePipelineRexRap(pipelineId: string, source: string) {
+  return command<Pipeline>("save_pipeline_rexrap", { pipelineId, source });
 }
 
 export async function deletePipeline(pipelineId: string) {

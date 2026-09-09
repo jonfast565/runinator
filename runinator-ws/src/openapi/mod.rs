@@ -351,6 +351,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
         "/pipelines/{id}/triggers",
         docs::EndpointPolicy::Authenticated,
     ),
+    (
+        "get",
+        "/pipelines/{id}/rexrap",
+        docs::EndpointPolicy::Authenticated,
+    ),
     ("get", "/rate-card", docs::EndpointPolicy::Authenticated),
     (
         "get",
@@ -495,6 +500,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "put",
         "/orgs/{id}/quota",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "put",
+        "/pipelines/{id}/rexrap",
         docs::EndpointPolicy::Authenticated,
     ),
 ];

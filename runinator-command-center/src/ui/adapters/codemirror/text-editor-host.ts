@@ -15,6 +15,7 @@ import type {
   CredentialSummary,
   ProviderMetadata,
   RexRapDiagnostic,
+  RexRapDocumentKind,
   RexRapSettingRef,
 } from "../../../core/domain/models";
 import { osCodeMirrorTheme } from "./codemirror-theme";
@@ -30,6 +31,7 @@ interface RexRapHostContext {
   providers: () => ProviderMetadata[];
   settings: () => RexRapSettingRef[];
   sourcePath?: string | null;
+  document?: RexRapDocumentKind;
 }
 
 interface CodeMirrorHostOptions extends TextEditorHostCreateOptions {
@@ -66,6 +68,7 @@ function createRexRapHost(options: CodeMirrorHostOptions): TextEditorHost {
       const nextDiagnostics = await rexrapLanguageService.analyzeSilent(
         source,
         rexrapContext.sourcePath ?? options.sourcePath,
+        rexrapContext.document,
       );
 
       if (request === diagnosticsRequest) {
@@ -264,7 +267,7 @@ function createRexRapHost(options: CodeMirrorHostOptions): TextEditorHost {
       }
 
       const source = view.state.doc.toString();
-      const formatted = await rexrapLanguageService.formatSilent(source);
+      const formatted = await rexrapLanguageService.formatSilent(source, rexrapContext.document);
       host.setValue(formatted);
       options.onChange(formatted);
       await refreshDiagnostics(formatted);

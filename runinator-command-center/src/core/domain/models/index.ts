@@ -254,6 +254,7 @@ export type {
   RexRapCompletionItem,
   RexRapCompletionRequest,
   RexRapCompletionResponse,
+  RexRapDocumentKind,
   RexRapDiagnostic,
   RexRapHoverRequest,
   RexRapHoverResponse,

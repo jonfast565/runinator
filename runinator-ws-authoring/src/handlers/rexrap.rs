@@ -49,6 +49,16 @@ pub struct RexRapSourceRequest {
     pub source: String,
     #[serde(default)]
     pub fragment: Option<RexRapFragmentKind>,
+    #[serde(default)]
+    pub document: RexRapDocumentKind,
+}
+
+#[derive(Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RexRapDocumentKind {
+    #[default]
+    Workflow,
+    Pipeline,
 }
 
 #[derive(Deserialize)]
@@ -282,6 +292,12 @@ pub async fn analyze_rexrap<
     ValidatedJson(request): ValidatedJson<RexRapSourceRequest>,
 ) -> Json<Vec<DiagnosticSummary>> {
     let source = request.source;
+    if request.document == RexRapDocumentKind::Pipeline {
+        return match runinator_rexrap::parse_pipeline_str(&source) {
+            Ok(_) => Json(Vec::new()),
+            Err(error) => Json(vec![rexrap_error_to_summary(error, &source)]),
+        };
+    }
     let providers = fetch_provider_metadata(&catalog).await.unwrap_or_default();
     if let Some(kind) = request.fragment {
         let options = CompileOptions {
@@ -389,6 +405,11 @@ fn workflow_signatures_from_definition(workflow: &WorkflowDefinition) -> Vec<Wor
 pub async fn format_rexrap(
     ValidatedJson(request): ValidatedJson<RexRapSourceRequest>,
 ) -> Result<Json<String>, (StatusCode, String)> {
+    if request.document == RexRapDocumentKind::Pipeline {
+        return runinator_rexrap::parse_pipeline_str(&request.source)
+            .map(|bundle| Json(runinator_rexrap::pipeline_to_rexrapp(&bundle)))
+            .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()));
+    }
     runinator_rexrap::format_str(&request.source)
         .map(Json)
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))

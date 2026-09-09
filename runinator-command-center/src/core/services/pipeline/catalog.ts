@@ -1,7 +1,9 @@
 import {
   deletePipeline as deletePipelineApi,
+  fetchPipelineRexRap as fetchPipelineRexRapApi,
   fetchPipelines as fetchPipelinesApi,
   savePipeline as savePipelineApi,
+  savePipelineRexRap as savePipelineRexRapApi,
   setPipelineOwner as setPipelineOwnerApi,
 } from "../../api/commandCenterApi";
 import type { Pipeline } from "../../domain/models";
@@ -13,6 +15,14 @@ export async function fetchPipelines(): Promise<Pipeline[]> {
 
 export async function savePipeline(pipeline: Pipeline): Promise<Pipeline> {
   return savePipelineApi(pipeline);
+}
+
+export async function fetchPipelineRexRap(pipelineId: string): Promise<string> {
+  return fetchPipelineRexRapApi(pipelineId);
+}
+
+export async function savePipelineRexRap(pipelineId: string, source: string): Promise<Pipeline> {
+  return savePipelineRexRapApi(pipelineId, source);
 }
 
 export async function deletePipeline(pipelineId: string): Promise<void> {

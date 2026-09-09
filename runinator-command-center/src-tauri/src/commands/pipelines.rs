@@ -14,6 +14,33 @@ pub async fn fetch_pipeline(
 }
 
 #[tauri::command]
+pub async fn fetch_pipeline_rexrap(
+    state: State<'_, CommandCenterState>,
+    pipeline_id: Uuid,
+) -> CommandResult<String> {
+    get_json(&state, &format!("pipelines/{pipeline_id}/rexrap")).await
+}
+
+#[tauri::command]
+pub async fn save_pipeline_rexrap(
+    state: State<'_, CommandCenterState>,
+    pipeline_id: Uuid,
+    source: String,
+) -> CommandResult<Pipeline> {
+    let url = build_state_url(&state, &format!("pipelines/{pipeline_id}/rexrap")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .put(url.clone())
+        .json(&serde_json::json!({ "source": source }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Pipeline>().await?)
+}
+
+#[tauri::command]
 pub async fn save_pipeline(
     state: State<'_, CommandCenterState>,
     pipeline: Pipeline,

@@ -158,7 +158,14 @@ pub fn compile_rexrap(source: String, enabled: bool) -> CommandResult<WorkflowDe
 pub fn analyze_rexrap(
     source: String,
     source_path: Option<String>,
+    document: Option<String>,
 ) -> CommandResult<Vec<DiagnosticSummary>> {
+    if document.as_deref() == Some("pipeline") {
+        return match runinator_rexrap::parse_pipeline_str(&source) {
+            Ok(_) => Ok(Vec::new()),
+            Err(error) => Ok(vec![rexrap_error_to_summary(error, &source)]),
+        };
+    }
     let providers = runinator_provider_catalog::metadata();
     let workflow_signatures = source_path
         .as_deref()
@@ -212,7 +219,12 @@ pub fn hover_rexrap(
 }
 
 #[tauri::command]
-pub fn format_rexrap(source: String) -> CommandResult<String> {
+pub fn format_rexrap(source: String, document: Option<String>) -> CommandResult<String> {
+    if document.as_deref() == Some("pipeline") {
+        return runinator_rexrap::parse_pipeline_str(&source)
+            .map(|bundle| runinator_rexrap::pipeline_to_rexrapp(&bundle))
+            .map_err(|err| CommandError::Unexpected(err.to_string()));
+    }
     runinator_rexrap::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 

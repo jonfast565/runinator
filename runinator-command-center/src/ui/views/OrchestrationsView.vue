@@ -165,11 +165,17 @@
 
         <PipelineOrchestrationEditor
           v-if="definitionPipeline"
-          :key="definitionPipeline.id ?? definitionPipeline.name"
+          :key="definitionEditorKey"
           :pipeline="definitionPipeline"
           :adapter-kinds="store.adapterKinds"
           @cancel="mode = 'Instances'"
           @save="saveDefinition"
+        />
+
+        <PipelineRexRapEditor
+          v-if="definitionPipeline"
+          :key="`rexrap:${definitionPipeline.id ?? definitionPipeline.name}`"
+          :pipeline="definitionPipeline"
         />
 
         <EmptyState v-else-if="!definitionLoading" icon="workflow" title="Select a pipeline">
@@ -1798,6 +1804,7 @@ import { useSecretsStore } from "../adapters/pinia/secrets";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineOrchestrationEditor from "../components/pipeline/PipelineOrchestrationEditor.vue";
+import PipelineRexRapEditor from "../components/pipeline/PipelineRexRapEditor.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -1823,6 +1830,20 @@ const mode = ref<Mode>(store.selectedId ? "Instances" : "Definitions");
 const definitionPipelineId = ref<string | null>(null);
 const definitionLoading = ref(false);
 const definitionError = ref<string | null>(null);
+const definitionEditorKey = computed(() => {
+  const pipeline = definitionPipeline.value;
+
+  if (!pipeline) {
+    return "no-definition";
+  }
+
+  // The visual editor owns reactive working copies. Remount it after a source apply so the
+  // metadata and member surface immediately reflects the durable pipeline revision.
+  return `${pipeline.id ?? pipeline.name}:${JSON.stringify({
+    metadata: pipeline.metadata,
+    members: pipeline.graph.members,
+  })}`;
+});
 const statuses = [
   "pending",
   "running",

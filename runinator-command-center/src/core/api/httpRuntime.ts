@@ -406,6 +406,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}`,
   },
+  fetch_pipeline_rexrap: {
+    method: "GET",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/rexrap`,
+  },
   save_pipeline: {
     method: (args) => {
       const pipeline = arg(args, "pipeline") as { id?: string | null };
@@ -416,6 +420,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       return pipeline.id != null ? `pipelines/${escape(pipeline.id)}` : "pipelines";
     },
     body: (args) => arg(args, "pipeline"),
+  },
+  save_pipeline_rexrap: {
+    method: "PUT",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/rexrap`,
+    body: (args) => ({ source: arg(args, "source") }),
   },
   delete_pipeline: {
     method: "DELETE",
@@ -942,12 +951,16 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => ({
       source: arg(args, "source"),
       source_path: argOpt(args, "sourcePath") ?? null,
+      document: argOpt(args, "document") ?? "workflow",
     }),
   },
   format_rexrap: {
     method: "POST",
     path: () => "rexrap/format",
-    body: (args) => ({ source: arg(args, "source") }),
+    body: (args) => ({
+      source: arg(args, "source"),
+      document: argOpt(args, "document") ?? "workflow",
+    }),
   },
   decompile_to_rexrap: {
     method: "POST",

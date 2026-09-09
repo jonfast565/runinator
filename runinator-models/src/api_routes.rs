@@ -120,6 +120,10 @@ pub fn api_pipeline(pipeline_id: Uuid) -> String {
     format!("{API_PIPELINES}/{pipeline_id}")
 }
 
+pub fn api_pipeline_rexrap(pipeline_id: Uuid) -> String {
+    format!("{API_PIPELINES}/{pipeline_id}/rexrap")
+}
+
 pub fn api_workflow_run(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}")
 }

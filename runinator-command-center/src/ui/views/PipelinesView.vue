@@ -307,6 +307,8 @@
                     </li>
                   </ul>
                 </div>
+
+                <PipelineRexRapEditor :pipeline="selectedPipeline" />
               </div>
             </template>
           </SplitPane>
@@ -461,6 +463,7 @@ import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineDefaultsEditor from "../components/pipeline/PipelineDefaultsEditor.vue";
+import PipelineRexRapEditor from "../components/pipeline/PipelineRexRapEditor.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 
 const pipeline = usePipelineStore();

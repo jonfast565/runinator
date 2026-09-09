@@ -436,11 +436,148 @@ pub async fn import_pipeline_bundle_with<T: DefinitionStore + RuntimeStore + Sch
     Ok(imported)
 }
 
+/// Apply one pipeline source document to an existing pipeline. Unlike pack import, this keeps the
+/// selected durable identity even when the source changes its namespace or stable key.
+pub async fn update_pipeline_from_rexrap<T: DefinitionStore + RuntimeStore + ScheduleStore>(
+    db: &T,
+    pipeline_id: Uuid,
+    source: &str,
+) -> Result<Option<Pipeline>, SendableError> {
+    let Some(existing) = db.fetch_pipeline(pipeline_id).await? else {
+        return Ok(None);
+    };
+    let bundle = runinator_rexrap::parse_pipeline_str(source)
+        .map_err(|error| invalid_pipeline(error.to_string()))?;
+    let [spec] = bundle.pipelines.as_slice() else {
+        return Err(invalid_pipeline(
+            "pipeline REXRAP source must declare exactly one pipeline",
+        ));
+    };
+    let workflows = db.fetch_workflows().await?;
+    let mut pipeline = pipeline_from_spec(spec, existing.org_id, Some(&existing), &workflows)?;
+    // The current REXRAP pipeline grammar intentionally does not spell these canvas-only authoring
+    // defaults. Keep them when source is applied so a source round trip cannot silently reset a
+    // surface-editor choice.
+    pipeline.defaults.links_enabled_by_default = existing.defaults.links_enabled_by_default;
+    pipeline.defaults.default_parameters = existing.defaults.default_parameters.clone();
+    pipeline.defaults.default_failure_mode = existing.defaults.default_failure_mode;
+    pipeline.metadata = source_pipeline_metadata(&spec.metadata, Some(&existing.metadata))?;
+    validate_pipeline(&pipeline)?;
+    let saved = upsert_pipeline(db, &pipeline).await?;
+    let pipelines = db.fetch_pipelines().await?;
+    let saved_id = saved
+        .id
+        .ok_or_else(|| invalid_pipeline("saved pipeline is missing its id"))?;
+    materialize_pipeline_triggers(db, spec, saved_id, &workflows, &pipelines).await?;
+    Ok(Some(saved))
+}
+
+/// Render the REXRAP-managed portion of a stored pipeline back to portable source.
+pub fn pipeline_to_rexrap(pipeline: &Pipeline, triggers: &[PipelineTrigger]) -> String {
+    let mut metadata = pipeline.metadata.clone();
+    if let Some(metadata) = metadata.as_object_mut() {
+        metadata.remove("managed_by");
+        metadata.remove("requires_reimport");
+    }
+    let triggers = triggers
+        .iter()
+        .filter(|trigger| {
+            trigger
+                .metadata
+                .pointer("/managed_by")
+                .and_then(Value::as_str)
+                == Some("rexrap")
+        })
+        .map(|trigger| {
+            let mut configuration = trigger.configuration.clone();
+            if trigger.kind == runinator_models::workflows::WorkflowTriggerKind::Chained
+                && let Some(configuration) = configuration.as_object_mut()
+            {
+                configuration.remove("source_workflow_id");
+                configuration.remove("source_pipeline_id");
+            }
+            runinator_models::pipelines::PipelineTriggerSpec {
+                kind: trigger.kind.clone(),
+                enabled: trigger.enabled,
+                configuration,
+            }
+        })
+        .collect();
+    let bundle = PipelineBundle {
+        pipelines: vec![PipelineSpec {
+            name: pipeline.name.clone(),
+            key: pipeline.key.clone(),
+            namespace: pipeline.namespace.clone(),
+            description: pipeline.description.clone(),
+            defaults: pipeline.defaults.clone(),
+            members: pipeline
+                .graph
+                .members
+                .iter()
+                .map(|member| runinator_models::pipelines::PipelineMemberSpec {
+                    workspace: member.workspace.clone(),
+                    name: member.key.clone(),
+                    // Stored members carry their inherited value. Rendering it explicitly is
+                    // semantically equivalent and keeps source updates deterministic.
+                    failure_mode: Some(member.failure_mode),
+                })
+                .collect(),
+            links: pipeline
+                .graph
+                .links
+                .iter()
+                .map(|link| runinator_models::pipelines::PipelineLinkSpec {
+                    from: link.from.clone(),
+                    to: link.to.clone(),
+                    on: link.on,
+                    enabled: link.enabled,
+                    parameters: link.parameters.clone(),
+                })
+                .collect(),
+            joins: pipeline
+                .graph
+                .joins
+                .values()
+                .map(|join| runinator_models::pipelines::PipelineJoinSpec {
+                    target: join.target.clone(),
+                    mode: join.mode,
+                    parameters: join.parameters.clone(),
+                })
+                .collect(),
+            concurrency: pipeline.concurrency,
+            metadata,
+            triggers,
+        }],
+    };
+    runinator_rexrap::pipeline_to_rexrapp(&bundle)
+}
+
 async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>(
     db: &T,
     spec: &PipelineSpec,
     import_org: Option<Uuid>,
     existing: &[Pipeline],
+    workflows: &[WorkflowDefinition],
+) -> Result<Pipeline, SendableError> {
+    let stable_key = spec
+        .key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| invalid_pipeline("pipeline key is required"))?;
+    let prior = existing
+        .iter()
+        .find(|pipeline| pipeline.org_id == import_org && pipeline.artifact_key() == stable_key);
+    let pipeline = pipeline_from_spec(spec, import_org, prior, workflows)?;
+    let saved =
+        upsert_pipeline_with_author(db, &pipeline, &RevisionAuthor::system(RevisionSource::Pack))
+            .await?;
+    Ok(saved)
+}
+
+fn pipeline_from_spec(
+    spec: &PipelineSpec,
+    import_org: Option<Uuid>,
+    prior: Option<&Pipeline>,
     workflows: &[WorkflowDefinition],
 ) -> Result<Pipeline, SendableError> {
     // Resolve each canonical member path to an id; display-name aliases are deliberately not part
@@ -457,19 +594,8 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
                 .unwrap_or(spec.defaults.default_failure_mode),
         });
     }
-    // A stable key survives a namespace move or display rename. The destructive namespace cutover
-    // intentionally has no name-based fallback.
-    let stable_key = spec
-        .key
-        .as_deref()
-        .filter(|key| !key.trim().is_empty())
-        .ok_or_else(|| invalid_pipeline("pipeline key is required"))?;
-    let prior = existing
-        .iter()
-        .find(|pipeline| pipeline.org_id == import_org && pipeline.artifact_key() == stable_key);
-    let prior_id = prior.and_then(|p| p.id);
     let pipeline = Pipeline {
-        id: prior_id,
+        id: prior.and_then(|pipeline| pipeline.id),
         name: spec.name.clone(),
         key: spec.key.clone(),
         namespace: spec.namespace.clone(),
@@ -523,10 +649,7 @@ async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>
         updated_at: None,
     };
     validate_pipeline(&pipeline)?;
-    let saved =
-        upsert_pipeline_with_author(db, &pipeline, &RevisionAuthor::system(RevisionSource::Pack))
-            .await?;
-    Ok(saved)
+    Ok(pipeline)
 }
 
 fn imported_pipeline_metadata(metadata: &Value) -> Result<Value, SendableError> {
@@ -537,6 +660,25 @@ fn imported_pipeline_metadata(metadata: &Value) -> Result<Value, SendableError> 
     object.insert("managed_by".into(), Value::String("rexrap".into()));
     object.insert("requires_reimport".into(), Value::Bool(false));
     Ok(metadata)
+}
+
+fn source_pipeline_metadata(source: &Value, prior: Option<&Value>) -> Result<Value, SendableError> {
+    let source = source
+        .as_object()
+        .ok_or_else(|| invalid_pipeline("pipeline metadata must be an object"))?;
+    let mut metadata = prior
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let object = metadata
+        .as_object_mut()
+        .ok_or_else(|| invalid_pipeline("pipeline metadata must be an object"))?;
+    // These are the metadata fields represented by the REXRAP pipeline surface. Replace them
+    // wholesale so deleting a block from source removes its corresponding policy, while unrelated
+    // metadata remains intact for other pipeline features.
+    object.remove("ingress");
+    object.remove("orchestration");
+    object.extend(source.clone());
+    imported_pipeline_metadata(&metadata)
 }
 
 // realize a pipeline's header triggers as managed `pipeline_triggers`. reconciles idempotently: drop

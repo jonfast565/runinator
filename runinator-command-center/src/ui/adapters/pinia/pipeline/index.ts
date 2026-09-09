@@ -14,6 +14,7 @@ import { workflowPath } from "../../../../core/domain/models";
 import {
   deletePipeline as deletePipelineService,
   fetchPipelines,
+  savePipelineRexRap as savePipelineRexRapService,
   loadPipelineData,
   savePipeline,
   setPipelineOwner as setPipelineOwnerService,
@@ -229,6 +230,37 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
   function savePipelineMetadata(metadata: JsonRecord) {
     return persistSelected((draft) => ({ ...draft, metadata }));
+  }
+
+  async function savePipelineRexRap(source: string): Promise<boolean> {
+    const current = selectedPipeline.value;
+
+    if (!current?.id) {
+      return false;
+    }
+
+    return savePipelineRexRapFor(current.id, source);
+  }
+
+  // Source editing can happen from the orchestration page, whose selected definition is not
+  // necessarily the pipeline currently shown on the canvas.
+  async function savePipelineRexRapFor(id: string, source: string): Promise<boolean> {
+    if (!pipelines.value.some((pipeline) => pipeline.id === id)) {
+      error.value = "Selected pipeline no longer exists.";
+      return false;
+    }
+
+    try {
+      const saved = await savePipelineRexRapService(id, source);
+      pipelines.value = pipelines.value.map((pipeline) =>
+        pipeline.id === saved.id ? saved : pipeline,
+      );
+      await refreshGraph();
+      return true;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+      return false;
+    }
   }
 
   // persist metadata for a caller-selected pipeline without making it the active canvas.
@@ -530,6 +562,8 @@ export const usePipelineStore = defineStore("pipeline", () => {
     savePipelineConcurrency,
     savePipelineMetadata,
     savePipelineMetadataFor,
+    savePipelineRexRap,
+    savePipelineRexRapFor,
     setPipelineEnabled,
     updateJoin,
     addWorkflowToPipeline,

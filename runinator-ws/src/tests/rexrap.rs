@@ -106,6 +106,7 @@ async fn rexrap_analyze_validates_source_fragments() {
         ValidatedJson(crate::handlers::rexrap::RexRapSourceRequest {
             source: "params.count >".into(),
             fragment: Some(RexRapFragmentKind::Condition),
+            document: crate::handlers::rexrap::RexRapDocumentKind::Workflow,
         }),
     )
     .await;

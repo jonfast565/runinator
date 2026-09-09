@@ -1,6 +1,8 @@
 import type { ProviderMetadata } from "../provider/provider-metadata";
 import type { SettingKind } from "../setting";
 
+export type RexRapDocumentKind = "workflow" | "pipeline";
+
 export interface RexRapDiagnostic {
   start: number;
   end: number;
