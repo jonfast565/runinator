@@ -15,6 +15,7 @@ import BrokerMessageLog from "../shared/BrokerMessageLog.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
 import RunTimeline from "../shared/RunTimeline.vue";
 import RunGantt from "../shared/RunGantt.vue";
+import RunElapsedClock from "../shared/RunElapsedClock.vue";
 import RunNodeActions, { type RunNodeActionType } from "../shared/RunNodeActions.vue";
 import CursorRail from "./CursorRail.vue";
 import DebugControlBar from "./DebugControlBar.vue";

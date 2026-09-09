@@ -43,10 +43,18 @@
     </div>
   </div>
 
-  <div v-if="workflows.workflowRunDetail" class="workflow-run-meta">
-    <div>Started: {{ formatDate(workflows.workflowRunDetail.run.started_at) }}</div>
-    <div v-if="workflows.workflowRunDetail.run.finished_at">
-      Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}
+  <div v-if="workflows.workflowRunDetail" class="workflow-run-meta items-center">
+    <RunElapsedClock
+      :key="workflows.workflowRunDetail.run.id"
+      :started-at="workflows.workflowRunDetail.run.started_at"
+      :finished-at="workflows.workflowRunDetail.run.finished_at"
+      :status="workflows.workflowRunDetail.run.status"
+    />
+    <div class="grid gap-1">
+      <div>Started: {{ formatDate(workflows.workflowRunDetail.run.started_at) }}</div>
+      <div v-if="workflows.workflowRunDetail.run.finished_at">
+        Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}
+      </div>
     </div>
   </div>
 

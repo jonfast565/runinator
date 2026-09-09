@@ -23,3 +23,7 @@ The command center checks `RUNINATOR_COMMAND_CENTER_SERVICE_URL`,
 `RUNINATOR_SERVICE_URL`, then `WS_API_BASE_URL` before falling back to gossip.
 It is a pure client and does not execute workflow actions itself; use the
 desktop agent below to run actions on your own machine.
+
+## Workflow run timing
+
+The Workflow Runs detail view includes an analog elapsed-time clock. Its hour, minute, and second hands start at 12 and tick each second while the run is active, including waits and pauses. After the run finishes, the clock stays visible at the recorded final duration. The numeric hours/minutes/seconds display preserves total hours beyond one dial revolution. Queued runs stay at zero until they start; completed runs without timing data show “Timing unavailable.”
