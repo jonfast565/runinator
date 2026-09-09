@@ -576,6 +576,11 @@ pub enum ExecutionProfileCommands {
     List,
     /// Show one profile by UUID.
     Show { id: Uuid },
+    /// Show desktop-agent approval, collection, and publication status for profiles.
+    Status {
+        /// Profile UUID. Omit to show every profile in the active organization.
+        id: Option<Uuid>,
+    },
     /// Add an execution profile from generic command-line fields and JSON specifications.
     Add {
         /// Stable profile name for workflow and adapter bindings.

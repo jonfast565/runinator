@@ -1,7 +1,12 @@
 //! covers generic execution-profile request construction from command-line fields.
 
 use super::*;
-use runinator_models::execution_profiles::{ExecutionProfileCommand, ExecutionProfileSource};
+use chrono::Utc;
+use runinator_models::execution_profiles::{
+    ExecutionProfileAgentStatus, ExecutionProfileApprovalState, ExecutionProfileCommand,
+    ExecutionProfileHealth, ExecutionProfileSource,
+};
+use uuid::Uuid;
 
 #[test]
 fn request_reads_collection_and_exposure_json() {
@@ -58,4 +63,39 @@ fn request_defaults_exposure_and_names_invalid_json() {
     let error = profile_request("desktop-session", None, &["provider-a".into()], "{", None)
         .expect_err("invalid collection json");
     assert!(error.to_string().contains("--collection"));
+}
+
+#[test]
+fn collection_status_text_reports_desktop_approval_and_error() {
+    let profile_id = Uuid::now_v7();
+    let agent_id = Uuid::now_v7();
+    let now = Utc::now();
+    let status = ExecutionProfileCollectionStatus {
+        profile_id,
+        config_digest: "digest".into(),
+        publication_health: ExecutionProfileHealth::Ready,
+        current_revision: Some(3),
+        published_at: Some(now),
+        expires_at: None,
+        latest_operation: None,
+        agents: vec![ExecutionProfileAgentStatus {
+            profile_id,
+            agent_id,
+            config_digest: "digest".into(),
+            approval: ExecutionProfileApprovalState::Approved,
+            last_seen_at: now,
+            last_attempt_at: Some(now),
+            last_success_at: Some(now),
+            last_error: Some("collection failed after the last success".into()),
+        }],
+    };
+    let names = BTreeMap::from([(profile_id, "desktop-session".into())]);
+
+    let text = collection_status_text(&[status], &names);
+
+    assert!(text.contains("desktop-session"));
+    assert!(text.contains("publication: ready; revision: 3"));
+    assert!(text.contains(&agent_id.to_string()));
+    assert!(text.contains("approved"));
+    assert!(text.contains("collection failed after the last success"));
 }

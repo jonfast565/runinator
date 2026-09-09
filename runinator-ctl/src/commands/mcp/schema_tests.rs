@@ -185,6 +185,17 @@ fn execution_profile_add_has_a_callable_schema() {
 }
 
 #[test]
+fn execution_profile_status_has_a_callable_schema() {
+    let built = line(
+        "runinator_execution_profiles_status",
+        json!({ "id": "00000000-0000-0000-0000-000000000001" }),
+    );
+    assert_eq!(built[0..2], ["execution-profiles", "status"]);
+    assert!(built.contains(&"00000000-0000-0000-0000-000000000001".to_string()));
+    assert!(repl::parse(&built).is_ok(), "clap rejected {built:?}");
+}
+
+#[test]
 fn positionals_keep_their_declared_order() {
     let built = line(
         "runinator_settings_set",

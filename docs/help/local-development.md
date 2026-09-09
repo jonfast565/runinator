@@ -403,6 +403,9 @@ The desktop agent shows local profile approvals before starting collection. New 
 approvals appear in the agent window and trigger a native notification once per configuration.
 Requested collections and actions executing on the desktop also trigger native notifications;
 collection progress and failures remain available under **Execution profiles** and in the log.
+`runinatorctl execution-profiles status [profile-id]` reports each desktop's approval, last contact,
+last successful collection, sanitized collection error, publication state, and latest requested
+operation without exposing profile contents.
 System prompts such as macOS Keychain access are separate from Runinator's saved local approval.
 
 Execution-profile approval, collection, publication, and failure changes update Command Center

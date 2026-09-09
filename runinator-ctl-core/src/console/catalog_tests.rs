@@ -23,6 +23,7 @@ fn lists_console_verbs_and_every_command_line_leaf() {
     assert!(names.contains(&"workflows list".to_string()));
     assert!(names.contains(&"replicas list".to_string()));
     assert!(names.contains(&"execution-profiles add".to_string()));
+    assert!(names.contains(&"execution-profiles status".to_string()));
     // a parent is not itself callable, so it is not listed on its own.
     assert!(!names.contains(&"workflows".to_string()));
 }

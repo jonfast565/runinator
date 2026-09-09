@@ -1,7 +1,10 @@
 use super::*;
 
+use std::collections::BTreeMap;
+
 use runinator_models::execution_profiles::{
-    ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec, ExecutionProfilePutRequest,
+    ExecutionProfileCollectionSpec, ExecutionProfileCollectionStatus, ExecutionProfileExposureSpec,
+    ExecutionProfilePutRequest,
 };
 
 pub(super) async fn execution_profiles(
@@ -28,6 +31,30 @@ pub(super) async fn execution_profiles(
         ExecutionProfileCommands::Show { id } => {
             let profile = client.fetch_execution_profile(*id).await?;
             output::json(&profile)?;
+        }
+        ExecutionProfileCommands::Status { id } => {
+            let (profiles, mut statuses) = tokio::try_join!(
+                client.list_execution_profiles(),
+                client.list_execution_profile_collection_statuses(),
+            )?;
+            if let Some(id) = id {
+                statuses.retain(|status| status.profile_id == *id);
+                if statuses.is_empty() {
+                    return Err(err(format!("execution profile {id} not found")));
+                }
+            }
+            if json_output {
+                return output::json(&statuses);
+            }
+            if statuses.is_empty() {
+                println!("no execution profiles are configured");
+                return Ok(());
+            }
+            let names = profiles
+                .into_iter()
+                .map(|profile| (profile.id, profile.name))
+                .collect::<BTreeMap<_, _>>();
+            print!("{}", collection_status_text(&statuses, &names));
         }
         ExecutionProfileCommands::Add {
             name,
@@ -120,6 +147,94 @@ fn profile_request(
         exposure,
         enabled: true,
     })
+}
+
+fn collection_status_text(
+    statuses: &[ExecutionProfileCollectionStatus],
+    names: &BTreeMap<Uuid, String>,
+) -> String {
+    let mut text = String::new();
+    for (index, status) in statuses.iter().enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+        let name = names
+            .get(&status.profile_id)
+            .map(String::as_str)
+            .unwrap_or("unknown profile");
+        let revision = status
+            .current_revision
+            .map(|revision| revision.to_string())
+            .unwrap_or_else(|| "none".into());
+        let published = status
+            .published_at
+            .as_ref()
+            .map(|published| published.to_rfc3339())
+            .unwrap_or_else(|| "never".into());
+        let operation = status
+            .latest_operation
+            .as_ref()
+            .map(|operation| {
+                let error = operation
+                    .error
+                    .as_deref()
+                    .map(|error| format!(" ({})", output::truncate(error, 80)))
+                    .unwrap_or_default();
+                format!(
+                    "{} {}{}",
+                    operation.kind.as_str(),
+                    operation.state.as_str(),
+                    error
+                )
+            })
+            .unwrap_or_else(|| "none".into());
+        text.push_str(&format!(
+            "{name} ({})\npublication: {}; revision: {revision}; published: {published}\nlatest operation: {operation}\n",
+            status.profile_id,
+            status.publication_health.as_str(),
+        ));
+        let rows = match status.agents.is_empty() {
+            true => vec![vec![
+                "-".into(),
+                "not reported".into(),
+                "-".into(),
+                "-".into(),
+                "no desktop agent has reported this profile".into(),
+            ]],
+            false => status
+                .agents
+                .iter()
+                .map(|agent| {
+                    vec![
+                        agent.agent_id.to_string(),
+                        agent.approval.as_str().into(),
+                        agent.last_seen_at.to_rfc3339(),
+                        agent
+                            .last_success_at
+                            .as_ref()
+                            .map(|success| success.to_rfc3339())
+                            .unwrap_or_else(|| "-".into()),
+                        agent
+                            .last_error
+                            .as_deref()
+                            .map(|error| output::truncate(error, 80))
+                            .unwrap_or_else(|| "-".into()),
+                    ]
+                })
+                .collect(),
+        };
+        text.push_str(&output::table(
+            &[
+                "desktop agent",
+                "approval",
+                "last seen",
+                "last success",
+                "error",
+            ],
+            &rows,
+        ));
+    }
+    text
 }
 
 #[cfg(test)]

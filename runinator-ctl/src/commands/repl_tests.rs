@@ -115,6 +115,19 @@ fn parses_the_generic_execution_profile_add_command() {
 }
 
 #[test]
+fn parses_execution_profile_status_for_one_profile() {
+    let id = "00000000-0000-0000-0000-000000000001";
+    let parsed = parse(&tokens(&format!("execution-profiles status {id}"))).expect("parses");
+
+    assert!(matches!(
+        parsed.command,
+        Commands::ExecutionProfiles {
+            command: ExecutionProfileCommands::Status { id: Some(parsed_id) }
+        } if parsed_id.to_string() == id
+    ));
+}
+
+#[test]
 fn accepts_json_after_the_subcommand() {
     let parsed = parse(&tokens("runs list --open --json")).expect("parses");
     assert!(parsed.json);

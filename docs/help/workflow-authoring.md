@@ -31,7 +31,9 @@ runinatorctl execution-profiles add \
 
 The command accepts provider-neutral scopes and profile specifications; `--collection` is required,
 while `--exposure` defaults to an empty specification. Approve the newly configured profile in the
-desktop agent and use `execution-profiles rotate <profile-id>` to request a collection.
+desktop agent and use `execution-profiles status [profile-id]` to inspect its approval, desktop
+collection, publication, and most recent sanitized error. Use `execution-profiles rotate
+<profile-id>` to request a collection.
 
 The Execution Profiles table reports desktop collection health separately from publication
 availability. **Dry run** and **Rotate** queue a durable desktop operation for an agent that has

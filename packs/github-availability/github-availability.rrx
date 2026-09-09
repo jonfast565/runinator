@@ -1,0 +1,93 @@
+language rexrap-1
+
+package {
+  {
+    "name": "GitHub Availability Test Pack",
+    "version": 1
+  }
+}
+
+namespace runinator.tests.github {
+
+workflow "GitHub Availability" v1 {
+    key github_availability
+
+    do {
+        @id("github_user")
+        @timeout(30s)
+        @retry(1)
+        @runner("desktop")
+        @profile("github-default")
+        github_cli.api(endpoint: "user")
+            routes {
+                on success {
+                    continue available
+                }
+                on failure {
+                    continue unavailable
+                }
+                on timeout {
+                    continue unavailable
+                }
+            }
+
+        @id("available")
+        emit ("yes")
+    }
+
+    join unavailable {
+        @id("unavailable_no")
+        emit ("no")
+            routes {
+                on next {
+                    continue fail
+                }
+            }
+    }
+}
+
+}
+
+tests {
+  {
+    "workflow": "GitHub Availability",
+    "tests": [
+      {
+        "name": "an authenticated response succeeds",
+        "mocks": {
+          "github_user": { "output": { "response": { "login": "runinator" } } }
+        },
+        "expect": {
+          "status": "succeeded",
+          "reached": ["github_user", "available"],
+          "not_reached": ["unavailable_no", "fail"],
+          "output": "yes"
+        }
+      },
+      {
+        "name": "an unavailable desktop integration fails",
+        "mocks": {
+          "github_user": { "status": "failed" }
+        },
+        "expect": {
+          "status": "failed",
+          "reached": ["github_user", "unavailable_no", "fail"],
+          "not_reached": ["available"],
+          "output": "no"
+        }
+      },
+      {
+        "name": "a timeout fails",
+        "mocks": {
+          "github_user": { "status": "timed_out" }
+        },
+        "expect": {
+          "status": "failed",
+          "reached": ["github_user", "unavailable_no", "fail"],
+          "not_reached": ["available"],
+          "output": "no"
+        }
+      }
+    ]
+  }
+}
