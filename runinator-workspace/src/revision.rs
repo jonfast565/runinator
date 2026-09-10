@@ -194,6 +194,32 @@ pub fn capture_from<S: WriteStore>(
     Ok((edit, usage))
 }
 
+/// Reuse an immutable base namespace while replacing only its named results.
+pub fn checkpoint_results<S: WriteStore>(
+    store: S,
+    base: storage::Id,
+    base_usage: WorkspaceUsage,
+    results: &BTreeMap<String, Value>,
+    limits: WorkspaceLimits,
+    scratch: &Path,
+) -> Result<(Edit<S>, WorkspaceUsage), SendableError> {
+    limits.validate()?;
+    let mut edit = Edit::new(store, Some(base), Layout::default(), 16 * 1024 * 1024)?;
+    let results_bytes = save_results(&mut edit, results, limits, scratch)?;
+    let logical_bytes = base_usage
+        .logical_bytes
+        .checked_sub(base_usage.results_bytes)
+        .and_then(|bytes| bytes.checked_add(results_bytes))
+        .ok_or_else(|| WORKSPACE_INVALID.error("workspace result size overflow"))?;
+    let usage = WorkspaceUsage {
+        logical_bytes,
+        results_bytes,
+        entries: base_usage.entries,
+    };
+    limits.check(usage)?;
+    Ok((edit, usage))
+}
+
 fn scan<S: WriteStore>(
     edit: &mut Edit<S>,
     root: &Path,

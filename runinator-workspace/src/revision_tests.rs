@@ -79,6 +79,37 @@ fn capture_materialize_and_exact_limits() -> Result<(), SendableError> {
 }
 
 #[test]
+fn result_checkpoint_reuses_the_base_namespace() -> Result<(), SendableError> {
+    let source = tempfile::tempdir()?;
+    let scratch = tempfile::tempdir()?;
+    fs::write(source.path().join("file"), b"unchanged")?;
+    let (base_edit, base_usage) = capture(
+        Staging::new(EmptyStore, scratch.path())?,
+        source.path(),
+        &BTreeMap::new(),
+        WorkspaceLimits::default(),
+        scratch.path(),
+    )?;
+    let base = base_edit.finish("base", None)?;
+    let results = BTreeMap::from([("result".into(), Value::from("checkpoint"))]);
+    let (checkpoint, expected) = checkpoint_results(
+        Staging::new_deduplicating(&base_edit.store, scratch.path())?,
+        base,
+        base_usage,
+        &results,
+        WorkspaceLimits::default(),
+        scratch.path(),
+    )?;
+    assert_eq!(checkpoint.workspace.inodes, base_edit.workspace.inodes);
+    assert_eq!(checkpoint.projection.root, base_edit.projection.root);
+    let revision = checkpoint.finish("checkpoint", Some(base))?;
+    let view = View::new(&checkpoint.store, revision)?;
+    assert_eq!(read_results(&view)?, results);
+    assert_eq!(usage(&view)?, expected);
+    Ok(())
+}
+
+#[test]
 fn results_larger_than_a_single_storage_object() -> Result<(), SendableError> {
     let source = tempfile::tempdir()?;
     let scratch = tempfile::tempdir()?;

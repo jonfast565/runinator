@@ -91,6 +91,7 @@ impl ActiveWorkspace {
         replica_id: uuid::Uuid,
         deadline: std::time::Instant,
         phases: WorkspacePhaseReporter,
+        materialize_files: bool,
     ) -> Result<Self, SendableError> {
         let execution: WorkspaceExecution = value.decode()?;
         let expires = execution.checkout.leased_until.timestamp();
@@ -160,7 +161,11 @@ impl ActiveWorkspace {
         )?);
         let revision_for_materialize = revision_id.clone();
         let materialize_objects = objects.clone();
-        let phase = phases.start("workspace.restore.materialize");
+        let phase = phases.start(if materialize_files {
+            "workspace.restore.materialize"
+        } else {
+            "workspace.restore.metadata"
+        });
         let (directory, results) =
             tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
                 std::fs::create_dir_all(&root)?;
@@ -172,7 +177,9 @@ impl ActiveWorkspace {
                         materialize_objects.as_ref(),
                         revision.parse()?,
                     )?;
-                    runinator_workspace::revision::materialize(&view, directory.path())?;
+                    if materialize_files {
+                        runinator_workspace::revision::materialize(&view, directory.path())?;
+                    }
                     runinator_workspace::revision::read_results(&view)?
                 } else {
                     Default::default()
@@ -209,6 +216,7 @@ impl ActiveWorkspace {
         &self,
         api: &AsyncApiClient<StaticLocator>,
         output: Option<&Value>,
+        result_only: bool,
     ) -> Result<Option<WorkspaceCommit>, SendableError> {
         if self.execution.checkout.access == WorkspaceAccess::Read {
             let phase = self.phases.start("workspace.snapshot.reuse");
@@ -244,8 +252,17 @@ impl ActiveWorkspace {
             .snapshot
             .as_ref()
             .map(|snapshot| snapshot.revision_id.clone());
+        let base_usage = self
+            .execution
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.usage);
         let phases = self.phases.clone();
-        let capture_phase = phases.start("workspace.snapshot.capture");
+        let capture_phase = phases.start(if result_only && parent.is_some() {
+            "workspace.snapshot.results"
+        } else {
+            "workspace.snapshot.capture"
+        });
         let revision_id = tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
             use runinator_workspace::storage::{packs, staging::Staging};
             let scratch = tempfile::tempdir()?;
@@ -259,14 +276,26 @@ impl ActiveWorkspace {
                 deadline: objects.clone(),
             };
             let parent = parent.map(|value| value.parse()).transpose()?;
-            let (edit, usage) = runinator_workspace::revision::capture_from(
-                stage,
-                parent,
-                &root,
-                &results,
-                limits,
-                scratch.path(),
-            )?;
+            let (edit, usage) = match (result_only, parent, base_usage) {
+                (true, Some(parent), Some(base_usage)) => {
+                    runinator_workspace::revision::checkpoint_results(
+                        stage,
+                        parent,
+                        base_usage,
+                        &results,
+                        limits,
+                        scratch.path(),
+                    )?
+                }
+                _ => runinator_workspace::revision::capture_from(
+                    stage,
+                    parent,
+                    &root,
+                    &results,
+                    limits,
+                    scratch.path(),
+                )?,
+            };
             let revision = edit.finish("provider workspace", parent)?;
             capture_phase.succeeded(runinator_models::json!({
                 "entries": usage.entries,

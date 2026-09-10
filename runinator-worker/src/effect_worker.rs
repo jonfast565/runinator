@@ -507,6 +507,7 @@ async fn process_provider_effect(
     let workspace_deadline =
         std::time::Instant::now() + Duration::from_secs(workspace_remaining.max(0) as u64);
     let workspace_phases = crate::durable_workspace::WorkspacePhaseReporter::default();
+    let result_only_checkpoint = provider == "workspace" && function == "checkpoint";
     let portable_workspace = if let Some(value) = workspace_affinity
         .as_ref()
         .filter(|value| value.get("key").is_some())
@@ -519,6 +520,7 @@ async fn process_provider_effect(
                     replica_id,
                     workspace_deadline,
                     workspace_phases.clone(),
+                    !result_only_checkpoint,
                 )
                 .await
             }
@@ -718,7 +720,11 @@ async fn process_provider_effect(
                     }
                 } else {
                     workspace
-                        .save(&api_client, recorded.output_json.as_ref())
+                        .save(
+                            &api_client,
+                            recorded.output_json.as_ref(),
+                            result_only_checkpoint,
+                        )
                         .await
                 };
                 publish_workspace_phases(
@@ -920,7 +926,10 @@ async fn process_provider_effect(
     let mut terminal_message = outcome.task_result.message.clone();
     if let Some(workspace) = &portable_workspace {
         if status == WorkflowEffectStatus::Succeeded {
-            match workspace.save(&api_client, output.as_ref()).await {
+            match workspace
+                .save(&api_client, output.as_ref(), result_only_checkpoint)
+                .await
+            {
                 Ok(commit) => workspace_commit = commit,
                 Err(error) => {
                     status = WorkflowEffectStatus::Failed;

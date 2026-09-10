@@ -190,11 +190,13 @@ and stages only new objects. Pack omission checks use index or record-header met
 load or decompress object content merely to answer whether an object already exists. Read-only
 actions should override a writing workflow default with `@workspace({ ..., access: "read" })` so
 they reuse the restored snapshot and never scan, pack, upload, or seal unchanged content.
+The compiler-generated completion checkpoint restores only snapshot metadata and replaces named
+results against the immutable base; it never materializes or rescans the workspace filesystem.
 
 Workspace-affined effects publish bounded lifecycle records for archive download and indexing,
-materialization, change capture, pack upload, staging cleanup, read-only reuse, rebinding, and
-sealing. The run timeline projects those records as timed workspace phases. Lifecycle reporting is
-per phase, never per file or logical object.
+materialization or metadata-only recovery, change or result capture, pack upload, staging cleanup,
+read-only reuse, rebinding, and sealing. The run timeline projects those records as timed workspace
+phases. Lifecycle reporting is per phase, never per file or logical object.
 
 Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
 deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops
