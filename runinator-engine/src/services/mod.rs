@@ -99,3 +99,6 @@ mod workspace_transfers;
 pub use workspace_transfers::run_workspace_transfers;
 
 mod workspace_cursor;
+
+#[cfg(test)]
+mod workspace_directory_benchmark;

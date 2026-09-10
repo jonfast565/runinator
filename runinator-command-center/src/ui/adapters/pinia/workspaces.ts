@@ -9,6 +9,12 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
     selected: computed(() => state.value.selected),
     pinnedSnapshot: computed(() => state.value.pinnedSnapshot),
     versions: computed(() => state.value.versions),
+    directories: computed(() => state.value.directories),
+    expandDirectory: (...args: Parameters<typeof workspacesService.expandDirectory>) =>
+      workspacesService.expandDirectory(...args),
+    collapseDirectory: (path: string) => {
+      workspacesService.collapseDirectory(path);
+    },
     directory: computed(() => state.value.directory),
     results: computed(() => state.value.results),
     transfer: computed(() => state.value.transfer),

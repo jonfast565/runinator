@@ -359,109 +359,17 @@
                   role="tabpanel"
                   aria-labelledby="workspace-files-tab"
                 >
-                  <div class="workspace-file-toolbar">
-                    <button
-                      class="btn btn-sm"
-                      :disabled="!directoryPath || busy"
-                      @click="openDirectory(directoryPath.split('/').slice(0, -1).join('/'))"
-                    >
-                      Parent
-                    </button>
-                    <span>{{ directoryPath || "/" }}</span>
-                    <label>
-                      <Icon name="search" :size="14" />
-                      <input
-                        v-model.trim="fileQuery"
-                        type="search"
-                        placeholder="Filter this directory page"
-                      />
-                    </label>
-                    <span>{{ visibleFiles.length }} of {{ snapshot.usage.entries }}</span>
-                  </div>
-
-                  <EmptyState
-                    v-if="!visibleFiles.length"
-                    compact
-                    :icon="snapshot.usage.entries ? 'search' : 'file'"
-                    :title="
-                      snapshot.usage.entries ? 'No matching files' : 'No files in this version'
-                    "
-                    :description="
-                      snapshot.usage.entries
-                        ? `No paths match “${fileQuery}”.`
-                        : 'This version contains saved results only.'
-                    "
+                  <WorkspaceFileBrowser
+                    :key="snapshot.revision_id"
+                    :directories="store.directories"
+                    :path="directoryPath"
+                    :busy="busy"
+                    @open="openDirectory"
+                    @expand="expandDirectory"
+                    @collapse="store.collapseDirectory"
+                    @preview="preview"
+                    @download="download"
                   />
-
-                  <div v-else class="workspace-files-table-wrap">
-                    <table class="workspace-files-table">
-                      <thead>
-                        <tr>
-                          <th>Path</th>
-                          <th>Size</th>
-                          <th>Digest</th>
-                          <th><span class="sr-only">Actions</span></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="file in visibleFiles" :key="file.name">
-                          <td>
-                            <div class="workspace-file-path">
-                              <Icon
-                                :name="
-                                  file.kind === 'directory'
-                                    ? 'folder'
-                                    : file.link_target
-                                      ? 'link'
-                                      : 'file'
-                                "
-                                :size="15"
-                              />
-                              <span>
-                                <button
-                                  class="btn btn-sm btn-ghost"
-                                  :disabled="file.kind === 'symlink' || busy"
-                                  @click="
-                                    file.kind === 'directory'
-                                      ? openDirectory(childPath(file.name))
-                                      : preview(childPath(file.name))
-                                  "
-                                >
-                                  {{ file.name }}
-                                </button>
-                                <small v-if="file.link_target">→ {{ file.link_target }}</small>
-                                <small v-else-if="file.executable">Executable</small>
-                              </span>
-                            </div>
-                          </td>
-                          <td>{{ bytes(file.size_bytes) }}</td>
-                          <td>
-                            <code :title="file.content_id">{{ shortHash(file.content_id) }}</code>
-                          </td>
-                          <td>
-                            <button
-                              v-if="file.kind === 'file'"
-                              class="btn btn-sm btn-icon"
-                              type="button"
-                              :disabled="busy"
-                              :aria-label="`Download ${file.name}`"
-                              :title="`Download ${file.name}`"
-                              @click="download(childPath(file.name))"
-                            >
-                              <Icon name="download" :size="14" />
-                            </button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <button
-                    class="btn btn-sm"
-                    :disabled="!store.directory?.next_cursor || busy"
-                    @click="openDirectory(directoryPath, store.directory?.next_cursor ?? null)"
-                  >
-                    Next entries
-                  </button>
                   <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
                 </div>
 
@@ -484,11 +392,7 @@
                     class="workspace-file-toolbar"
                   >
                     <span>{{ result.name }} · {{ bytes(result.size_bytes) }}</span>
-                    <button
-                      class="btn btn-sm"
-                      :disabled="busy"
-                      @click="preview(result.name, true)"
-                    >
+                    <button class="btn btn-sm" :disabled="busy" @click="preview(result.name, true)">
                       Preview
                     </button>
                     <button
@@ -546,6 +450,7 @@ import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import WorkspaceFileBrowser from "../components/workspaces/WorkspaceFileBrowser.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 
 const pageSize = 50;
@@ -570,7 +475,6 @@ const page = ref(0);
 const versionPage = ref(0);
 const selectedVersion = ref<number | null>(null);
 const activeTab = ref<"files" | "results">("files");
-const fileQuery = ref("");
 const directoryPath = ref("");
 const compareVersion = ref<number | null>(null);
 const copyFeedback = ref("");
@@ -584,16 +488,6 @@ const snapshot = computed(
     store.versions.find((version) => version.version === selectedVersion.value) ??
     (store.pinnedSnapshot?.version === selectedVersion.value ? store.pinnedSnapshot : null),
 );
-const visibleFiles = computed(() => {
-  const query = fileQuery.value.toLowerCase();
-  return query
-    ? (store.directory?.entries ?? []).filter((file) =>
-        [file.name, file.link_target ?? "", file.content_id].some((value) =>
-          value.toLowerCase().includes(query),
-        ),
-      )
-    : (store.directory?.entries ?? []);
-});
 const resultCount = computed(() => store.results?.entries.length ?? 0);
 const canDeleteWorkspace = computed(() => store.selected?.permission === "own");
 const canDeleteVersion = computed(
@@ -652,7 +546,7 @@ async function operation(work: () => Promise<void>) {
 function resetVersionView() {
   selectedVersion.value = store.versions[0]?.version ?? null;
   activeTab.value = "files";
-  fileQuery.value = "";
+  directoryPath.value = "";
 }
 
 async function refresh() {
@@ -754,11 +648,7 @@ async function compare(cursor: string | null = null) {
   await operation(() => store.compare(selected.id, before, version, cursor));
 }
 
-function childPath(name: string) {
-  return directoryPath.value ? `${directoryPath.value}/${name}` : name;
-}
-
-async function openDirectory(path: string, cursor: string | null = null) {
+async function openDirectory(path: string) {
   const selected = store.selected;
   const version = selectedVersion.value;
 
@@ -767,7 +657,19 @@ async function openDirectory(path: string, cursor: string | null = null) {
   }
 
   directoryPath.value = path;
-  await operation(() => store.browse(selected.id, version, path, cursor));
+  store.clearPreview();
+  await store.browse(selected.id, version, path);
+}
+
+async function expandDirectory(path: string) {
+  const selected = store.selected;
+  const version = selectedVersion.value;
+
+  if (!selected || version === null) {
+    return;
+  }
+
+  await store.expandDirectory(selected.id, version, path);
 }
 
 async function loadResults(cursor: string | null = null) {
@@ -813,11 +715,20 @@ watch(
   () => snapshot.value?.revision_id,
   async (revision) => {
     if (revision) {
-      await openDirectory("");
-      await loadResults();
+      void openDirectory("");
+
+      if (activeTab.value === "results") {
+        await loadResults();
+      }
     }
   },
 );
+
+watch(activeTab, async (tab) => {
+  if (tab === "results" && !store.results) {
+    await loadResults();
+  }
+});
 
 async function remove(version: number | null) {
   const selected = store.selected;
@@ -1357,7 +1268,12 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1024px) {
+  .workspace-layout > :deep(.split-section) {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
   .workspace-layout {
     grid-template-columns: 1fr;
     overflow: auto;

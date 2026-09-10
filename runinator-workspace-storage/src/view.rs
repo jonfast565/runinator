@@ -8,7 +8,7 @@ use crate::{
     namespace, pages,
     projection::{PathNode, PathProjection},
     radix,
-    store::{ReadStore, load},
+    store::{ReadStore, load, load_many},
 };
 
 pub struct View<S> {
@@ -57,15 +57,36 @@ impl<S: ReadStore> View<S> {
             crate::projection::subtree(&self.store, &self.projection, path)?
         };
         let node: PathNode = load(&self.store, node, Kind::PathNode)?;
-        radix::page(&self.store, node.children, after.map(str::as_bytes), limit)?
+        let children = radix::page(&self.store, node.children, after.map(str::as_bytes), limit)?;
+        let nodes: Vec<PathNode> = load_many(
+            &self.store,
+            &children.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+            Kind::PathNode,
+        )?;
+        let inodes: Vec<Inode> = load_many(
+            &self.store,
+            &nodes.iter().map(|node| node.inode_id).collect::<Vec<_>>(),
+            Kind::Inode,
+        )?;
+        let file_ids: Vec<_> = inodes
+            .iter()
+            .filter_map(|inode| match inode.data {
+                InodeData::File(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let files: Vec<FileObject> = load_many(&self.store, &file_ids, Kind::File)?;
+        let sizes: std::collections::HashMap<_, _> = file_ids
             .into_iter()
-            .map(|(name, id)| {
-                let node: PathNode = load(&self.store, id, Kind::PathNode)?;
-                let inode: Inode = load(&self.store, node.inode_id, Kind::Inode)?;
-                let size = match &inode.data {
-                    InodeData::File(id) => {
-                        load::<FileObject, _>(&self.store, *id, Kind::File)?.size
-                    }
+            .zip(files.into_iter().map(|file| file.size))
+            .collect();
+        children
+            .into_iter()
+            .zip(nodes)
+            .zip(inodes)
+            .map(|(((name, _), node), inode)| {
+                let size = match inode.data {
+                    InodeData::File(id) => sizes[&id],
                     _ => 0,
                 };
                 Ok(Entry {

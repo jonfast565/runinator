@@ -6,6 +6,7 @@ import type {
   WorkspaceDirectory,
   WorkspaceDiff,
 } from "../domain/models/workspaces";
+import { createDirectoryLoader, emptyDirectories } from "./workspace-directories";
 import { createStore } from "./event-bus";
 
 export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
@@ -15,14 +16,21 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
     versions: [] as WorkspaceSnapshot[],
     pinnedSnapshot: null as WorkspaceSnapshot | null,
     directory: null as WorkspaceDirectory | null,
+    directories: emptyDirectories(),
     results: null as WorkspaceDirectory | null,
     preview: "",
     diff: null as WorkspaceDiff | null,
     transfer: null as import("../domain/models/workspaces").WorkspaceTransfer | null,
   });
+  const directories = createDirectoryLoader(api, (directories, path) => {
+    store.setState((current) => ({
+      ...current,
+      directories,
+      directory: directories[path] ?? null,
+    }));
+  });
   let listGeneration = 0;
   let detailGeneration = 0;
-  let directoryGeneration = 0;
   let resultsGeneration = 0;
   let previewGeneration = 0;
   let diffGeneration = 0;
@@ -36,7 +44,12 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
     }
 
     activeVersion = next;
-    directoryGeneration++;
+    const snapshot =
+      store.getState().versions.find((item) => item.version === version) ??
+      (store.getState().pinnedSnapshot?.version === version
+        ? store.getState().pinnedSnapshot
+        : null);
+    directories.reset(snapshot?.revision_id ?? "");
     resultsGeneration++;
     previewGeneration++;
     diffGeneration++;
@@ -52,6 +65,7 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
   return {
     ...store,
     async refresh(offset = 0) {
+      directories.reset();
       const token = ++listGeneration;
       const items = await api.fetchDurableWorkspaces(offset).catch((error: unknown) => {
         if (token === listGeneration) {
@@ -71,8 +85,8 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
     },
     async select(selected: DurableWorkspace | null, offset = 0, pinned: number | null = null) {
       activeVersion = "";
+      directories.reset();
       const token = ++detailGeneration;
-      directoryGeneration++;
       diffGeneration++;
       resultsGeneration++;
       previewGeneration++;
@@ -131,17 +145,22 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
       results = false,
     ) {
       activate(workspace, version);
-      const token = results ? ++resultsGeneration : ++directoryGeneration;
+
+      if (!results) {
+        return directories.load(workspace, version, path);
+      }
+
+      const token = ++resultsGeneration;
       previewGeneration++;
       store.setState((current) => ({
         ...current,
-        [results ? "results" : "directory"]: null,
+        results: null,
         preview: "",
       }));
       const page = await api
         .fetchWorkspaceDirectory(workspace, version, path, cursor, results)
         .catch((error: unknown) => {
-          if (token === (results ? resultsGeneration : directoryGeneration)) {
+          if (token === resultsGeneration) {
             throw error;
           }
 
@@ -152,9 +171,16 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
         return;
       }
 
-      if (token === (results ? resultsGeneration : directoryGeneration)) {
-        store.setState((current) => ({ ...current, [results ? "results" : "directory"]: page }));
+      if (token === resultsGeneration) {
+        store.setState((current) => ({ ...current, results: page }));
       }
+    },
+    async expandDirectory(workspace: string, version: number, path: string) {
+      activate(workspace, version);
+      return directories.load(workspace, version, path, true);
+    },
+    collapseDirectory(path: string) {
+      directories.collapse(path);
     },
     async compare(workspace: string, before: number, after: number, cursor: string | null = null) {
       activate(workspace, after);
@@ -206,6 +232,7 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
     },
     async remove(id: string, version: number | null = null) {
       await api.deleteDurableWorkspace(id, version);
+      directories.reset();
     },
     async download(workspace: string, version: number, path: string | null = null, result = false) {
       if (path !== null) {
@@ -264,9 +291,9 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
     },
     clear() {
       activeVersion = "";
+      directories.reset();
       listGeneration++;
       detailGeneration++;
-      directoryGeneration++;
       diffGeneration++;
       resultsGeneration++;
       previewGeneration++;
@@ -276,6 +303,7 @@ export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
         versions: [],
         pinnedSnapshot: null,
         directory: null,
+        directories: emptyDirectories(),
         results: null,
         preview: "",
         diff: null,

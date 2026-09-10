@@ -14,16 +14,49 @@ pub struct SharedObjects<T: DurableWorkspaceStore> {
     pub runtime: tokio::runtime::Handle,
     pub reader: Option<ReaderGuard<T>>,
     pub records: storage::cache::ByteCache,
+    pub database_reads: std::sync::atomic::AtomicU64,
+    pub blob_reads: std::sync::atomic::AtomicU64,
+    pub locations: std::sync::Mutex<std::collections::HashMap<Id, WorkspaceObjectLocation>>,
+    pub metadata_reads: Arc<tokio::sync::Semaphore>,
 }
 
 impl<T: DurableWorkspaceStore> SharedObjects<T> {
     async fn location(&self, id: Id) -> Result<WorkspaceObjectLocation, SendableError> {
-        self.db
+        if let Some(location) = self
+            .locations
+            .lock()
+            .map_err(|_| storage::Error::Poisoned)?
+            .get(&id)
+            .cloned()
+        {
+            return Ok(location);
+        }
+        self.database_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let location = self
+            .db
             .fetch_workspace_object(self.workspace, id.to_string())
             .await?
-            .ok_or_else(|| Box::new(storage::Error::NotFound(id.to_string())) as SendableError)
+            .ok_or_else(|| Box::new(storage::Error::NotFound(id.to_string())) as SendableError)?;
+        let mut locations = self
+            .locations
+            .lock()
+            .map_err(|_| storage::Error::Poisoned)?;
+        // bounded to one small directory page's metadata, including traversal nodes.
+        if locations.len() >= 8192 {
+            locations.clear();
+        }
+        locations.insert(id, location.clone());
+        Ok(location)
     }
     fn read(&self, id: Id) -> storage::Result<Object> {
+        if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
+            return Err(storage::Error::Conflict);
+        }
+        let _permit = self
+            .runtime
+            .block_on(self.metadata_reads.acquire())
+            .map_err(|_| storage::Error::Conflict)?;
         if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
             return Err(storage::Error::Conflict);
         }
@@ -38,13 +71,20 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         {
             return Err(storage::Error::Corrupt("oversized physical record".into()));
         }
-        let bytes = self
+        let load = || {
+            self.runtime
+                .block_on(self.read_record(&location))
+                .map_err(storage_error)
+        };
+        let bytes = match self
             .records
-            .get_or_load(key, location.length as usize, || {
-                self.runtime
-                    .block_on(self.read_record(&location))
-                    .map_err(storage_error)
-            })?;
+            .get_or_load(key, location.length as usize, load)
+        {
+            Ok(bytes) => bytes,
+            // concurrent large records may fill the cache; the shared read limit bounds fallback buffers.
+            Err(storage::Error::CacheFull) => Arc::new(load()?),
+            Err(error) => return Err(error),
+        };
         storage::record::decode_range(&bytes, id, location.member)
     }
     async fn read_record(
@@ -52,6 +92,8 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         location: &WorkspaceObjectLocation,
     ) -> Result<Vec<u8>, SendableError> {
         use tokio::io::AsyncReadExt;
+        self.blob_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let uri = crate::artifact_storage::workspace_pack_uri(self.workspace, &location.pack)?;
         let end = location
             .offset
@@ -85,6 +127,29 @@ pub(super) fn storage_error(error: SendableError) -> storage::Error {
 }
 
 impl<T: DurableWorkspaceStore> ReadStore for SharedObjects<T> {
+    fn get_many(&self, ids: &[Id]) -> storage::Result<Vec<Object>> {
+        // scoped threads borrow the request's reader guard; all finish before it is released.
+        std::thread::scope(|scope| {
+            let chunk_size = ids.len().div_ceil(8).max(1);
+            let tasks: Vec<_> = ids
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .map(|id| self.read(*id))
+                            .collect::<storage::Result<Vec<_>>>()
+                    })
+                })
+                .collect();
+            let mut objects = Vec::with_capacity(ids.len());
+            for task in tasks {
+                objects.extend(task.join().map_err(|_| storage::Error::Conflict)??);
+            }
+            Ok(objects)
+        })
+    }
+
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
         let location = self
             .runtime

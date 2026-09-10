@@ -120,11 +120,15 @@ where
 /// Current immutable object-graph workspace representation.
 pub(crate) struct ObjectGraphStorageProvider<T> {
     context: WorkspaceStorageContext<T>,
+    pub(super) metadata_reads: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl<T> ObjectGraphStorageProvider<T> {
     pub(crate) fn new(context: WorkspaceStorageContext<T>) -> Self {
-        Self { context }
+        Self {
+            context,
+            metadata_reads: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
+        }
     }
 }
 

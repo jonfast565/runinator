@@ -21,6 +21,10 @@ pub struct Object {
 pub trait ReadStore: Sync {
     fn info(&self, id: Id) -> Result<ObjectInfo>;
     fn get(&self, id: Id) -> Result<Object>;
+    /// Read objects in input order; backends may fetch independent objects concurrently.
+    fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
+        ids.iter().map(|id| self.get(*id)).collect()
+    }
     fn contains(&self, id: Id) -> Result<bool> {
         match self.info(id) {
             Ok(_) => Ok(true),
@@ -33,6 +37,9 @@ pub trait WriteStore: ReadStore {
     fn put(&self, kind: Kind, raw: &[u8]) -> Result<Id>;
 }
 impl<S: ReadStore + ?Sized> ReadStore for &S {
+    fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
+        (**self).get_many(ids)
+    }
     fn info(&self, id: Id) -> Result<ObjectInfo> {
         (**self).info(id)
     }
@@ -108,4 +115,33 @@ impl WriteStore for MemoryStore {
         });
         Ok(id)
     }
+}
+
+/// Decode an ordered batch, fetching each identity at most once.
+pub fn load_many<T: Binary, S: ReadStore + ?Sized>(
+    s: &S,
+    ids: &[Id],
+    kind: Kind,
+) -> Result<Vec<T>> {
+    let mut positions = HashMap::new();
+    let mut unique = Vec::new();
+    for id in ids {
+        if !positions.contains_key(id) {
+            positions.insert(*id, unique.len());
+            unique.push(*id);
+        }
+    }
+    let objects = s.get_many(&unique)?;
+    if objects.len() != unique.len() {
+        return Err(corrupt("bulk read returned incorrect object count"));
+    }
+    ids.iter()
+        .map(|id| {
+            let object = &objects[positions[id]];
+            if object.kind != kind {
+                return Err(corrupt("object has incorrect type"));
+            }
+            T::decode(&object.bytes)
+        })
+        .collect()
 }

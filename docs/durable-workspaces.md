@@ -266,7 +266,14 @@ MCP schemas and WASM catalog data derive from the same command tree.
 ## Inspecting and deleting
 
 Command Center's **Workspaces** view lists keys, version history, producing run/attempt, paged
-results, directories and diffs. Preview files or download individual files/results; archive downloads
+results and diffs. The Files tab has a resizable folders-only tree and a virtualized directory
+listing. Expand a folder to discover its children, or select it to browse its files. The first
+200 entries appear as soon as available; later pages append automatically until the directory is
+complete. Filtering covers accumulated entries and continues loading remaining pages. Loading and
+retry status distinguish incomplete listings from empty directories. Visited directories are reused
+within the active immutable version; refresh, version changes, deletion, and logout clear that cache.
+The folder tree collapses on narrow screens and breadcrumbs remain available. Results load when
+that tab opens. Preview files or download individual files/results; archive downloads
 create durable export jobs. Browser downloads use short-lived resource-scoped tickets and desktop
 downloads stream directly to a selected file. Pipeline
 defaults also include a JSON workspace-binding editor; member overrides can be authored in REXRAP.
@@ -309,3 +316,11 @@ other buckets and worker user directories are untouched. A repeated interrupted 
 safely; a completed ledger refuses another erase so newly created workspaces cannot be deleted by
 an accidental retry. Resume recorded replicas only after deploying the new storage code. External
 object stores require an equivalent scoped maintenance procedure; the command refuses them.
+
+### Directory loading diagnostics
+
+Directory metadata is fetched in ordered batches, with at most eight concurrent object reads per
+storage provider. Request-local location and physical-record caches avoid repeat database lookups
+and blob ranges. The engine's debug event `workspace directory metadata loaded` reports elapsed
+milliseconds, entry count, database reads, and blob reads for each page. File contents are not read
+for directory listings. Existing authorization, reader leases, and cursor validation still apply.

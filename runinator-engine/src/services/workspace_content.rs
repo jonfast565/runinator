@@ -67,6 +67,10 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                 workspace,
                 runtime: tokio::runtime::Handle::current(),
                 reader: None,
+                database_reads: Default::default(),
+                blob_reads: Default::default(),
+                locations: std::sync::Mutex::new(std::collections::HashMap::new()),
+                metadata_reads: self.metadata_reads.clone(),
                 records: runinator_workspace::storage::cache::ByteCache::new(64 * 1024 * 1024),
             },
             48 * 1024 * 1024,
@@ -292,8 +296,14 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
         let after = decode_cursor(after, &snapshot.revision_id, &path, false)?;
         let store = self.version_objects(id, version).await?;
         tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
+            let started = std::time::Instant::now();
             let view = View::new(store, snapshot.revision_id.parse()?)?;
             let mut entries = view.directory(&path, after.as_deref(), limit + 1)?;
+            tracing::debug!(workspace = %id, version, path, entries = entries.len(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                database_reads = view.store.inner.database_reads.load(std::sync::atomic::Ordering::Relaxed),
+                blob_reads = view.store.inner.blob_reads.load(std::sync::atomic::Ordering::Relaxed),
+                "workspace directory metadata loaded");
             let next_cursor = if entries.len() > limit {
                 entries.truncate(limit);
                 entries.last().map(|entry| entry.name.clone())

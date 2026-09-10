@@ -124,7 +124,29 @@ async fn packs_are_validated_before_receipt_and_receipts_do_not_publish() {
         // bypass the logical cache to exercise shared physical records across verification passes.
         gc::verify_roots(&objects.inner, &[verified_revision], scratch.path(), false).unwrap();
         let first = objects.inner.records.stats().unwrap();
+        let batch = objects.inner.get_many(&[verified_revision; 32]).unwrap();
+        assert_eq!(batch.len(), 32);
+        assert!(batch.windows(2).all(|pair| pair[0].bytes == pair[1].bytes));
+        assert_eq!(objects.inner.metadata_reads.available_permits(), 8);
+        let database_reads = objects
+            .inner
+            .database_reads
+            .load(std::sync::atomic::Ordering::Relaxed);
         objects.inner.get(verified_revision).unwrap();
+        assert_eq!(
+            objects
+                .inner
+                .database_reads
+                .load(std::sync::atomic::Ordering::Relaxed),
+            database_reads
+        );
+        assert!(
+            objects
+                .inner
+                .get_many(&[runinator_workspace::storage::Id::sha256(b"missing")])
+                .is_err()
+        );
+        assert_eq!(objects.inner.metadata_reads.available_permits(), 8);
         let second = objects.inner.records.stats().unwrap();
         assert_eq!(second.misses, first.misses);
         assert!(second.hits > first.hits);

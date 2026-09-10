@@ -58,6 +58,16 @@ impl ByteCache {
             misses: s.misses,
         })
     }
+    fn get_cached(&self, id: Id) -> Result<Option<Arc<Vec<u8>>>> {
+        let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        let Some(entry) = state.entries.get_mut(&id) else {
+            return Ok(None);
+        };
+        entry.referenced = true;
+        let bytes = entry.bytes.clone();
+        state.hits += 1;
+        Ok(Some(bytes))
+    }
     pub fn get_or_load<F>(&self, id: Id, len: usize, loader: F) -> Result<Arc<Vec<u8>>>
     where
         F: FnOnce() -> Result<Vec<u8>>,
@@ -186,6 +196,57 @@ pub struct CachedStore<S> {
     pub caches: Arc<ObjectCaches>,
 }
 impl<S: ReadStore> ReadStore for CachedStore<S> {
+    fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
+        let mut found = HashMap::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            if found.contains_key(id) || missing.contains(id) {
+                continue;
+            }
+            let info = self.inner.info(*id)?;
+            let cache = if info.kind == Kind::Chunk {
+                &self.caches.chunks
+            } else {
+                &self.caches.metadata
+            };
+            if let Some(bytes) = cache.get_cached(*id)? {
+                if bytes.len() != info.raw_len {
+                    return Err(corrupt("cache length mismatch"));
+                }
+                found.insert(
+                    *id,
+                    Object {
+                        kind: info.kind,
+                        bytes,
+                    },
+                );
+            } else {
+                missing.push(*id);
+            }
+        }
+        let loaded = self.inner.get_many(&missing)?;
+        if loaded.len() != missing.len() {
+            return Err(corrupt("bulk read returned incorrect object count"));
+        }
+        for (id, object) in missing.into_iter().zip(loaded) {
+            let cache = if object.kind == Kind::Chunk {
+                &self.caches.chunks
+            } else {
+                &self.caches.metadata
+            };
+            let bytes =
+                cache.get_or_load(id, object.bytes.len(), || Ok((*object.bytes).clone()))?;
+            found.insert(
+                id,
+                Object {
+                    kind: object.kind,
+                    bytes,
+                },
+            );
+        }
+        Ok(ids.iter().map(|id| found[id].clone()).collect())
+    }
+
     fn info(&self, id: Id) -> Result<ObjectInfo> {
         self.inner.info(id)
     }
@@ -201,6 +262,24 @@ pub struct BufferedStore<S> {
     state: Mutex<(usize, HashMap<Id, Object>)>,
 }
 impl<S> BufferedStore<S> {
+    fn retain(&self, id: Id, object: &Object) -> Result<()> {
+        let size = object.bytes.len().saturating_add(128);
+        if size <= self.capacity {
+            let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
+            if !state.1.contains_key(&id) {
+                while state.0 > self.capacity - size {
+                    let key = state.1.keys().next().copied().ok_or(Error::Poisoned)?;
+                    if let Some(evicted) = state.1.remove(&key) {
+                        state.0 -= evicted.bytes.len().saturating_add(128);
+                    }
+                }
+                state.0 += size;
+                state.1.insert(id, object.clone());
+            }
+        }
+        Ok(())
+    }
+
     pub fn new(inner: S, capacity: usize) -> Self {
         Self {
             inner,
@@ -210,6 +289,34 @@ impl<S> BufferedStore<S> {
     }
 }
 impl<S: ReadStore> ReadStore for BufferedStore<S> {
+    fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
+        let mut found = HashMap::new();
+        {
+            let state = self.state.lock().map_err(|_| Error::Poisoned)?;
+            for id in ids {
+                if let Some(object) = state.1.get(id) {
+                    found.insert(*id, object.clone());
+                }
+            }
+        }
+        let missing: Vec<_> = ids
+            .iter()
+            .copied()
+            .filter(|id| !found.contains_key(id))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let loaded = self.inner.get_many(&missing)?;
+        if loaded.len() != missing.len() {
+            return Err(corrupt("bulk read returned incorrect object count"));
+        }
+        for (id, object) in missing.into_iter().zip(loaded) {
+            self.retain(id, &object)?;
+            found.insert(id, object);
+        }
+        Ok(ids.iter().map(|id| found[id].clone()).collect())
+    }
+
     fn info(&self, id: Id) -> Result<ObjectInfo> {
         if let Some(object) = self.state.lock().map_err(|_| Error::Poisoned)?.1.get(&id) {
             return Ok(ObjectInfo {
@@ -231,20 +338,7 @@ impl<S: ReadStore> ReadStore for BufferedStore<S> {
             return Ok(object);
         }
         let object = self.inner.get(id)?;
-        let size = object.bytes.len().saturating_add(128);
-        if size <= self.capacity {
-            let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
-            if !state.1.contains_key(&id) {
-                while state.0 > self.capacity - size {
-                    let key = state.1.keys().next().copied().ok_or(Error::Poisoned)?;
-                    if let Some(evicted) = state.1.remove(&key) {
-                        state.0 -= evicted.bytes.len().saturating_add(128);
-                    }
-                }
-                state.0 += size;
-                state.1.insert(id, object.clone());
-            }
-        }
+        self.retain(id, &object)?;
         Ok(object)
     }
     fn contains(&self, id: Id) -> Result<bool> {
