@@ -76,3 +76,55 @@ async fn restore_does_not_retry_a_genuinely_stale_checkout() {
     assert!(error.to_string().contains("checkout is no longer active"));
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+struct CheckoutSource {
+    checkout: uuid::Uuid,
+    replica: uuid::Uuid,
+    calls: std::sync::atomic::AtomicUsize,
+}
+#[async_trait::async_trait]
+impl WorkspaceCheckoutClient for CheckoutSource {
+    async fn download_workspace_checkout(
+        &self,
+        checkout: uuid::Uuid,
+        replica: uuid::Uuid,
+        timeout: std::time::Duration,
+    ) -> runinator_api::Result<Vec<u8>> {
+        assert_eq!((checkout, replica), (self.checkout, self.replica));
+        assert!(!timeout.is_zero());
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            return Err(workspace_http_error(
+                "replica has not claimed this active attempt",
+            ));
+        }
+        Ok(vec![7, 8])
+    }
+    async fn seal_workspace(
+        &self,
+        _: uuid::Uuid,
+        _: uuid::Uuid,
+        _: String,
+        _: std::time::Duration,
+    ) -> runinator_api::Result<WorkspaceReceipt> {
+        panic!("restore must not seal a checkout")
+    }
+}
+
+#[tokio::test]
+async fn injected_checkout_transport_preserves_claim_retry_and_scope() {
+    let source = CheckoutSource {
+        checkout: uuid::Uuid::new_v4(),
+        replica: uuid::Uuid::new_v4(),
+        calls: Default::default(),
+    };
+    let bytes = download_workspace_checkout_after_claim(
+        &source,
+        source.checkout,
+        source.replica,
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bytes, vec![7, 8]);
+    assert_eq!(source.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

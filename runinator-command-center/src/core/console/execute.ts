@@ -1,10 +1,12 @@
+import type { ConsoleApi } from "../api/ports/console";
 // running one `:` line.
 
-import { COMMANDS } from "./registry";
+import { createCommands } from "./registry";
 import type { ConsoleOutput, ConsoleSessionPort, ConsoleTerminalPort } from "./types";
 import { ctlFlags, ctlParse } from "./wasm-engine";
 
 export interface ConsoleExecution {
+  api?: ConsoleApi;
   session: ConsoleSessionPort;
   terminal: ConsoleTerminalPort;
   signal: AbortSignal;
@@ -23,7 +25,9 @@ export async function executeCommand(line: string, execution: ConsoleExecution):
   }
 
   const name = parsed.path.join(" ");
-  const command = COMMANDS.find((candidate) => candidate.path.join(" ") === name);
+  const command = createCommands(execution.api).find(
+    (candidate) => candidate.path.join(" ") === name,
+  );
 
   if (!command) {
     throw new Error(`:${name} is not available in Command Center`);

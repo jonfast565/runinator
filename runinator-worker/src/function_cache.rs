@@ -18,11 +18,12 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::capabilities::{FunctionArtifactSource, FunctionExportResolver};
 use runinator_models::errors::SendableError;
 use runinator_models::functions::{FunctionBinding, is_valid_digest};
 use runinator_models::value::{Map, Value};
 use runinator_platform::app_data;
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::errors::{
@@ -46,25 +47,25 @@ pub const DEFAULT_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// downloads and unpacks packaged-function artifacts, keyed by digest.
 pub struct FunctionCache {
-    client: AsyncApiClient<StaticLocator>,
+    client: Arc<dyn FunctionArtifactSource>,
     root: PathBuf,
     capacity_bytes: u64,
 }
 
 impl FunctionCache {
-    pub fn new(client: AsyncApiClient<StaticLocator>) -> Self {
+    pub fn new(client: impl FunctionArtifactSource + 'static) -> Self {
         let root = app_data::app_data_path("worker/functions")
             .unwrap_or_else(|_| std::env::temp_dir().join("runinator-worker-functions"));
         Self {
-            client,
+            client: Arc::new(client),
             root,
             capacity_bytes: DEFAULT_CACHE_BYTES,
         }
     }
 
-    pub fn with_root(client: AsyncApiClient<StaticLocator>, root: PathBuf) -> Self {
+    pub fn with_root(client: impl FunctionArtifactSource + 'static, root: PathBuf) -> Self {
         Self {
-            client,
+            client: Arc::new(client),
             root,
             capacity_bytes: DEFAULT_CACHE_BYTES,
         }
@@ -166,7 +167,7 @@ const READY_MARKER: &str = ".runinator-staged";
 /// binding names an exact version, and this reads that version.
 pub async fn prepare_invocation(
     cache: &FunctionCache,
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn FunctionExportResolver,
     binding: &FunctionBinding,
     authored: Value,
     context: Value,

@@ -1,9 +1,10 @@
-import { fetchSupervisorStatus, type SupervisorStatus } from "../api/commandCenterApi";
+import { defaultApi, type SupervisorApi } from "../api/ports/supervisor";
+import type { SupervisorStatus } from "../api/commandCenterApi";
 
-export function createSupervisorService() {
+export function createSupervisorService(api: SupervisorApi = defaultApi) {
   return {
     fetchStatus(): Promise<SupervisorStatus> {
-      return fetchSupervisorStatus();
+      return api.fetchSupervisorStatus();
     },
   };
 }

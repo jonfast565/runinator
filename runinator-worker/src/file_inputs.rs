@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::capabilities::RunFileSource;
 use runinator_models::{
     errors::SendableError,
     files::{FileDescriptor, validate_relative_path, with_local_path},
@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub async fn materialize(
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn RunFileSource,
     effect_id: Uuid,
     workflow_run_id: Uuid,
     value: Value,
@@ -27,7 +27,7 @@ pub async fn materialize(
 }
 
 async fn materialize_value(
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn RunFileSource,
     root: &Path,
     workflow_run_id: Uuid,
     value: Value,
@@ -59,7 +59,7 @@ async fn materialize_value(
 }
 
 async fn materialize_file(
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn RunFileSource,
     root: &Path,
     workflow_run_id: Uuid,
     descriptor: &FileDescriptor,
@@ -97,3 +97,7 @@ async fn materialize_file(
         target.to_string_lossy().into_owned(),
     ))
 }
+
+#[cfg(test)]
+#[path = "file_inputs_tests.rs"]
+mod file_inputs_tests;

@@ -1,23 +1,17 @@
-import {
-  fetchNodeBackends,
-  fetchNodes,
-  scaleNodes,
-  type NodeBackendInfo,
-  type ProvisionedGroup,
-  type ScaleNodesRequest,
-} from "../api/commandCenterApi";
+import { defaultApi, type NodePoolsApi } from "../api/ports/node-pools";
+import type { NodeBackendInfo, ProvisionedGroup, ScaleNodesRequest } from "../api/commandCenterApi";
 import type { AppService } from "./app";
 
-export function createNodePoolsService(app: AppService) {
+export function createNodePoolsService(app: AppService, api: NodePoolsApi = defaultApi) {
   return {
     fetchBackends() {
-      return app.runOperation("Loading node backends", () => fetchNodeBackends());
+      return app.runOperation("Loading node backends", () => api.fetchNodeBackends());
     },
     fetchNodes() {
-      return app.runOperation("Loading node pools", () => fetchNodes());
+      return app.runOperation("Loading node pools", () => api.fetchNodes());
     },
     scale(request: ScaleNodesRequest) {
-      return app.runOperation("Scaling node pool", () => scaleNodes(request));
+      return app.runOperation("Scaling node pool", () => api.scaleNodes(request));
     },
   };
 }

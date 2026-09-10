@@ -4,21 +4,20 @@ import { functionCallPath, shortDigest } from "../../domain/models";
 import type { FunctionCatalogEntry, FunctionPackage } from "../../domain/models";
 import type { AppService } from "../app";
 
-vi.mock("../../api/commandCenterApi", () => ({
-  fetchFunctionPackages: vi.fn(),
-  fetchFunctionPackage: vi.fn(),
-  fetchFunctionCatalog: vi.fn(),
-  deleteFunctionPackage: vi.fn(),
-  setFunctionAlias: vi.fn(),
-  deleteFunctionAlias: vi.fn(),
-}));
+import type { FunctionsApi } from "../../api/ports/functions";
 
-import {
-  fetchFunctionCatalog,
-  fetchFunctionPackage,
-  fetchFunctionPackages,
-  setFunctionAlias,
-} from "../../api/commandCenterApi";
+const api = {
+  fetchFunctionPackages: vi.fn<FunctionsApi["fetchFunctionPackages"]>(),
+  fetchFunctionPackage: vi.fn<FunctionsApi["fetchFunctionPackage"]>(),
+  fetchFunctionCatalog: vi.fn<FunctionsApi["fetchFunctionCatalog"]>(),
+  deleteFunctionPackage: vi.fn<FunctionsApi["deleteFunctionPackage"]>(),
+  restoreFunctionPackage: vi.fn<FunctionsApi["restoreFunctionPackage"]>(),
+  setFunctionAlias: vi.fn<FunctionsApi["setFunctionAlias"]>(),
+  deleteFunctionAlias: vi.fn<FunctionsApi["deleteFunctionAlias"]>(),
+  publishFunctionVersion: vi.fn<FunctionsApi["publishFunctionVersion"]>(),
+  uploadFunctionArtifact: vi.fn<FunctionsApi["uploadFunctionArtifact"]>(),
+} satisfies FunctionsApi;
+const { fetchFunctionPackages, fetchFunctionPackage, fetchFunctionCatalog, setFunctionAlias } = api;
 
 const digest = `sha256:${"a".repeat(64)}`;
 
@@ -73,7 +72,7 @@ describe("functions service", () => {
   it("lists a package's exports newest version first", async () => {
     // a reader tracing which version a workflow pinned needs the older ones too, so this reads the
     // catalog rather than the package's `exports` — which only carries the default alias's.
-    const service = createFunctionsService(app);
+    const service = createFunctionsService(app, api);
     await service.refreshPackages();
 
     const versions = service.exportsForPackage("package-1").map((item) => item.version);
@@ -82,11 +81,14 @@ describe("functions service", () => {
 
   it("keeps the selection on the same package across a refresh", async () => {
     // publishing should not move what the reader is looking at.
-    const service = createFunctionsService(app);
+    const service = createFunctionsService(app, api);
     await service.refreshPackages();
     expect(service.getState().selectedPackage?.id).toBe("package-1");
 
-    vi.mocked(fetchFunctionPackages).mockResolvedValue([pkg({ id: "package-2", name: "other" }), pkg()]);
+    vi.mocked(fetchFunctionPackages).mockResolvedValue([
+      pkg({ id: "package-2", name: "other" }),
+      pkg(),
+    ]);
     vi.mocked(fetchFunctionPackage).mockResolvedValue({ ...pkg(), versions: [], aliases: [] });
     await service.refreshPackages();
 
@@ -94,7 +96,7 @@ describe("functions service", () => {
   });
 
   it("promotes an alias to a named version", async () => {
-    const service = createFunctionsService(app);
+    const service = createFunctionsService(app, api);
     await service.refreshPackages();
     await service.promote("production", 2);
 
@@ -102,8 +104,22 @@ describe("functions service", () => {
     expect(vi.mocked(setFunctionAlias)).toHaveBeenCalledWith("image-tools", "production", 2);
   });
 
+  it("keeps injected service instances isolated", async () => {
+    const secondApi = {
+      ...api,
+      fetchFunctionPackages: vi.fn<FunctionsApi["fetchFunctionPackages"]>().mockResolvedValue([]),
+      fetchFunctionCatalog: vi.fn<FunctionsApi["fetchFunctionCatalog"]>().mockResolvedValue([]),
+    };
+    const first = createFunctionsService(app, api);
+    const second = createFunctionsService(app, secondApi);
+    await Promise.all([first.refreshPackages(), second.refreshPackages()]);
+    expect(first.getState().packages).toHaveLength(1);
+    expect(second.getState().packages).toEqual([]);
+    expect(secondApi.fetchFunctionPackages).toHaveBeenCalledOnce();
+  });
+
   it("filters packages by qualified name", async () => {
-    const service = createFunctionsService(app);
+    const service = createFunctionsService(app, api);
     vi.mocked(fetchFunctionPackages).mockResolvedValue([
       pkg(),
       pkg({ id: "package-2", namespace: "media", name: "video-tools", description: null }),

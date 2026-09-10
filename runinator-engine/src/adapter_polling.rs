@@ -83,7 +83,7 @@ struct BatchSummary {
 
 async fn poll_one<T: BackgroundEngineStore>(
     store: Arc<T>,
-    _broker: &Arc<dyn Broker>,
+    host: &dyn runinator_adapter_client::AdapterPoller,
     pipelines: &PipelineOperations<T>,
     instance: &str,
     status: runinator_models::orchestration::AdapterPollStatus,
@@ -158,16 +158,18 @@ async fn poll_one<T: BackgroundEngineStore>(
         .resolve_secrets(adapter.org_id, &secret_bindings)
         .await?;
     let initialize = status.checkpoint.is_null();
-    let response = runinator_adapter_client::poll(
-        &adapter.kind,
-        AdapterPollRequest {
-            configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
-            secrets,
-            checkpoint: serde_json::to_value(status.checkpoint.clone()).unwrap_or_default(),
-            initialize,
-        },
-    )
-    .await;
+    let response = host
+        .poll(
+            &adapter.kind,
+            AdapterPollRequest {
+                configuration: serde_json::to_value(revision.configuration.clone())
+                    .unwrap_or_default(),
+                secrets,
+                checkpoint: serde_json::to_value(status.checkpoint.clone()).unwrap_or_default(),
+                initialize,
+            },
+        )
+        .await;
     let outcome = match response {
         Ok(response) => {
             finish_poll_response(
@@ -308,7 +310,7 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
     broker: Arc<dyn Broker>,
     events: EventSender,
     signals: EmbeddedEngineSignals,
-    _instance: String,
+    host: Arc<dyn runinator_adapter_client::AdapterPoller>,
     shutdown: Arc<Notify>,
 ) {
     let pipelines = PipelineOperations::new(store.clone(), broker.clone(), events, Some(signals));
@@ -336,7 +338,7 @@ pub async fn run_adapter_poll_loop<T: BackgroundEngineStore>(
             let Some(claim) = claim else { break };
             match poll_one(
                 store.clone(),
-                &broker,
+                host.as_ref(),
                 &pipelines,
                 &claim_owner,
                 claim.clone(),
@@ -473,3 +475,7 @@ pub async fn create_poll_attempt<
         .await?;
     Ok(id)
 }
+
+#[cfg(test)]
+#[path = "adapter_polling_tests.rs"]
+mod adapter_polling_tests;

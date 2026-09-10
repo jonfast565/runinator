@@ -1,10 +1,5 @@
-import {
-  deleteCredential,
-  fetchCredential,
-  fetchCredentials,
-  moveCredential,
-  saveCredential,
-} from "../api/commandCenterApi";
+import { defaultApi, type SecretsApi } from "../api/ports/secrets";
+
 import type { CredentialSummary, SettingKind } from "../domain/models";
 import { secretKey } from "../utils/secrets";
 import { createStore } from "./event-bus";
@@ -37,7 +32,7 @@ export function blankSecretDraft(kind: SettingKind = "secret"): SecretDraft {
   };
 }
 
-export function createSecretsService(app: AppService) {
+export function createSecretsService(app: AppService, api: SecretsApi = defaultApi) {
   const store = createStore<SecretsState>({
     secrets: [],
     configValues: {},
@@ -117,10 +112,11 @@ export function createSecretsService(app: AppService) {
     },
     async refreshSecrets() {
       let secrets = await app
-        .runOperation("Refreshing secrets", () => fetchCredentials(), { retryable: true })
+        .runOperation("Refreshing secrets", () => api.fetchCredentials(), { retryable: true })
         .catch(() => []);
       secrets = [...secrets].sort(
-        (left, right) => left.scope.localeCompare(right.scope) || left.name.localeCompare(right.name),
+        (left, right) =>
+          left.scope.localeCompare(right.scope) || left.name.localeCompare(right.name),
       );
 
       let selectedSecretKey = store.getState().selectedSecretKey;
@@ -154,7 +150,7 @@ export function createSecretsService(app: AppService) {
 
       const key = secretKey(setting);
       const detail = await app.runOperation("Loading config value", () =>
-        fetchCredential(setting.scope, setting.name, "config"),
+        api.fetchCredential(setting.scope, setting.name, "config"),
       );
       store.setState((state) => ({
         ...state,
@@ -210,12 +206,9 @@ export function createSecretsService(app: AppService) {
       const selected = selectedSecret();
       const selectedId = selected?.id;
 
-      if (
-        selectedId &&
-        (selected.scope !== scope || selected.name !== name)
-      ) {
+      if (selectedId && (selected.scope !== scope || selected.name !== name)) {
         await app.runOperation(`Moving ${kind}`, () =>
-          moveCredential(selectedId, scope, name, kind),
+          api.moveCredential(selectedId, scope, name, kind),
         );
       }
 
@@ -233,7 +226,7 @@ export function createSecretsService(app: AppService) {
       }
 
       await app.runOperation(`Saving ${kind}`, () =>
-        saveCredential(scope, name, value, kind, schema, expiresAt),
+        api.saveCredential(scope, name, value, kind, schema, expiresAt),
       );
       store.setState((state) => ({
         ...state,
@@ -254,7 +247,7 @@ export function createSecretsService(app: AppService) {
 
       const kind = secret.kind ?? "secret";
       await app.runOperation(`Deleting ${kind}`, () =>
-        deleteCredential(secret.scope, secret.name, kind),
+        api.deleteCredential(secret.scope, secret.name, kind),
       );
       app.setStatus(
         `${kind === "config" ? "Config" : "Secret"} deleted: ${secret.scope}/${secret.name}`,

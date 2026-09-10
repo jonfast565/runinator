@@ -1,18 +1,5 @@
-import {
-  cancelConsoleCell,
-  createConsoleCell,
-  createConsoleSession,
-  clearConsoleSession,
-  deleteConsoleCell,
-  deleteConsoleSession,
-  fetchConsoleCell,
-  fetchConsoleSession,
-  fetchConsoleSessions,
-  renameConsoleSession,
-  replayConsoleCell,
-  runConsoleCell,
-  updateConsoleCell,
-} from "../api/commandCenterApi";
+import { defaultApi, type ConsoleSessionsApi } from "../api/ports/console-sessions";
+
 import type { ConsoleCell, ConsoleSession, ConsoleSessionDetail } from "../domain/models";
 import { isCellPending } from "../domain/models";
 import { createStore } from "./event-bus";
@@ -33,7 +20,7 @@ const POLL_INTERVAL_MS = 1000;
 /// bounded so a wedged run cannot leave a timer running for the life of the tab.
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
-export function createConsoleService(app: AppService) {
+export function createConsoleService(app: AppService, api: ConsoleSessionsApi = defaultApi) {
   const store = createStore<ConsoleState>({
     sessions: [],
     activeSession: null,
@@ -72,7 +59,7 @@ export function createConsoleService(app: AppService) {
     try {
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        const cell = await fetchConsoleCell(cellId).catch(() => null);
+        const cell = await api.fetchConsoleCell(cellId).catch(() => null);
 
         if (!cell) {
           return;
@@ -99,7 +86,7 @@ export function createConsoleService(app: AppService) {
     },
     async refreshSessions() {
       const sessions = await app
-        .runOperation("Refreshing console sessions", fetchConsoleSessions)
+        .runOperation("Refreshing console sessions", api.fetchConsoleSessions)
         .catch(() => []);
       store.setState((state) => ({ ...state, sessions }));
 
@@ -120,7 +107,7 @@ export function createConsoleService(app: AppService) {
         return;
       }
 
-      const detail = await fetchConsoleSession(activeId).catch(() => null);
+      const detail = await api.fetchConsoleSession(activeId).catch(() => null);
 
       if (detail) {
         store.setState((state) => ({ ...state, activeSession: detail }));
@@ -128,7 +115,7 @@ export function createConsoleService(app: AppService) {
     },
     async openSession(sessionId: string) {
       const detail = await app
-        .runOperation("Opening console session", () => fetchConsoleSession(sessionId))
+        .runOperation("Opening console session", () => api.fetchConsoleSession(sessionId))
         .catch(() => null);
       store.setState((state) => ({ ...state, activeSession: detail }));
 
@@ -142,7 +129,7 @@ export function createConsoleService(app: AppService) {
     },
     async newSession(name?: string) {
       const session = await app.runOperation("Creating console session", () =>
-        createConsoleSession(name),
+        api.createConsoleSession(name),
       );
       await service.refreshSessions();
       await service.openSession(session.id);
@@ -150,7 +137,7 @@ export function createConsoleService(app: AppService) {
     },
     async renameSession(sessionId: string, name: string) {
       await app.runOperation("Renaming console session", () =>
-        renameConsoleSession(sessionId, name),
+        api.renameConsoleSession(sessionId, name),
       );
       await service.refreshSessions();
     },
@@ -160,7 +147,9 @@ export function createConsoleService(app: AppService) {
       }
 
       try {
-        await app.runOperation("Clearing console session", () => clearConsoleSession(sessionId));
+        await app.runOperation("Clearing console session", () =>
+          api.clearConsoleSession(sessionId),
+        );
       } catch (error) {
         app.setError(String(error));
         return false;
@@ -193,7 +182,9 @@ export function createConsoleService(app: AppService) {
       }
 
       try {
-        await app.runOperation("Deleting console session", () => deleteConsoleSession(sessionId));
+        await app.runOperation("Deleting console session", () =>
+          api.deleteConsoleSession(sessionId),
+        );
       } catch (error) {
         app.setError(String(error));
         return false;
@@ -216,14 +207,14 @@ export function createConsoleService(app: AppService) {
       }
 
       const cell = await app.runOperation("Adding cell", () =>
-        createConsoleCell(sessionId, source, label),
+        api.createConsoleCell(sessionId, source, label),
       );
       await service.refreshActiveSession();
       return cell;
     },
     async editCell(cellId: string, source: string, label?: string | null) {
       const cell = await app.runOperation("Saving cell", () =>
-        updateConsoleCell(cellId, source, label),
+        api.updateConsoleCell(cellId, source, label),
       );
       replaceCell(cell);
     },
@@ -233,14 +224,14 @@ export function createConsoleService(app: AppService) {
       }
 
       await app
-        .runOperation("Deleting cell", () => deleteConsoleCell(cellId))
+        .runOperation("Deleting cell", () => api.deleteConsoleCell(cellId))
         .catch((error: unknown) => {
           app.setError(String(error));
         });
       await service.refreshActiveSession();
     },
     async runCell(cellId: string) {
-      const cell = await app.runOperation("Running cell", () => runConsoleCell(cellId));
+      const cell = await app.runOperation("Running cell", () => api.runConsoleCell(cellId));
       replaceCell(cell);
 
       // a pure cell has already settled by the time this returns; only an effectful one needs
@@ -255,12 +246,12 @@ export function createConsoleService(app: AppService) {
       return cell;
     },
     async cancelCell(cellId: string) {
-      await app.runOperation("Canceling cell", () => cancelConsoleCell(cellId));
+      await app.runOperation("Canceling cell", () => api.cancelConsoleCell(cellId));
       markPending(cellId, false);
       await service.refreshActiveSession();
     },
     async replayCell(cellId: string) {
-      const cell = await app.runOperation("Replaying cell", () => replayConsoleCell(cellId));
+      const cell = await app.runOperation("Replaying cell", () => api.replayConsoleCell(cellId));
       replaceCell(cell);
 
       if (isCellPending(cell)) {

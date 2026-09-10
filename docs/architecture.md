@@ -107,6 +107,24 @@ without publishing a successful output binding.
 
 The Tauri command center presents the web service; it does not host a worker or execute provider actions. `runinatorctl` is the terminal control client, and its console and MCP server dispatch through the same command surface as its normal command-line interface.
 
+### Injectable client capabilities
+
+`runinator-api::capabilities` exposes focused traits for function artifacts and export resolution,
+run-scoped secrets and files, execution profiles, artifact uploads, and workspace checkout/object
+transport. The HTTP client implements each trait; worker preparation and materialization depend on
+these capabilities while keeping authorization scope, request deadlines, and API error classification
+intact. Local object algorithms continue to use `ReadStore` and `WriteStore`.
+
+`runinator-adapter-client` exposes polling, verification, and administration traits. Its HTTP
+implementation owns a pooled client and circuit shared by its clones. Engine polling accepts an
+injected poller; authoring adapter routes accept an injected host through `routes_with_host`.
+Environment discovery remains inside the client crate.
+
+Command Center API capabilities live in `src/core/api/ports`. Service and console-command factories
+accept a typed API object, defaulting to the existing command-runtime facade. Workflow service
+composition forwards its injected API to each child service; console factories use the same API for
+name lookup and execution. Tests can supply independent clients without replacing global modules.
+
 ### Workflow definition and evaluation
 
 REXRAP is the authored workflow language. The language family is split by compile stage: `runinator-rexrap-syntax` parses and formats, `runinator-rexrap-sema` resolves and type-checks, and `runinator-rexrap-codegen` lowers to or decompiles from the workflow model. `runinator-rexrap` is the public facade and unified `.rrx` container front end; `runinator-rexrap-ide` adds editor completion and hover without affecting compilation.

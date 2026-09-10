@@ -1,5 +1,6 @@
 //! Cached base membership for outgoing workspace packs.
 use super::*;
+use runinator_api::{AsyncApiClient, StaticLocator};
 
 #[test]
 fn cached_base_omits_only_verified_remote_objects() -> storage::Result<()> {
@@ -119,4 +120,59 @@ async fn downloaded_base_miss_never_falls_back_to_the_object_endpoint()
         Err(storage::Error::NotFound(_))
     ));
     Ok(())
+}
+
+struct ObjectTransport {
+    checkout: uuid::Uuid,
+    replica: uuid::Uuid,
+    uploads: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+}
+#[async_trait::async_trait]
+impl WorkspaceObjectTransport for ObjectTransport {
+    async fn workspace_object(
+        &self,
+        checkout: uuid::Uuid,
+        replica: uuid::Uuid,
+        _: &str,
+    ) -> runinator_api::Result<Option<Vec<u8>>> {
+        assert_eq!((checkout, replica), (self.checkout, self.replica));
+        Ok(None)
+    }
+    async fn upload_workspace_pack(
+        &self,
+        checkout: uuid::Uuid,
+        replica: uuid::Uuid,
+        bytes: Vec<u8>,
+    ) -> runinator_api::Result<()> {
+        assert_eq!((checkout, replica), (self.checkout, self.replica));
+        self.uploads.lock().unwrap().push(bytes);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn injected_object_transport_keeps_checkout_scope_and_missing_objects() {
+    let checkout = uuid::Uuid::new_v4();
+    let replica = uuid::Uuid::new_v4();
+    let uploads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let objects = WorkerObjects::new(
+        ObjectTransport {
+            checkout,
+            replica,
+            uploads: uploads.clone(),
+        },
+        checkout,
+        replica,
+        Instant::now() + std::time::Duration::from_secs(1),
+        None,
+    )
+    .unwrap();
+    tokio::task::spawn_blocking(move || {
+        objects.upload(vec![1, 2, 3]).unwrap();
+        let id: Id = "00".repeat(32).parse().unwrap();
+        assert!(matches!(objects.get(id), Err(storage::Error::NotFound(_))));
+    })
+    .await
+    .unwrap();
+    assert_eq!(*uploads.lock().unwrap(), vec![vec![1, 2, 3]]);
 }

@@ -2,7 +2,13 @@
 //! delivery) and the engine's durable poll loop call the same process over the same contract, so
 //! the url discovery, credential, and request shape live here once rather than in each caller.
 
-use std::{sync::OnceLock, time::Duration};
+use async_trait::async_trait;
+use std::time::Duration;
+
+mod client;
+pub use client::{
+    AdapterHostAdmin, AdapterHostClient, AdapterPoller, AdapterVerifier, HttpAdapterHostClient,
+};
 
 use runinator_adapter_contract::{
     AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse,
@@ -151,36 +157,13 @@ pub fn host_token() -> Result<String> {
     })
 }
 
-/// One pooled client for the whole process. A per-call `Client` would rebuild the connection pool
-/// and tls configuration on every poll, which the poll loop does continuously.
-fn client() -> Result<&'static reqwest::Client> {
-    static CLIENT: OnceLock<std::result::Result<reqwest::Client, String>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(POLL_TIMEOUT)
-                .build()
-                .map_err(|error| format!("adapter host client could not be created: {error}"))
-        })
-        .as_ref()
-        .map_err(|error| AdapterClientError::Configuration(error.clone()))
-}
-
-fn circuit() -> &'static AdapterCircuit {
-    static CIRCUIT: OnceLock<AdapterCircuit> = OnceLock::new();
-    CIRCUIT.get_or_init(AdapterCircuit::from_env)
-}
-
-async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
-    send_with_circuit(circuit(), builder).await
-}
-
 async fn send_with_circuit(
+    client: &reqwest::Client,
     circuit: &AdapterCircuit,
     builder: reqwest::RequestBuilder,
 ) -> Result<reqwest::Response> {
     let request = builder.build().map_err(AdapterClientError::Request)?;
-    let client = client()?.clone();
+    let client = client.clone();
     if !circuit.enabled {
         return client
             .execute(request)
@@ -200,33 +183,6 @@ async fn send_with_circuit(
     }
 }
 
-async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T> {
-    let response = send(
-        client()?
-            .get(format!("{}{path}", host_url()))
-            .bearer_auth(host_token()?)
-            .timeout(VERIFY_TIMEOUT),
-    )
-    .await?;
-    decode(response).await
-}
-
-async fn post_json<T: DeserializeOwned>(
-    path: &str,
-    body: serde_json::Value,
-    timeout: Duration,
-) -> Result<T> {
-    let response = send(
-        client()?
-            .post(format!("{}{path}", host_url()))
-            .bearer_auth(host_token()?)
-            .timeout(timeout)
-            .json(&body),
-    )
-    .await?;
-    decode(response).await
-}
-
 async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
     let status = response.status();
     if !status.is_success() {
@@ -236,138 +192,5 @@ async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
     response.json().await.map_err(AdapterClientError::Decode)
 }
 
-/// The loaded adapter kinds and their health, as reported by the host's own catalog.
-pub async fn kinds() -> Result<Vec<AdapterKindCatalogEntry>> {
-    get_json("/kinds").await
-}
-
-/// The host's liveness and per-library load diagnostics.
-pub async fn health() -> Result<serde_json::Value> {
-    get_json("/health").await
-}
-
-/// Ask the host to rescan its adapter directory.
-pub async fn reload() -> Result<serde_json::Value> {
-    post_json("/reload", serde_json::json!({}), VERIFY_TIMEOUT).await
-}
-
-/// Verify a signed delivery and normalize it into canonical events.
-pub async fn verify_normalize(kind: &str, request: AdapterRequest) -> Result<AdapterResponse> {
-    post_json(
-        "/verify-normalize",
-        serde_json::json!({ "kind": kind, "request": request }),
-        VERIFY_TIMEOUT,
-    )
-    .await
-}
-
-/// Pull the next batch of events for a polling adapter.
-pub async fn poll(kind: &str, request: AdapterPollRequest) -> Result<AdapterPollResponse> {
-    post_json(
-        "/poll",
-        serde_json::json!({ "kind": kind, "request": request }),
-        POLL_TIMEOUT,
-    )
-    .await
-}
-
 #[cfg(test)]
-mod resilience_tests {
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-        thread,
-    };
-
-    use super::*;
-
-    fn status_server(statuses: Vec<u16>) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let server_calls = calls.clone();
-        let task = thread::spawn(move || {
-            for status in statuses {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut request = [0_u8; 1024];
-                let _ = stream.read(&mut request);
-                server_calls.fetch_add(1, Ordering::SeqCst);
-                let reason = if status == 200 { "OK" } else { "Test Failure" };
-                let body = if status == 200 { "{}" } else { "failure" };
-                write!(
-                    stream,
-                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
-            }
-        });
-        (format!("http://{address}"), calls, task)
-    }
-
-    #[test]
-    fn transient_failures_fast_fail_then_a_successful_probe_closes_the_adapter_circuit() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
-            let (base_url, calls, server) = status_server(vec![500, 500, 200]);
-            let circuit = AdapterCircuit::new(true, 2, Duration::from_millis(1));
-            let http = reqwest::Client::new();
-            for _ in 0..2 {
-                let response = send_with_circuit(&circuit, http.get(format!("{base_url}/failing")))
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    response.status(),
-                    reqwest::StatusCode::INTERNAL_SERVER_ERROR
-                );
-            }
-            let error = send_with_circuit(&circuit, http.get(format!("{base_url}/skipped")))
-                .await
-                .unwrap_err();
-            assert!(matches!(
-                error,
-                AdapterClientError::CircuitOpen {
-                    retry_after_seconds: 1
-                }
-            ));
-            assert_eq!(calls.load(Ordering::SeqCst), 2);
-
-            tokio::time::sleep(Duration::from_millis(5)).await;
-            let response = send_with_circuit(&circuit, http.get(format!("{base_url}/probe")))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), reqwest::StatusCode::OK);
-            assert_eq!(calls.load(Ordering::SeqCst), 3);
-            server.join().unwrap();
-        });
-    }
-
-    #[test]
-    fn normal_4xx_responses_do_not_open_the_adapter_circuit() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
-            let (base_url, calls, server) = status_server(vec![400, 400, 400]);
-            let circuit = AdapterCircuit::new(true, 2, Duration::from_secs(1));
-            let http = reqwest::Client::new();
-            for _ in 0..3 {
-                let response =
-                    send_with_circuit(&circuit, http.get(format!("{base_url}/client-error")))
-                        .await
-                        .unwrap();
-                assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-            }
-            assert_eq!(calls.load(Ordering::SeqCst), 3);
-            server.join().unwrap();
-        });
-    }
-}
+mod resilience_tests;

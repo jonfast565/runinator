@@ -1,5 +1,6 @@
 mod async_client;
 mod blocking_client;
+pub mod capabilities;
 mod error;
 mod locator;
 mod replicas;

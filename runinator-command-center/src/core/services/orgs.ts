@@ -1,12 +1,5 @@
-import {
-  createOrg as apiCreateOrg,
-  listMyOrgs,
-  switchOrg,
-  switchPlatform,
-  updateOrg as apiUpdateOrg,
-  type OrgMembershipView,
-  type OrgRole,
-} from "../api/commandCenterApi";
+import { defaultApi, type OrgsApi } from "../api/ports/orgs";
+import type { OrgMembershipView, OrgRole } from "../api/commandCenterApi";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
 import type { AuthService } from "./auth";
@@ -45,7 +38,7 @@ function safeSet(key: string, value: string | null) {
   }
 }
 
-export function createOrgsService(app: AppService, auth: AuthService) {
+export function createOrgsService(app: AppService, auth: AuthService, api: OrgsApi = defaultApi) {
   const store = createStore<OrgsState>({
     memberships: [],
     activeOrgId: safeGet(ACTIVE_ORG_KEY),
@@ -86,7 +79,7 @@ export function createOrgsService(app: AppService, auth: AuthService) {
     },
     async refresh({ selectDefault = false }: RefreshOrgsOptions = {}) {
       const memberships = await app
-        .runOperation("Loading organizations", () => listMyOrgs())
+        .runOperation("Loading organizations", () => api.listMyOrgs())
         .catch(() => []);
 
       let activeOrgId = selectDefault ? null : store.getState().activeOrgId;
@@ -118,7 +111,7 @@ export function createOrgsService(app: AppService, auth: AuthService) {
     },
     async setActive(orgId: string): Promise<boolean> {
       try {
-        const context = await switchOrg(orgId);
+        const context = await api.switchOrg(orgId);
         await auth.applyAccessToken(context.access_token);
         // the new token carries the org role, so refresh the principal to pick up org actions.
         await auth.reloadMe();
@@ -138,7 +131,7 @@ export function createOrgsService(app: AppService, auth: AuthService) {
       }
 
       try {
-        const context = await switchPlatform();
+        const context = await api.switchPlatform();
         await auth.applyAccessToken(context.access_token);
         await auth.reloadMe();
       } catch {
@@ -152,7 +145,7 @@ export function createOrgsService(app: AppService, auth: AuthService) {
     },
     async create(name: string): Promise<boolean> {
       const org = await app
-        .runOperation("Creating organization", () => apiCreateOrg(name))
+        .runOperation("Creating organization", () => api.createOrg(name))
         .catch(() => null);
 
       if (!org) {
@@ -171,7 +164,7 @@ export function createOrgsService(app: AppService, auth: AuthService) {
       }
 
       const org = await app
-        .runOperation("Renaming organization", () => apiUpdateOrg(orgId, name))
+        .runOperation("Renaming organization", () => api.updateOrg(orgId, name))
         .catch(() => null);
 
       if (!org) {

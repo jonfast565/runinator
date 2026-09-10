@@ -1,24 +1,5 @@
-import {
-  cancelWorkflowRun,
-  deleteWorkflowRun,
-  closeGate,
-  continueWorkflowRun,
-  createWorkflowRun,
-  fetchGates,
-  fetchWorkflowRun,
-  fetchWorkflowRuns,
-  openGate,
-  pauseWorkflowRun,
-  renameWorkflowRun as renameWorkflowRunApi,
-  replayWorkflowRun as replayWorkflowRunApi,
-  requestRunInterrupt,
-  settleWorkflowEffect,
-  resumeWorkflowRun,
-  runWorkflowToNode,
-  setWorkflowRunBreakpoints,
-  setWorkflowRunPauseOnFailure,
-  stepWorkflowRun,
-} from "../../api/commandCenterApi";
+import { defaultApi, type WorkflowsRunsApi } from "../../api/ports/workflows-runs";
+
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
 import {
   workflowEffectId,
@@ -56,7 +37,9 @@ interface DebugPreset {
 }
 
 function loadDebugPreset(workflowId: string): DebugPreset {
-  if (typeof window === "undefined") {return { breakpoints: [], pauseOnFailure: false };}
+  if (typeof window === "undefined") {
+    return { breakpoints: [], pauseOnFailure: false };
+  }
 
   try {
     const value: unknown = JSON.parse(
@@ -115,7 +98,10 @@ function collectFileIds(value: unknown): string[] {
   return [...ids];
 }
 
-export function createWorkflowRunService(host: WorkflowServiceHost) {
+export function createWorkflowRunService(
+  host: WorkflowServiceHost,
+  api: WorkflowsRunsApi = defaultApi,
+) {
   const { internal } = host;
   const watchService = createWorkflowRunWatchService(host);
   const asRecord = asJsonRecord;
@@ -194,12 +180,20 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
         ? `Running workflow ${workflow.name} in debug mode`
         : `Running workflow ${workflow.name}`,
       () =>
-        createWorkflowRun(workflowId, { debug, parameters, fileIds: collectFileIds(parameters) }),
+        api.createWorkflowRun(workflowId, {
+          debug,
+          parameters,
+          fileIds: collectFileIds(parameters),
+        }),
     );
     host.state.selectedWorkflowRunId = response.id;
     host.ctx.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);
     await fetchWorkflowRunDetail(response.id);
-    if (debug) {await applyDebugPreset(workflowId);}
+
+    if (debug) {
+      await applyDebugPreset(workflowId);
+    }
+
     await fetchRecentWorkflowRuns();
     host.ctx.activeTab = "Runs";
     host.notify();
@@ -213,7 +207,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const runId = host.state.workflowRunDetail.run.id;
     const cursor = selectedCursorId();
     const response = await host.ctx.runOperation(`Stepping workflow run ${runId}`, () =>
-      stepWorkflowRun(runId, cursor),
+      api.stepWorkflowRun(runId, cursor),
     );
 
     if (!response.success) {
@@ -263,7 +257,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Continuing workflow run ${runId}`, () =>
-      continueWorkflowRun(runId, selectedCursorId()),
+      api.continueWorkflowRun(runId, selectedCursorId()),
     );
 
     if (!response.success) {
@@ -285,7 +279,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const normalized = [...new Set(breakpoints)].sort();
     const response = await host.ctx.runOperation(
       `Updating breakpoints for workflow run ${runId}`,
-      () => setWorkflowRunBreakpoints(runId, normalized),
+      () => api.setWorkflowRunBreakpoints(runId, normalized),
     );
 
     if (!response.success) {
@@ -331,9 +325,13 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   async function setPauseOnFailure(enabled: boolean) {
     const detail = host.state.workflowRunDetail;
-    if (!detail || !host.isDebugRun()) {return;}
+
+    if (!detail || !host.isDebugRun()) {
+      return;
+    }
+
     const response = await host.ctx.runOperation("Updating pause on failure", () =>
-      setWorkflowRunPauseOnFailure(detail.run.id, enabled),
+      api.setWorkflowRunPauseOnFailure(detail.run.id, enabled),
     );
 
     if (!response.success) {
@@ -373,9 +371,13 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   async function runToNode(nodeId: string) {
     const detail = host.state.workflowRunDetail;
     const cursor = selectedCursorId();
-    if (!detail || !cursor || !host.isSelectedCursorPaused()) {return;}
+
+    if (!detail || !cursor || !host.isSelectedCursorPaused()) {
+      return;
+    }
+
     const response = await host.ctx.runOperation(`Running selected branch to ${nodeId}`, () =>
-      runWorkflowToNode(detail.run.id, cursor, nodeId),
+      api.runWorkflowToNode(detail.run.id, cursor, nodeId),
     );
 
     if (!response.success) {
@@ -395,7 +397,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Canceling workflow run ${runId}`, () =>
-      cancelWorkflowRun(runId),
+      api.cancelWorkflowRun(runId),
     );
 
     if (!response.success) {
@@ -416,7 +418,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     const response = await host.ctx.runOperation(`Deleting workflow run ${run.id}`, () =>
-      deleteWorkflowRun(run.id),
+      api.deleteWorkflowRun(run.id),
     );
 
     if (!response.success) {
@@ -433,7 +435,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   async function deleteWorkflowRunById(runId: string) {
     const response = await host.ctx.runOperation(`Deleting workflow run ${runId}`, () =>
-      deleteWorkflowRun(runId),
+      api.deleteWorkflowRun(runId),
     );
 
     if (!response.success) {
@@ -475,7 +477,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       `Deleting ${String(runs.length)} workflow runs`,
       () =>
         runBulk(runs, async (run) => {
-          const response = await deleteWorkflowRun(run.id);
+          const response = await api.deleteWorkflowRun(run.id);
 
           if (!response.success) {
             throw new Error(response.message || `Failed to delete run ${run.id}`);
@@ -534,7 +536,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(
       `Requesting ${source} interrupt for workflow run ${runId}`,
-      () => requestRunInterrupt(runId, source, payload, continuationId),
+      () => api.requestRunInterrupt(runId, source, payload, continuationId),
     );
 
     if (!response.success) {
@@ -557,7 +559,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Pausing workflow run ${runId}`, () =>
-      pauseWorkflowRun(runId),
+      api.pauseWorkflowRun(runId),
     );
 
     if (!response.success) {
@@ -577,7 +579,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Resuming workflow run ${runId}`, () =>
-      resumeWorkflowRun(runId),
+      api.resumeWorkflowRun(runId),
     );
 
     if (!response.success) {
@@ -602,7 +604,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     if (action === "replay") {
       const created = await host.ctx.runOperation(`Force replaying workflow run ${runId}`, () =>
-        replayWorkflowRunApi(runId, { override }),
+        api.replayWorkflowRun(runId, { override }),
       );
       host.ctx.setStatus(`Emergency replay started as run ${created.id}`);
       await fetchWorkflowRunDetail(runId, true);
@@ -613,10 +615,10 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const invoke =
       action === "cancel"
-        ? cancelWorkflowRun
+        ? api.cancelWorkflowRun
         : action === "pause"
-          ? pauseWorkflowRun
-          : resumeWorkflowRun;
+          ? api.pauseWorkflowRun
+          : api.resumeWorkflowRun;
     const response = await host.ctx.runOperation(`Force ${action} workflow run ${runId}`, () =>
       invoke(runId, override),
     );
@@ -642,7 +644,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       ? `Replaying workflow run ${targetId} from step ${fromStepId}`
       : `Replaying workflow run ${targetId}`;
     const created = await host.ctx
-      .runOperation(label, () => replayWorkflowRunApi(targetId, { fromStepId }))
+      .runOperation(label, () => api.replayWorkflowRun(targetId, { fromStepId }))
       .catch((error: unknown) => {
         host.ctx.setError(String(error));
         return null;
@@ -658,7 +660,11 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     activateRunTab(created.id);
     await fetchWorkflowRunDetail(created.id);
     const replayWorkflowId = host.getWorkflowRunWorkflow()?.id;
-    if (host.isDebugRun() && replayWorkflowId) {await applyDebugPreset(replayWorkflowId);}
+
+    if (host.isDebugRun() && replayWorkflowId) {
+      await applyDebugPreset(replayWorkflowId);
+    }
+
     await fetchRecentWorkflowRuns();
     host.ctx.activeTab = "Runs";
     return created.id;
@@ -671,7 +677,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     const response = await host.ctx
-      .runOperation(`Renaming run ${runId}`, () => renameWorkflowRunApi(runId, name))
+      .runOperation(`Renaming run ${runId}`, () => api.renameWorkflowRun(runId, name))
       .catch((error: unknown) => {
         host.ctx.setError(String(error));
         return null;
@@ -697,7 +703,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     // object out from under a `host.state.x = await ...` assignment (the getter reads the object
     // before the await resolves), silently dropping the write onto a detached copy.
     const runs = (await host.ctx
-      .runOperation("Loading workflow runs", () => fetchWorkflowRuns(workflowId))
+      .runOperation("Loading workflow runs", () => api.fetchWorkflowRuns(workflowId))
       .catch(() => [])) as RunSummary[];
     host.state.workflowRuns = mergeById(host.state.workflowRuns, runs);
 
@@ -713,7 +719,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     // background refreshes (poll/event-driven) run silently so the table updates in place instead of
     // dimming; user-initiated refreshes keep the loading indicator.
     const runs = (await host.ctx
-      .runOperation("Loading workflow runs", () => fetchWorkflowRuns(), {
+      .runOperation("Loading workflow runs", () => api.fetchWorkflowRuns(), {
         silent: options?.background,
         retryable: true,
       })
@@ -925,9 +931,9 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const requestId = ++internal.nextWorkflowRunHttpRequestId;
     internal.latestWorkflowRunHttpRequest.set(workflowRunId, requestId);
     const detail = silent
-      ? await fetchWorkflowRun(workflowRunId).catch(() => null)
+      ? await api.fetchWorkflowRun(workflowRunId).catch(() => null)
       : await host.ctx
-          .runOperation("Loading workflow run", () => fetchWorkflowRun(workflowRunId))
+          .runOperation("Loading workflow run", () => api.fetchWorkflowRun(workflowRunId))
           .catch(() => null);
     applyWorkflowRunDetail(detail, { source: "http", requestStartedVersion, requestId });
   }
@@ -1047,7 +1053,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
         },
       ];
     });
-    const gates = vmGates.length > 0 ? vmGates : await fetchGates(runId).catch(() => null);
+    const gates = vmGates.length > 0 ? vmGates : await api.fetchGates(runId).catch(() => null);
 
     if (requestId !== internal.nextWorkflowRunGateRequestId) {
       return;
@@ -1089,15 +1095,15 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       action === "open" ? "Opening gate" : "Closing gate",
       () =>
         vmEffect
-          ? settleWorkflowEffect(
+          ? api.settleWorkflowEffect(
               gateId,
               "succeeded",
               { open: action === "open", reason: trimmed ?? null },
               trimmed ?? `Gate ${action === "open" ? "opened" : "closed"}`,
             )
           : action === "open"
-            ? openGate(gateId, trimmed)
-            : closeGate(gateId, trimmed),
+            ? api.openGate(gateId, trimmed)
+            : api.closeGate(gateId, trimmed),
     );
     host.ctx.setStatus(response.message || `Gate ${action === "open" ? "opened" : "closed"}`);
     await Promise.all([fetchWorkflowRunDetail(runId, true), refreshWorkflowRunGates(runId, true)]);
@@ -1258,7 +1264,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       `Canceling ${String(cancellable.length)} workflow runs`,
       () =>
         runBulk(cancellable, async (run) => {
-          const response = await cancelWorkflowRun(run.id);
+          const response = await api.cancelWorkflowRun(run.id);
 
           if (!response.success) {
             throw new Error(response.message || `Failed to cancel run ${run.id}`);
@@ -1305,7 +1311,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
         runBulk(
           runs,
           async (run) => {
-            const created = await replayWorkflowRunApi(run.id, {});
+            const created = await api.replayWorkflowRun(run.id, {});
 
             if (!created.id) {
               throw new Error(`Replay of run ${run.id} returned no run id`);

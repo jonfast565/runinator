@@ -1,9 +1,5 @@
-import {
-  deliverSignal,
-  fetchWorkflowEffectOutput,
-  fetchWorkflowRunArtifacts,
-  settleWorkflowEffect,
-} from "../api/commandCenterApi";
+import { defaultApi, type WorkflowRunExtrasApi } from "../api/ports/workflow-run-extras";
+
 import type {
   JsonValue,
   RunArtifact,
@@ -13,12 +9,15 @@ import type {
 } from "../domain/models";
 import type { AppService } from "./app";
 
-export function createWorkflowRunExtrasService(app: AppService) {
+export function createWorkflowRunExtrasService(
+  app: AppService,
+  api: WorkflowRunExtrasApi = defaultApi,
+) {
   return {
     fetchNodeRunArtifacts(effectId: string) {
       return app
         .runOperation("Loading workflow effect artifacts", async () =>
-          (await fetchWorkflowEffectOutput(effectId))
+          (await api.fetchWorkflowEffectOutput(effectId))
             .filter((event) => event.output.type === "artifact")
             .map((event) => {
               const artifact = event.output.type === "artifact" ? event.output.artifact : {};
@@ -35,12 +34,12 @@ export function createWorkflowRunExtrasService(app: AppService) {
     },
     fetchRunArtifacts(runId: string) {
       return app
-        .runOperation("Loading run artifacts", () => fetchWorkflowRunArtifacts(runId))
+        .runOperation("Loading run artifacts", () => api.fetchWorkflowRunArtifacts(runId))
         .catch(() => [] as WorkflowRunArtifact[]);
     },
     fetchNodeRunChunks(effectId: string) {
       return app.runOperation("Loading workflow effect log", async () =>
-        (await fetchWorkflowEffectOutput(effectId))
+        (await api.fetchWorkflowEffectOutput(effectId))
           .filter(
             (event) =>
               event.output.type === "chunk" && event.output.stream !== "runinator.workspace",
@@ -61,18 +60,18 @@ export function createWorkflowRunExtrasService(app: AppService) {
     fetchTerminalInteraction(effectId: string) {
       return app
         .runOperation("Loading terminal interaction", async () => {
-          return activeTerminalInteraction(await fetchWorkflowEffectOutput(effectId));
+          return activeTerminalInteraction(await api.fetchWorkflowEffectOutput(effectId));
         })
         .catch(() => null as TerminalInteraction | null);
     },
     deliverSignal(workflowRunId: string, name: string, payload: unknown = {}) {
       return app.runOperation(`Sending signal '${name}'`, () =>
-        deliverSignal(workflowRunId, name, payload),
+        api.deliverSignal(workflowRunId, name, payload),
       );
     },
     resolveInput(effectId: string, outputJson: unknown, resolvedBy?: string, message?: string) {
       return app.runOperation("Resolving workflow input", () =>
-        settleWorkflowEffect(effectId, "succeeded", outputJson as JsonValue, message ?? null),
+        api.settleWorkflowEffect(effectId, "succeeded", outputJson as JsonValue, message ?? null),
       );
     },
   };

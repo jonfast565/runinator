@@ -1,16 +1,5 @@
-import {
-  decompileToRexRap,
-  deleteWorkflow,
-  deleteWorkflowTrigger,
-  duplicateWorkflow,
-  fetchWorkflowTriggers,
-  fetchWorkflows,
-  importPackArchive,
-  saveWorkflow,
-  saveWorkflowRexRap,
-  saveWorkflowTrigger,
-  type WorkflowRexRapSaveRequest,
-} from "../../api/commandCenterApi";
+import { defaultApi, type WorkflowsCatalogApi } from "../../api/ports/workflows-catalog";
+import type { WorkflowRexRapSaveRequest } from "../../api/commandCenterApi";
 import type {
   ArtifactIdentity,
   JsonRecord,
@@ -60,6 +49,7 @@ export function createWorkflowCatalogService(
   host: WorkflowServiceHost,
   editor: WorkflowEditorPeer,
   runs: WorkflowRunsPeer,
+  api: WorkflowsCatalogApi = defaultApi,
 ) {
   const { internal } = host;
 
@@ -70,7 +60,7 @@ export function createWorkflowCatalogService(
     // under a `host.state.x = await ...` assignment, since the getter is read before the await
     // resolves; writing into a local first keeps the final assignment on the live object.
     const fetched = (await host.ctx
-      .runOperation("Refreshing workflows", () => fetchWorkflows(), { retryable: true })
+      .runOperation("Refreshing workflows", () => api.fetchWorkflows(), { retryable: true })
       .catch(() => [])) as WorkflowDefinition[];
 
     if (preserve?.id && !fetched.some((workflow) => workflow.id === preserve.id)) {
@@ -183,7 +173,7 @@ export function createWorkflowCatalogService(
 
   async function exportWorkflowRexRap(): Promise<void> {
     try {
-      const source = await decompileToRexRap(cloneJson(host.state.workflowDraft));
+      const source = await api.decompileToRexRap(cloneJson(host.state.workflowDraft));
       const name = host.state.workflowDraft.name.trim() || "workflow";
       const fileName = `${name.replace(/[^a-z0-9._-]+/gi, "_")}.rexrap`;
       host.deps.downloadTextFile(fileName, source, "text/plain");
@@ -216,7 +206,7 @@ export function createWorkflowCatalogService(
         let source: string;
 
         try {
-          source = await decompileToRexRap(cloneJson(workflow));
+          source = await api.decompileToRexRap(cloneJson(workflow));
         } catch {
           skipped.push(workflow.name || `workflow ${workflow.id}`);
           continue;
@@ -235,7 +225,7 @@ export function createWorkflowCatalogService(
         const fileName = `${slug}.rexrap`;
         entries.push({ name: fileName, content: source });
         manifestWorkflows.push(fileName);
-        triggers.push(...(await fetchWorkflowTriggers(workflow.id).catch(() => [])));
+        triggers.push(...(await api.fetchWorkflowTriggers(workflow.id).catch(() => [])));
       }
 
       if (entries.length === 0) {
@@ -257,7 +247,7 @@ export function createWorkflowCatalogService(
 
   async function importWorkflowPack(bytes: ArrayBuffer, overwrite = false): Promise<void> {
     const result = await host.ctx.runOperation("Importing workflow pack", () =>
-      importPackArchive(bytes, overwrite),
+      api.importPackArchive(bytes, overwrite),
     );
     await refreshWorkflows();
     host.deps.refreshResources();
@@ -301,7 +291,7 @@ export function createWorkflowCatalogService(
     }
 
     const triggers = (await host.ctx
-      .runOperation("Loading workflow triggers", () => fetchWorkflowTriggers(workflowId))
+      .runOperation("Loading workflow triggers", () => api.fetchWorkflowTriggers(workflowId))
       .catch(() => [])) as WorkflowTrigger[];
     host.state.workflowTriggers = triggers;
     host.notify();
@@ -393,7 +383,7 @@ export function createWorkflowCatalogService(
       blackout_end: dateTimeLocalToIso(host.state.triggerDraft.blackout_end),
     };
     const saved = await host.ctx.runOperation("Saving workflow trigger", () =>
-      saveWorkflowTrigger(trigger, host.state.triggerEditorCreating),
+      api.saveWorkflowTrigger(trigger, host.state.triggerEditorCreating),
     );
     host.ctx.setStatus(`Workflow trigger saved: ${saved.kind}`);
     closeTriggerEditor();
@@ -413,7 +403,7 @@ export function createWorkflowCatalogService(
     }
 
     const response = await host.ctx.runOperation("Deleting workflow trigger", () =>
-      deleteWorkflowTrigger(triggerId),
+      api.deleteWorkflowTrigger(triggerId),
     );
 
     if (!response.success) {
@@ -469,7 +459,7 @@ export function createWorkflowCatalogService(
   async function workflowRexRapSaveRequest(): Promise<WorkflowRexRapSaveRequest> {
     const workflow = cloneJson(host.state.workflowDraft);
     const workflowId = workflow.id ?? null;
-    const source = await decompileToRexRap(workflow);
+    const source = await api.decompileToRexRap(workflow);
     const triggers = workflowId === null ? [] : workflowSaveTriggers(workflowId);
     const request: WorkflowRexRapSaveRequest = {
       source,
@@ -507,7 +497,7 @@ export function createWorkflowCatalogService(
       normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)),
     );
     const saved = await host.ctx.runOperation("Saving workflow", async () =>
-      saveWorkflowRexRap(await workflowRexRapSaveRequest()),
+      api.saveWorkflowRexRap(await workflowRexRapSaveRequest()),
     );
     const savedWorkflow = saved.workflows.at(0);
 
@@ -549,7 +539,7 @@ export function createWorkflowCatalogService(
 
     const workflowId = workflow.id;
     const response = await host.ctx.runOperation(`Deleting workflow ${workflow.name}`, () =>
-      deleteWorkflow(workflowId),
+      api.deleteWorkflow(workflowId),
     );
 
     if (!response.success) {
@@ -594,7 +584,7 @@ export function createWorkflowCatalogService(
     const workflowId = workflow.id;
     const copy = await host.ctx
       .runOperation(`Duplicating workflow ${workflow.name}`, () =>
-        duplicateWorkflow(workflowId, bump),
+        api.duplicateWorkflow(workflowId, bump),
       )
       .catch((error: unknown) => {
         host.ctx.setError(error instanceof Error ? error.message : "Failed to duplicate workflow");
@@ -645,7 +635,7 @@ export function createWorkflowCatalogService(
     const verb = enabled ? "Enabling" : "Disabling";
     const result = await host.ctx.runOperation(
       `${verb} ${String(workflows.length)} workflows`,
-      () => runBulk(workflows, (workflow) => saveWorkflow({ ...cloneJson(workflow), enabled })),
+      () => runBulk(workflows, (workflow) => api.saveWorkflow({ ...cloneJson(workflow), enabled })),
     );
 
     await refreshWorkflows();
@@ -693,7 +683,7 @@ export function createWorkflowCatalogService(
       `Deleting ${String(deletable.length)} workflows`,
       () =>
         runBulk(deletable, async (workflow) => {
-          const response = await deleteWorkflow(workflow.id);
+          const response = await api.deleteWorkflow(workflow.id);
 
           if (!response.success) {
             throw new Error(response.message || `Failed to delete ${workflow.name}`);

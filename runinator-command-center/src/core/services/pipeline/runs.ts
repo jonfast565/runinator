@@ -1,84 +1,103 @@
-import {
-  cancelPipelineRun as cancelPipelineRunApi,
-  createPipelineRun as createPipelineRunApi,
-  deletePipelineRun as deletePipelineRunApi,
-  fetchPipelineRun as fetchPipelineRunApi,
-  fetchPipelineRuns as fetchPipelineRunsApi,
-  pausePipelineRun as pausePipelineRunApi,
-  resolvePipelineRun as resolvePipelineRunApi,
-  resumePipelineRun as resumePipelineRunApi,
-  retryPipelineMember as retryPipelineMemberApi,
-} from "../../api/commandCenterApi";
+import { defaultApi, type PipelineRunsApi } from "../../api/ports/pipeline-runs";
+
 import type { JsonRecord } from "../../domain/json";
 import type { PipelineRun, PipelineRunDetail } from "../../domain/models";
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
 import { runBulk, type BulkResult } from "../../utils/bulk";
 
 /** Start a manual run of a pipeline (starts its entry members). */
-export async function createPipelineRun(
-  pipelineId: string,
-  parameters: JsonRecord = {},
-): Promise<PipelineRun> {
-  return createPipelineRunApi(pipelineId, parameters);
-}
-
-export async function fetchPipelineRuns(): Promise<PipelineRun[]> {
-  return fetchPipelineRunsApi();
-}
-
-export async function fetchPipelineRun(pipelineRunId: string): Promise<PipelineRunDetail> {
-  return fetchPipelineRunApi(pipelineRunId);
-}
-
-export async function deletePipelineRun(pipelineRunId: string): Promise<void> {
-  const response = await deletePipelineRunApi(pipelineRunId);
-
-  if (!response.success) {
-    throw new Error(response.message || "Failed to delete pipeline run");
+export function createPipelineRunsService(api: PipelineRunsApi = defaultApi) {
+  async function createPipelineRun(
+    pipelineId: string,
+    parameters: JsonRecord = {},
+  ): Promise<PipelineRun> {
+    return api.createPipelineRun(pipelineId, parameters);
   }
+
+  async function fetchPipelineRuns(): Promise<PipelineRun[]> {
+    return api.fetchPipelineRuns();
+  }
+
+  async function fetchPipelineRun(pipelineRunId: string): Promise<PipelineRunDetail> {
+    return api.fetchPipelineRun(pipelineRunId);
+  }
+
+  async function deletePipelineRun(pipelineRunId: string): Promise<void> {
+    const response = await api.deletePipelineRun(pipelineRunId);
+
+    if (!response.success) {
+      throw new Error(response.message || "Failed to delete pipeline run");
+    }
+  }
+
+  // Pipeline-run deletion also removes every member workflow's history. Keep the fan-out here so
+  // callers get one consistent partial-success result and refresh only once after the batch.
+  function deletePipelineRuns(pipelineRunIds: readonly string[]): Promise<BulkResult<string>> {
+    return runBulk(pipelineRunIds, deletePipelineRun);
+  }
+
+  async function cancelPipelineRun(
+    pipelineRunId: string,
+    override?: ManagedRunOverrideOptions,
+  ): Promise<void> {
+    await api.cancelPipelineRun(pipelineRunId, override);
+  }
+
+  async function pausePipelineRun(
+    pipelineRunId: string,
+    override?: ManagedRunOverrideOptions,
+  ): Promise<void> {
+    await api.pausePipelineRun(pipelineRunId, override);
+  }
+
+  async function resumePipelineRun(
+    pipelineRunId: string,
+    override?: ManagedRunOverrideOptions,
+  ): Promise<void> {
+    await api.resumePipelineRun(pipelineRunId, override);
+  }
+
+  async function retryPipelineMember(
+    pipelineRunId: string,
+    memberKey: string,
+    parameters: JsonRecord = {},
+    override?: ManagedRunOverrideOptions,
+  ) {
+    return api.retryPipelineMember(pipelineRunId, memberKey, parameters, override);
+  }
+
+  /** Resolve a pipeline run's pending inquiry. */
+  async function resolvePipelineRun(
+    pipelineRunId: string,
+    decision: "continue" | "abort",
+    message?: string | null,
+  ): Promise<PipelineRun> {
+    return api.resolvePipelineRun(pipelineRunId, decision, null, message ?? null);
+  }
+
+  return {
+    createPipelineRun,
+    fetchPipelineRuns,
+    fetchPipelineRun,
+    deletePipelineRun,
+    deletePipelineRuns,
+    cancelPipelineRun,
+    pausePipelineRun,
+    resumePipelineRun,
+    retryPipelineMember,
+    resolvePipelineRun,
+  };
 }
 
-// Pipeline-run deletion also removes every member workflow's history. Keep the fan-out here so
-// callers get one consistent partial-success result and refresh only once after the batch.
-export function deletePipelineRuns(pipelineRunIds: readonly string[]): Promise<BulkResult<string>> {
-  return runBulk(pipelineRunIds, deletePipelineRun);
-}
-
-export async function cancelPipelineRun(
-  pipelineRunId: string,
-  override?: ManagedRunOverrideOptions,
-): Promise<void> {
-  await cancelPipelineRunApi(pipelineRunId, override);
-}
-
-export async function pausePipelineRun(
-  pipelineRunId: string,
-  override?: ManagedRunOverrideOptions,
-): Promise<void> {
-  await pausePipelineRunApi(pipelineRunId, override);
-}
-
-export async function resumePipelineRun(
-  pipelineRunId: string,
-  override?: ManagedRunOverrideOptions,
-): Promise<void> {
-  await resumePipelineRunApi(pipelineRunId, override);
-}
-
-export async function retryPipelineMember(
-  pipelineRunId: string,
-  memberKey: string,
-  parameters: JsonRecord = {},
-  override?: ManagedRunOverrideOptions,
-) {
-  return retryPipelineMemberApi(pipelineRunId, memberKey, parameters, override);
-}
-
-/** Resolve a pipeline run's pending inquiry. */
-export async function resolvePipelineRun(
-  pipelineRunId: string,
-  decision: "continue" | "abort",
-  message?: string | null,
-): Promise<PipelineRun> {
-  return resolvePipelineRunApi(pipelineRunId, decision, null, message ?? null);
-}
+export const {
+  createPipelineRun,
+  fetchPipelineRuns,
+  fetchPipelineRun,
+  deletePipelineRun,
+  deletePipelineRuns,
+  cancelPipelineRun,
+  pausePipelineRun,
+  resumePipelineRun,
+  retryPipelineMember,
+  resolvePipelineRun,
+} = createPipelineRunsService();

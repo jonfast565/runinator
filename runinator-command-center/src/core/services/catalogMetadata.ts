@@ -1,8 +1,5 @@
-import {
-  fetchEnumCatalogs as fetchEnumCatalogsApi,
-  fetchNodeKinds as fetchNodeKindsApi,
-  fetchTriggerKinds as fetchTriggerKindsApi,
-} from "../api/commandCenterApi";
+import { defaultApi, type CatalogMetadataApi } from "../api/ports/catalogMetadata";
+
 import type {
   EnumCatalogMetadata,
   WorkflowNodeKindMetadata,
@@ -24,7 +21,7 @@ export interface CatalogMetadataState {
 // the node/edge/trigger metadata catalogs are compile-time constants on the backend, so they are
 // fetched once and cached for the session. the workflow editor, palette, detail view, and trigger
 // forms all render generically from this state instead of hardcoding per-kind knowledge.
-export function createCatalogMetadataService() {
+export function createCatalogMetadataService(api: CatalogMetadataApi = defaultApi) {
   const store = createStore<CatalogMetadataState>({
     nodeKinds: [],
     triggerKinds: [],
@@ -47,9 +44,9 @@ export function createCatalogMetadataService() {
 
       try {
         const [nodeKinds, triggerKinds, enums] = await Promise.all([
-          fetchNodeKindsApi(),
-          fetchTriggerKindsApi(),
-          fetchEnumCatalogsApi(),
+          api.fetchNodeKinds(),
+          api.fetchTriggerKinds(),
+          api.fetchEnumCatalogs(),
         ]);
         setWorkflowCatalogs({ nodeKinds, triggerKinds, enums });
         store.setState((state) => ({

@@ -1,25 +1,32 @@
-import { deleteWorkflowTrigger, saveWorkflowTrigger } from "../../api/commandCenterApi";
+import { defaultApi, type PipelineChainLinksApi } from "../../api/ports/pipeline-chain-links";
+
 import type { WorkflowTrigger } from "../../domain/models";
 import type { ChainEvent } from "../../workflow/pipeline-graph";
 
 /** Persist selector/enabled edits to an existing chained trigger (pipeline tag preserved). */
-export async function updateChainLink(
-  trigger: WorkflowTrigger,
-  changes: { on?: ChainEvent; enabled?: boolean },
-): Promise<WorkflowTrigger> {
-  return saveWorkflowTrigger(
-    {
-      ...trigger,
-      enabled: changes.enabled ?? trigger.enabled,
-      configuration: {
-        ...trigger.configuration,
-        on: changes.on ?? trigger.configuration.on,
+export function createPipelineChainLinksService(api: PipelineChainLinksApi = defaultApi) {
+  async function updateChainLink(
+    trigger: WorkflowTrigger,
+    changes: { on?: ChainEvent; enabled?: boolean },
+  ): Promise<WorkflowTrigger> {
+    return api.saveWorkflowTrigger(
+      {
+        ...trigger,
+        enabled: changes.enabled ?? trigger.enabled,
+        configuration: {
+          ...trigger.configuration,
+          on: changes.on ?? trigger.configuration.on,
+        },
       },
-    },
-    false,
-  );
+      false,
+    );
+  }
+
+  async function deleteChainLink(triggerId: string): Promise<void> {
+    await api.deleteWorkflowTrigger(triggerId);
+  }
+
+  return { updateChainLink, deleteChainLink };
 }
 
-export async function deleteChainLink(triggerId: string): Promise<void> {
-  await deleteWorkflowTrigger(triggerId);
-}
+export const { updateChainLink, deleteChainLink } = createPipelineChainLinksService();

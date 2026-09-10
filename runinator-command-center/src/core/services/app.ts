@@ -1,10 +1,7 @@
-import { fetchReplicas as fetchReplicasApi } from "../api/commandCenterApi";
+import { defaultApi, type AppApi } from "../api/ports/app";
+
 import type { AppTab } from "../navigation/app";
-import {
-  readSidebarCollapsed,
-  readStoredDefaultTab,
-  tabs,
-} from "../navigation/nav-config";
+import { readSidebarCollapsed, readStoredDefaultTab, tabs } from "../navigation/nav-config";
 import type { ReplicaCounts, ReplicaRecord } from "../domain/models";
 import { createStore } from "./event-bus";
 
@@ -76,7 +73,7 @@ export function isNetworkError(error: unknown): boolean {
   );
 }
 
-export function createAppService() {
+export function createAppService(api: AppApi = defaultApi) {
   const store = createStore<AppState>({
     activeTab: readStoredDefaultTab(),
     sidebarCollapsed: readSidebarCollapsed(),
@@ -313,7 +310,9 @@ export function createAppService() {
         errorText: url ? "" : state.errorText,
         eventStreamState: url ? state.eventStreamState : "disconnected",
         replicas: url ? state.replicas : [],
-        replicaCounts: url ? state.replicaCounts : { workers: 0, wakers: 0, webservices: 0, background: 0 },
+        replicaCounts: url
+          ? state.replicaCounts
+          : { workers: 0, wakers: 0, webservices: 0, background: 0 },
       }));
     },
     setEventStreamState(state: EventStreamState) {
@@ -353,9 +352,10 @@ export function createAppService() {
       store.setState((state) => ({ ...state, searchQuery: query }));
     },
     async refreshReplicas() {
-      const response = await fetchReplicasApi();
+      const response = await api.fetchReplicas();
       const nextReplicas = [...response.replicas].sort((left, right) => {
-        const typeOrder = replicaKindOrder(left.replica_type) - replicaKindOrder(right.replica_type);
+        const typeOrder =
+          replicaKindOrder(left.replica_type) - replicaKindOrder(right.replica_type);
 
         if (typeOrder !== 0) {
           return typeOrder;

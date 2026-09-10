@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+async-trait = "0.1"
 runinator-adapter-contract = { path = "../runinator-adapter-contract" }
 runinator-models = { path = "../runinator-models" }
 log = "0.4"

@@ -1,5 +1,8 @@
 //! Restore and snapshot isolated portable workspaces around provider execution.
-use runinator_api::{ApiError, AsyncApiClient, StaticLocator};
+use runinator_api::{
+    ApiError,
+    capabilities::{WorkspaceCheckoutClient, WorkspaceObjectTransport},
+};
 use runinator_models::{
     errors::{SendableError, WORKSPACE_INVALID},
     value::Value,
@@ -91,7 +94,7 @@ pub struct ActiveWorkspace {
 
 impl ActiveWorkspace {
     pub async fn restore(
-        api: &AsyncApiClient<StaticLocator>,
+        api: &(impl WorkspaceCheckoutClient + WorkspaceObjectTransport + Clone + 'static),
         value: &Value,
         replica_id: uuid::Uuid,
         deadline: std::time::Instant,
@@ -213,7 +216,7 @@ impl ActiveWorkspace {
     }
     pub async fn save(
         &self,
-        api: &AsyncApiClient<StaticLocator>,
+        api: &dyn WorkspaceCheckoutClient,
         output: Option<&Value>,
         result_only: bool,
     ) -> Result<Option<WorkspaceCommit>, SendableError> {
@@ -353,7 +356,7 @@ impl ActiveWorkspace {
     }
     pub async fn rebind_cached_commit(
         &self,
-        api: &AsyncApiClient<StaticLocator>,
+        api: &dyn WorkspaceCheckoutClient,
         commit: WorkspaceCommit,
     ) -> Result<WorkspaceCommit, SendableError> {
         if commit.snapshot.workspace_id != self.execution.checkout.workspace_id
@@ -393,7 +396,7 @@ impl ActiveWorkspace {
 }
 
 async fn download_workspace_checkout_after_claim(
-    api: &AsyncApiClient<StaticLocator>,
+    api: &dyn WorkspaceCheckoutClient,
     checkout_id: uuid::Uuid,
     replica_id: uuid::Uuid,
     deadline: std::time::Instant,

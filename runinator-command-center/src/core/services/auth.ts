@@ -1,12 +1,5 @@
-import {
-  fetchAuthConfig,
-  fetchAuthMe,
-  login as apiLogin,
-  logout as apiLogout,
-  refreshSession,
-  setAccessToken,
-  type LoginResult,
-} from "../api/commandCenterApi";
+import { defaultApi, type AuthApi } from "../api/ports/auth";
+import type { LoginResult } from "../api/commandCenterApi";
 import { type Action, type JsonRecord } from "../domain/models";
 import { getPlatformAdapterOptional } from "../platform";
 import type { AuthStorage } from "../platform/types";
@@ -88,7 +81,7 @@ function safeGet(key: string): string | null {
   return authStorage().get(key);
 }
 
-export function createAuthService() {
+export function createAuthService(api: AuthApi = defaultApi) {
   let refreshToken: string | null = null;
   let refreshPromise: Promise<boolean> | null = null;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -121,7 +114,7 @@ export function createAuthService() {
   }
 
   async function publishAccessToken(access: string | null) {
-    await setAccessToken(access);
+    await api.setAccessToken(access);
     store.setState((state) => ({
       ...state,
       accessTokenRevision: state.accessTokenRevision + 1,
@@ -197,7 +190,7 @@ export function createAuthService() {
 
   async function tryRefresh(token: string): Promise<boolean> {
     try {
-      await apply(await refreshSession(token));
+      await apply(await api.refreshSession(token));
 
       // Refresh intentionally mints an org-less token. The organization service restores the
       // operator's explicit selection before this refresh is considered complete.
@@ -264,7 +257,7 @@ export function createAuthService() {
     },
     async init() {
       try {
-        const config = await fetchAuthConfig();
+        const config = await api.fetchAuthConfig();
         store.setState((state) => ({ ...state, required: config.enabled }));
       } catch {
         store.setState((state) => ({ ...state, required: false }));
@@ -286,7 +279,7 @@ export function createAuthService() {
         scheduleAccessTokenRefresh(access);
 
         try {
-          const user = await fetchAuthMe();
+          const user = await api.fetchAuthMe();
           store.setState((state) => ({
             ...state,
             user: readPrincipal(user),
@@ -305,7 +298,7 @@ export function createAuthService() {
       store.setState((state) => ({ ...state, error: "" }));
 
       try {
-        await apply(await apiLogin(username, password));
+        await apply(await api.login(username, password));
         return true;
       } catch (err) {
         store.setState((state) => ({
@@ -318,7 +311,7 @@ export function createAuthService() {
     async signOut() {
       if (refreshToken) {
         try {
-          await apiLogout(refreshToken);
+          await api.logout(refreshToken);
         } catch {
           /* best effort */
         }
@@ -343,7 +336,7 @@ export function createAuthService() {
       }
 
       try {
-        const user = await fetchAuthMe();
+        const user = await api.fetchAuthMe();
         store.setState((state) => ({
           ...state,
           user: readPrincipal(user),

@@ -8590,6 +8590,7 @@ dependencies = [
 name = "runinator-worker"
 version = "0.21.695"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "clap",

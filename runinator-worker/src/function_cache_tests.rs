@@ -197,10 +197,12 @@ fn eviction_drops_the_least_recently_used_entry_first() {
     let _ = filetime_touch(&root.join("bbb").join(READY_MARKER));
 
     let cache = FunctionCache {
-        client: runinator_api::AsyncApiClient::new(runinator_api::StaticLocator::new(
-            "http://127.0.0.1:1",
-        ))
-        .unwrap(),
+        client: Arc::new(
+            runinator_api::AsyncApiClient::new(runinator_api::StaticLocator::new(
+                "http://127.0.0.1:1",
+            ))
+            .unwrap(),
+        ),
         root: root.clone(),
         // 8192 staged plus a 4096 incoming exceeds this by one entry, so exactly one is evicted.
         capacity_bytes: 10_000,
@@ -216,4 +218,92 @@ fn eviction_drops_the_least_recently_used_entry_first() {
         "the recently used entry should stay"
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+struct ArtifactSource {
+    bytes: Vec<u8>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl FunctionArtifactSource for ArtifactSource {
+    async fn download_function_artifact(&self, _digest: &str) -> runinator_api::Result<Vec<u8>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.bytes.clone())
+    }
+}
+
+#[tokio::test]
+async fn staging_validates_injected_bytes_and_reuses_only_verified_packages() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let bytes = archive(&[("main.py", "print('hello')")]);
+    let digest = format!("sha256:{}", sha256_hex(&bytes));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cache = FunctionCache::with_root(
+        ArtifactSource {
+            bytes,
+            calls: calls.clone(),
+        },
+        root.path().to_owned(),
+    );
+    let staged = cache.stage(&digest).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(staged.join("main.py")).unwrap(),
+        "print('hello')"
+    );
+    assert_eq!(cache.stage(&digest).await.unwrap(), staged);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let bad_digest = format!("sha256:{}", "0".repeat(64));
+    assert!(
+        cache
+            .stage(&bad_digest)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not the requested")
+    );
+    assert!(!root.path().join("0".repeat(64)).join(READY_MARKER).exists());
+}
+
+struct MissingExport;
+#[async_trait::async_trait]
+impl FunctionExportResolver for MissingExport {
+    async fn resolve_function_export(
+        &self,
+        _id: uuid::Uuid,
+    ) -> runinator_api::Result<runinator_models::functions::FunctionInvocationTarget> {
+        Err(runinator_api::ApiError::UnexpectedResponse(
+            "export was removed".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn unresolved_exports_do_not_download_or_stage_code() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let root = tempfile::tempdir().unwrap();
+    let cache = FunctionCache::with_root(
+        ArtifactSource {
+            bytes: Vec::new(),
+            calls: calls.clone(),
+        },
+        root.path().to_owned(),
+    );
+    let binding = FunctionBinding {
+        package_id: uuid::Uuid::new_v4(),
+        package_name: "package".into(),
+        namespace: None,
+        version_id: uuid::Uuid::new_v4(),
+        version: 1,
+        export_id: uuid::Uuid::new_v4(),
+        export_name: "run".into(),
+        artifact_digest: format!("sha256:{}", "0".repeat(64)),
+    };
+    let error = prepare_invocation(&cache, &MissingExport, &binding, Value::Null, Value::Null)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("export was removed"));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

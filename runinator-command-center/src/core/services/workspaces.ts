@@ -1,17 +1,5 @@
-import {
-  fetchDurableWorkspaces,
-  fetchWorkspaceVersions,
-  fetchWorkspaceSnapshot,
-  deleteDurableWorkspace,
-  downloadWorkspaceVersion,
-  fetchWorkspaceDirectory,
-  fetchWorkspaceDiff,
-  createWorkspaceTransfer,
-  fetchWorkspaceTransfer,
-  cancelWorkspaceTransfer,
-  importWorkspaceArchive,
-  previewWorkspaceFile,
-} from "../api/commandCenterApi";
+import { defaultApi, type WorkspacesApi } from "../api/ports/workspaces";
+
 import type {
   DurableWorkspace,
   WorkspaceSnapshot,
@@ -20,7 +8,7 @@ import type {
 } from "../domain/models/workspaces";
 import { createStore } from "./event-bus";
 
-export function createWorkspacesService() {
+export function createWorkspacesService(api: WorkspacesApi = defaultApi) {
   const store = createStore({
     items: [] as DurableWorkspace[],
     selected: null as DurableWorkspace | null,
@@ -65,7 +53,7 @@ export function createWorkspacesService() {
     ...store,
     async refresh(offset = 0) {
       const token = ++listGeneration;
-      const items = await fetchDurableWorkspaces(offset).catch((error: unknown) => {
+      const items = await api.fetchDurableWorkspaces(offset).catch((error: unknown) => {
         if (token === listGeneration) {
           throw error;
         }
@@ -103,13 +91,15 @@ export function createWorkspacesService() {
         return;
       }
 
-      const versions = await fetchWorkspaceVersions(selected.id, offset).catch((error: unknown) => {
-        if (token === detailGeneration) {
-          throw error;
-        }
+      const versions = await api
+        .fetchWorkspaceVersions(selected.id, offset)
+        .catch((error: unknown) => {
+          if (token === detailGeneration) {
+            throw error;
+          }
 
-        return null;
-      });
+          return null;
+        });
 
       if (versions === null) {
         return;
@@ -118,15 +108,15 @@ export function createWorkspacesService() {
       let pinnedSnapshot: WorkspaceSnapshot | null = null;
 
       if (pinned !== null && !versions.some((snapshot) => snapshot.version === pinned)) {
-        pinnedSnapshot = await fetchWorkspaceSnapshot(selected.id, pinned).catch(
-          (error: unknown) => {
+        pinnedSnapshot = await api
+          .fetchWorkspaceSnapshot(selected.id, pinned)
+          .catch((error: unknown) => {
             if (token === detailGeneration) {
               throw error;
             }
 
             return null;
-          },
-        );
+          });
       }
 
       if (token === detailGeneration) {
@@ -148,15 +138,15 @@ export function createWorkspacesService() {
         [results ? "results" : "directory"]: null,
         preview: "",
       }));
-      const page = await fetchWorkspaceDirectory(workspace, version, path, cursor, results).catch(
-        (error: unknown) => {
+      const page = await api
+        .fetchWorkspaceDirectory(workspace, version, path, cursor, results)
+        .catch((error: unknown) => {
           if (token === (results ? resultsGeneration : directoryGeneration)) {
             throw error;
           }
 
           return null;
-        },
-      );
+        });
 
       if (page === null) {
         return;
@@ -170,15 +160,15 @@ export function createWorkspacesService() {
       activate(workspace, after);
       const token = ++diffGeneration;
       store.setState((current) => ({ ...current, diff: null }));
-      const diff = await fetchWorkspaceDiff(workspace, before, after, cursor).catch(
-        (error: unknown) => {
+      const diff = await api
+        .fetchWorkspaceDiff(workspace, before, after, cursor)
+        .catch((error: unknown) => {
           if (token === diffGeneration) {
             throw error;
           }
 
           return null;
-        },
-      );
+        });
 
       if (diff === null) {
         return;
@@ -192,15 +182,15 @@ export function createWorkspacesService() {
       activate(workspace, version);
       const token = ++previewGeneration;
       store.setState((current) => ({ ...current, preview: "" }));
-      const preview = await previewWorkspaceFile(workspace, version, path, result).catch(
-        (error: unknown) => {
+      const preview = await api
+        .previewWorkspaceFile(workspace, version, path, result)
+        .catch((error: unknown) => {
           if (token === previewGeneration) {
             throw error;
           }
 
           return null;
-        },
-      );
+        });
 
       if (preview === null) {
         return;
@@ -215,21 +205,21 @@ export function createWorkspacesService() {
       store.setState((current) => ({ ...current, preview: "" }));
     },
     async remove(id: string, version: number | null = null) {
-      await deleteDurableWorkspace(id, version);
+      await api.deleteDurableWorkspace(id, version);
     },
     async download(workspace: string, version: number, path: string | null = null, result = false) {
       if (path !== null) {
-        return downloadWorkspaceVersion(workspace, version, path, result);
+        return api.downloadWorkspaceVersion(workspace, version, path, result);
       }
 
       const generation = detailGeneration;
-      let job = await createWorkspaceTransfer(workspace, version);
+      let job = await api.createWorkspaceTransfer(workspace, version);
 
       while (generation === detailGeneration) {
         store.setState((current) => ({ ...current, transfer: job }));
 
         if (job.state === "ready") {
-          return downloadWorkspaceVersion(workspace, version, null, false, job.id);
+          return api.downloadWorkspaceVersion(workspace, version, null, false, job.id);
         }
 
         if (["failed", "cancelled"].includes(job.state)) {
@@ -237,14 +227,14 @@ export function createWorkspacesService() {
         }
 
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        job = await fetchWorkspaceTransfer(job.id);
+        job = await api.fetchWorkspaceTransfer(job.id);
       }
 
       return null;
     },
     async importArchive(key: string, file: File | null) {
       const generation = detailGeneration;
-      let job = await importWorkspaceArchive(key, file);
+      let job = await api.importWorkspaceArchive(key, file);
 
       if (!job) {
         return;
@@ -262,14 +252,14 @@ export function createWorkspacesService() {
         }
 
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        job = await fetchWorkspaceTransfer(job.id);
+        job = await api.fetchWorkspaceTransfer(job.id);
       }
     },
     async cancelTransfer() {
       const job = store.getState().transfer;
 
       if (job) {
-        await cancelWorkspaceTransfer(job.id);
+        await api.cancelWorkspaceTransfer(job.id);
       }
     },
     clear() {

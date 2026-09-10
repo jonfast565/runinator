@@ -1,10 +1,5 @@
-import {
-  approveApproval,
-  deleteAutomationEvent,
-  fetchResourceRecords,
-  rejectApproval,
-  settleWorkflowEffect,
-} from "../api/commandCenterApi";
+import { defaultApi, type ResourcesApi } from "../api/ports/resources";
+
 import type { ResourceEndpoint } from "../navigation/app";
 import type { JsonRecord, WorkflowNodeRun } from "../domain/models";
 import {
@@ -32,7 +27,7 @@ export interface ResourcesState {
   hideResolved: boolean;
 }
 
-export function createResourcesService(app: AppService) {
+export function createResourcesService(app: AppService, api: ResourcesApi = defaultApi) {
   const store = createStore<ResourcesState>({
     selectedResourceEndpoint: "external_items",
     resourceRecords: [],
@@ -43,8 +38,12 @@ export function createResourcesService(app: AppService) {
   function operationContext(): OperationContext {
     return {
       runOperation: (label, operation, options) => app.runOperation(label, operation, options),
-      setStatus: (text) => { app.setStatus(text); },
-      setError: (text, action) => { app.setError(text, action); },
+      setStatus: (text) => {
+        app.setStatus(text);
+      },
+      setError: (text, action) => {
+        app.setError(text, action);
+      },
       normalizedSearch: app.normalizedSearch,
     };
   }
@@ -76,7 +75,10 @@ export function createResourcesService(app: AppService) {
     const query = app.normalizedSearch;
     let records = store.getState().resourceRecords;
 
-    if (store.getState().hideResolved && store.getState().selectedResourceEndpoint === "approvals") {
+    if (
+      store.getState().hideResolved &&
+      store.getState().selectedResourceEndpoint === "approvals"
+    ) {
       records = records.filter((record) => !isResolved(record));
     }
 
@@ -137,7 +139,7 @@ export function createResourcesService(app: AppService) {
     async refreshResources() {
       const endpoint = store.getState().selectedResourceEndpoint;
       const records = await operationContext()
-        .runOperation("Refreshing resources", () => fetchResourceRecords(endpoint), {
+        .runOperation("Refreshing resources", () => api.fetchResourceRecords(endpoint), {
           retryable: true,
         })
         .catch(() => []);
@@ -169,9 +171,12 @@ export function createResourcesService(app: AppService) {
       const ctx = operationContext();
       const response = await ctx.runOperation(
         `${action === "approve" ? "Approving" : "Rejecting"} approval`,
-        () => (action === "approve" ? approveApproval(approvalId) : rejectApproval(approvalId)),
+        () =>
+          action === "approve" ? api.approveApproval(approvalId) : api.rejectApproval(approvalId),
       );
-      ctx.setStatus(response.message || `Approval ${action === "approve" ? "approved" : "rejected"}`);
+      ctx.setStatus(
+        response.message || `Approval ${action === "approve" ? "approved" : "rejected"}`,
+      );
       await service.refreshResources();
     },
     async resolveApproval(action: ApprovalAction) {
@@ -199,7 +204,7 @@ export function createResourcesService(app: AppService) {
 
       if (effectId) {
         await operationContext().runOperation(`Resolving workflow effect ${effectId}`, () =>
-          settleWorkflowEffect(
+          api.settleWorkflowEffect(
             effectId,
             action === "approve" ? "succeeded" : "failed",
             { decision: action === "approve" ? "approved" : "rejected" },
@@ -230,7 +235,7 @@ export function createResourcesService(app: AppService) {
 
       const ctx = operationContext();
       const approvals = await ctx.runOperation("Loading workflow approvals", () =>
-        fetchResourceRecords(`approvals?workflow_run_id=${workflowRunId}`),
+        api.fetchResourceRecords(`approvals?workflow_run_id=${workflowRunId}`),
       );
       const approval = selectWorkflowApprovalRecord(approvals, workflowRunId, nodeId);
       const approvalId = nonEmptyString(approval?.id);
@@ -259,7 +264,7 @@ export function createResourcesService(app: AppService) {
       }
 
       await operationContext()
-        .runOperation("Deleting event", () => deleteAutomationEvent(id))
+        .runOperation("Deleting event", () => api.deleteAutomationEvent(id))
         .catch((error: unknown) => {
           app.setError(String(error));
         });
@@ -277,7 +282,9 @@ export function createResourcesService(app: AppService) {
         return;
       }
 
-      const current = list.findIndex((record) => record === store.getState().selectedResourceRecord);
+      const current = list.findIndex(
+        (record) => record === store.getState().selectedResourceRecord,
+      );
       store.setState((state) => ({
         ...state,
         selectedResourceRecord: list[boundedIndex(current, delta, list.length)],

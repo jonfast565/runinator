@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::capabilities::ExecutionProfileSource;
 use runinator_models::{
     errors::SendableError,
     execution_profiles::{
@@ -38,7 +38,7 @@ impl Drop for ProfileLease {
 }
 
 pub async fn materialize(
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn ExecutionProfileSource,
     effect_id: uuid::Uuid,
     workflow_run_id: uuid::Uuid,
     binding: &ExecutionProfileBinding,
@@ -47,7 +47,7 @@ pub async fn materialize(
 }
 
 pub async fn materialize_for_adapter(
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn ExecutionProfileSource,
     dispatch_id: uuid::Uuid,
     binding: &ExecutionProfileBinding,
 ) -> Result<ProfileLease, SendableError> {
@@ -55,7 +55,7 @@ pub async fn materialize_for_adapter(
 }
 
 async fn materialize_for_consumer(
-    client: &AsyncApiClient<StaticLocator>,
+    client: &dyn ExecutionProfileSource,
     effect_id: uuid::Uuid,
     binding: &ExecutionProfileBinding,
     workflow_run_id: Option<uuid::Uuid>,
@@ -382,3 +382,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "execution_profile_source_tests.rs"]
+mod execution_profile_source_tests;

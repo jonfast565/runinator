@@ -1,3 +1,4 @@
+import { defaultApi } from "../../api/ports/workflows";
 import type {
   ControlFrame,
   DebugFrame,
@@ -66,6 +67,7 @@ function defaultDownloadTextFile(fileName: string, contents: string, mimeType = 
 
 export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   const deps: Required<WorkflowServiceDeps> = {
+    api: defaultApi,
     confirm: defaultConfirm,
     downloadBlob: defaultDownloadBlob,
     downloadTextFile: defaultDownloadTextFile,
@@ -401,12 +403,12 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     ensureWorkflowNodes,
   };
 
-  const runs = createWorkflowRunService(host);
+  const runs = createWorkflowRunService(host, deps.api);
   const catalogPeer: { saveSelectedWorkflowBundle: () => Promise<void> } = {
     saveSelectedWorkflowBundle: () => Promise.resolve(),
   };
-  const editor = createWorkflowEditorService(host, runs, catalogPeer);
-  const catalog = createWorkflowCatalogService(host, editor, runs);
+  const editor = createWorkflowEditorService(host, runs, catalogPeer, deps.api);
+  const catalog = createWorkflowCatalogService(host, editor, runs, deps.api);
   catalogPeer.saveSelectedWorkflowBundle = catalog.saveSelectedWorkflowBundle;
   const header = createWorkflowHeaderService(host, editor);
 

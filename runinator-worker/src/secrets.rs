@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use runinator_api::{ApiError, AsyncApiClient, StaticLocator};
+use runinator_api::{ApiError, capabilities::RunSecretReader};
 use runinator_models::errors::SendableError;
 use runinator_models::value::Value;
 use uuid::Uuid;
@@ -19,7 +19,7 @@ pub(crate) fn is_transient_secret_error(err: &SendableError) -> bool {
 }
 
 pub(crate) async fn resolve_secret_refs(
-    api_client: &AsyncApiClient<StaticLocator>,
+    api_client: &dyn RunSecretReader,
     workflow_run_id: Uuid,
     parameters: Value,
 ) -> Result<Value, SendableError> {
@@ -168,3 +168,7 @@ mod tests {
         assert_eq!(reference.name, "api/token");
     }
 }
+
+#[cfg(test)]
+#[path = "secret_resolution_tests.rs"]
+mod secret_resolution_tests;

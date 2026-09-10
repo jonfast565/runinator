@@ -1,14 +1,5 @@
-import {
-  deleteFunctionAlias,
-  deleteFunctionPackage,
-  fetchFunctionCatalog,
-  fetchFunctionPackage,
-  fetchFunctionPackages,
-  publishFunctionVersion,
-  restoreFunctionPackage,
-  setFunctionAlias,
-  uploadFunctionArtifact,
-} from "../api/commandCenterApi";
+import { defaultApi, type FunctionsApi } from "../api/ports/functions";
+
 import type {
   FunctionCatalogEntry,
   FunctionManifest,
@@ -36,7 +27,7 @@ export interface FunctionsState {
   catalog: FunctionCatalogEntry[];
 }
 
-export function createFunctionsService(app: AppService) {
+export function createFunctionsService(app: AppService, api: FunctionsApi = defaultApi) {
   const store = createStore<FunctionsState>({
     packages: [],
     selectedPackage: null,
@@ -51,9 +42,7 @@ export function createFunctionsService(app: AppService) {
     }
 
     return packages.filter((pkg) => {
-      const haystack = [qualifiedPackageName(pkg), pkg.description ?? ""]
-        .join(" ")
-        .toLowerCase();
+      const haystack = [qualifiedPackageName(pkg), pkg.description ?? ""].join(" ").toLowerCase();
       return haystack.includes(query);
     });
   }
@@ -74,8 +63,8 @@ export function createFunctionsService(app: AppService) {
     exportsForPackage,
     async refreshPackages() {
       const [packages, catalog] = await Promise.all([
-        app.runOperation("Refreshing functions", fetchFunctionPackages).catch(() => []),
-        app.runOperation("Refreshing function catalog", fetchFunctionCatalog).catch(() => []),
+        app.runOperation("Refreshing functions", api.fetchFunctionPackages).catch(() => []),
+        app.runOperation("Refreshing function catalog", api.fetchFunctionCatalog).catch(() => []),
       ]);
       const selectedId = store.getState().selectedPackage?.id;
       store.setState((state) => ({ ...state, packages, catalog }));
@@ -99,7 +88,7 @@ export function createFunctionsService(app: AppService) {
 
       const detail = await app
         .runOperation("Loading function package", () =>
-          fetchFunctionPackage(qualifiedPackageName(pkg)),
+          api.fetchFunctionPackage(qualifiedPackageName(pkg)),
         )
         .catch(() => null);
       store.setState((state) => ({ ...state, selectedPackage: detail }));
@@ -116,12 +105,15 @@ export function createFunctionsService(app: AppService) {
         request.alias = alias;
       }
 
-      const published = await app.runOperation(`Publishing ${qualifiedPackageName(manifest)}`, async () => {
-        // the server keeps the bytes only if it does not already hold that digest, so republishing
-        // unchanged code is a no-op rather than a second copy.
-        await uploadFunctionArtifact(digest, archive);
-        return publishFunctionVersion(request);
-      });
+      const published = await app.runOperation(
+        `Publishing ${qualifiedPackageName(manifest)}`,
+        async () => {
+          // the server keeps the bytes only if it does not already hold that digest, so republishing
+          // unchanged code is a no-op rather than a second copy.
+          await api.uploadFunctionArtifact(digest, archive);
+          return api.publishFunctionVersion(request);
+        },
+      );
       app.setStatus(
         `Published ${qualifiedPackageName(manifest)} version ${String(published.version)}`,
       );
@@ -130,7 +122,7 @@ export function createFunctionsService(app: AppService) {
     },
     async restore(packageName: string) {
       await app.runOperation("Restoring function package", () =>
-        restoreFunctionPackage(packageName),
+        api.restoreFunctionPackage(packageName),
       );
       app.setStatus(`Restored ${packageName}`);
       await service.refreshPackages();
@@ -149,7 +141,7 @@ export function createFunctionsService(app: AppService) {
       }
 
       const response = await app.runOperation(`Moving ${alias}`, () =>
-        setFunctionAlias(qualifiedPackageName(pkg), alias, version),
+        api.setFunctionAlias(qualifiedPackageName(pkg), alias, version),
       );
       app.setStatus(`Alias ${alias} now points at version ${String(version)}`);
       await service.refreshPackages();
@@ -168,7 +160,9 @@ export function createFunctionsService(app: AppService) {
       }
 
       await app
-        .runOperation("Deleting alias", () => deleteFunctionAlias(qualifiedPackageName(pkg), alias))
+        .runOperation("Deleting alias", () =>
+          api.deleteFunctionAlias(qualifiedPackageName(pkg), alias),
+        )
         .catch((error: unknown) => {
           app.setError(String(error));
         });
@@ -194,7 +188,7 @@ export function createFunctionsService(app: AppService) {
       }
 
       await app
-        .runOperation("Deleting function package", () => deleteFunctionPackage(name))
+        .runOperation("Deleting function package", () => api.deleteFunctionPackage(name))
         .catch((error: unknown) => {
           app.setError(String(error));
         });

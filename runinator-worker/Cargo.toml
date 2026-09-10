@@ -48,4 +48,5 @@ rabbitmq = ["runinator-broker/rabbitmq"]
 ws = ["runinator-broker/ws"]
 
 [dev-dependencies]
+async-trait = "0.1"
 tempfile = "3"

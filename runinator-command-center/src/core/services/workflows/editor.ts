@@ -1,4 +1,5 @@
-import { compileRexRap, decompileToRexRap } from "../../api/commandCenterApi";
+import { defaultApi, type WorkflowsEditorApi } from "../../api/ports/workflows-editor";
+
 import type {
   JsonRecord,
   WorkflowDefinition,
@@ -71,6 +72,7 @@ export function createWorkflowEditorService(
   host: WorkflowServiceHost,
   runs: WorkflowRunsPeer,
   catalog: WorkflowCatalogPeer,
+  api: WorkflowsEditorApi = defaultApi,
 ) {
   const { internal } = host;
 
@@ -901,7 +903,10 @@ export function createWorkflowEditorService(
       : null;
 
     try {
-      compiled = await compileRexRap(host.state.workflowRexRap, host.state.workflowDraft.enabled);
+      compiled = await api.compileRexRap(
+        host.state.workflowRexRap,
+        host.state.workflowDraft.enabled,
+      );
     } catch (err) {
       host.ctx.setError(`REXRAP compile error: ${errorMessage(err)}`);
       return false;
@@ -928,7 +933,7 @@ export function createWorkflowEditorService(
 
   async function refreshWorkflowRexRap(): Promise<void> {
     try {
-      setWorkflowRexRapSilently(await decompileToRexRap(cloneJson(host.state.workflowDraft)));
+      setWorkflowRexRapSilently(await api.decompileToRexRap(cloneJson(host.state.workflowDraft)));
       host.state.workflowRexRapError = "";
     } catch (err) {
       setWorkflowRexRapSilently("");

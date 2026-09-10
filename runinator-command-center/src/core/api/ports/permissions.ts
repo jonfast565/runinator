@@ -1,0 +1,36 @@
+import type * as Api from "../commandCenterApi";
+export { defaultApi } from "./default";
+
+export type PermissionsApi = Pick<
+  typeof Api,
+  | "fetchDurableWorkspaces"
+  | "addTeamMember"
+  | "createApiKey"
+  | "createTeam"
+  | "createUser"
+  | "deleteTeam"
+  | "deleteUser"
+  | "fetchAdapters"
+  | "fetchConsoleSessions"
+  | "fetchCredentials"
+  | "fetchExecutionProfiles"
+  | "fetchFunctionPackages"
+  | "fetchNotificationPolicies"
+  | "fetchPipelines"
+  | "fetchWorkflowFiles"
+  | "fetchWorkflows"
+  | "grantResourceAccess"
+  | "listApiKeys"
+  | "listTeamMembers"
+  | "listTeams"
+  | "listUserTeams"
+  | "listUsers"
+  | "listResourceGrants"
+  | "removeTeamMember"
+  | "revokeApiKey"
+  | "revokeResourceGrant"
+  | "rotateApiKey"
+  | "updateApiKey"
+  | "updateTeam"
+  | "updateUser"
+>;

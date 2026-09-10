@@ -1,33 +1,29 @@
-import {
-  fetchOrgNodes,
-  fetchOrgQuota,
-  fetchOrgUsage,
-  fetchRateCard,
-  scaleOrgNodes,
-  type OrgQuota,
-  type OrgResourceGroup,
-  type OrgUsage,
-  type RateCard,
-  type ScaleOrgNodesRequest,
+import { defaultApi, type OrgResourcesApi } from "../api/ports/org-resources";
+import type {
+  OrgQuota,
+  OrgResourceGroup,
+  OrgUsage,
+  RateCard,
+  ScaleOrgNodesRequest,
 } from "../api/commandCenterApi";
 import type { AppService } from "./app";
 
-export function createOrgResourcesService(app: AppService) {
+export function createOrgResourcesService(app: AppService, api: OrgResourcesApi = defaultApi) {
   return {
     fetchNodes(orgId: string) {
-      return app.runOperation("Loading org nodes", () => fetchOrgNodes(orgId));
+      return app.runOperation("Loading org nodes", () => api.fetchOrgNodes(orgId));
     },
     fetchQuota(orgId: string) {
-      return fetchOrgQuota(orgId);
+      return api.fetchOrgQuota(orgId);
     },
     fetchUsage(orgId: string) {
-      return fetchOrgUsage(orgId);
+      return api.fetchOrgUsage(orgId);
     },
     fetchRateCard() {
-      return fetchRateCard();
+      return api.fetchRateCard();
     },
     scaleNodes(orgId: string, request: ScaleOrgNodesRequest) {
-      return app.runOperation("Scaling org nodes", () => scaleOrgNodes(orgId, request));
+      return app.runOperation("Scaling org nodes", () => api.scaleOrgNodes(orgId, request));
     },
   };
 }

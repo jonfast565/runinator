@@ -1,3 +1,4 @@
+import type { WorkflowsApi } from "../../api/ports/workflows";
 import type {
   ControlFrame,
   DebugFrame,
@@ -16,6 +17,7 @@ import { createStore } from "../event-bus";
 import type { WorkflowServicesInternal, WorkflowServicesState } from "./state";
 
 export interface WorkflowServiceDeps {
+  api?: WorkflowsApi;
   app: AppService;
   getProviders: () => ProviderMetadata[];
   getNodeKinds: () => WorkflowNodeKindMetadata[];

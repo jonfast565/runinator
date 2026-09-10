@@ -1,16 +1,5 @@
-import {
-  changeCurrentPassword,
-  createPersonalApiKey,
-  listCurrentSessions,
-  listPersonalApiKeys,
-  listPersonalApiKeyScopes,
-  revokeApiKey,
-  revokeCurrentSession,
-  revokeOtherSessions,
-  rotateApiKey,
-  updateApiKey,
-  updateCurrentUser,
-} from "../api/commandCenterApi";
+import { defaultApi, type ProfileSecurityApi } from "../api/ports/profile-security";
+
 import type {
   Action,
   ApiKey,
@@ -29,7 +18,11 @@ export interface ProfileSecurityState {
   revealedApiKey: PersonalApiKeySecret | null;
 }
 
-export function createProfileSecurityService(app: AppService, auth: AuthService) {
+export function createProfileSecurityService(
+  app: AppService,
+  auth: AuthService,
+  api: ProfileSecurityApi = defaultApi,
+) {
   const store = createStore<ProfileSecurityState>({
     sessions: [],
     apiKeys: [],
@@ -43,18 +36,22 @@ export function createProfileSecurityService(app: AppService, auth: AuthService)
       const [sessions, apiKeys, keyScopes] = await app.runOperation(
         "Loading profile security",
         () =>
-          Promise.all([listCurrentSessions(), listPersonalApiKeys(), listPersonalApiKeyScopes()]),
+          Promise.all([
+            api.listCurrentSessions(),
+            api.listPersonalApiKeys(),
+            api.listPersonalApiKeyScopes(),
+          ]),
       );
       store.setState((state) => ({ ...state, sessions, apiKeys, keyScopes }));
     },
     async updateEmail(email: string | null) {
-      await app.runOperation("Saving profile", () => updateCurrentUser({ email }));
+      await app.runOperation("Saving profile", () => api.updateCurrentUser({ email }));
       await auth.reloadMe();
       app.setStatus("Profile saved.");
     },
     async changePassword(currentPassword: string, newPassword: string) {
       await app.runOperation("Changing password", () =>
-        changeCurrentPassword({
+        api.changeCurrentPassword({
           current_password: currentPassword,
           new_password: newPassword,
         }),
@@ -63,7 +60,7 @@ export function createProfileSecurityService(app: AppService, auth: AuthService)
       app.setStatus("Password changed. Other sessions were signed out.");
     },
     async revokeSession(session: AuthSessionSummary) {
-      await app.runOperation("Signing out session", () => revokeCurrentSession(session.id));
+      await app.runOperation("Signing out session", () => api.revokeCurrentSession(session.id));
 
       if (session.current) {
         await auth.signOut();
@@ -74,7 +71,7 @@ export function createProfileSecurityService(app: AppService, auth: AuthService)
       app.setStatus("Session signed out.");
     },
     async revokeOthers() {
-      await app.runOperation("Signing out other sessions", revokeOtherSessions);
+      await app.runOperation("Signing out other sessions", api.revokeOtherSessions);
       await service.refresh();
       app.setStatus("Other sessions signed out.");
     },
@@ -85,7 +82,7 @@ export function createProfileSecurityService(app: AppService, auth: AuthService)
       actionCeiling: Action[];
     }) {
       const revealed = await app.runOperation("Creating API key", () =>
-        createPersonalApiKey({
+        api.createPersonalApiKey({
           name: input.name,
           org_id: input.orgId,
           expires_at: input.expiresAt,
@@ -98,24 +95,24 @@ export function createProfileSecurityService(app: AppService, auth: AuthService)
     },
     async updateKey(keyId: string, name: string, expiresAt: string | null, disabled: boolean) {
       await app.runOperation("Updating API key", () =>
-        updateApiKey(keyId, { name, expires_at: expiresAt, disabled }),
+        api.updateApiKey(keyId, { name, expires_at: expiresAt, disabled }),
       );
       await service.refreshKeys();
       app.setStatus("API key saved.");
     },
     async rotateKey(keyId: string) {
-      const revealed = await app.runOperation("Rotating API key", () => rotateApiKey(keyId));
+      const revealed = await app.runOperation("Rotating API key", () => api.rotateApiKey(keyId));
       store.setState((state) => ({ ...state, revealedApiKey: revealed }));
       await service.refreshKeys();
       app.setStatus("API key rotated. Copy the new secret now.");
     },
     async revokeKey(keyId: string) {
-      await app.runOperation("Revoking API key", () => revokeApiKey(keyId));
+      await app.runOperation("Revoking API key", () => api.revokeApiKey(keyId));
       await service.refreshKeys();
       app.setStatus("API key revoked.");
     },
     async refreshKeys() {
-      const apiKeys = await listPersonalApiKeys();
+      const apiKeys = await api.listPersonalApiKeys();
       store.setState((state) => ({ ...state, apiKeys }));
     },
     clearRevealedKey() {

@@ -1,4 +1,5 @@
-import { analyzeRexRap, completeRexRap, formatRexRap, hoverRexRap } from "../api/commandCenterApi";
+import { defaultApi, type RexrapLanguageApi } from "../api/ports/rexrap-language";
+
 import type {
   CredentialSummary,
   ProviderMetadata,
@@ -9,31 +10,31 @@ import type {
 } from "../domain/models";
 import type { AppService } from "./app";
 
-export function createRexRapLanguageService(app: AppService) {
+export function createRexRapLanguageService(app: AppService, api: RexrapLanguageApi = defaultApi) {
   return {
     analyze(source: string, sourcePath?: string | null, document: RexRapDocumentKind = "workflow") {
       return app.runOperation("Analyzing REXRAP", () =>
-        analyzeRexRap(source, sourcePath, document),
+        api.analyzeRexRap(source, sourcePath, document),
       );
     },
     format(source: string, document: RexRapDocumentKind = "workflow") {
-      return app.runOperation("Formatting REXRAP", () => formatRexRap(source, document));
+      return app.runOperation("Formatting REXRAP", () => api.formatRexRap(source, document));
     },
     complete(request: RexRapCompletionRequest) {
-      return completeRexRap(request);
+      return api.completeRexRap(request);
     },
     hover(request: RexRapHoverRequest) {
-      return hoverRexRap(request);
+      return api.hoverRexRap(request);
     },
     analyzeSilent(
       source: string,
       sourcePath?: string | null,
       document: RexRapDocumentKind = "workflow",
     ): Promise<RexRapDiagnostic[]> {
-      return analyzeRexRap(source, sourcePath, document);
+      return api.analyzeRexRap(source, sourcePath, document);
     },
     formatSilent(source: string, document: RexRapDocumentKind = "workflow"): Promise<string> {
-      return formatRexRap(source, document);
+      return api.formatRexRap(source, document);
     },
   };
 }

@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
+use runinator_adapter_client::{AdapterHostClient, HttpAdapterHostClient};
 use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
 use runinator_engine::services::{AdapterOperations, ExecutionProfileOperations};
@@ -40,11 +41,10 @@ use runinator_ws_middleware::authz::{
 };
 use uuid::Uuid;
 
-async fn catalog() -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String>
-{
-    runinator_adapter_client::kinds()
-        .await
-        .map_err(|error| error.to_string())
+async fn catalog(
+    host: &dyn AdapterHostClient,
+) -> Result<Vec<runinator_models::orchestration::AdapterKindCatalogEntry>, String> {
+    host.kinds().await.map_err(|error| error.to_string())
 }
 fn org_id(ctx: &AuthContext) -> Result<Uuid, GuardError> {
     ctx.org_id
@@ -443,13 +443,14 @@ fn webhook_header_allowlist() -> std::collections::BTreeSet<String> {
 }
 
 pub async fn kinds<T: RbacStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(_db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = adapter_list_scope(&ctx, Action::View) {
         return reply.into_reply();
     }
-    match catalog().await {
+    match catalog(host.as_ref()).await {
         Ok(entries) => (StatusCode::OK, Json(ApiResponse::AdapterKindList(entries))),
         Err(error) => api_error(error.to_string()),
     }
@@ -539,6 +540,7 @@ pub async fn poll_status<T: OrchestrationStore + AuthorizationStore>(
 }
 
 pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfileStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -548,7 +550,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
         Ok(value) => value,
         Err(reply) => return reply.into_reply(),
     };
-    let kinds = match catalog().await {
+    let kinds = match catalog(host.as_ref()).await {
         Ok(values) => values,
         Err(error) => return api_error(error.to_string()),
     };
@@ -615,6 +617,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
 }
 
 pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfileStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
     Extension(ctx): Extension<AuthContext>,
@@ -629,7 +632,7 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
     if request.kind != adapter.kind {
         return bad_request("adapter kind cannot be changed; clone the adapter instead");
     }
-    let kinds = match catalog().await {
+    let kinds = match catalog(host.as_ref()).await {
         Ok(values) => values,
         Err(error) => return api_error(error.to_string()),
     };
@@ -781,6 +784,7 @@ pub async fn test<
         + IngressStore
         + ExecutionProfileStore,
 >(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
@@ -869,16 +873,17 @@ pub async fn test<
     };
     if revision.transport == AdapterTransport::Polling {
         let configuration = request.configuration.unwrap_or(revision.configuration);
-        let response: AdapterPollResponse = match runinator_adapter_client::poll(
-            &adapter.kind,
-            AdapterPollRequest {
-                configuration: serde_json::to_value(configuration).unwrap_or_default(),
-                secrets,
-                checkpoint: serde_json::Value::Null,
-                initialize: false,
-            },
-        )
-        .await
+        let response: AdapterPollResponse = match host
+            .poll(
+                &adapter.kind,
+                AdapterPollRequest {
+                    configuration: serde_json::to_value(configuration).unwrap_or_default(),
+                    secrets,
+                    checkpoint: serde_json::Value::Null,
+                    initialize: false,
+                },
+            )
+            .await
         {
             Ok(value) => value,
             Err(error) => return api_error(error.to_string()),
@@ -911,7 +916,7 @@ pub async fn test<
         .unwrap_or_default(),
         secrets,
     };
-    match runinator_adapter_client::verify_normalize(&adapter.kind, adapter_request).await {
+    match host.verify_normalize(&adapter.kind, adapter_request).await {
         Ok(normalized) => {
             let mut previews = Vec::new();
             if normalized.verified {
@@ -940,21 +945,22 @@ pub async fn test<
 }
 
 pub async fn health<T: RbacStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(_db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if !ctx.is_platform_admin() {
         return forbidden();
     }
-    match runinator_adapter_client::health().await {
+    match host.health().await {
         Ok(value) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(
                 serde_json::json!({
                     "host": value,
                     "web_service": {
-                        "adapter_host_url": runinator_adapter_client::host_url(),
-                        "adapter_host_token_configured": runinator_adapter_client::host_token().is_ok(),
+                        "adapter_host_url": host.host_url(),
+                        "adapter_host_token_configured": host.token_configured(),
                         "webhook_body_limit_bytes": webhook_body_limit(),
                         "webhook_header_allowlist": webhook_header_allowlist(),
                     }
@@ -967,13 +973,14 @@ pub async fn health<T: RbacStore>(
 }
 
 pub async fn reload<T: RbacStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(_db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if !ctx.is_platform_admin() {
         return forbidden();
     }
-    match runinator_adapter_client::reload().await {
+    match host.reload().await {
         Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value.into()))),
         Err(error) => api_error(error.to_string()),
     }
@@ -993,6 +1000,7 @@ pub async fn webhook<
         + WorkflowVmStore
         + ExecutionProfileStore,
 >(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(db): Extension<Arc<T>>,
     Path(endpoint): Path<String>,
     headers: HeaderMap,
@@ -1056,8 +1064,7 @@ pub async fn webhook<
         configuration: serde_json::to_value(revision.configuration.clone()).unwrap_or_default(),
         secrets,
     };
-    let normalized = match runinator_adapter_client::verify_normalize(&adapter.kind, request).await
-    {
+    let normalized = match host.verify_normalize(&adapter.kind, request).await {
         Ok(value) => value,
         Err(error) => {
             let message = error.to_string();
@@ -1150,6 +1157,25 @@ where
         + WorkflowVmStore
         + ExecutionProfileStore,
 {
+    routes_with_host(pool, publisher, Arc::new(HttpAdapterHostClient::from_env()))
+}
+
+pub fn routes_with_host<T>(
+    pool: Arc<T>,
+    publisher: UiEventPublisher,
+    host: Arc<dyn AdapterHostClient>,
+) -> axum::Router
+where
+    T: OrchestrationStore
+        + AuthorizationStore
+        + SettingStore
+        + RuntimeStore
+        + DefinitionStore
+        + IngressStore
+        + ScheduleStore
+        + WorkflowVmStore
+        + ExecutionProfileStore,
+{
     axum::Router::new()
         .route("/orchestrations/adapters/kinds", get(kinds::<T>))
         .route("/orchestrations/adapters/health", get(health::<T>))
@@ -1173,6 +1199,7 @@ where
         )
         .route("/orchestrations/adapters/{id}/test", post(test::<T>))
         .route("/webhooks/orchestration/{adapter_id}", post(webhook::<T>))
+        .layer(Extension(host))
         .layer(Extension(pool))
         .layer(Extension(publisher))
 }

@@ -1,4 +1,5 @@
-import { fetchProviders as fetchProvidersApi } from "../api/commandCenterApi";
+import { defaultApi, type ProvidersApi } from "../api/ports/providers";
+
 import type { ProviderMetadata } from "../domain/models";
 import { errorMessage } from "../utils/format";
 import { createStore } from "./event-bus";
@@ -11,7 +12,7 @@ export interface ProvidersState {
   focusedAction: string;
 }
 
-export function createProvidersService() {
+export function createProvidersService(api: ProvidersApi = defaultApi) {
   const store = createStore<ProvidersState>({
     providers: [],
     loading: false,
@@ -33,7 +34,7 @@ export function createProvidersService() {
       store.setState((state) => ({ ...state, loading: true, error: null }));
 
       try {
-        const response = await fetchProvidersApi();
+        const response = await api.fetchProviders();
         const providers = response
           .map(normalizeProvider)
           .filter((provider) => provider.name)

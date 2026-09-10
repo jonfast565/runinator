@@ -1,11 +1,5 @@
-import {
-  deleteExecutionProfile,
-  fetchExecutionProfileCollectionStatuses,
-  fetchExecutionProfiles,
-  putExecutionProfile,
-  rotateExecutionProfile,
-  testExecutionProfile,
-} from "../api/commandCenterApi";
+import { defaultApi, type ExecutionProfilesApi } from "../api/ports/execution-profiles";
+
 import type {
   ExecutionProfile,
   ExecutionProfileCollectionStatus,
@@ -19,7 +13,10 @@ export interface ExecutionProfilesState {
   collectionStatuses: Record<string, ExecutionProfileCollectionStatus>;
 }
 
-export function createExecutionProfilesService(app: AppService) {
+export function createExecutionProfilesService(
+  app: AppService,
+  api: ExecutionProfilesApi = defaultApi,
+) {
   const store = createStore<ExecutionProfilesState>({ profiles: [], collectionStatuses: {} });
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let backgroundRefresh: Promise<void> | undefined;
@@ -32,7 +29,11 @@ export function createExecutionProfilesService(app: AppService) {
     async refresh() {
       const [profiles, statuses] = await app.runOperation(
         "Refreshing execution profiles",
-        () => Promise.all([fetchExecutionProfiles(), fetchExecutionProfileCollectionStatuses()]),
+        () =>
+          Promise.all([
+            api.fetchExecutionProfiles(),
+            api.fetchExecutionProfileCollectionStatuses(),
+          ]),
         { retryable: true },
       );
       store.setState(() => ({ profiles, collectionStatuses: indexStatuses(statuses) }));
@@ -61,8 +62,8 @@ export function createExecutionProfilesService(app: AppService) {
         while (fetchedRevision < refreshRevision) {
           fetchedRevision = refreshRevision;
           const [profiles, statuses] = await Promise.all([
-            fetchExecutionProfiles(),
-            fetchExecutionProfileCollectionStatuses(),
+            api.fetchExecutionProfiles(),
+            api.fetchExecutionProfileCollectionStatuses(),
           ]);
 
           if (startedGeneration !== generation) {
@@ -83,20 +84,22 @@ export function createExecutionProfilesService(app: AppService) {
       store.setState(() => ({ profiles: [], collectionStatuses: {} }));
     },
     async save(id: string, profile: ExecutionProfileInput) {
-      await app.runOperation("Saving execution profile", () => putExecutionProfile(id, profile));
+      await app.runOperation("Saving execution profile", () =>
+        api.putExecutionProfile(id, profile),
+      );
       await service.refresh();
     },
     async remove(id: string) {
-      await app.runOperation("Deleting execution profile", () => deleteExecutionProfile(id));
+      await app.runOperation("Deleting execution profile", () => api.deleteExecutionProfile(id));
       await service.refresh();
     },
     async rotate(id: string) {
-      await app.runOperation("Rotating execution profile", () => rotateExecutionProfile(id));
+      await app.runOperation("Rotating execution profile", () => api.rotateExecutionProfile(id));
       await service.refresh();
     },
     async test(id: string) {
       await app.runOperation("Dry-running execution profile collection", () =>
-        testExecutionProfile(id),
+        api.testExecutionProfile(id),
       );
       await service.refresh();
     },

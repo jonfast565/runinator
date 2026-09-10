@@ -1,18 +1,18 @@
-import {
-  fetchWorkflowRevision,
-  fetchWorkflowRevisions,
-  restoreWorkflowRevision,
-} from "../api/commandCenterApi";
+import { defaultApi, type WorkflowRevisionsApi } from "../api/ports/workflow-revisions";
+
 import type { WorkflowRevision } from "../domain/models";
 import type { AppService } from "./app";
 
-export function createWorkflowRevisionsService(app: AppService) {
+export function createWorkflowRevisionsService(
+  app: AppService,
+  api: WorkflowRevisionsApi = defaultApi,
+) {
   return {
     /** a workflow's history, newest first. */
     list(workflowId: string, limit?: number): Promise<WorkflowRevision[]> {
       return app.runOperation(
         "Loading revision history",
-        () => fetchWorkflowRevisions(workflowId, limit),
+        () => api.fetchWorkflowRevisions(workflowId, limit),
         { retryable: true },
       );
     },
@@ -20,7 +20,7 @@ export function createWorkflowRevisionsService(app: AppService) {
     get(workflowId: string, revision: number): Promise<WorkflowRevision> {
       return app.runOperation(
         "Loading revision",
-        () => fetchWorkflowRevision(workflowId, revision),
+        () => api.fetchWorkflowRevision(workflowId, revision),
         {
           retryable: true,
         },
@@ -33,7 +33,7 @@ export function createWorkflowRevisionsService(app: AppService) {
      */
     restore(workflowId: string, revision: number, contractOverrideReason?: string) {
       return app.runOperation("Restoring revision", () =>
-        restoreWorkflowRevision(workflowId, revision, contractOverrideReason),
+        api.restoreWorkflowRevision(workflowId, revision, contractOverrideReason),
       );
     },
   };

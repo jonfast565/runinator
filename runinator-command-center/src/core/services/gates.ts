@@ -1,4 +1,5 @@
-import { closeGate, deleteGate, fetchGates, openGate } from "../api/commandCenterApi";
+import { defaultApi, type GatesApi } from "../api/ports/gates";
+
 import type { GateRecord } from "../domain/models";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
@@ -9,7 +10,7 @@ export interface GatesState {
   selectedGate: GateRecord | null;
 }
 
-export function createGatesService(app: AppService) {
+export function createGatesService(app: AppService, api: GatesApi = defaultApi) {
   const store = createStore<GatesState>({ gates: [], selectedGate: null });
 
   function filteredGates(query: string): GateRecord[] {
@@ -50,7 +51,7 @@ export function createGatesService(app: AppService) {
       store.setState((state) => ({ ...state, selectedGate: gate }));
     },
     async refreshGates() {
-      const gates = await app.runOperation("Refreshing gates", fetchGates).catch(() => []);
+      const gates = await app.runOperation("Refreshing gates", api.fetchGates).catch(() => []);
       const selectedId = store.getState().selectedGate?.id;
       store.setState((state) => ({
         ...state,
@@ -72,7 +73,7 @@ export function createGatesService(app: AppService) {
       const trimmed = reason?.trim() ? reason.trim() : undefined;
       const response = await app.runOperation(
         action === "open" ? "Opening gate" : "Closing gate",
-        () => (action === "open" ? openGate(gateId, trimmed) : closeGate(gateId, trimmed)),
+        () => (action === "open" ? api.openGate(gateId, trimmed) : api.closeGate(gateId, trimmed)),
       );
       app.setStatus(response.message);
       await service.refreshGates();
@@ -90,7 +91,7 @@ export function createGatesService(app: AppService) {
       }
 
       await app
-        .runOperation("Deleting gate", () => deleteGate(gateId))
+        .runOperation("Deleting gate", () => api.deleteGate(gateId))
         .catch((error: unknown) => {
           app.setError(String(error));
         });

@@ -1,38 +1,10 @@
-import { fetchDurableWorkspaces } from "../api/commandCenterApi";
-import {
-  addTeamMember,
-  createApiKey,
-  createTeam,
-  createUser,
-  deleteTeam,
-  deleteUser,
-  fetchAdapters,
-  fetchConsoleSessions,
-  fetchCredentials,
-  fetchExecutionProfiles,
-  fetchFunctionPackages,
-  fetchNotificationPolicies,
-  fetchPipelines,
-  fetchWorkflowFiles,
-  fetchWorkflows,
-  grantResourceAccess,
-  listApiKeys,
-  listTeamMembers,
-  listTeams,
-  listUserTeams,
-  listUsers,
-  listResourceGrants,
-  removeTeamMember,
-  revokeApiKey,
-  revokeResourceGrant,
-  rotateApiKey,
-  updateApiKey,
-  updateTeam,
-  updateUser,
-  type CreateApiKeyInput,
-  type CreateUserInput,
-  type UpdateApiKeyInput,
-  type UpdateUserInput,
+import { defaultApi, type PermissionsApi } from "../api/ports/permissions";
+
+import type {
+  CreateApiKeyInput,
+  CreateUserInput,
+  UpdateApiKeyInput,
+  UpdateUserInput,
 } from "../api/commandCenterApi";
 import type {
   ApiKey,
@@ -154,7 +126,7 @@ export function blankGrantDraft(): GrantDraft {
   };
 }
 
-export function createPermissionsService(app: AppService) {
+export function createPermissionsService(app: AppService, api: PermissionsApi = defaultApi) {
   const store = createStore<PermissionsState>({
     users: [],
     teams: [],
@@ -241,9 +213,9 @@ export function createPermissionsService(app: AppService) {
     async refreshAll() {
       await app.runOperation("Loading permissions", async () => {
         const [nextUsers, nextTeams, nextApiKeys] = await Promise.all([
-          listUsers(),
-          listTeams(),
-          listApiKeys(),
+          api.listUsers(),
+          api.listTeams(),
+          api.listApiKeys(),
         ]);
         store.setState((state) => ({
           ...state,
@@ -276,7 +248,7 @@ export function createPermissionsService(app: AppService) {
       }
     },
     async refreshApiKeys() {
-      const apiKeys = await app.runOperation("Loading API keys", () => listApiKeys());
+      const apiKeys = await app.runOperation("Loading API keys", () => api.listApiKeys());
       store.setState((state) => ({ ...state, apiKeys }));
 
       if (store.getState().selectedApiKeyId && !selectedApiKey()) {
@@ -352,7 +324,7 @@ export function createPermissionsService(app: AppService) {
               request.password = userDraft.password;
             }
 
-            return updateUser(currentUser.id, request);
+            return api.updateUser(currentUser.id, request);
           }
 
           const request: CreateUserInput = {
@@ -361,7 +333,7 @@ export function createPermissionsService(app: AppService) {
             email: email || null,
             platform_role: userDraft.platform_role,
           };
-          return createUser(request);
+          return api.createUser(request);
         },
       );
       await service.refreshAll();
@@ -376,7 +348,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       const userId = user.id;
-      await app.runOperation("Deleting user", () => deleteUser(userId));
+      await app.runOperation("Deleting user", () => api.deleteUser(userId));
       service.clearUserSelection();
       await service.refreshAll();
       app.setStatus("User deleted.");
@@ -420,7 +392,7 @@ export function createPermissionsService(app: AppService) {
                 : null,
               disabled: apiKeyDraft.disabled,
             };
-            return updateApiKey(currentApiKey.id, request);
+            return api.updateApiKey(currentApiKey.id, request);
           }
 
           const request: CreateApiKeyInput = {
@@ -434,7 +406,7 @@ export function createPermissionsService(app: AppService) {
               ? new Date(apiKeyDraft.expires_at).toISOString()
               : null,
           };
-          const created = await createApiKey(request);
+          const created = await api.createApiKey(request);
           store.setState((state) => ({ ...state, revealedApiKey: created }));
           return created.api_key;
         },
@@ -463,7 +435,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Revoking API key", () => revokeApiKey(apiKeyId));
+      await app.runOperation("Revoking API key", () => api.revokeApiKey(apiKeyId));
       await service.refreshApiKeys();
 
       const refreshed = store.getState().apiKeys.find((apiKey) => apiKey.id === apiKeyId);
@@ -483,7 +455,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      const rotated = await app.runOperation("Rotating API key", () => rotateApiKey(apiKeyId));
+      const rotated = await app.runOperation("Rotating API key", () => api.rotateApiKey(apiKeyId));
       store.setState((state) => ({ ...state, revealedApiKey: rotated }));
       await service.refreshApiKeys();
       service.selectApiKey(
@@ -502,7 +474,9 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      const userTeams = await app.runOperation("Loading user teams", () => listUserTeams(userId));
+      const userTeams = await app.runOperation("Loading user teams", () =>
+        api.listUserTeams(userId),
+      );
       store.setState((state) => ({ ...state, userTeams }));
     },
     async assignSelectedUserToTeam(teamId: string) {
@@ -512,7 +486,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Assigning team", () => addTeamMember(teamId, userId, "member"));
+      await app.runOperation("Assigning team", () => api.addTeamMember(teamId, userId, "member"));
       await Promise.all([
         service.refreshSelectedUserTeams(),
         selectedTeam() ? service.refreshSelectedTeamMembers() : Promise.resolve(),
@@ -526,7 +500,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Removing team", () => removeTeamMember(teamId, userId));
+      await app.runOperation("Removing team", () => api.removeTeamMember(teamId, userId));
       await Promise.all([
         service.refreshSelectedUserTeams(),
         selectedTeam() ? service.refreshSelectedTeamMembers() : Promise.resolve(),
@@ -565,7 +539,7 @@ export function createPermissionsService(app: AppService) {
       const currentTeam = selectedTeam();
       const editing = Boolean(currentTeam);
       const saved = await app.runOperation(editing ? "Updating team" : "Creating team", () =>
-        currentTeam?.id ? updateTeam(currentTeam.id, name) : createTeam(name),
+        currentTeam?.id ? api.updateTeam(currentTeam.id, name) : api.createTeam(name),
       );
       await service.refreshAll();
       service.selectTeam(store.getState().teams.find((team) => team.id === saved.id) ?? saved);
@@ -579,7 +553,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       const teamId = team.id;
-      await app.runOperation("Deleting team", () => deleteTeam(teamId));
+      await app.runOperation("Deleting team", () => api.deleteTeam(teamId));
       service.clearTeamSelection();
       await service.refreshAll();
       app.setStatus("Team deleted.");
@@ -593,7 +567,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       const teamMembers = await app.runOperation("Loading team members", () =>
-        listTeamMembers(teamId),
+        api.listTeamMembers(teamId),
       );
       store.setState((state) => ({ ...state, teamMembers }));
     },
@@ -604,7 +578,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Adding member", () => addTeamMember(teamId, userId, "member"));
+      await app.runOperation("Adding member", () => api.addTeamMember(teamId, userId, "member"));
       await Promise.all([
         service.refreshSelectedTeamMembers(),
         selectedUser() ? service.refreshSelectedUserTeams() : Promise.resolve(),
@@ -618,7 +592,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Removing member", () => removeTeamMember(teamId, userId));
+      await app.runOperation("Removing member", () => api.removeTeamMember(teamId, userId));
       await Promise.all([
         service.refreshSelectedTeamMembers(),
         selectedUser() ? service.refreshSelectedUserTeams() : Promise.resolve(),
@@ -631,44 +605,47 @@ export function createPermissionsService(app: AppService) {
       const accessResources = await app.runOperation("Loading resource access", async () => {
         switch (resourceType) {
           case "workflow":
-            return (await fetchWorkflows()).flatMap((item) =>
+            return (await api.fetchWorkflows()).flatMap((item) =>
               item.id ? [{ id: item.id, label: item.name }] : [],
             );
           case "pipeline":
-            return (await fetchPipelines()).flatMap((item) =>
+            return (await api.fetchPipelines()).flatMap((item) =>
               item.id ? [{ id: item.id, label: item.name }] : [],
             );
           case "function_package":
-            return (await fetchFunctionPackages()).map((item) => ({
+            return (await api.fetchFunctionPackages()).map((item) => ({
               id: item.id,
               label: [item.namespace, item.name].filter(Boolean).join("."),
             }));
           case "console_session":
-            return (await fetchConsoleSessions()).map((item) => ({
+            return (await api.fetchConsoleSessions()).map((item) => ({
               id: item.id,
               label: item.name,
             }));
           case "setting":
-            return (await fetchCredentials()).flatMap((item) =>
+            return (await api.fetchCredentials()).flatMap((item) =>
               item.id
                 ? [{ id: item.id, label: `${item.kind ?? "secret"}:${item.scope}/${item.name}` }]
                 : [],
             );
           case "execution_profile":
-            return (await fetchExecutionProfiles()).map((item) => ({
+            return (await api.fetchExecutionProfiles()).map((item) => ({
               id: item.id,
               label: item.name,
             }));
           case "orchestration_adapter":
-            return (await fetchAdapters()).map((item) => ({ id: item.id, label: item.name }));
+            return (await api.fetchAdapters()).map((item) => ({ id: item.id, label: item.name }));
           case "library_file":
-            return (await fetchWorkflowFiles())
+            return (await api.fetchWorkflowFiles())
               .filter((item) => item.scope === "library")
               .map((item) => ({ id: item.descriptor.id, label: item.descriptor.path }));
           case "workspace":
-            return (await fetchDurableWorkspaces()).map(item => ({ id: item.id, label: item.key }));
+            return (await api.fetchDurableWorkspaces()).map((item) => ({
+              id: item.id,
+              label: item.key,
+            }));
           case "notification_policy":
-            return (await fetchNotificationPolicies())
+            return (await api.fetchNotificationPolicies())
               .filter((item) => !item.workflow_id)
               .map((item) => ({ id: item.id, label: item.name }));
         }
@@ -705,7 +682,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       const resourceGrants = (await app.runOperation("Loading resource access", () =>
-        listResourceGrants(selectedResourceType, selectedResourceId),
+        api.listResourceGrants(selectedResourceType, selectedResourceId),
       )) as unknown as Grant[];
       store.setState((state) => ({ ...state, resourceGrants }));
     },
@@ -717,7 +694,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       await app.runOperation("Saving access", () =>
-        grantResourceAccess(
+        api.grantResourceAccess(
           selectedResourceType,
           selectedResourceId,
           grantDraft.principal_type,
@@ -737,7 +714,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       await app.runOperation("Revoking access", () =>
-        revokeResourceGrant(selectedResourceType, selectedResourceId, grantId),
+        api.revokeResourceGrant(selectedResourceType, selectedResourceId, grantId),
       );
       await service.refreshResourceGrants();
       app.setStatus("Access revoked.");

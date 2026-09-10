@@ -1,18 +1,6 @@
-import {
-  createNotificationPolicy,
-  deleteNotification,
-  deleteNotificationPolicy,
-  fetchNotificationPolicies,
-  fetchNotifications,
-  markAllNotificationsRead,
-  markNotificationRead,
-  updateNotificationPolicy,
-} from "../api/commandCenterApi";
-import type {
-  NewNotificationPolicy,
-  Notification,
-  NotificationPolicy,
-} from "../domain/models";
+import { defaultApi, type NotificationsApi } from "../api/ports/notifications";
+
+import type { NewNotificationPolicy, Notification, NotificationPolicy } from "../domain/models";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
 
@@ -22,7 +10,7 @@ export interface NotificationsState {
   policies: NotificationPolicy[];
 }
 
-export function createNotificationsService(app: AppService) {
+export function createNotificationsService(app: AppService, api: NotificationsApi = defaultApi) {
   const store = createStore<NotificationsState>({
     notifications: [],
     unreadOnly: false,
@@ -42,7 +30,7 @@ export function createNotificationsService(app: AppService) {
     async refreshNotifications() {
       const { unreadOnly } = store.getState();
       const notifications = await app
-        .runOperation("Loading notifications", () => fetchNotifications({ unreadOnly }), {
+        .runOperation("Loading notifications", () => api.fetchNotifications({ unreadOnly }), {
           retryable: true,
         })
         .catch(() => []);
@@ -53,7 +41,7 @@ export function createNotificationsService(app: AppService) {
     },
     async markRead(id: string) {
       await app
-        .runOperation("Marking notification read", () => markNotificationRead(id))
+        .runOperation("Marking notification read", () => api.markNotificationRead(id))
         .catch((error: unknown) => {
           app.setError(String(error));
         });
@@ -61,7 +49,7 @@ export function createNotificationsService(app: AppService) {
     },
     async markAllRead() {
       await app
-        .runOperation("Marking all notifications read", () => markAllNotificationsRead())
+        .runOperation("Marking all notifications read", () => api.markAllNotificationsRead())
         .catch((error: unknown) => {
           app.setError(String(error));
         });
@@ -69,7 +57,7 @@ export function createNotificationsService(app: AppService) {
     },
     async remove(id: string) {
       await app
-        .runOperation("Dismissing notification", () => deleteNotification(id))
+        .runOperation("Dismissing notification", () => api.deleteNotification(id))
         .catch((error: unknown) => {
           app.setError(String(error));
         });
@@ -81,7 +69,7 @@ export function createNotificationsService(app: AppService) {
     },
     async refreshPolicies() {
       const policies = await app
-        .runOperation("Loading notification policies", () => fetchNotificationPolicies(), {
+        .runOperation("Loading notification policies", () => api.fetchNotificationPolicies(), {
           retryable: true,
         })
         .catch(() => []);
@@ -93,8 +81,8 @@ export function createNotificationsService(app: AppService) {
       try {
         await app.runOperation("Saving notification policy", () =>
           policyId
-            ? updateNotificationPolicy(policyId, policy)
-            : createNotificationPolicy(policy),
+            ? api.updateNotificationPolicy(policyId, policy)
+            : api.createNotificationPolicy(policy),
         );
       } catch (error: unknown) {
         app.setError(String(error));
@@ -108,7 +96,7 @@ export function createNotificationsService(app: AppService) {
     async removePolicy(policyId: string) {
       try {
         await app.runOperation("Deleting notification policy", () =>
-          deleteNotificationPolicy(policyId),
+          api.deleteNotificationPolicy(policyId),
         );
       } catch (error: unknown) {
         app.setError(String(error));
@@ -132,7 +120,7 @@ export function createNotificationsService(app: AppService) {
       await app
         .runOperation("Dismissing read notifications", async () => {
           for (const notificationId of readIds) {
-            await deleteNotification(notificationId);
+            await api.deleteNotification(notificationId);
           }
         })
         .catch((error: unknown) => {

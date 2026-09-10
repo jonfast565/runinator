@@ -1,3 +1,4 @@
+import { defaultApi, type ConsoleApi } from "../api/ports/console";
 // the console tab's terminal: a transcript, a line of input, and what each line turned into.
 //
 // the split is the same one the console itself makes. a bare line is REXRAP and becomes a durable
@@ -38,7 +39,10 @@ export interface ConsoleTerminalState {
 const MAX_ENTRIES = 400;
 const MAX_HISTORY = 200;
 
-export function createConsoleTerminalService(consoleService: ConsoleService) {
+export function createConsoleTerminalService(
+  consoleService: ConsoleService,
+  api: ConsoleApi = defaultApi,
+) {
   const store = createStore<ConsoleTerminalState>({ entries: [], history: [], busy: false });
   let controller: AbortController | null = null;
   let counter = 0;
@@ -115,6 +119,7 @@ export function createConsoleTerminalService(consoleService: ConsoleService) {
 
     try {
       await executeCommand(line, {
+        api,
         session,
         terminal: {
           clear: () => {

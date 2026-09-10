@@ -1,21 +1,17 @@
+import { defaultApi, type ConsoleApi } from "../api/ports/console";
 // every command the console answers, and the two that describe the console itself.
 
 import { done, table, text } from "./format";
-import { workspaceCommands } from "./commands/workspaces";
-import { functionCommands } from "./commands/functions";
-import {
-  agentCommands,
-  nodeCommands,
-  orgCommands,
-  replicaCommands,
-} from "./commands/infrastructure";
-import { operationCommands } from "./commands/operations";
-import { runCommands } from "./commands/runs";
-import { sessionCommands } from "./commands/session";
-import { settingsCommands } from "./commands/settings";
-import { freezeCommands, triggerCommands } from "./commands/triggers";
-import { rexrapCommands } from "./commands/rexrap";
-import { workflowCommands } from "./commands/workflows";
+import { createWorkspacesCommands } from "./commands/workspaces";
+import { createFunctionsCommands } from "./commands/functions";
+import { createInfrastructureCommands } from "./commands/infrastructure";
+import { createOperationsCommands } from "./commands/operations";
+import { createRunsCommands } from "./commands/runs";
+import { createSessionCommands } from "./commands/session";
+import { createSettingsCommands } from "./commands/settings";
+import { createTriggersCommands } from "./commands/triggers";
+import { createRexrapCommands } from "./commands/rexrap";
+import { createWorkflowsCommands } from "./commands/workflows";
 import type { ConsoleCommand } from "./types";
 import { ctlCatalog } from "./wasm-engine";
 
@@ -64,21 +60,36 @@ const clearCommand: ConsoleCommand = {
 };
 
 /// every console command, in the order `:help` lists them.
-export const COMMANDS: ConsoleCommand[] = [
-  helpCommand,
-  clearCommand,
-  ...sessionCommands,
-  ...operationCommands,
-  ...workflowCommands,
-  ...runCommands,
-  ...triggerCommands,
-  ...freezeCommands,
-  ...functionCommands,
-  ...workspaceCommands,
-  ...settingsCommands,
-  ...rexrapCommands,
-  ...nodeCommands,
-  ...orgCommands,
-  ...replicaCommands,
-  ...agentCommands,
-];
+export function createCommands(api: ConsoleApi = defaultApi): ConsoleCommand[] {
+  const { functionCommands } = createFunctionsCommands(api);
+  const { nodeCommands, replicaCommands, orgCommands, agentCommands } =
+    createInfrastructureCommands(api);
+  const { operationCommands } = createOperationsCommands(api);
+  const { rexrapCommands } = createRexrapCommands(api);
+  const { runCommands } = createRunsCommands(api);
+  const { sessionCommands } = createSessionCommands(api);
+  const { settingsCommands } = createSettingsCommands(api);
+  const { triggerCommands, freezeCommands } = createTriggersCommands(api);
+  const { workflowCommands } = createWorkflowsCommands(api);
+  const { workspaceCommands } = createWorkspacesCommands(api);
+  return [
+    helpCommand,
+    clearCommand,
+    ...sessionCommands,
+    ...operationCommands,
+    ...workflowCommands,
+    ...runCommands,
+    ...triggerCommands,
+    ...freezeCommands,
+    ...functionCommands,
+    ...workspaceCommands,
+    ...settingsCommands,
+    ...rexrapCommands,
+    ...nodeCommands,
+    ...orgCommands,
+    ...replicaCommands,
+    ...agentCommands,
+  ];
+}
+
+export const COMMANDS = createCommands();

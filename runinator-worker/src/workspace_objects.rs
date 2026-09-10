@@ -1,9 +1,10 @@
 //! Checkout-scoped object transport and disposable local cache.
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::capabilities::WorkspaceObjectTransport;
 use runinator_workspace::storage::{
     self, Id,
     store::{Object, ObjectInfo, ReadStore},
 };
+use std::sync::Arc;
 use std::{fs, io::Write, time::Instant};
 
 pub(super) struct LocalObjects {
@@ -34,7 +35,7 @@ impl ReadStore for LocalObjects {
 }
 
 pub struct WorkerObjects {
-    api: AsyncApiClient<StaticLocator>,
+    api: Arc<dyn WorkspaceObjectTransport>,
     checkout: uuid::Uuid,
     replica: uuid::Uuid,
     runtime: tokio::runtime::Handle,
@@ -56,14 +57,14 @@ impl WorkerObjects {
     }
 
     pub fn new(
-        api: AsyncApiClient<StaticLocator>,
+        api: impl WorkspaceObjectTransport + 'static,
         checkout: uuid::Uuid,
         replica: uuid::Uuid,
         deadline: Instant,
         local: Option<LocalObjects>,
     ) -> Result<Self, runinator_models::errors::SendableError> {
         Ok(Self {
-            api,
+            api: Arc::new(api),
             checkout,
             replica,
             runtime: tokio::runtime::Handle::current(),

@@ -12,7 +12,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::capabilities::ArtifactContentUploader;
 use runinator_comm::EffectCommand;
 use runinator_models::runs::NewRunArtifact;
 use tracing::{debug, warn};
@@ -24,12 +24,14 @@ pub const MAX_UPLOAD_BYTES: u64 = 256 * 1024 * 1024;
 
 /// uploads artifact bytes to the web service so they outlive this worker.
 pub struct ArtifactUploader {
-    client: AsyncApiClient<StaticLocator>,
+    client: Arc<dyn ArtifactContentUploader>,
 }
 
 impl ArtifactUploader {
-    pub fn new(client: AsyncApiClient<StaticLocator>) -> Arc<Self> {
-        Arc::new(Self { client })
+    pub fn new(client: impl ArtifactContentUploader + 'static) -> Arc<Self> {
+        Arc::new(Self {
+            client: Arc::new(client),
+        })
     }
 
     /// The blob upload is attributed to the effect; no node-run row is created or required.
@@ -96,3 +98,7 @@ impl ArtifactUploader {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "artifact_upload_tests.rs"]
+mod artifact_upload_tests;

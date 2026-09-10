@@ -192,7 +192,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         broker.clone(),
         publisher.clone(),
         local_signals.clone(),
-        instance.clone(),
+        Arc::new(runinator_adapter_client::HttpAdapterHostClient::from_env()),
         shutdown.clone(),
     ));
     loops.spawn(run_agent_directive_publisher(

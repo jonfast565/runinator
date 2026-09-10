@@ -1,14 +1,8 @@
-import {
-  fetchCredentials,
-  fetchForeignLanguageRuntime,
-  fetchAuthSettings,
-  fetchServerSettings,
-  saveForeignLanguageRuntime,
-  saveAuthSettings,
-  saveServerSettings,
-  type ServerSettingDefinition,
-  type RuntimeSettingDefinition,
-  type ServerSettingsValues,
+import { defaultApi, type AdminSettingsApi } from "../api/ports/admin-settings";
+import type {
+  ServerSettingDefinition,
+  RuntimeSettingDefinition,
+  ServerSettingsValues,
 } from "../api/commandCenterApi";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
@@ -87,9 +81,27 @@ const LANGUAGE_DEFINITIONS: readonly {
   defaultSetupScript?: string;
   defaultExecutable: string;
 }[] = [
-  { language: "python", label: "Python", aliases: ["py"], defaultImage: "python:3.12", defaultExecutable: "python" },
-  { language: "javascript", label: "JavaScript", aliases: ["js", "node"], defaultImage: "node:22", defaultExecutable: "node" },
-  { language: "bash", label: "Bash", aliases: ["sh"], defaultImage: "bash:5.2", defaultExecutable: "bash" },
+  {
+    language: "python",
+    label: "Python",
+    aliases: ["py"],
+    defaultImage: "python:3.12",
+    defaultExecutable: "python",
+  },
+  {
+    language: "javascript",
+    label: "JavaScript",
+    aliases: ["js", "node"],
+    defaultImage: "node:22",
+    defaultExecutable: "node",
+  },
+  {
+    language: "bash",
+    label: "Bash",
+    aliases: ["sh"],
+    defaultImage: "bash:5.2",
+    defaultExecutable: "bash",
+  },
   {
     language: "commonlisp",
     label: "Common Lisp",
@@ -162,11 +174,41 @@ const LANGUAGE_DEFINITIONS: readonly {
     defaultSetupScript: ERLANG_SETUP,
     defaultExecutable: "escript",
   },
-  { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3", defaultExecutable: "ruby" },
-  { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40", defaultExecutable: "perl" },
-  { language: "php", label: "PHP", aliases: [], defaultImage: "php:8.3-cli", defaultExecutable: "php" },
-  { language: "go", label: "Go", aliases: ["golang"], defaultImage: "golang:1.26", defaultExecutable: "go" },
-  { language: "swift", label: "Swift", aliases: [], defaultImage: "swift:6.3", defaultExecutable: "swiftc" },
+  {
+    language: "ruby",
+    label: "Ruby",
+    aliases: ["rb"],
+    defaultImage: "ruby:3.3",
+    defaultExecutable: "ruby",
+  },
+  {
+    language: "perl",
+    label: "Perl",
+    aliases: ["pl"],
+    defaultImage: "perl:5.40",
+    defaultExecutable: "perl",
+  },
+  {
+    language: "php",
+    label: "PHP",
+    aliases: [],
+    defaultImage: "php:8.3-cli",
+    defaultExecutable: "php",
+  },
+  {
+    language: "go",
+    label: "Go",
+    aliases: ["golang"],
+    defaultImage: "golang:1.26",
+    defaultExecutable: "go",
+  },
+  {
+    language: "swift",
+    label: "Swift",
+    aliases: [],
+    defaultImage: "swift:6.3",
+    defaultExecutable: "swiftc",
+  },
   {
     language: "powershell",
     label: "PowerShell",
@@ -220,7 +262,7 @@ export interface AdminSettingsState {
   runtimeCatalog: RuntimeSettingDefinition[];
 }
 
-export function createAdminSettingsService(app: AppService) {
+export function createAdminSettingsService(app: AppService, api: AdminSettingsApi = defaultApi) {
   const store = createStore<AdminSettingsState>({
     loaded: false,
     languages: createLanguageSettings(),
@@ -232,7 +274,17 @@ export function createAdminSettingsService(app: AppService) {
 
   const service = {
     ...store,
-    updateLanguageField(language: string, field: "image" | "setup_script" | "environment_text" | "executable" | "build_args_text" | "run_args_text", value: string) {
+    updateLanguageField(
+      language: string,
+      field:
+        | "image"
+        | "setup_script"
+        | "environment_text"
+        | "executable"
+        | "build_args_text"
+        | "run_args_text",
+      value: string,
+    ) {
       store.setState((state) => ({
         ...state,
         languages: state.languages.map((runtime) =>
@@ -249,7 +301,9 @@ export function createAdminSettingsService(app: AppService) {
       }));
     },
     async refresh() {
-      const settings = await app.runOperation("Loading admin settings", () => fetchCredentials());
+      const settings = await app.runOperation("Loading admin settings", () =>
+        api.fetchCredentials(),
+      );
       const existing = new Set(
         settings
           .filter(
@@ -267,7 +321,7 @@ export function createAdminSettingsService(app: AppService) {
         }
 
         const detail = await app.runOperation(`Loading ${runtime.label} runtime`, () =>
-          fetchForeignLanguageRuntime(runtime.language),
+          api.fetchForeignLanguageRuntime(runtime.language),
         );
         const value = detail.value;
 
@@ -282,16 +336,24 @@ export function createAdminSettingsService(app: AppService) {
               : (runtime.defaultSetupScript ?? "");
 
           const environment = value.environment;
-          runtime.environment_text = environment && typeof environment === "object"
-            ? Object.entries(environment).map(([name, entry]) => `${name}=${entry}`).join("\n")
-            : "";
+          runtime.environment_text =
+            environment && typeof environment === "object"
+              ? Object.entries(environment)
+                  .map(([name, entry]) => `${name}=${entry}`)
+                  .join("\n")
+              : "";
 
           const toolchain = value.toolchain;
-          runtime.executable = typeof toolchain?.executable === "string" && toolchain.executable.trim()
-            ? toolchain.executable
-            : runtime.defaultExecutable;
-          runtime.build_args_text = Array.isArray(toolchain?.build_args) ? toolchain.build_args.join("\n") : "";
-          runtime.run_args_text = Array.isArray(toolchain?.run_args) ? toolchain.run_args.join("\n") : "";
+          runtime.executable =
+            typeof toolchain?.executable === "string" && toolchain.executable.trim()
+              ? toolchain.executable
+              : runtime.defaultExecutable;
+          runtime.build_args_text = Array.isArray(toolchain?.build_args)
+            ? toolchain.build_args.join("\n")
+            : "";
+          runtime.run_args_text = Array.isArray(toolchain?.run_args)
+            ? toolchain.run_args.join("\n")
+            : "";
 
           const limits = value.limits;
 
@@ -312,7 +374,7 @@ export function createAdminSettingsService(app: AppService) {
       }));
     },
     async refreshServerSettings() {
-      const server = await app.runOperation("Loading server settings", fetchServerSettings);
+      const server = await app.runOperation("Loading server settings", api.fetchServerSettings);
       store.setState((state) => ({
         ...state,
         serverValues: server.values,
@@ -322,7 +384,10 @@ export function createAdminSettingsService(app: AppService) {
       }));
     },
     async refreshAuthSettings() {
-      const settings = await app.runOperation("Loading authentication settings", fetchAuthSettings);
+      const settings = await app.runOperation(
+        "Loading authentication settings",
+        api.fetchAuthSettings,
+      );
       store.setState((state) => ({ ...state, maxRefreshes: settings.max_refreshes }));
     },
     updateMaxRefreshes(value: number) {
@@ -335,7 +400,7 @@ export function createAdminSettingsService(app: AppService) {
     },
     async saveAuthSettings() {
       const saved = await app.runOperation("Saving authentication settings", () =>
-        saveAuthSettings(store.getState().maxRefreshes),
+        api.saveAuthSettings(store.getState().maxRefreshes),
       );
       store.setState((state) => ({ ...state, maxRefreshes: saved.max_refreshes }));
       app.setStatus("Authentication settings saved");
@@ -379,7 +444,7 @@ export function createAdminSettingsService(app: AppService) {
     },
     async saveServerSettings() {
       const saved = await app.runOperation("Saving server settings", () =>
-        saveServerSettings(store.getState().serverValues),
+        api.saveServerSettings(store.getState().serverValues),
       );
       store.setState((state) => ({
         ...state,
@@ -450,7 +515,7 @@ export function createAdminSettingsService(app: AppService) {
       }
 
       await app.runOperation(`Saving ${runtime.label} runtime`, () =>
-        saveForeignLanguageRuntime(runtime.language, {
+        api.saveForeignLanguageRuntime(runtime.language, {
           image,
           setup_script: runtime.setup_script,
           environment,
