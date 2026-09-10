@@ -1,4 +1,4 @@
-# Trim resource requests for laptop-class local clusters.
+# Tune resource requests for laptop-class local clusters while allowing workers to burst.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -47,8 +47,8 @@ spec:
         - name: worker
           resources:
             requests:
-              cpu: "50m"
-              memory: "128Mi"
+              cpu: "1000m"
+              memory: "2Gi"
             limits:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "8000m"
+              memory: "16Gi"

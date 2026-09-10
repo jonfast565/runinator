@@ -17,6 +17,12 @@ replicas with HorizontalPodAutoscalers (capped low for laptop capacity) and
 PodDisruptionBudgets — the same multi-replica topology as prod, just smaller.
 Every service runs as a Deployment; workers are stateless broker
 competing-consumers with no persistent volumes, so they need no stable identity.
+Each worker requests 1 vCPU and 2 GiB so the scheduler can place it, with burst
+limits of 8 vCPU and 16 GiB. The limits are ceilings rather than reservations:
+configure the local cluster VM with enough capacity for the number of workers that
+may burst simultaneously. Allocate at least 24 GiB to Docker Desktop for one worker
+to reach its ceiling alongside the rest of the stack, or 40 GiB when both default
+workers may burst to 16 GiB at the same time.
 Install
 [metrics-server](https://github.com/kubernetes-sigs/metrics-server) for the HPAs
 to actually autoscale (minikube: `minikube addons enable metrics-server`).

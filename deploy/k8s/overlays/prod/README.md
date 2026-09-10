@@ -19,6 +19,11 @@ cargo run -p xtask -- k8s deploy \
    so the HorizontalPodAutoscalers can read CPU. ws, worker, waker, and the
    command-center web frontend each ship an HPA (bounds in
    `autoscaling-patch.yaml`) plus a PodDisruptionBudget; tune the min/max there.
+   Production workers request 2 vCPU and 4 GiB and may burst to 8 vCPU and 16 GiB.
+   Ensure every eligible node can satisfy one worker request and that the node
+   pool has enough memory for the maximum number of simultaneous 16 GiB bursts;
+   unlike CPU, memory pressure cannot be safely throttled and may cause eviction
+   or OOM termination.
    All four are safe to scale arbitrarily — ws competes on durable claims/leases
    and fans UI events over the broker, workers/wakers are broker
    competing-consumers, and the frontend is stateless. Manual scaling also works:
