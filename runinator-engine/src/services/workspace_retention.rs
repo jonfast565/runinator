@@ -5,7 +5,10 @@ use runinator_models::{
     workspaces::*,
 };
 use runinator_store::roles::DurableWorkspaceStore;
-use runinator_workspace::storage::{self, Id};
+use runinator_workspace::storage::{
+    self, Id,
+    store::{Object, ObjectInfo, ReadStore},
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -15,6 +18,28 @@ struct Renewal {
     task: tokio::task::JoinHandle<()>,
     valid: Arc<AtomicBool>,
 }
+
+struct RevocableStore<S> {
+    inner: S,
+    valid: Arc<AtomicBool>,
+}
+
+impl<S: ReadStore> ReadStore for RevocableStore<S> {
+    fn get(&self, id: Id) -> storage::Result<Object> {
+        if !self.valid.load(Ordering::Acquire) {
+            return Err(storage::Error::Conflict);
+        }
+        self.inner.get(id)
+    }
+
+    fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
+        if !self.valid.load(Ordering::Acquire) {
+            return Err(storage::Error::Conflict);
+        }
+        self.inner.info(id)
+    }
+}
+
 impl Drop for Renewal {
     fn drop(&mut self) {
         self.task.abort();
@@ -65,6 +90,13 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         let Some(lease) = self.store.claim_workspace_gc(id).await? else {
             return Ok(());
         };
+        let started = std::time::Instant::now();
+        tracing::info!(
+            workspace_id = %id,
+            roots = lease.roots.len(),
+            objects = lease.object_count,
+            "workspace collection started"
+        );
         let valid = Arc::new(AtomicBool::new(true));
         let renew_valid = valid.clone();
         let db = self.store.clone();
@@ -73,7 +105,7 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             valid,
             task: tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     if !matches!(db.renew_workspace_gc(renewing.clone()).await, Ok(true)) {
                         renew_valid.store(false, Ordering::Release);
                         return;
@@ -81,7 +113,10 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
                 }
             }),
         };
-        let objects = self.objects(id);
+        let objects = RevocableStore {
+            inner: self.objects(id),
+            valid: renewal.valid.clone(),
+        };
         let db = self.store.clone();
         let blobs = self.blobs.clone();
         let runtime = tokio::runtime::Handle::current();
@@ -158,6 +193,12 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         }
         self.store.finish_workspace_gc(lease, repacked).await?;
         drop(renewal);
+        tracing::info!(
+            workspace_id = %id,
+            repacked,
+            duration_ms = started.elapsed().as_millis(),
+            "workspace collection finished"
+        );
         self.collect_retired_packs(id).await
     }
 

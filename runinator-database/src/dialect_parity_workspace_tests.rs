@@ -269,6 +269,13 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
             .await
             .is_err()
     );
+    assert!(
+        !db.workspace_gc_candidates()
+            .await
+            .unwrap()
+            .contains(&identity.id)
+    );
+    assert!(db.claim_workspace_gc(identity.id).await.unwrap().is_none());
     db.update_workflow_run_status(run_id, WorkflowStatus::Succeeded, None, None, None)
         .await
         .unwrap();
@@ -346,6 +353,24 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     let gc = db.claim_workspace_gc(identity.id).await.unwrap().unwrap();
     assert_eq!(gc.roots, vec!["a".repeat(64)]);
     assert!(db.claim_workspace_gc(identity.id).await.unwrap().is_none());
+    let preempting = WorkspaceAcquire {
+        effect_id: Uuid::now_v7(),
+        now: Utc::now(),
+        leased_until: Utc::now() + Duration::minutes(5),
+        ..request.clone()
+    };
+    let WorkspaceAcquisition::Acquired {
+        checkout: preempting,
+    } = db.acquire_workspace_checkout(preempting).await.unwrap()
+    else {
+        panic!("foreground writer did not preempt collection");
+    };
+    db.release_workspace_checkout(preempting.id, preempting.fence)
+        .await
+        .unwrap();
+    assert!(!db.renew_workspace_gc(gc.clone()).await.unwrap());
+    assert!(db.finish_workspace_gc(gc, false).await.is_err());
+    let gc = db.claim_workspace_gc(identity.id).await.unwrap().unwrap();
     let mut stale_gc = gc.clone();
     stale_gc.fence += 1;
     assert!(db.finish_workspace_gc(stale_gc, false).await.is_err());

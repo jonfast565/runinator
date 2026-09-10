@@ -324,11 +324,15 @@ where
             return Ok(WorkspaceAcquisition::Busy);
         }
         if request.access == WorkspaceAccess::Write {
-            let collecting: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_gc_state WHERE workspace_id = ? AND lease_until > ?"))
-                .bind(request.workspace_id).bind(Utc::now().timestamp()).fetch_one(&mut *tx).await?;
-            if collecting > 0 {
-                return Ok(WorkspaceAcquisition::Busy);
-            }
+            // foreground writes preempt background collection. the collector's generation fence
+            // prevents a revoked pass from publishing its staged object map.
+            sqlx::query(&self.render(
+                "UPDATE workspace_gc_state SET lease_until = 0 WHERE workspace_id = ? AND lease_until > ?",
+            ))
+            .bind(request.workspace_id)
+            .bind(Utc::now().timestamp())
+            .execute(&mut *tx)
+            .await?;
         }
         if request.access == WorkspaceAccess::Write {
             let count: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_checkouts WHERE workspace_id = ? AND writer = 1 AND leased_until > ?"))

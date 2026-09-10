@@ -1263,6 +1263,7 @@ function workspacePhasePayload(event: WorkflowEffectOutputEvent): WorkspacePhase
 
 function workspacePhaseLabel(phase: string): string {
   const labels: Record<string, string> = {
+    "workspace.admission.wait": "workspace · wait for maintenance or writer",
     "workspace.restore.download": "workspace · download archive",
     "workspace.restore.index": "workspace · validate and index archive",
     "workspace.restore.materialize": "workspace · materialize files",

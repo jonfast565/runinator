@@ -540,10 +540,21 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
     db.mark_workflow_effect_dispatch_failed(dispatches[0].id, "broker unavailable".into())
         .await
         .unwrap();
+    assert!(
+        db.claim_pending_workflow_effect_dispatches(
+            "effect-publisher".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     let retried = db
         .claim_pending_workflow_effect_dispatches(
             "effect-publisher".into(),
-            Utc::now(),
+            Utc::now() + Duration::seconds(2),
             Utc::now() + Duration::seconds(30),
             10,
         )

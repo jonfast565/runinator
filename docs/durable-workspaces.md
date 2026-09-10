@@ -196,7 +196,9 @@ results against the immutable base; it never materializes or rescans the workspa
 Workspace-affined effects publish bounded lifecycle records for archive download and indexing,
 materialization or metadata-only recovery, change or result capture, pack upload, staging cleanup,
 read-only reuse, rebinding, and sealing. The run timeline projects those records as timed workspace
-phases. Lifecycle reporting is per phase, never per file or logical object.
+phases. Admission contention is also projected as one timed wait after it clears. Lifecycle
+reporting is per phase, never per file or logical object. Generation-fenced collection never claims
+a workspace while a nonterminal workflow that produced one of its snapshots is still active.
 
 Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
 deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops

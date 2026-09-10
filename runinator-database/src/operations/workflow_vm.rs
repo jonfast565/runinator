@@ -2308,8 +2308,9 @@ where
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
-            "UPDATE workflow_effect_dispatches SET attempts = attempts + 1, updated_at = ?, last_error = ?, claimed_by = NULL, claimed_until = NULL WHERE id = ? AND published_at IS NULL",
+            "UPDATE workflow_effect_dispatches SET attempts = attempts + 1, available_at = ?, updated_at = ?, last_error = ?, claimed_by = NULL, claimed_until = NULL WHERE id = ? AND published_at IS NULL",
         ))
+        .bind(now + 1)
         .bind(now)
         .bind(error)
         .bind(dispatch_id)

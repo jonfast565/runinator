@@ -339,7 +339,12 @@ impl RabbitMqBrokerInner {
         )
         .await
         .map_err(rabbitmq_error("event_queue_bind"))?;
-        let tag = format!("{}.events.{}", config.client_id, consumer_id);
+        let tag = format!(
+            "{}.events.{}.{}",
+            config.client_id,
+            consumer_id,
+            Uuid::new_v4()
+        );
         let consumer = Arc::new(AsyncMutex::new(
             ch.basic_consume(
                 queue_name.as_str().into(),
@@ -372,7 +377,12 @@ impl RabbitMqBrokerInner {
         let ch = self.ensure_connected(config).await?;
         let queue = agent_queue(config, replica_id);
         RabbitChannel(&ch).declare_queue(&queue).await?;
-        let tag = format!("{}.agent.{}", config.client_id, consumer_id);
+        let tag = format!(
+            "{}.agent.{}.{}",
+            config.client_id,
+            consumer_id,
+            Uuid::new_v4()
+        );
         let consumer = Arc::new(AsyncMutex::new(
             ch.basic_consume(
                 queue.as_str().into(),
@@ -411,10 +421,11 @@ impl RabbitMqBrokerInner {
         let ch = self.ensure_connected(config).await?;
         let queue = queue_for(config, channel);
         let tag = format!(
-            "{}.{}.{}",
+            "{}.{}.{}.{}",
             config.client_id,
             channel_name(channel),
-            consumer_id
+            consumer_id,
+            Uuid::new_v4()
         );
         let consumer = Arc::new(AsyncMutex::new(
             ch.basic_consume(

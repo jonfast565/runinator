@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{sync::Arc, time::Duration};
 
 use runinator_broker_core::{Broker, WakeMessage};
-use runinator_comm::{AgentDirectiveKind, AgentDirectiveState, WakeCommand};
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveState, EffectDispatchRecord, WakeCommand};
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::{
@@ -15,8 +15,11 @@ use runinator_models::{
     pipelines::{PipelineExecutionContext, PipelineMemberAttempt, PipelineMemberAttemptStatus},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
     value::Value,
-    workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
-    workspaces::WorkspaceAffinity,
+    workflow_vm::{
+        WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowEffectRequest,
+        WorkflowEffectStatus,
+    },
+    workspaces::{WORKSPACE_TIMELINE_STREAM, WorkspaceAffinity, WorkspacePhaseEvent},
 };
 use runinator_store::{
     RuntimeStore,
@@ -1474,7 +1477,18 @@ pub async fn run_workflow_effect_dispatcher<
                     )
                     .await
                     {
-                        Ok(true) => {}
+                        Ok(true) => {
+                            if dispatch.last_error.as_deref() == Some("workspace writer is busy")
+                                && let Err(error) = record_workspace_admission_wait(
+                                    db.as_ref(),
+                                    &dispatch,
+                                    chrono::Utc::now(),
+                                )
+                                .await
+                            {
+                                warn!(error = %error, dispatch_id = %dispatch.id, "failed to record workspace admission wait");
+                            }
+                        }
                         Ok(false) => {
                             let _ = db
                                 .mark_workflow_effect_dispatch_failed(
@@ -1660,6 +1674,42 @@ pub async fn run_workflow_effect_dispatcher<
         }
         tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.effect_dispatch_poll_interval_ms)) => {} }
     }
+}
+
+async fn record_workspace_admission_wait<T: WorkflowVmStore>(
+    db: &T,
+    dispatch: &EffectDispatchRecord,
+    finished_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), runinator_models::errors::SendableError> {
+    let duration_ms = (finished_at - dispatch.created_at)
+        .num_milliseconds()
+        .max(0) as u64;
+    let phase = WorkspacePhaseEvent {
+        version: 1,
+        phase: "workspace.admission.wait".into(),
+        status: "succeeded".into(),
+        started_at: dispatch.created_at,
+        finished_at,
+        duration_ms,
+        details: runinator_models::json!({
+            "reason": "workspace writer or maintenance lease was busy",
+            "attempts": dispatch.attempts,
+        }),
+    };
+    db.append_workflow_effect_output(WorkflowEffectOutputEvent {
+        event_id: uuid::Uuid::new_v4(),
+        effect_id: dispatch.command.effect_id,
+        workflow_run_id: dispatch.command.workflow_run_id,
+        continuation_id: dispatch.command.continuation_id,
+        attempt: dispatch.command.attempt,
+        output: WorkflowEffectOutput::Chunk {
+            stream: WORKSPACE_TIMELINE_STREAM.into(),
+            content: serde_json::to_string(&phase)?,
+        },
+        created_at: finished_at.timestamp(),
+    })
+    .await?;
+    Ok(())
 }
 
 async fn prepare_external_operation<T: OrchestrationStore + DefinitionStore>(

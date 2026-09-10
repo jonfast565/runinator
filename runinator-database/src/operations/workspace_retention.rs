@@ -38,7 +38,7 @@ where
         Ok(count > 0)
     }
     async fn workspace_gc_candidates(&self) -> Result<Vec<Uuid>, SendableError> {
-        Ok(sqlx::query_scalar(&self.render("SELECT w.id FROM durable_workspaces w LEFT JOIN workspace_gc_state g ON g.workspace_id = w.id WHERE (g.workspace_id IS NULL OR g.last_revision < w.revision OR EXISTS (SELECT 1 FROM workspace_retired_packs p WHERE p.workspace_id = w.id)) AND (g.workspace_id IS NULL OR g.lease_until <= ?) ORDER BY w.updated_at LIMIT 20"))
+        Ok(sqlx::query_scalar(&self.render("SELECT w.id FROM durable_workspaces w LEFT JOIN workspace_gc_state g ON g.workspace_id = w.id WHERE (g.workspace_id IS NULL OR g.last_revision < w.revision OR EXISTS (SELECT 1 FROM workspace_retired_packs p WHERE p.workspace_id = w.id)) AND (g.workspace_id IS NULL OR g.lease_until <= ?) AND NOT EXISTS (SELECT 1 FROM workspace_snapshots s JOIN workflow_runs r ON r.id = s.workflow_run_id WHERE s.workspace_id = w.id AND r.status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')) ORDER BY w.updated_at LIMIT 20"))
             .bind(Utc::now().timestamp()).fetch_all(self.pool()).await?)
     }
     async fn claim_workspace_gc(
@@ -59,14 +59,22 @@ where
         let Some(revision) = revision else {
             return Ok(None);
         };
+        let active_runs: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_snapshots s JOIN workflow_runs r ON r.id = s.workflow_run_id WHERE s.workspace_id = ? AND r.status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')"))
+            .bind(id).fetch_one(&mut *tx).await?;
+        if active_runs > 0 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
         let active: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_checkouts WHERE workspace_id = ? AND writer = 1 AND leased_until > ?"))
             .bind(id).bind(Utc::now().timestamp()).fetch_one(&mut *tx).await?;
         if active > 0 {
+            tx.rollback().await?;
             return Ok(None);
         }
         let imports: i64 = sqlx::query_scalar(&self.render("SELECT COUNT(*) FROM workspace_transfers WHERE workspace_id = ? AND importing = 1 AND state IN ('uploading', 'receiving', 'queued', 'running') AND expires_at > ?"))
             .bind(id).bind(Utc::now().timestamp()).fetch_one(&mut *tx).await?;
         if imports > 0 {
+            tx.rollback().await?;
             return Ok(None);
         }
         let token = Uuid::new_v4();
@@ -87,12 +95,14 @@ where
         .fetch_one(&mut *tx)
         .await?;
         if last >= revision {
+            tx.rollback().await?;
             return Ok(None);
         }
         let expires_at = Utc::now() + chrono::Duration::minutes(5);
         let changed = sqlx::query(&self.render("UPDATE workspace_gc_state SET token = ?, fence = fence + 1, lease_until = ? WHERE workspace_id = ? AND lease_until <= ?"))
             .bind(token).bind(expires_at.timestamp()).bind(id).bind(Utc::now().timestamp()).execute(&mut *tx).await?;
         if changed.affected() != 1 {
+            tx.rollback().await?;
             return Ok(None);
         }
         let fence: i64 = sqlx::query_scalar(
