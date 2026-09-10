@@ -10,11 +10,14 @@ range, unit, label, and description. New struct fields use their compiled defaul
 stored document is read.
 
 The Command Center exposes the catalog under Settings → Server, grouped into Authentication,
-Orchestration, Notifications, Workers, Replicas, and Archiver. Saving writes the full document
-atomically. Embedded and standalone engines share a cached snapshot and refresh it at the configured
-refresh interval; standalone workers read only the worker subset through `GET /worker/settings` and
-gracefully drain and rebuild their action loop when that policy changes. Desktop agents retain their
-machine-local settings.
+Orchestration, Notifications, Workers, Wakers, Engine Workers, Replicas, and Archiver. Saving writes
+the full document atomically. Embedded and standalone engines share a cached snapshot and refresh it
+at the configured refresh interval; standalone workers read only the worker subset through
+`GET /worker/settings` and gracefully drain and rebuild their action loop when that policy changes.
+Desktop agents retain their machine-local settings. Standalone engine workers apply ingress
+concurrency from the same refreshed snapshot. The engine attaches the current waker policy to newly
+armed wake messages so wakers remain broker-only relays and adopt the policy without calling the API
+or settings store.
 
 The current catalog covers:
 
@@ -24,6 +27,8 @@ The current catalog covers:
   synchronous invocation wait/poll timing;
 - notification scanning, batch size, default secret-expiry warning, and delivery timeout;
 - standalone worker concurrency, shutdown grace, reconnect budget, and settings refresh timing;
+- waker concurrency and maximum sleep interval;
+- standalone engine-worker ingress concurrency;
 - replica stale/reap/delete windows, cleanup cadence, telemetry retention/window, and point limit.
 
 Replica windows also have relational validation: `reap_after_seconds` must exceed
@@ -34,7 +39,7 @@ Replica windows also have relational validation: `reap_after_seconds` must excee
 The audit does not turn every numeric literal into mutable policy. These categories remain fixed:
 
 - command-line and environment bootstrap defaults (ports, backend selection, authentication token
-  TTLs, overload/rate-limit options, and engine ingress concurrency), because they are needed before
+  TTLs, and overload/rate-limit options), because they are needed before
   the settings store or HTTP service is available and already have process-level configuration;
 - wire/protocol and security bounds (WebSocket frame sizes, S3 multipart limits, SigV4 clock skew,
   enrollment-token maximum TTL, stale broker-message TTL, and protocol versions), because peers or
@@ -47,9 +52,11 @@ The audit does not turn every numeric literal into mutable policy. These categor
 - per-workflow/action values such as action timeout, retry policy, debounce, approval expiry, and
   gate polling, which are authored into the durable workflow/effect and must not change underneath a
   running execution;
-- desktop-agent, waker, broker, and blob-process local settings. Standalone workers preserve their
-  CLI configuration until an administrator first saves the unified policy; after that, the Workers
-  section becomes authoritative for the worker fields it contains.
+- desktop-agent, broker, and blob-process local settings. Standalone workers, wakers, and engine
+  workers preserve their CLI configuration until an administrator first saves the unified policy;
+  after that, their respective server-settings sections become authoritative. Wakers receive new
+  policy on subsequently armed wake messages, so an idle waker can continue to report its process
+  source until it services the first new policy-bearing wake.
 
 The reserved policy row is omitted from the generic credentials list and workflow config type tree.
 Generic credential writes, moves, deletes, and pack imports reject that coordinate, so all policy

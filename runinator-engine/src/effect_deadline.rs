@@ -14,6 +14,7 @@
 use chrono::{DateTime, Utc};
 use runinator_broker_core::{Broker, WakeMessage};
 use runinator_comm::{EffectCommand, EffectResult, WakeCommand};
+use runinator_models::server_settings::WakerSettings;
 use runinator_models::workflow_vm::{
     DEFAULT_ACTION_TIMEOUT_SECONDS, WorkflowEffectRequest, WorkflowEffectStatus,
 };
@@ -105,7 +106,7 @@ pub(crate) async fn arm(
     command: &EffectCommand,
     dispatched_at: DateTime<Utc>,
 ) {
-    arm_with_grace(broker, command, dispatched_at, DEADLINE_GRACE_SECONDS).await;
+    arm_with_grace(broker, command, dispatched_at, DEADLINE_GRACE_SECONDS, None).await;
 }
 
 pub(crate) async fn arm_with_grace(
@@ -113,10 +114,14 @@ pub(crate) async fn arm_with_grace(
     command: &EffectCommand,
     dispatched_at: DateTime<Utc>,
     grace_seconds: i64,
+    waker_settings: Option<WakerSettings>,
 ) {
-    let Some(wake) = deadline_wake_with_grace(command, dispatched_at, grace_seconds) else {
+    let Some(mut wake) = deadline_wake_with_grace(command, dispatched_at, grace_seconds) else {
         return;
     };
+    if let Some(settings) = waker_settings {
+        wake = wake.with_waker_settings(settings);
+    }
     let due_at = wake.due_at;
     match broker
         .publish_wake(WakeMessage {

@@ -3,9 +3,9 @@ use runinator_models::value::Value;
 use runinator_store::DatabaseImpl;
 
 use super::{
-    decode_config_schema, decode_config_value, decode_secret, load_persisted_server_settings,
-    load_server_settings, save_server_settings, validate_and_encode,
-    validate_and_encode_with_expiry,
+    ServerSettingsHandle, decode_config_schema, decode_config_value, decode_secret,
+    load_persisted_server_settings, load_server_settings, save_server_settings,
+    validate_and_encode, validate_and_encode_with_expiry,
 };
 
 // the schema pinned in a config slot's stored bytes, mirroring how the handler reuses it on a
@@ -38,6 +38,34 @@ async fn server_settings_round_trip_as_one_validated_policy() {
         load_persisted_server_settings(&db).await.unwrap(),
         Some(settings)
     );
+}
+
+#[tokio::test]
+async fn server_settings_handle_preserves_process_fallback_until_policy_is_saved() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-server-settings-handle-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let db = runinator_database::sqlite::SqliteDb::new(path.to_str().unwrap())
+        .await
+        .unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let handle = ServerSettingsHandle::load(&db).await.unwrap();
+    assert!(!handle.configured());
+
+    let mut settings = runinator_models::server_settings::ServerSettings::default();
+    settings.background_engine.max_concurrent_ingress = 24;
+    settings.wakers.max_concurrent_wakes = 48;
+    save_server_settings(&db, &settings).await.unwrap();
+    handle.refresh(&db).await.unwrap();
+
+    assert!(handle.configured());
+    assert_eq!(
+        handle.current().background_engine.max_concurrent_ingress,
+        24
+    );
+    assert_eq!(handle.current().wakers.max_concurrent_wakes, 48);
 }
 
 #[test]

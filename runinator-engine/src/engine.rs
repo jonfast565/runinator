@@ -158,19 +158,22 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         publisher.clone(),
         shutdown.clone(),
     ));
-    loops.spawn(crate::run_infrastructure_effect_host(
-        pool.clone(),
-        broker.clone(),
-        shutdown.clone(),
-    ));
     loops.spawn(
-        crate::ingress_consumer::run_ingress_consumer_with_orchestration_nudge(
+        crate::infrastructure_effect_host::run_infrastructure_effect_host_with_settings(
             pool.clone(),
             broker.clone(),
-            orchestration_nudge.clone(),
+            server_settings.clone(),
             shutdown.clone(),
         ),
     );
+    loops.spawn(crate::ingress_consumer::run_ingress_consumer_with_settings(
+        pool.clone(),
+        broker.clone(),
+        orchestration_nudge.clone(),
+        server_settings.clone(),
+        config.max_concurrent_ingress,
+        shutdown.clone(),
+    ));
     loops.spawn(run_trigger_loop(
         pool.clone(),
         publisher.clone(),

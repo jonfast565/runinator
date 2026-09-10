@@ -241,6 +241,56 @@ describe("admin settings store", () => {
     });
   });
 
+  it("edits waker and engine worker concurrency through the server settings catalog", async () => {
+    vi.mocked(fetchServerSettings).mockResolvedValue({
+      values: {
+        authentication: { max_refreshes: 100 },
+        wakers: { max_concurrent_wakes: 32, max_wake_sleep_seconds: 20 },
+        background_engine: { max_concurrent_ingress: 16 },
+      },
+      catalog: [
+        {
+          key: "wakers.max_concurrent_wakes",
+          section: "Wakers",
+          label: "Maximum concurrent wakes",
+          description: "Maximum wake messages each waker services at once.",
+          unit: "wakes",
+          default: 32,
+          minimum: 1,
+          maximum: 4096,
+          usual_minimum: 8,
+          usual_maximum: 128,
+        },
+        {
+          key: "background_engine.max_concurrent_ingress",
+          section: "Engine Workers",
+          label: "Maximum concurrent ingress",
+          description: "Maximum ingress messages each engine worker applies at once.",
+          unit: "messages",
+          default: 16,
+          minimum: 1,
+          maximum: 1024,
+          usual_minimum: 4,
+          usual_maximum: 64,
+        },
+      ],
+    });
+    const settings = useAdminSettingsStore();
+
+    await settings.refreshServerSettings();
+    settings.updateServerSetting("wakers.max_concurrent_wakes", 48);
+    settings.updateServerSetting("background_engine.max_concurrent_ingress", 24);
+    await settings.saveServerSettings();
+
+    expect(settings.serverValues.wakers.max_concurrent_wakes).toBe(48);
+    expect(settings.serverValues.background_engine.max_concurrent_ingress).toBe(24);
+    expect(saveServerSettings).toHaveBeenCalledWith({
+      authentication: { max_refreshes: 100 },
+      wakers: { max_concurrent_wakes: 48, max_wake_sleep_seconds: 20 },
+      background_engine: { max_concurrent_ingress: 24 },
+    });
+  });
+
   it("updates boolean archiver settings without coercing them to numbers", async () => {
     vi.mocked(fetchServerSettings).mockResolvedValue({
       values: {

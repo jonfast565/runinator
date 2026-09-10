@@ -4,7 +4,7 @@ use crate::{
     WebServiceAnnouncement, WireCodec, WsIngressCommand,
 };
 use chrono::Utc;
-use runinator_models::json;
+use runinator_models::{json, server_settings::WakerSettings};
 use uuid::Uuid;
 
 #[test]
@@ -39,6 +39,45 @@ fn wake_command_round_trips_with_json_and_carries_its_effect_result() {
     assert_eq!(decoded.effect_id(), effect_id);
     assert_eq!(decoded.workflow_run_id(), workflow_run_id);
     assert_eq!(decoded.dedupe_key(), format!("{effect_id}:0"));
+}
+
+#[test]
+fn wake_command_round_trips_server_managed_waker_settings() {
+    let due_at = Utc::now();
+    let settings = WakerSettings {
+        max_concurrent_wakes: 48,
+        max_wake_sleep_seconds: 12,
+    };
+    let command = WakeCommand::new(
+        due_at,
+        EffectResult {
+            workspace_commit: None,
+            version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            event_id: Uuid::now_v7(),
+            effect_id: Uuid::now_v7(),
+            workflow_run_id: Uuid::now_v7(),
+            continuation_id: Uuid::now_v7(),
+            attempt: 0,
+            kind: EffectResultKind::Status {
+                status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+                output: None,
+                message: None,
+            },
+            timestamp: due_at,
+            trace_id: Uuid::now_v7(),
+            notification_delivery_id: None,
+        },
+        Uuid::now_v7(),
+    )
+    .with_waker_settings(settings.clone());
+
+    let decoded = WakeCommand::from_wire(&command.to_wire().unwrap()).unwrap();
+    assert_eq!(decoded.waker_settings, Some(settings));
+
+    let mut older = serde_json::to_value(command).unwrap();
+    older.as_object_mut().unwrap().remove("waker_settings");
+    let older: WakeCommand = serde_json::from_value(older).unwrap();
+    assert_eq!(older.waker_settings, None);
 }
 
 #[test]

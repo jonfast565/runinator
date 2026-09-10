@@ -11,6 +11,7 @@ use runinator_models::{
     providers::ProviderMetadata,
     replicas::ReplicaRegistrationRequest,
     runs::{ProviderTerminalControl, TerminalInteraction},
+    server_settings::WakerSettings,
     value::Value,
     workflow_vm::{
         UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
@@ -513,6 +514,10 @@ pub struct WakeCommand {
     /// authoritative; the waker merely tells an engine replica that its deadline has arrived.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orchestration_intent: Option<OrchestrationIntentWake>,
+    /// Current server-managed waker limits. Older wakes omit this and leave the receiving waker's
+    /// process settings unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waker_settings: Option<WakerSettings>,
 }
 
 /// A due occurrence of one configured workflow timer. The timer id names a frozen interrupt
@@ -538,6 +543,7 @@ impl WakeCommand {
             trace_id,
             timer_interrupt: None,
             orchestration_intent: None,
+            waker_settings: None,
         }
     }
 
@@ -576,6 +582,7 @@ impl WakeCommand {
                 interval_seconds,
             }),
             orchestration_intent: None,
+            waker_settings: None,
         }
     }
 
@@ -612,7 +619,14 @@ impl WakeCommand {
                 binding_id,
                 intent: intent.into(),
             }),
+            waker_settings: None,
         }
+    }
+
+    /// Attach the operating policy the receiving broker-only waker should adopt.
+    pub fn with_waker_settings(mut self, settings: WakerSettings) -> Self {
+        self.waker_settings = Some(settings);
+        self
     }
 
     /// the effect this wake settles.

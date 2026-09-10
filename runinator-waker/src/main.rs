@@ -6,7 +6,10 @@ use runinator_platform::startup::ProcessResources;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use runinator_waker::{config::parse_config, waker_loop};
+use runinator_waker::{
+    attributes_with_waker_settings, config::parse_config, runtime_settings,
+    waker_loop_with_settings,
+};
 
 mod service;
 use service::WakerService;
@@ -80,14 +83,17 @@ async fn run_process() -> Result<(), SendableError> {
     }
     let replica_id = Uuid::now_v7();
     let runtime_id = replica_id.to_string();
-    let attributes = runinator_observability::resource_telemetry::attributes_with_host_metadata(
-        &runinator_models::json!({
-            "broker_backend": broker_backend,
-            "broker_connection": broker_connection,
-            "broker_client_id": config.broker_client_id.clone(),
-            "consumer_group": config.waker_consumer_group.clone(),
-        }),
-    );
+    let runtime_settings = runtime_settings(&config);
+    let base_attributes =
+        runinator_observability::resource_telemetry::attributes_with_host_metadata(
+            &runinator_models::json!({
+                "broker_backend": broker_backend,
+                "broker_connection": broker_connection,
+                "broker_client_id": config.broker_client_id.clone(),
+                "consumer_group": config.waker_consumer_group.clone(),
+            }),
+        );
+    let attributes = attributes_with_waker_settings(&base_attributes, &runtime_settings);
     runinator_waker::publish_replica_availability(
         broker.as_ref(),
         &config,
@@ -106,15 +112,17 @@ async fn run_process() -> Result<(), SendableError> {
         config.clone(),
         replica_id,
         runtime_id,
-        attributes,
+        base_attributes,
+        runtime_settings.clone(),
         notify.clone(),
     );
 
     let loop_notify = notify.clone();
     let loop_broker = broker.clone();
-    let loop_config = config.clone();
+    let consumer_group = config.waker_consumer_group.clone();
+    let loop_settings = runtime_settings;
     let handle = tokio::spawn(async move {
-        waker_loop(loop_broker, loop_notify, &loop_config).await;
+        waker_loop_with_settings(loop_broker, loop_notify, consumer_group, loop_settings).await;
     });
 
     shutdown.cancelled().await;

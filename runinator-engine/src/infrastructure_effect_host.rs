@@ -9,7 +9,10 @@ use std::{sync::Arc, time::Duration};
 use chrono::{DateTime, TimeZone, Utc};
 use runinator_broker_core::{Broker, EffectDelivery, EffectResultMessage, WakeMessage};
 use runinator_comm::{EffectExecutor, EffectResult, WakeCommand};
-use runinator_models::workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus};
+use runinator_models::{
+    server_settings::WakerSettings,
+    workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus},
+};
 use runinator_store::{
     RuntimeStore,
     roles::{DefinitionStore, WorkflowVmStore},
@@ -22,6 +25,28 @@ const CONSUMER_ID: &str = "runinator-infrastructure-effects";
 pub async fn run_infrastructure_effect_host<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
+    shutdown: Arc<Notify>,
+) {
+    run_infrastructure_effect_host_inner(db, broker, None, shutdown).await;
+}
+
+pub(crate) async fn run_infrastructure_effect_host_with_settings<
+    T: RuntimeStore + WorkflowVmStore + DefinitionStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    settings: crate::settings::ServerSettingsHandle,
+    shutdown: Arc<Notify>,
+) {
+    run_infrastructure_effect_host_inner(db, broker, Some(settings), shutdown).await;
+}
+
+async fn run_infrastructure_effect_host_inner<
+    T: RuntimeStore + WorkflowVmStore + DefinitionStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    settings: Option<crate::settings::ServerSettingsHandle>,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow VM infrastructure effect host started");
@@ -43,7 +68,13 @@ pub async fn run_infrastructure_effect_host<T: RuntimeStore + WorkflowVmStore + 
                     Ok(delivery) => {
                         let broker = broker.clone();
                         let db = db.clone();
-                        tasks.spawn(async move { handle_delivery(db, broker, delivery).await });
+                        let waker_settings = settings
+                            .as_ref()
+                            .filter(|settings| settings.configured())
+                            .map(|settings| settings.current().wakers);
+                        tasks.spawn(async move {
+                            handle_delivery(db, broker, delivery, waker_settings).await
+                        });
                     }
                     Err(err) => {
                         warn!(error = %err, "failed to receive infrastructure effect");
@@ -75,6 +106,7 @@ async fn handle_delivery<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     delivery: EffectDelivery,
+    waker_settings: Option<WakerSettings>,
 ) {
     let acknowledged = match execute(db.as_ref(), &delivery).await {
         Outcome::Settle(result) => match broker
@@ -94,7 +126,10 @@ async fn handle_delivery<T: RuntimeStore + WorkflowVmStore + DefinitionStore>(
             }
         },
         Outcome::Timer { due_at, result } => {
-            let wake = WakeCommand::new(due_at, result, delivery.command.trace_id);
+            let mut wake = WakeCommand::new(due_at, result, delivery.command.trace_id);
+            if let Some(settings) = waker_settings {
+                wake = wake.with_waker_settings(settings);
+            }
             match broker
                 .publish_wake(WakeMessage {
                     dedupe_key: Some(wake.dedupe_key()),

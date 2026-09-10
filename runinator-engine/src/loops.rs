@@ -109,8 +109,13 @@ pub async fn run_correlated_orchestration_reducer<
         {
             Ok(commands) => {
                 for command in commands {
-                    let outcome =
-                        execute_orchestration_command(db.clone(), broker.as_ref(), &command).await;
+                    let outcome = execute_orchestration_command(
+                        db.clone(),
+                        broker.as_ref(),
+                        &command,
+                        settings.configured().then(|| policy.wakers.clone()),
+                    )
+                    .await;
                     let (succeeded, result) = match outcome {
                         Ok(result) => (true, result),
                         Err(err) => {
@@ -172,6 +177,7 @@ async fn execute_orchestration_command<
     db: Arc<T>,
     broker: &dyn Broker,
     command: &runinator_models::orchestration::OrchestrationCommand,
+    waker_settings: Option<runinator_models::server_settings::WakerSettings>,
 ) -> Result<runinator_models::value::Value, runinator_models::errors::SendableError> {
     let binding = db
         .fetch_orchestration_binding(command.binding_id)
@@ -328,8 +334,11 @@ async fn execute_orchestration_command<
                     "orchestration wake command has an invalid deadline",
                 )) as runinator_models::errors::SendableError
             })?;
-            let wake =
+            let mut wake =
                 WakeCommand::orchestration_intent(due_at, binding.id, intent, uuid::Uuid::now_v7());
+            if let Some(settings) = waker_settings {
+                wake = wake.with_waker_settings(settings);
+            }
             match broker
                 .publish_wake(WakeMessage {
                     dedupe_key: Some(wake.dedupe_key()),
@@ -1392,13 +1401,16 @@ pub async fn run_timer_interrupt_scheduler<T: WorkflowVmStore>(
         {
             Ok(timers) => {
                 for timer in timers {
-                    let wake = WakeCommand::timer_interrupt(
+                    let mut wake = WakeCommand::timer_interrupt(
                         timer.due_at,
                         timer.workflow_run_id,
                         timer.timer_id.clone(),
                         timer.interval_seconds,
                         uuid::Uuid::now_v7(),
                     );
+                    if settings.configured() {
+                        wake = wake.with_waker_settings(policy.wakers.clone());
+                    }
                     match broker
                         .publish_wake(WakeMessage {
                             dedupe_key: Some(wake.dedupe_key()),
@@ -1652,6 +1664,7 @@ pub async fn run_workflow_effect_dispatcher<
                                 &published_command,
                                 now,
                                 policy.orchestration.action_deadline_grace_seconds as i64,
+                                settings.configured().then(|| policy.wakers.clone()),
                             )
                             .await;
                             if let Err(err) = db

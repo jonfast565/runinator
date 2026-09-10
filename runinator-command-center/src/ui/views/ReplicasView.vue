@@ -314,6 +314,19 @@
                     </div>
                   </div>
 
+                  <div
+                    v-if="selectedRuntimeSettings.length"
+                    class="mb-4 rounded-lg border border-border bg-surface-subtle p-3"
+                  >
+                    <h3 class="m-0 mb-2 text-sm font-semibold text-fg">Runtime settings</h3>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm md:grid-cols-3">
+                      <div v-for="setting in selectedRuntimeSettings" :key="setting.label">
+                        <span class="text-fg-muted">{{ setting.label }}</span
+                        ><br />{{ setting.value }}
+                      </div>
+                    </div>
+                  </div>
+
                   <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
                       <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
@@ -1128,6 +1141,42 @@ const selectedReplica = computed<ReplicaRecord | null>(() => {
 });
 
 const selectedAgentStatus = computed(() => agentStatus(selectedReplica.value));
+const selectedRuntimeSettings = computed(() => {
+  const replica = selectedReplica.value;
+
+  if (!replica) {
+    return [];
+  }
+
+  if (replica.replica_type === "waker") {
+    return compactRuntimeSettings([
+      ["Concurrent wakes", replica.attributes.max_concurrent_wakes],
+      ["Maximum wake sleep", replica.attributes.max_wake_sleep_seconds, "s"],
+      ["Settings source", replica.attributes.waker_settings_source],
+    ]);
+  }
+
+  if (replica.replica_type === "background") {
+    return compactRuntimeSettings([
+      ["Concurrent ingress", replica.attributes.max_concurrent_ingress],
+      ["Settings source", replica.attributes.engine_settings_source],
+    ]);
+  }
+
+  return [];
+});
+
+function compactRuntimeSettings(
+  entries: [label: string, value: unknown, suffix?: string][],
+): { label: string; value: string }[] {
+  return entries.flatMap(([label, value, suffix = ""]) => {
+    if (typeof value !== "string" && typeof value !== "number") {
+      return [];
+    }
+
+    return [{ label, value: `${String(value)}${suffix}` }];
+  });
+}
 
 function agentStatus(replica: ReplicaRecord | null | undefined): AgentStatusReport | null {
   const status = replica?.attributes.status;

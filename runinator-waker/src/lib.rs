@@ -2,19 +2,63 @@ pub mod config;
 pub mod errors;
 pub mod metrics;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use chrono::Utc;
 use runinator_broker::{Broker, IngressMessage, WsIngressCommand};
 use runinator_models::errors::error_code_or_unknown;
-use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
+use runinator_models::{
+    replicas::{ReplicaKind, ReplicaRegistrationRequest},
+    server_settings::WakerSettings,
+    value::Value,
+};
 use runinator_observability::resource_telemetry::{TelemetryCollector, attributes_with_telemetry};
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::{Instrument, error, info};
 
 use crate::config::Config;
+
+#[derive(Debug, Clone)]
+pub struct ActiveWakerSettings {
+    pub values: WakerSettings,
+    pub source: &'static str,
+}
+
+pub type SharedWakerSettings = Arc<RwLock<ActiveWakerSettings>>;
+
+pub fn runtime_settings(config: &Config) -> SharedWakerSettings {
+    Arc::new(RwLock::new(ActiveWakerSettings {
+        values: WakerSettings {
+            max_concurrent_wakes: config.max_concurrent_wakes as u64,
+            max_wake_sleep_seconds: config.max_wake_sleep_seconds,
+        },
+        source: "process",
+    }))
+}
+
+pub fn attributes_with_waker_settings(base: &Value, settings: &SharedWakerSettings) -> Value {
+    let mut attributes = base.clone();
+    let active = settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(values) = attributes.as_object_mut() {
+        values.insert(
+            "max_concurrent_wakes".into(),
+            Value::from(active.values.max_concurrent_wakes),
+        );
+        values.insert(
+            "max_wake_sleep_seconds".into(),
+            Value::from(active.values.max_wake_sleep_seconds),
+        );
+        values.insert(
+            "waker_settings_source".into(),
+            Value::String(active.source.into()),
+        );
+    }
+    attributes
+}
 
 // backoff before retrying a failed wake receive, so a broker outage does not hot-loop the waker.
 const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_millis(250);
@@ -109,6 +153,7 @@ pub fn spawn_replica_heartbeat(
     replica_id: uuid::Uuid,
     runtime_id: String,
     base_attributes: runinator_models::value::Value,
+    settings: SharedWakerSettings,
     shutdown: Arc<Notify>,
 ) -> tokio::task::JoinHandle<()> {
     let telemetry = TelemetryCollector::new();
@@ -128,7 +173,8 @@ pub fn spawn_replica_heartbeat(
                     return;
                 }
                 _ = ticker.tick() => {
-                    let attributes = attributes_with_telemetry(&base_attributes, &telemetry);
+                    let active_attributes = attributes_with_waker_settings(&base_attributes, &settings);
+                    let attributes = attributes_with_telemetry(&active_attributes, &telemetry);
                     if let Err(err) = publish_replica_availability(
                         broker.as_ref(),
                         &config,
@@ -155,22 +201,39 @@ fn non_blank(value: &str) -> Option<String> {
 /// other wakes still get serviced. wakes are handled concurrently up to `max_concurrent_wakes`,
 /// so one wake sleeping toward its due time never head-of-line blocks a due wake behind it.
 pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &Config) {
-    let group: Arc<str> = Arc::from(config.waker_consumer_group.as_str());
-    let max_sleep = Duration::from_secs(config.max_wake_sleep_seconds);
-    let slots = Arc::new(Semaphore::new(config.max_concurrent_wakes));
+    waker_loop_with_settings(
+        broker,
+        notify,
+        config.waker_consumer_group.clone(),
+        runtime_settings(config),
+    )
+    .await;
+}
+
+pub async fn waker_loop_with_settings(
+    broker: Arc<dyn Broker>,
+    notify: Arc<Notify>,
+    consumer_group: String,
+    settings: SharedWakerSettings,
+) {
+    let group: Arc<str> = Arc::from(consumer_group);
     let mut handlers = JoinSet::new();
     loop {
         // reap finished handlers so the join set does not hold results for the process lifetime.
         while handlers.try_join_next().is_some() {}
 
-        // hold a slot before receiving so this replica never buffers more wakes than it services.
-        let slot = tokio::select! {
-            _ = notify.notified() => break,
-            slot = Arc::clone(&slots).acquire_owned() => match slot {
-                Ok(slot) => slot,
-                Err(_) => break,
+        let max_concurrent = settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values
+            .max_concurrent_wakes;
+        if handlers.len() >= usize::try_from(max_concurrent).unwrap_or(usize::MAX).max(1) {
+            tokio::select! {
+                _ = notify.notified() => break,
+                _ = handlers.join_next() => {}
             }
-        };
+            continue;
+        }
         let delivery = tokio::select! {
             _ = notify.notified() => break,
             received = broker.receive_wake(&group) => {
@@ -192,6 +255,34 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
             }
         };
 
+        if let Some(next) = delivery.command.waker_settings.clone() {
+            let mut active = settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if active.values != next || active.source != "server" {
+                active.values = next;
+                active.source = "server";
+                runinator_observability::tui::gauge(
+                    "waker",
+                    "wake capacity",
+                    active.values.max_concurrent_wakes as i64,
+                );
+                info!(
+                    max_concurrent_wakes = active.values.max_concurrent_wakes,
+                    max_wake_sleep_seconds = active.values.max_wake_sleep_seconds,
+                    "applied server waker settings"
+                );
+            }
+        }
+        let max_sleep = Duration::from_secs(
+            settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .values
+                .max_wake_sleep_seconds
+                .max(1),
+        );
+
         // carries this wake's correlation id through the sleep and the settle so it can be traced
         // end to end alongside the engine-side ingress logs that consume the resulting settle.
         let span = tracing::info_span!(
@@ -204,7 +295,6 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
         let notify = Arc::clone(&notify);
         let group = Arc::clone(&group);
         handlers.spawn(async move {
-            let _slot = slot;
             handle_wake(broker.as_ref(), &group, max_sleep, &notify, delivery)
                 .instrument(span)
                 .await;

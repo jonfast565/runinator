@@ -189,13 +189,21 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     let replica_id = Uuid::now_v7();
     let runtime_id = replica_id.to_string();
+    let process_max_concurrent_ingress = engine_config.max_concurrent_ingress.max(1) as u64;
     let base_attributes = resource_telemetry::attributes_with_host_metadata(&attributes);
+    let active_settings = load_background_engine_settings(
+        db.as_ref(),
+        process_max_concurrent_ingress,
+        ActiveBackgroundEngineSettings::process(process_max_concurrent_ingress),
+    )
+    .await;
+    let attributes = background_engine_attributes(&base_attributes, active_settings);
     publish_replica_availability(
         broker.as_ref(),
         replica_id,
         &runtime_id,
         &instance,
-        base_attributes.clone(),
+        attributes,
     )
     .await?;
 
@@ -206,9 +214,11 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     let hb_runtime_id = runtime_id.clone();
     let hb_instance = instance.clone();
     let hb_attributes = base_attributes;
+    let hb_db = db.clone();
     let telemetry = Arc::new(resource_telemetry::TelemetryCollector::new());
     let heartbeat = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(10));
+        let mut active_settings = active_settings;
         loop {
             tokio::select! {
                 _ = hb_shutdown.notified() => {
@@ -221,8 +231,17 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
                     return;
                 }
                 _ = ticker.tick() => {
-                    let attributes = resource_telemetry::attributes_with_telemetry(
+                    active_settings = load_background_engine_settings(
+                        hb_db.as_ref(),
+                        process_max_concurrent_ingress,
+                        active_settings,
+                    ).await;
+                    let active_attributes = background_engine_attributes(
                         &hb_attributes,
+                        active_settings,
+                    );
+                    let attributes = resource_telemetry::attributes_with_telemetry(
+                        &active_attributes,
                         telemetry.as_ref(),
                     );
                     let _ = publish_replica_availability(
@@ -254,6 +273,54 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     publish_replica_offline(broker.as_ref(), replica_id, &runtime_id).await;
     heartbeat.abort();
     result
+}
+
+#[derive(Clone, Copy)]
+struct ActiveBackgroundEngineSettings {
+    max_concurrent_ingress: u64,
+    source: &'static str,
+}
+
+impl ActiveBackgroundEngineSettings {
+    fn process(max_concurrent_ingress: u64) -> Self {
+        Self {
+            max_concurrent_ingress,
+            source: "process",
+        }
+    }
+}
+
+async fn load_background_engine_settings<T: DatabaseImpl>(
+    db: &T,
+    process_max_concurrent_ingress: u64,
+    fallback: ActiveBackgroundEngineSettings,
+) -> ActiveBackgroundEngineSettings {
+    match runinator_engine::settings::load_persisted_server_settings(db).await {
+        Ok(Some(settings)) => ActiveBackgroundEngineSettings {
+            max_concurrent_ingress: settings.background_engine.max_concurrent_ingress,
+            source: "server",
+        },
+        Ok(None) => ActiveBackgroundEngineSettings::process(process_max_concurrent_ingress),
+        Err(error) => {
+            log::warn!("failed to load background engine settings for heartbeat: {error}");
+            fallback
+        }
+    }
+}
+
+fn background_engine_attributes(base: &Value, settings: ActiveBackgroundEngineSettings) -> Value {
+    let mut attributes = base.clone();
+    if let Some(values) = attributes.as_object_mut() {
+        values.insert(
+            "max_concurrent_ingress".into(),
+            Value::from(settings.max_concurrent_ingress),
+        );
+        values.insert(
+            "engine_settings_source".into(),
+            Value::String(settings.source.into()),
+        );
+    }
+    attributes
 }
 
 async fn publish_replica_availability(

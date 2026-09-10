@@ -204,6 +204,60 @@ async fn a_relayed_settle_carries_the_armed_result_verbatim() {
 }
 
 #[tokio::test]
+async fn a_policy_bearing_wake_updates_the_active_runtime_settings() {
+    use runinator_broker::{Broker, WakeCommand, WakeMessage};
+    use runinator_models::server_settings::WakerSettings;
+    use std::sync::Arc;
+
+    let broker: Arc<dyn Broker> = Arc::new(runinator_broker::in_memory::InMemoryBroker::new());
+    let due_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+    let expected = WakerSettings {
+        max_concurrent_wakes: 48,
+        max_wake_sleep_seconds: 12,
+    };
+    broker
+        .publish_wake(WakeMessage {
+            command: WakeCommand::new(due_at, effect_result(due_at), uuid::Uuid::now_v7())
+                .with_waker_settings(expected.clone()),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let config = Config::try_parse_from(["runinator-waker"]).unwrap();
+    let settings = crate::runtime_settings(&config);
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let handle = tokio::spawn(crate::waker_loop_with_settings(
+        broker.clone(),
+        shutdown.clone(),
+        config.waker_consumer_group,
+        settings.clone(),
+    ));
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        broker.receive_ingress("test"),
+    )
+    .await
+    .expect("policy-bearing wake should be relayed")
+    .unwrap();
+    {
+        let active = settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(active.values, expected);
+        assert_eq!(active.source, "server");
+    }
+
+    shutdown.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("waker loop should stop after shutdown")
+        .unwrap();
+}
+
+#[tokio::test]
 async fn a_due_orchestration_deadline_is_relayed_as_an_opaque_nudge() {
     use runinator_broker::{Broker, WakeCommand, WakeMessage, WsIngressCommand};
     use std::sync::Arc;

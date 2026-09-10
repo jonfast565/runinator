@@ -24,6 +24,7 @@ use runinator_store::{
     roles::{DeliveryStore, OrchestrationStore, RbacStore, ReplicaStore, WorkflowVmStore},
 };
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
 const INGRESS_CONSUMER_ID: &str = "runinator-engine-ingress";
@@ -40,10 +41,10 @@ pub async fn run_ingress_consumer<
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
 ) {
-    run_ingress_consumer_with_orchestration_nudge(db, broker, Arc::new(Notify::new()), shutdown)
-        .await;
+    run_ingress_consumer_inner(db, broker, Arc::new(Notify::new()), None, shutdown).await;
 }
 
+#[cfg(test)]
 pub async fn run_ingress_consumer_with_orchestration_nudge<
     T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
 >(
@@ -52,12 +53,92 @@ pub async fn run_ingress_consumer_with_orchestration_nudge<
     orchestration_nudge: Arc<Notify>,
     shutdown: Arc<Notify>,
 ) {
+    run_ingress_consumer_inner(db, broker, orchestration_nudge, None, shutdown).await;
+}
+
+/// Apply ingress with a hot-reloadable per-replica concurrency limit. Before the unified policy is
+/// first saved, the process value remains authoritative.
+pub async fn run_ingress_consumer_with_settings<
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    orchestration_nudge: Arc<Notify>,
+    settings: crate::settings::ServerSettingsHandle,
+    process_max_concurrent_ingress: usize,
+    shutdown: Arc<Notify>,
+) {
+    run_ingress_consumer_inner(
+        db,
+        broker,
+        orchestration_nudge,
+        Some((settings, process_max_concurrent_ingress.max(1))),
+        shutdown,
+    )
+    .await;
+}
+
+async fn run_ingress_consumer_inner<
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    orchestration_nudge: Arc<Notify>,
+    concurrency: Option<(crate::settings::ServerSettingsHandle, usize)>,
+    shutdown: Arc<Notify>,
+) {
     info!("workflow ingress consumer started");
     let mut approvals = tokio::time::interval(Duration::from_millis(250));
     let mut last_cleanup = chrono::Utc::now();
+    let mut deliveries = JoinSet::new();
+    let mut reported_limit = None;
     loop {
+        let limit = concurrency
+            .as_ref()
+            .map(|(settings, process_limit)| {
+                if settings.configured() {
+                    usize::try_from(settings.current().background_engine.max_concurrent_ingress)
+                        .unwrap_or(usize::MAX)
+                        .max(1)
+                } else {
+                    *process_limit
+                }
+            })
+            .unwrap_or(1);
+        if reported_limit != Some(limit) {
+            runinator_observability::tui::gauge("engine", "ingress capacity", limit as i64);
+            info!(
+                max_concurrent_ingress = limit,
+                "applied engine ingress limit"
+            );
+            reported_limit = Some(limit);
+        }
+        if deliveries.len() >= limit {
+            tokio::select! {
+                _ = shutdown.notified() => {
+                    deliveries.shutdown().await;
+                    return;
+                }
+                joined = deliveries.join_next() => {
+                    if let Some(Err(error)) = joined {
+                        error!(%error, "ingress delivery task failed");
+                    }
+                }
+            }
+            continue;
+        }
+
         let delivery = tokio::select! {
-            _ = shutdown.notified() => return,
+            _ = shutdown.notified() => {
+                deliveries.shutdown().await;
+                return;
+            },
+            joined = deliveries.join_next(), if !deliveries.is_empty() => {
+                if let Some(Err(error)) = joined {
+                    error!(%error, "ingress delivery task failed");
+                }
+                continue;
+            }
             _ = approvals.tick() => {
                 match db.claim_approved_broker_ingress(chrono::Utc::now()).await {
                     Ok(Some(record)) => {
@@ -105,32 +186,41 @@ pub async fn run_ingress_consumer_with_orchestration_nudge<
             }
         };
 
-        match inspect_or_apply(
-            db.clone(),
-            broker.as_ref(),
-            orchestration_nudge.as_ref(),
-            &delivery,
-        )
-        .await
-        {
-            Ok(()) => {
-                crate::stability::ingress_applied();
-                if let Err(err) = broker
-                    .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                    .await
-                {
-                    warn!(error = %err, "failed to ack ingress message");
-                }
+        let delivery_db = db.clone();
+        let delivery_broker = broker.clone();
+        let delivery_nudge = orchestration_nudge.clone();
+        deliveries.spawn(async move {
+            settle_delivery(delivery_db, delivery_broker, delivery_nudge, delivery).await;
+        });
+    }
+}
+
+async fn settle_delivery<
+    T: RuntimeStore + ReplicaStore + WorkflowVmStore + DeliveryStore + RbacStore + OrchestrationStore,
+>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    orchestration_nudge: Arc<Notify>,
+    delivery: IngressDelivery,
+) {
+    match inspect_or_apply(db, broker.as_ref(), orchestration_nudge.as_ref(), &delivery).await {
+        Ok(()) => {
+            crate::stability::ingress_applied();
+            if let Err(err) = broker
+                .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                .await
+            {
+                warn!(error = %err, "failed to ack ingress message");
             }
-            Err(err) => {
-                crate::stability::ingress_retried();
-                error!(error = %err, "failed to apply ingress message");
-                if let Err(err) = broker
-                    .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                    .await
-                {
-                    warn!(error = %err, "failed to requeue ingress message");
-                }
+        }
+        Err(err) => {
+            crate::stability::ingress_retried();
+            error!(error = %err, "failed to apply ingress message");
+            if let Err(err) = broker
+                .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                .await
+            {
+                warn!(error = %err, "failed to requeue ingress message");
             }
         }
     }

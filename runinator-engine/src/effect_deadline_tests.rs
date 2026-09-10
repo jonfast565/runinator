@@ -153,13 +153,25 @@ fn only_provider_actions_get_a_deadline() {
 #[tokio::test]
 async fn arming_publishes_one_wake_per_attempt_and_none_for_a_non_action() {
     use runinator_broker_core::in_memory::InMemoryBroker;
+    use runinator_models::server_settings::WakerSettings;
     use std::sync::Arc;
 
     let broker: Arc<dyn Broker> = Arc::new(InMemoryBroker::new());
     let dispatched_at = Utc::now();
     let action = command(action(Some(45)), 0);
+    let settings = WakerSettings {
+        max_concurrent_wakes: 48,
+        max_wake_sleep_seconds: 12,
+    };
 
-    arm(broker.as_ref(), &action, dispatched_at).await;
+    arm_with_grace(
+        broker.as_ref(),
+        &action,
+        dispatched_at,
+        DEADLINE_GRACE_SECONDS,
+        Some(settings.clone()),
+    )
+    .await;
     let delivery = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         broker.receive_wake("waker"),
@@ -168,6 +180,7 @@ async fn arming_publishes_one_wake_per_attempt_and_none_for_a_non_action() {
     .expect("arming should publish a wake")
     .unwrap();
     assert_eq!(delivery.command.effect_id(), action.effect_id);
+    assert_eq!(delivery.command.waker_settings, Some(settings));
     assert_eq!(
         (delivery.command.due_at - dispatched_at).num_seconds(),
         45 + DEADLINE_GRACE_SECONDS

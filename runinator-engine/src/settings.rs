@@ -7,7 +7,10 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -474,33 +477,56 @@ pub async fn save_server_settings<T: SettingStore>(
 
 /// Cheap, cloneable snapshot shared by all loops in an engine replica.
 #[derive(Clone)]
-pub struct ServerSettingsHandle(Arc<RwLock<ServerSettings>>);
+pub struct ServerSettingsHandle {
+    current: Arc<RwLock<ServerSettings>>,
+    configured: Arc<AtomicBool>,
+}
 
 impl ServerSettingsHandle {
-    pub async fn load<T: RuntimeStore>(db: &T) -> Result<Self, SendableError> {
-        Ok(Self(Arc::new(RwLock::new(load_server_settings(db).await?))))
+    pub async fn load<T: RuntimeStore + SettingStore>(db: &T) -> Result<Self, SendableError> {
+        let persisted = load_persisted_server_settings(db).await?;
+        let configured = persisted.is_some();
+        let current = match persisted {
+            Some(settings) => settings,
+            None => load_server_settings(db).await?,
+        };
+        Ok(Self {
+            current: Arc::new(RwLock::new(current)),
+            configured: Arc::new(AtomicBool::new(configured)),
+        })
     }
 
     pub fn current(&self) -> ServerSettings {
-        self.0
+        self.current
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
-    async fn refresh<T: RuntimeStore>(&self, db: &T) -> Result<(), SendableError> {
-        let next = load_server_settings(db).await?;
+    /// Whether an administrator has saved the unified policy at least once.
+    pub fn configured(&self) -> bool {
+        self.configured.load(Ordering::SeqCst)
+    }
+
+    async fn refresh<T: RuntimeStore + SettingStore>(&self, db: &T) -> Result<(), SendableError> {
+        let persisted = load_persisted_server_settings(db).await?;
+        let configured = persisted.is_some();
+        let next = match persisted {
+            Some(settings) => settings,
+            None => load_server_settings(db).await?,
+        };
         *self
-            .0
+            .current
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+        self.configured.store(configured, Ordering::SeqCst);
         Ok(())
     }
 }
 
 /// Refresh the shared snapshot so UI changes take effect without restarting server or worker
 /// replicas. The refresh interval itself is read from the current snapshot.
-pub async fn run_server_settings_refresher<T: RuntimeStore>(
+pub async fn run_server_settings_refresher<T: RuntimeStore + SettingStore>(
     db: Arc<T>,
     settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,

@@ -26,6 +26,8 @@ pub struct ServerSettings {
     pub orchestration: OrchestrationSettings,
     pub notifications: NotificationSettings,
     pub workers: WorkerSettings,
+    pub wakers: WakerSettings,
+    pub background_engine: BackgroundEngineSettings,
     pub replicas: ReplicaSettings,
     pub archiver: ArchiverSettings,
 }
@@ -134,6 +136,38 @@ impl Default for WorkerSettings {
 pub struct WorkerSettingsResponse {
     pub configured: bool,
     pub values: WorkerSettings,
+}
+
+/// operating limits carried to broker-only wakers on wake deliveries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WakerSettings {
+    pub max_concurrent_wakes: u64,
+    pub max_wake_sleep_seconds: u64,
+}
+
+impl Default for WakerSettings {
+    fn default() -> Self {
+        Self {
+            max_concurrent_wakes: 32,
+            max_wake_sleep_seconds: 20,
+        }
+    }
+}
+
+/// operating limits used by embedded and standalone durable engine runtimes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BackgroundEngineSettings {
+    pub max_concurrent_ingress: u64,
+}
+
+impl Default for BackgroundEngineSettings {
+    fn default() -> Self {
+        Self {
+            max_concurrent_ingress: 16,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,6 +625,42 @@ pub fn server_setting_catalog() -> Vec<ServerSettingDefinition> {
             30
         ),
         setting!(
+            "wakers.max_concurrent_wakes",
+            "Wakers",
+            "Maximum concurrent wakes",
+            "Maximum timer wakes each waker handles at once.",
+            "wakes",
+            32,
+            1,
+            4_096,
+            8,
+            128
+        ),
+        setting!(
+            "wakers.max_wake_sleep_seconds",
+            "Wakers",
+            "Maximum wake sleep",
+            "Longest time a waker holds a not-yet-due delivery before returning it to the broker for re-evaluation.",
+            "seconds",
+            20,
+            1,
+            300,
+            5,
+            25
+        ),
+        setting!(
+            "background_engine.max_concurrent_ingress",
+            "Engine Workers",
+            "Maximum concurrent ingress",
+            "Maximum ingress deliveries each durable engine runtime applies at once.",
+            "deliveries",
+            16,
+            1,
+            1_024,
+            4,
+            64
+        ),
+        setting!(
             "replicas.stale_after_seconds",
             "Replicas",
             "Stale after",
@@ -994,6 +1064,11 @@ impl ServerSettings {
             "workers.settings_refresh_interval_seconds" => {
                 self.workers.settings_refresh_interval_seconds
             }
+            "wakers.max_concurrent_wakes" => self.wakers.max_concurrent_wakes,
+            "wakers.max_wake_sleep_seconds" => self.wakers.max_wake_sleep_seconds,
+            "background_engine.max_concurrent_ingress" => {
+                self.background_engine.max_concurrent_ingress
+            }
             "replicas.stale_after_seconds" => self.replicas.stale_after_seconds,
             "replicas.reap_after_seconds" => self.replicas.reap_after_seconds,
             "replicas.delete_after_seconds" => self.replicas.delete_after_seconds,
@@ -1096,6 +1171,38 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .contains("workers.max_concurrent_actions")
+        );
+    }
+
+    #[test]
+    fn waker_and_engine_capacity_use_the_catalog_bounds() {
+        let mut settings = ServerSettings::default();
+        settings.wakers.max_concurrent_wakes = 0;
+        assert!(
+            settings
+                .validate()
+                .unwrap_err()
+                .contains("wakers.max_concurrent_wakes")
+        );
+
+        let mut settings = ServerSettings::default();
+        settings.background_engine.max_concurrent_ingress = 0;
+        assert!(
+            settings
+                .validate()
+                .unwrap_err()
+                .contains("background_engine.max_concurrent_ingress")
+        );
+    }
+
+    #[test]
+    fn older_policy_documents_receive_waker_and_engine_defaults() {
+        let settings: ServerSettings = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(settings.wakers, WakerSettings::default());
+        assert_eq!(
+            settings.background_engine,
+            BackgroundEngineSettings::default()
         );
     }
 }

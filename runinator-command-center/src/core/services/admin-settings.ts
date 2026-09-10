@@ -388,7 +388,7 @@ export function createAdminSettingsService(app: AppService) {
         maxRefreshes: Number(saved.values.authentication.max_refreshes),
       }));
       app.setStatus(
-        "Server settings saved; engine, archiver, and standalone worker replicas will refresh them shortly",
+        "Server settings saved; engine, archiver, worker, and waker replicas will adopt them shortly",
       );
     },
     async saveLanguage(language: string) {
