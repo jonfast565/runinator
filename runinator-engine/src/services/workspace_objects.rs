@@ -7,6 +7,40 @@ use runinator_workspace::storage::{
 };
 use std::sync::Arc;
 
+async fn read_pack_range_from(
+    blobs: Arc<dyn runinator_blob_core::BlobStore>,
+    workspace: uuid::Uuid,
+    pack: &str,
+    offset: u64,
+    length: u64,
+) -> Result<Vec<u8>, SendableError> {
+    use tokio::io::AsyncReadExt;
+    let uri = crate::artifact_storage::workspace_pack_uri(workspace, pack)?;
+    let end = offset
+        .checked_add(length)
+        .and_then(|n| n.checked_sub(1))
+        .ok_or_else(|| storage::Error::Corrupt("invalid object range".into()))?;
+    let content = crate::artifact_storage::open_artifact(
+        &blobs,
+        &uri,
+        Some(runinator_blob_core::ByteRange::From {
+            start: offset,
+            end: Some(end),
+        }),
+    )
+    .await?;
+    let mut bytes = Vec::new();
+    content
+        .body
+        .take(length + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 != length {
+        return Err(storage::Error::Corrupt("workspace object range is truncated".into()).into());
+    }
+    Ok(bytes)
+}
+
 pub struct SharedObjects<T: DurableWorkspaceStore> {
     pub db: Arc<T>,
     pub blobs: Arc<dyn runinator_blob_core::BlobStore>,
@@ -21,6 +55,10 @@ pub struct SharedObjects<T: DurableWorkspaceStore> {
 }
 
 impl<T: DurableWorkspaceStore> SharedObjects<T> {
+    fn record_key(location: &WorkspaceObjectLocation) -> Id {
+        Id::sha256(format!("{}:{}:{}", location.pack, location.offset, location.length).as_bytes())
+    }
+
     async fn location(&self, id: Id) -> Result<WorkspaceObjectLocation, SendableError> {
         if let Some(location) = self
             .locations
@@ -49,7 +87,57 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         locations.insert(id, location.clone());
         Ok(location)
     }
-    fn read(&self, id: Id) -> storage::Result<Object> {
+    async fn locations(&self, ids: &[Id]) -> Result<Vec<WorkspaceObjectLocation>, SendableError> {
+        let (mut found, missing) = {
+            let locations = self
+                .locations
+                .lock()
+                .map_err(|_| storage::Error::Poisoned)?;
+            let found = ids
+                .iter()
+                .filter_map(|id| locations.get(id).cloned().map(|location| (*id, location)))
+                .collect::<std::collections::HashMap<_, _>>();
+            let mut missing = ids
+                .iter()
+                .filter(|id| !found.contains_key(id))
+                .copied()
+                .collect::<Vec<_>>();
+            missing.sort_unstable();
+            missing.dedup();
+            (found, missing)
+        };
+        for batch in missing.chunks(500) {
+            self.database_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let objects = self
+                .db
+                .fetch_workspace_objects(
+                    self.workspace,
+                    batch.iter().map(ToString::to_string).collect(),
+                )
+                .await?;
+            let mut locations = self
+                .locations
+                .lock()
+                .map_err(|_| storage::Error::Poisoned)?;
+            if locations.len().saturating_add(objects.len()) >= 8192 {
+                locations.clear();
+            }
+            for object in objects {
+                let id = object.id.parse()?;
+                found.insert(id, object.clone());
+                locations.insert(id, object);
+            }
+        }
+        ids.iter()
+            .map(|id| {
+                found.get(id).cloned().ok_or_else(|| {
+                    Box::new(storage::Error::NotFound(id.to_string())) as SendableError
+                })
+            })
+            .collect()
+    }
+    fn read_location(&self, id: Id, location: WorkspaceObjectLocation) -> storage::Result<Object> {
         if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
             return Err(storage::Error::Conflict);
         }
@@ -60,13 +148,7 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
             return Err(storage::Error::Conflict);
         }
-        let location = self
-            .runtime
-            .block_on(self.location(id))
-            .map_err(storage_error)?;
-        let key = Id::sha256(
-            format!("{}:{}:{}", location.pack, location.offset, location.length).as_bytes(),
-        );
+        let key = Self::record_key(&location);
         if location.length > storage::codec::MAX_OBJECT as u64 + storage::record::HEADER_LEN + 65536
         {
             return Err(storage::Error::Corrupt("oversized physical record".into()));
@@ -87,35 +169,153 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         };
         storage::record::decode_range(&bytes, id, location.member)
     }
+    fn read(&self, id: Id) -> storage::Result<Object> {
+        let location = self
+            .runtime
+            .block_on(self.location(id))
+            .map_err(storage_error)?;
+        self.read_location(id, location)
+    }
     async fn read_record(
         &self,
         location: &WorkspaceObjectLocation,
     ) -> Result<Vec<u8>, SendableError> {
-        use tokio::io::AsyncReadExt;
+        self.read_pack_range(&location.pack, location.offset, location.length)
+            .await
+    }
+    async fn read_pack_range(
+        &self,
+        pack: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, SendableError> {
         self.blob_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let uri = crate::artifact_storage::workspace_pack_uri(self.workspace, &location.pack)?;
-        let end = location
-            .offset
-            .checked_add(location.length)
-            .and_then(|n| n.checked_sub(1))
-            .ok_or_else(|| storage::Error::Corrupt("invalid object range".into()))?;
-        let content = crate::artifact_storage::open_artifact(
-            &self.blobs,
-            &uri,
-            Some(runinator_blob_core::ByteRange::From {
-                start: location.offset,
-                end: Some(end),
-            }),
-        )
-        .await?;
-        let mut bytes = Vec::new();
-        content
-            .body
-            .take(location.length + 1)
-            .read_to_end(&mut bytes)
-            .await?;
-        Ok(bytes)
+        read_pack_range_from(self.blobs.clone(), self.workspace, pack, offset, length).await
+    }
+
+    async fn prefetch_records(
+        &self,
+        locations: &[WorkspaceObjectLocation],
+    ) -> Result<(), SendableError> {
+        const MAX_SPAN: u64 = 8 * 1024 * 1024;
+        const MAX_GAP: u64 = 512 * 1024;
+        const MAX_RECORD_OVERHEAD: u64 = 64 * 1024;
+
+        let mut missing = Vec::new();
+        for location in locations {
+            if location.length
+                > storage::codec::MAX_OBJECT as u64
+                    + storage::record::HEADER_LEN
+                    + MAX_RECORD_OVERHEAD
+            {
+                return Err(storage::Error::Corrupt("oversized physical record".into()).into());
+            }
+            if self
+                .records
+                .get_cached(Self::record_key(location))?
+                .is_none()
+            {
+                missing.push(location);
+            }
+        }
+        missing.sort_unstable_by(|a, b| {
+            (&a.pack, a.offset, a.length).cmp(&(&b.pack, b.offset, b.length))
+        });
+        missing.dedup_by(|a, b| a.pack == b.pack && a.offset == b.offset && a.length == b.length);
+
+        struct Span {
+            pack: String,
+            start: u64,
+            end: u64,
+            locations: Vec<WorkspaceObjectLocation>,
+        }
+        let mut spans = Vec::new();
+        let mut first = 0;
+        while first < missing.len() {
+            let pack = missing[first].pack.as_str();
+            let start = missing[first].offset;
+            let mut end = start
+                .checked_add(missing[first].length)
+                .ok_or_else(|| storage::Error::Corrupt("workspace object range overflow".into()))?;
+            let mut last = first + 1;
+            while let Some(location) = missing.get(last) {
+                if location.pack != pack || location.offset > end.saturating_add(MAX_GAP) {
+                    break;
+                }
+                let next_end = location
+                    .offset
+                    .checked_add(location.length)
+                    .ok_or_else(|| {
+                        storage::Error::Corrupt("workspace object range overflow".into())
+                    })?;
+                if next_end.saturating_sub(start) > MAX_SPAN {
+                    break;
+                }
+                end = end.max(next_end);
+                last += 1;
+            }
+            spans.push(Span {
+                pack: pack.to_owned(),
+                start,
+                end,
+                locations: missing[first..last]
+                    .iter()
+                    .map(|location| (*location).clone())
+                    .collect(),
+            });
+            first = last;
+        }
+        let retain = |span: Span, bytes: Vec<u8>| -> Result<(), SendableError> {
+            for location in &span.locations {
+                let begin = usize::try_from(location.offset - span.start)?;
+                let finish = begin
+                    .checked_add(usize::try_from(location.length)?)
+                    .ok_or_else(|| {
+                        storage::Error::Corrupt("workspace object range overflow".into())
+                    })?;
+                let record = bytes.get(begin..finish).ok_or_else(|| {
+                    storage::Error::Corrupt("workspace object range is truncated".into())
+                })?;
+                match self
+                    .records
+                    .get_or_load(Self::record_key(location), record.len(), || {
+                        Ok(record.to_vec())
+                    }) {
+                    Ok(_) | Err(storage::Error::CacheFull) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(())
+        };
+        let mut tasks = tokio::task::JoinSet::new();
+        for span in spans {
+            while tasks.len() >= 8 {
+                let result = tasks.join_next().await.ok_or(storage::Error::Conflict)??;
+                let (span, bytes) = result?;
+                retain(span, bytes)?;
+            }
+            self.blob_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let blobs = self.blobs.clone();
+            let workspace = self.workspace;
+            tasks.spawn(async move {
+                let bytes = read_pack_range_from(
+                    blobs,
+                    workspace,
+                    &span.pack,
+                    span.start,
+                    span.end - span.start,
+                )
+                .await?;
+                Ok::<_, SendableError>((span, bytes))
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            let (span, bytes) = result??;
+            retain(span, bytes)?;
+        }
+        Ok(())
     }
 }
 
@@ -128,16 +328,25 @@ pub(super) fn storage_error(error: SendableError) -> storage::Error {
 
 impl<T: DurableWorkspaceStore> ReadStore for SharedObjects<T> {
     fn get_many(&self, ids: &[Id]) -> storage::Result<Vec<Object>> {
+        let locations = self
+            .runtime
+            .block_on(self.locations(ids))
+            .map_err(storage_error)?;
+        self.runtime
+            .block_on(self.prefetch_records(&locations))
+            .map_err(storage_error)?;
         // scoped threads borrow the request's reader guard; all finish before it is released.
         std::thread::scope(|scope| {
             let chunk_size = ids.len().div_ceil(8).max(1);
             let tasks: Vec<_> = ids
                 .chunks(chunk_size)
-                .map(|chunk| {
+                .zip(locations.chunks(chunk_size))
+                .map(|(ids, locations)| {
                     scope.spawn(move || {
-                        chunk
-                            .iter()
-                            .map(|id| self.read(*id))
+                        ids.iter()
+                            .copied()
+                            .zip(locations.iter().cloned())
+                            .map(|(id, location)| self.read_location(id, location))
                             .collect::<storage::Result<Vec<_>>>()
                     })
                 })

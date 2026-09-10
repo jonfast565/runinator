@@ -58,7 +58,8 @@ impl ByteCache {
             misses: s.misses,
         })
     }
-    fn get_cached(&self, id: Id) -> Result<Option<Arc<Vec<u8>>>> {
+    /// Return a resident value without invoking a loader.
+    pub fn get_cached(&self, id: Id) -> Result<Option<Arc<Vec<u8>>>> {
         let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
         let Some(entry) = state.entries.get_mut(&id) else {
             return Ok(None);

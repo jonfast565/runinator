@@ -147,7 +147,13 @@ async fn sequential_and_bulk_directory_measurements() {
                 after = page.last().map(|entry| entry.name.clone());
             }
             assert_eq!(count, 1001);
-            println!("sequential={sequential} entries={count} first_ms={first_ms} total_ms={} database_reads={} blob_reads={}", started.elapsed().as_millis(), store.0.inner.database_reads.load(Ordering::Relaxed), store.0.inner.blob_reads.load(Ordering::Relaxed));
+            let database_reads = store.0.inner.database_reads.load(Ordering::Relaxed);
+            let blob_reads = store.0.inner.blob_reads.load(Ordering::Relaxed);
+            if !sequential {
+                assert!(database_reads < 100, "bulk directory used {database_reads} database reads");
+                assert!(blob_reads < 100, "bulk directory used {blob_reads} blob reads");
+            }
+            println!("sequential={sequential} entries={count} first_ms={first_ms} total_ms={} database_reads={database_reads} blob_reads={blob_reads}", started.elapsed().as_millis());
         }).await.unwrap();
     }
 }

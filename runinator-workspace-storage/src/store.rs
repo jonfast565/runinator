@@ -4,10 +4,13 @@ use crate::{
     error::{Result, corrupt, invalid},
     model::Kind,
 };
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
+
+const PARALLEL_BATCH_MIN: usize = 8;
 #[derive(Clone, Copy, Debug)]
 pub struct ObjectInfo {
     pub kind: Kind,
@@ -23,7 +26,14 @@ pub trait ReadStore: Sync {
     fn get(&self, id: Id) -> Result<Object>;
     /// Read objects in input order; backends may fetch independent objects concurrently.
     fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
-        ids.iter().map(|id| self.get(*id)).collect()
+        if ids.len() < PARALLEL_BATCH_MIN {
+            return ids.iter().map(|id| self.get(*id)).collect();
+        }
+        ids.par_iter()
+            .map(|id| self.get(*id))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect()
     }
     fn contains(&self, id: Id) -> Result<bool> {
         match self.info(id) {
@@ -118,7 +128,7 @@ impl WriteStore for MemoryStore {
 }
 
 /// Decode an ordered batch, fetching each identity at most once.
-pub fn load_many<T: Binary, S: ReadStore + ?Sized>(
+pub fn load_many<T: Binary + Send, S: ReadStore + ?Sized>(
     s: &S,
     ids: &[Id],
     kind: Kind,
@@ -135,13 +145,23 @@ pub fn load_many<T: Binary, S: ReadStore + ?Sized>(
     if objects.len() != unique.len() {
         return Err(corrupt("bulk read returned incorrect object count"));
     }
-    ids.iter()
-        .map(|id| {
-            let object = &objects[positions[id]];
-            if object.kind != kind {
-                return Err(corrupt("object has incorrect type"));
-            }
-            T::decode(&object.bytes)
-        })
+    let decode = |id: &Id| {
+        let object = &objects[positions[id]];
+        if object.kind != kind {
+            return Err(corrupt("object has incorrect type"));
+        }
+        T::decode(&object.bytes)
+    };
+    if ids.len() < PARALLEL_BATCH_MIN {
+        return ids.iter().map(decode).collect();
+    }
+    ids.par_iter()
+        .map(decode)
+        .collect::<Vec<_>>()
+        .into_iter()
         .collect()
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

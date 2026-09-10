@@ -25,6 +25,12 @@ pub trait DurableWorkspaceStore:
         workspace_id: Uuid,
         id: String,
     ) -> impl Future<Output = Result<Option<WorkspaceObjectLocation>, SendableError>> + Send;
+    /// Fetch up to 500 registered objects in one round trip.
+    fn fetch_workspace_objects(
+        &self,
+        workspace_id: Uuid,
+        ids: Vec<String>,
+    ) -> impl Future<Output = Result<Vec<WorkspaceObjectLocation>, SendableError>> + Send;
     /// Page registered objects in one immutable pack, ordered by logical object identity.
     fn workspace_pack_objects(
         &self,

@@ -124,6 +124,34 @@ where
         json.map(|value| serde_json::from_str(&value).map_err(Into::into))
             .transpose()
     }
+    async fn fetch_workspace_objects(
+        &self,
+        workspace_id: Uuid,
+        ids: Vec<String>,
+    ) -> Result<Vec<WorkspaceObjectLocation>, SendableError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if ids.len() > 500 {
+            return Err(
+                runinator_models::errors::WORKSPACE_INVALID.error("object batch exceeds 500")
+            );
+        }
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = self.render(&format!(
+            "SELECT location_json FROM workspace_objects WHERE workspace_id = ? AND object_id IN ({placeholders})"
+        ));
+        let mut query = sqlx::query_scalar(&sql).bind(workspace_id);
+        for id in ids {
+            query = query.bind(id);
+        }
+        let rows: Vec<String> = query.fetch_all(self.pool()).await?;
+        rows.into_iter()
+            .map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .collect()
+    }
     async fn workspace_pack_objects(
         &self,
         workspace_id: Uuid,

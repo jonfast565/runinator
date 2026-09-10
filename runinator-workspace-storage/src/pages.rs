@@ -99,6 +99,8 @@ pub fn pin_page<S: ReadStore + ?Sized>(
             return Err(corrupt("page-size mismatch"));
         }
         let mut result = vec![0; page_size as usize];
+        let mut positions = Vec::new();
+        let mut chunks = Vec::new();
         let mut pos = 0usize;
         for extent in p.extents {
             let end = pos
@@ -108,16 +110,25 @@ pub fn pin_page<S: ReadStore + ?Sized>(
                 return Err(corrupt("extent outside page"));
             }
             if let PageExtent::Data(c) = extent {
-                let object = s.get(c.id)?;
-                if object.kind != Kind::Chunk || object.bytes.len() != c.len as usize {
-                    return Err(corrupt("invalid chunk reference"));
-                }
-                result[pos..end].copy_from_slice(&object.bytes);
+                chunks.push(c.id);
+                positions.push((pos, end, c));
             }
-            // Zero extents need no object lookup and the buffer is already zeroed.
             pos = end;
         }
-        if pos != p.used as usize || result[pos - 1] == 0 {
+        if pos != p.used as usize || pos == 0 {
+            return Err(corrupt("invalid page length"));
+        }
+        let objects = s.get_many(&chunks)?;
+        if objects.len() != chunks.len() {
+            return Err(corrupt("bulk read returned incorrect object count"));
+        }
+        for ((begin, end, chunk), object) in positions.into_iter().zip(objects) {
+            if object.kind != Kind::Chunk || object.bytes.len() != chunk.len as usize {
+                return Err(corrupt("invalid chunk reference"));
+            }
+            result[begin..end].copy_from_slice(&object.bytes);
+        }
+        if result[pos - 1] == 0 {
             return Err(corrupt("noncanonical page padding"));
         }
         Ok(result)

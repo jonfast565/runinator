@@ -5,7 +5,7 @@ use crate::{
     Id,
     error::{Result, corrupt, invalid},
     model::{Kind, RadixNode},
-    store::{ReadStore, WriteStore, load, save},
+    store::{ReadStore, WriteStore, load, load_many, save},
 };
 pub fn get<S: ReadStore + ?Sized>(
     s: &S,
@@ -41,16 +41,52 @@ pub fn page<S: ReadStore + ?Sized>(
     if after.is_some_and(|key| key.len() > 4096) {
         return Err(invalid("cursor key too long"));
     }
+    fn preload<S: ReadStore + ?Sized>(
+        store: &S,
+        root: Id,
+        after: Option<&[u8]>,
+        budget: usize,
+    ) -> Result<std::collections::HashMap<Id, RadixNode>> {
+        let mut loaded = std::collections::HashMap::new();
+        let mut frontier = vec![(root, Vec::new())];
+        let mut processed = 0;
+        while !frontier.is_empty() && processed < budget {
+            let take = frontier.len().min(budget - processed);
+            let batch = frontier.drain(..take).collect::<Vec<_>>();
+            processed += batch.len();
+            let nodes: Vec<RadixNode> = load_many(
+                store,
+                &batch.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                Kind::Radix,
+            )?;
+            for ((id, mut prefix), node) in batch.into_iter().zip(nodes) {
+                loaded.entry(id).or_insert_with(|| node.clone());
+                prefix.extend(&node.prefix);
+                if prefix.len() > 4096 {
+                    return Err(corrupt("radix path too long"));
+                }
+                if after.is_some_and(|key| prefix.as_slice() < key && !key.starts_with(&prefix)) {
+                    continue;
+                }
+                for (edge, child) in node.children {
+                    let mut child_prefix = prefix.clone();
+                    child_prefix.push(edge);
+                    frontier.push((child, child_prefix));
+                }
+            }
+        }
+        Ok(loaded)
+    }
     fn walk<S: ReadStore + ?Sized>(
         store: &S,
-        id: Id,
+        node: RadixNode,
+        loaded: &mut std::collections::HashMap<Id, RadixNode>,
         prefix: &mut Vec<u8>,
         after: Option<&[u8]>,
         limit: usize,
         output: &mut Vec<(Vec<u8>, Id)>,
     ) -> Result<()> {
         let base = prefix.len();
-        let node: RadixNode = load(store, id, Kind::Radix)?;
         prefix.extend(&node.prefix);
         if prefix.len() > 4096 {
             return Err(corrupt("radix path too long"));
@@ -65,12 +101,39 @@ pub fn page<S: ReadStore + ?Sized>(
         {
             output.push((prefix.clone(), value));
         }
-        for (edge, child) in node.children {
+        if output.len() >= limit {
+            prefix.truncate(base);
+            return Ok(());
+        }
+        let children = node.children.into_iter().collect::<Vec<_>>();
+        let missing = children
+            .iter()
+            .map(|(_, id)| *id)
+            .filter(|id| !loaded.contains_key(id))
+            .collect::<Vec<_>>();
+        for (id, node) in
+            missing
+                .iter()
+                .copied()
+                .zip(load_many::<RadixNode, _>(store, &missing, Kind::Radix)?)
+        {
+            loaded.insert(id, node);
+        }
+        let nodes = children
+            .iter()
+            .map(|(_, id)| {
+                loaded
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| corrupt("missing prefetched radix child"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for ((edge, _), node) in children.into_iter().zip(nodes) {
             if output.len() >= limit {
                 break;
             }
             prefix.push(edge);
-            walk(store, child, prefix, after, limit, output)?;
+            walk(store, node, loaded, prefix, after, limit, output)?;
             prefix.pop();
         }
         prefix.truncate(base);
@@ -78,7 +141,20 @@ pub fn page<S: ReadStore + ?Sized>(
     }
     let mut output = Vec::new();
     if let Some(id) = root {
-        walk(store, id, &mut Vec::new(), after, limit, &mut output)?;
+        let budget = limit.saturating_mul(4).clamp(32, 8192);
+        let mut loaded = preload(store, id, after, budget)?;
+        let node = loaded
+            .remove(&id)
+            .ok_or_else(|| corrupt("missing prefetched radix root"))?;
+        walk(
+            store,
+            node,
+            &mut loaded,
+            &mut Vec::new(),
+            after,
+            limit,
+            &mut output,
+        )?;
     }
     Ok(output)
 }

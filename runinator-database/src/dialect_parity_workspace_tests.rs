@@ -95,6 +95,26 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
             .await
             .unwrap();
     }
+    assert_eq!(
+        db.fetch_workspace_objects(
+            identity.id,
+            vec![objects[1000].id.clone(), objects[0].id.clone()]
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|object| object.id)
+        .collect::<std::collections::HashSet<_>>(),
+        [objects[0].id.clone(), objects[1000].id.clone()]
+            .into_iter()
+            .collect()
+    );
+    assert!(
+        db.fetch_workspace_objects(identity.id, Vec::new())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let first = db
         .workspace_pack_objects(identity.id, "registered-pack".into(), None)
         .await
