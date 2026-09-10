@@ -1,5 +1,5 @@
-//! Reachability uses a disk-backed mark set rather than a HashSet containing
-//! every chunk ID. Repository::gc excludes active readers and transactions.
+//! Reachability stays in bounded memory for ordinary graphs and spills to disk
+//! for large ones. Repository::gc excludes active readers and transactions.
 use crate::{
     Id,
     cache::ByteCache,
@@ -14,19 +14,34 @@ use crate::{
     store::{ReadStore, load},
 };
 use std::{
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
 };
 use tempfile::TempDir;
+
+const MEMORY_MARK_LIMIT: usize = 65_536;
+const MEMORY_STACK_LIMIT: usize = 65_536;
+const MEMORY_COUNTER_LIMIT: usize = 65_536;
+
 pub struct DiskMarks {
     dir: TempDir,
+    memory: HashSet<Id>,
+    memory_limit: usize,
+    spilled: bool,
     pub count: u64,
 }
 impl DiskMarks {
     pub fn new(parent: &Path) -> Result<Self> {
+        Self::with_memory_limit(parent, MEMORY_MARK_LIMIT)
+    }
+    fn with_memory_limit(parent: &Path, memory_limit: usize) -> Result<Self> {
         Ok(Self {
             dir: TempDir::new_in(parent)?,
+            memory: HashSet::new(),
+            memory_limit,
+            spilled: false,
             count: 0,
         })
     }
@@ -35,21 +50,52 @@ impl DiskMarks {
         self.dir.path().join(&h[..2]).join(&h[2..])
     }
     pub fn contains(&self, id: Id) -> Result<bool> {
+        if !self.spilled {
+            return Ok(self.memory.contains(&id));
+        }
         Ok(self.path(id).try_exists()?)
     }
     pub fn insert(&mut self, id: Id) -> Result<bool> {
+        if !self.spilled && self.memory.len() < self.memory_limit {
+            if self.memory.insert(id) {
+                self.count += 1;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        if !self.spilled {
+            self.spill()?;
+        }
+        if self.insert_disk(id)? {
+            self.count += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    fn insert_disk(&self, id: Id) -> Result<bool> {
         let path = self.path(id);
         fs::create_dir_all(path.parent().unwrap())?;
         match OpenOptions::new().write(true).create_new(true).open(path) {
-            Ok(_) => {
-                self.count += 1;
-                Ok(true)
-            }
+            Ok(_) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
             Err(e) => Err(e.into()),
         }
     }
+    fn spill(&mut self) -> Result<()> {
+        for &id in &self.memory {
+            self.insert_disk(id)?;
+        }
+        self.memory.clear();
+        self.spilled = true;
+        Ok(())
+    }
     pub fn visit<F: FnMut(Id) -> Result<()>>(&self, mut f: F) -> Result<()> {
+        if !self.spilled {
+            for &id in &self.memory {
+                f(id)?;
+            }
+            return Ok(());
+        }
         for bucket in fs::read_dir(self.dir.path())? {
             let bucket = bucket?;
             let prefix = bucket.file_name().to_string_lossy().into_owned();
@@ -154,16 +200,36 @@ pub fn references(
 // graph traversal allocate a correspondingly large in-memory frontier.
 struct DiskStack<const N: usize> {
     file: File,
+    memory: Vec<[u8; N]>,
+    memory_limit: usize,
+    spilled: bool,
     count: u64,
 }
 impl<const N: usize> DiskStack<N> {
     fn new(parent: &Path) -> Result<Self> {
+        Self::with_memory_limit(parent, MEMORY_STACK_LIMIT)
+    }
+    fn with_memory_limit(parent: &Path, memory_limit: usize) -> Result<Self> {
         Ok(Self {
             file: tempfile::tempfile_in(parent)?,
+            memory: Vec::new(),
+            memory_limit,
+            spilled: false,
             count: 0,
         })
     }
     fn push(&mut self, bytes: [u8; N]) -> Result<()> {
+        if !self.spilled && self.memory.len() < self.memory_limit {
+            self.memory.push(bytes);
+            return Ok(());
+        }
+        if !self.spilled {
+            for item in self.memory.drain(..) {
+                self.file.write_all(&item)?;
+                self.count += 1;
+            }
+            self.spilled = true;
+        }
         let offset = self
             .count
             .checked_mul(N as u64)
@@ -174,6 +240,9 @@ impl<const N: usize> DiskStack<N> {
         Ok(())
     }
     fn pop(&mut self) -> Result<Option<[u8; N]>> {
+        if !self.spilled {
+            return Ok(self.memory.pop());
+        }
         if self.count == 0 {
             return Ok(None);
         }
@@ -231,11 +300,20 @@ pub fn mark_roots<S: ReadStore + ?Sized>(
 }
 struct Counters {
     dir: TempDir,
+    memory: HashMap<u64, u64>,
+    memory_limit: usize,
+    spilled: bool,
 }
 impl Counters {
     fn new(parent: &Path) -> Result<Self> {
+        Self::with_memory_limit(parent, MEMORY_COUNTER_LIMIT)
+    }
+    fn with_memory_limit(parent: &Path, memory_limit: usize) -> Result<Self> {
         Ok(Self {
             dir: TempDir::new_in(parent)?,
+            memory: HashMap::new(),
+            memory_limit,
+            spilled: false,
         })
     }
     fn path(&self, n: u64) -> std::path::PathBuf {
@@ -243,6 +321,9 @@ impl Counters {
         self.dir.path().join(&id[..2]).join(&id[2..])
     }
     fn get(&self, n: u64) -> Result<u64> {
+        if !self.spilled {
+            return Ok(self.memory.get(&n).copied().unwrap_or(0));
+        }
         match File::open(self.path(n)) {
             Ok(mut f) => {
                 let mut b = [0; 8];
@@ -253,14 +334,36 @@ impl Counters {
             Err(e) => Err(e.into()),
         }
     }
-    fn increment(&self, n: u64) -> Result<()> {
+    fn increment(&mut self, n: u64) -> Result<()> {
+        if !self.spilled && (self.memory.contains_key(&n) || self.memory.len() < self.memory_limit)
+        {
+            let value = self.memory.entry(n).or_default();
+            *value = value
+                .checked_add(1)
+                .ok_or_else(|| corrupt("link count overflow"))?;
+            return Ok(());
+        }
+        if !self.spilled {
+            self.spill()?;
+        }
         let value = self
             .get(n)?
             .checked_add(1)
             .ok_or_else(|| corrupt("link count overflow"))?;
+        self.write_disk(n, value)
+    }
+    fn write_disk(&self, n: u64, value: u64) -> Result<()> {
         let p = self.path(n);
         fs::create_dir_all(p.parent().unwrap())?;
         File::create(p)?.write_all(&value.to_le_bytes())?;
+        Ok(())
+    }
+    fn spill(&mut self) -> Result<()> {
+        for (&n, &value) in &self.memory {
+            self.write_disk(n, value)?;
+        }
+        self.memory.clear();
+        self.spilled = true;
         Ok(())
     }
 }
@@ -271,7 +374,7 @@ pub fn verify_workspace<S: ReadStore + ?Sized>(s: &S, w: &Workspace, scratch: &P
     if !matches!(root.data, InodeData::Directory(_)) {
         return Err(corrupt("root inode is not a directory"));
     }
-    let counts = Counters::new(scratch)?;
+    let mut counts = Counters::new(scratch)?;
     counts.increment(1)?;
     radix::visit(s, w.inodes, &mut |key, id| {
         let n = u64::from_be_bytes(
@@ -327,6 +430,7 @@ pub fn verify_workspace<S: ReadStore + ?Sized>(s: &S, w: &Workspace, scratch: &P
         Ok(())
     })
 }
+
 pub fn verify_file<S: ReadStore + ?Sized>(s: &S, cache: &ByteCache, f: &FileObject) -> Result<()> {
     f.validate()?;
     let p = f.layout.page_size as u64;
@@ -344,6 +448,41 @@ pub fn verify_file<S: ReadStore + ?Sized>(s: &S, cache: &ByteCache, f: &FileObje
         Ok(())
     })
 }
+
+fn verify_file_from_verified_info<S: ReadStore + ?Sized>(s: &S, f: &FileObject) -> Result<()> {
+    f.validate()?;
+    let page_size = f.layout.page_size as u64;
+    radix::visit(s, f.pages, &mut |key, id| {
+        let number = u64::from_be_bytes(key.try_into().map_err(|_| corrupt("bad page-map key"))?);
+        if f.size == 0 || number > (f.size - 1) / page_size {
+            return Err(corrupt("page mapping beyond EOF"));
+        }
+        let manifest: Page = load(s, id, Kind::Page)?;
+        if manifest.page_size != f.layout.page_size {
+            return Err(corrupt("page-size mismatch"));
+        }
+        let allowed = (f.size - number * page_size).min(page_size);
+        if manifest.used as u64 > allowed {
+            return Err(corrupt("page data beyond EOF"));
+        }
+        let mut final_chunk = None;
+        for extent in &manifest.extents {
+            if let PageExtent::Data(chunk) = extent {
+                let info = s.info(chunk.id)?;
+                if info.kind != Kind::Chunk || info.raw_len != chunk.len as usize {
+                    return Err(corrupt("invalid chunk reference"));
+                }
+                final_chunk = Some(chunk.id);
+            }
+        }
+        let final_chunk = final_chunk.ok_or_else(|| corrupt("page has no data extent"))?;
+        let object = s.get(final_chunk)?;
+        if object.kind != Kind::Chunk || object.bytes.last().is_none_or(|byte| *byte == 0) {
+            return Err(corrupt("noncanonical page padding"));
+        }
+        Ok(())
+    })
+}
 pub fn verify_graph<S: ReadStore + ?Sized>(
     s: &S,
     roots: &[Id],
@@ -357,13 +496,42 @@ pub fn verify_roots<S: ReadStore + ?Sized>(
     scratch: &Path,
     include_ancestors: bool,
 ) -> Result<DiskMarks> {
+    verify_roots_inner(s, roots, scratch, include_ancestors, false)
+}
+
+/// Verify a graph whose `ObjectInfo` values came from validated immutable packs.
+/// Chunk lengths use that trusted metadata, while structural objects and the
+/// final chunk of each page are still decoded and checked.
+pub fn verify_roots_with_verified_info<S: ReadStore + ?Sized>(
+    s: &S,
+    roots: &[Id],
+    scratch: &Path,
+    include_ancestors: bool,
+) -> Result<DiskMarks> {
+    verify_roots_inner(s, roots, scratch, include_ancestors, true)
+}
+
+fn verify_roots_inner<S: ReadStore + ?Sized>(
+    s: &S,
+    roots: &[Id],
+    scratch: &Path,
+    include_ancestors: bool,
+    verified_info: bool,
+) -> Result<DiskMarks> {
     let marks = mark_roots(s, roots, scratch, include_ancestors)?;
     let pages = ByteCache::new(8 * 1024 * 1024);
     marks.visit(|id| {
         let kind = s.info(id)?.kind;
         match kind {
             Kind::Workspace => verify_workspace(s, &load(s, id, Kind::Workspace)?, scratch)?,
-            Kind::File => verify_file(s, &pages, &load(s, id, Kind::File)?)?,
+            Kind::File => {
+                let file = load(s, id, Kind::File)?;
+                if verified_info {
+                    verify_file_from_verified_info(s, &file)?;
+                } else {
+                    verify_file(s, &pages, &file)?;
+                }
+            }
             Kind::Revision => {
                 let revision: Revision = load(s, id, Kind::Revision)?;
                 let workspace: Workspace = load(s, revision.workspace, Kind::Workspace)?;
@@ -384,3 +552,7 @@ pub struct GcReport {
     pub packs_before: usize,
     pub packs_after: usize,
 }
+
+#[cfg(test)]
+#[path = "gc_tests.rs"]
+mod gc_tests;

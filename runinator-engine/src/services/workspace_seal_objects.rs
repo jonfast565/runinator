@@ -7,17 +7,42 @@ use runinator_workspace::storage::{
     store::{Object, ObjectInfo, ReadStore},
 };
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     io::Read,
     sync::{Arc, Mutex},
 };
 
 const MAX_PACK_BYTES: u64 = 80 * 1024 * 1024;
 const MAX_CACHED_PACKS: usize = 8;
+const MAX_MEMORY_INDEX_ENTRIES: usize = 65_536;
+
+#[derive(Clone, Copy)]
+struct MemoryLocation {
+    location: Location,
+    info: ObjectInfo,
+}
+
+struct FoundObject {
+    pack: Arc<LocalPack>,
+    location: Location,
+    info: Option<ObjectInfo>,
+}
 
 struct LocalPack {
     index: DiskIndex,
+    memory_index: Option<HashMap<Id, MemoryLocation>>,
     _directory: tempfile::TempDir,
+}
+
+impl LocalPack {
+    fn lookup(&self, id: Id) -> storage::Result<Option<(Location, Option<ObjectInfo>)>> {
+        if let Some(index) = &self.memory_index {
+            return Ok(index
+                .get(&id)
+                .map(|found| (found.location, Some(found.info))));
+        }
+        Ok(self.index.lookup(id)?.map(|location| (location, None)))
+    }
 }
 
 pub(super) struct SealObjects<T: DurableWorkspaceStore>(
@@ -51,11 +76,7 @@ impl<T: DurableWorkspaceStore> SealObjects<T> {
 
 impl<T: DurableWorkspaceStore> ReadStore for SealObjects<T> {
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
-        let object = self.0.get(id)?;
-        Ok(ObjectInfo {
-            kind: object.kind,
-            raw_len: object.bytes.len(),
-        })
+        self.0.info(id)
     }
     fn get(&self, id: Id) -> storage::Result<Object> {
         self.0.get(id)
@@ -73,13 +94,17 @@ struct PackObjects<T: DurableWorkspaceStore> {
 }
 
 impl<T: DurableWorkspaceStore> PackObjects<T> {
-    fn find(&self, id: Id) -> storage::Result<Option<(Arc<LocalPack>, Location)>> {
+    fn find(&self, id: Id) -> storage::Result<Option<FoundObject>> {
         let mut packs = self.packs.lock().map_err(|_| storage::Error::Poisoned)?;
         for i in 0..packs.len() {
-            if let Some(location) = packs[i].index.lookup(id)? {
+            if let Some((location, info)) = packs[i].lookup(id)? {
                 let pack = packs.remove(i).ok_or(storage::Error::Poisoned)?;
                 packs.push_back(pack.clone());
-                return Ok(Some((pack, location)));
+                return Ok(Some(FoundObject {
+                    pack,
+                    location,
+                    info,
+                }));
             }
         }
         Ok(None)
@@ -97,6 +122,16 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
         let uri = crate::artifact_storage::workspace_pack_uri(self.source.workspace, name)?;
         let content =
             crate::artifact_storage::open_artifact(&self.source.blobs, &uri, None).await?;
+        let expected_digest = name
+            .split_once('/')
+            .ok_or_else(|| storage::Error::Corrupt("invalid registered pack key".into()))?
+            .1;
+        if content.sha256.as_deref() != Some(expected_digest) {
+            return Err(storage::Error::Corrupt(
+                "workspace pack checksum differs from its key".into(),
+            )
+            .into());
+        }
         if content.size_bytes > MAX_PACK_BYTES {
             return Err(storage::Error::Corrupt("oversized workspace pack".into()).into());
         }
@@ -110,7 +145,29 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
         Ok(std::fs::File::open(directory.join("pack"))?)
     }
 
-    fn load(&self, id: Id) -> storage::Result<(Arc<LocalPack>, Location)> {
+    fn object_info(
+        location: &runinator_models::workspaces::WorkspaceObjectLocation,
+    ) -> storage::Result<ObjectInfo> {
+        let kind = storage::model::Kind::try_from(location.kind)?;
+        if matches!(
+            kind,
+            storage::model::Kind::TinyBlock | storage::model::Kind::ChunkBlock
+        ) {
+            return Err(storage::Error::Corrupt(
+                "physical container registered as logical object".into(),
+            ));
+        }
+        let raw_len = usize::try_from(location.raw_len)
+            .map_err(|_| storage::Error::Corrupt("registered object is too large".into()))?;
+        if raw_len > storage::codec::MAX_OBJECT {
+            return Err(storage::Error::Corrupt(
+                "registered object is too large".into(),
+            ));
+        }
+        Ok(ObjectInfo { kind, raw_len })
+    }
+
+    fn load(&self, id: Id) -> storage::Result<FoundObject> {
         #[cfg(test)]
         self.database_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -124,6 +181,7 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
             )
             .map_err(super::workspace_objects::storage_error)?
             .ok_or_else(|| storage::Error::NotFound(id.to_string()))?;
+        let requested_info = Self::object_info(&location)?;
         let directory = tempfile::tempdir()?;
         let mut file = self
             .source
@@ -140,6 +198,7 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
         let size = file.metadata()?.len();
         let pack_id = Id::sha256(location.pack.as_bytes());
         let mut writer = IndexWriter::new(directory.path())?;
+        let mut memory_index = Some(HashMap::new());
         let mut after = None;
         loop {
             #[cfg(test)]
@@ -158,6 +217,8 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
                 break;
             }
             for object in batch {
+                let object_id: Id = object.id.parse()?;
+                let info = Self::object_info(&object)?;
                 if object.pack != location.pack
                     || object.offset < 8
                     || object.length
@@ -171,13 +232,27 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
                         "invalid registered pack range".into(),
                     ));
                 }
-                writer.push(Location {
-                    id: object.id.parse()?,
+                let indexed = Location {
+                    id: object_id,
                     pack: pack_id,
                     offset: object.offset,
                     length: object.length,
                     member: object.member,
-                })?;
+                };
+                writer.push(indexed)?;
+                if let Some(index) = &mut memory_index {
+                    if index.len() == MAX_MEMORY_INDEX_ENTRIES {
+                        memory_index = None;
+                    } else {
+                        index.insert(
+                            object_id,
+                            MemoryLocation {
+                                location: indexed,
+                                info,
+                            },
+                        );
+                    }
+                }
                 after = Some(object.id);
             }
         }
@@ -188,6 +263,7 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
             .ok_or_else(|| storage::Error::NotFound(id.to_string()))?;
         let pack = Arc::new(LocalPack {
             index,
+            memory_index,
             _directory: directory,
         });
         let mut packs = self.packs.lock().map_err(|_| storage::Error::Poisoned)?;
@@ -195,25 +271,38 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
             packs.pop_front();
         }
         packs.push_back(pack.clone());
-        Ok((pack, found))
+        Ok(FoundObject {
+            pack,
+            location: found,
+            info: Some(requested_info),
+        })
     }
 }
 
 impl<T: DurableWorkspaceStore> ReadStore for PackObjects<T> {
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
-        let object = self.get(id)?;
-        Ok(ObjectInfo {
-            kind: object.kind,
-            raw_len: object.bytes.len(),
-        })
-    }
-
-    fn get(&self, id: Id) -> storage::Result<Object> {
-        let (pack, location) = match self.find(id)? {
+        let found = match self.find(id)? {
             Some(found) => found,
             None => self.load(id)?,
         };
-        let file = std::fs::File::open(pack._directory.path().join("pack"))?;
-        storage::record::read_indexed(&file, location, &self.records)
+        match found.info {
+            Some(info) => Ok(info),
+            None => {
+                let object = self.get(id)?;
+                Ok(ObjectInfo {
+                    kind: object.kind,
+                    raw_len: object.bytes.len(),
+                })
+            }
+        }
+    }
+
+    fn get(&self, id: Id) -> storage::Result<Object> {
+        let found = match self.find(id)? {
+            Some(found) => found,
+            None => self.load(id)?,
+        };
+        let file = std::fs::File::open(found.pack._directory.path().join("pack"))?;
+        storage::record::read_indexed(&file, found.location, &self.records)
     }
 }

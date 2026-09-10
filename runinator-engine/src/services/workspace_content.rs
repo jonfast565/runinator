@@ -196,7 +196,12 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
                 if revision.parent != parent {
                     return Err(WORKSPACE_CONFLICT.error("revision has a different base"));
                 }
-                storage::gc::verify_roots(&store, &[revision_id], scratch.path(), false)?;
+                storage::gc::verify_roots_with_verified_info(
+                    &store,
+                    &[revision_id],
+                    scratch.path(),
+                    false,
+                )?;
                 let view = View::new(&store, revision_id)?;
                 let usage = runinator_workspace::revision::usage(&view)?;
                 limits.check(usage)?;

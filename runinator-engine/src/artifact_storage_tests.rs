@@ -53,6 +53,10 @@ async fn round_trips_through_the_object_store() {
 
     let content = open_artifact(&fixture.store, &uri, None).await.unwrap();
     assert_eq!(content.size_bytes, 13);
+    assert_eq!(
+        content.sha256.as_deref(),
+        Some(runinator_blob_core::sha256_hex(b"artifact body").as_str())
+    );
     assert_eq!(read_all(content).await, b"artifact body");
 }
 

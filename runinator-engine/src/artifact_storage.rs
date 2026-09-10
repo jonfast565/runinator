@@ -17,6 +17,7 @@ use crate::errors::{ARTIFACT_STORE_FAILED, ARTIFACT_UNREADABLE};
 /// an artifact's bytes, however they are stored.
 pub struct ArtifactContent {
     pub size_bytes: u64,
+    pub sha256: Option<String>,
     pub body: Box<dyn AsyncRead + Send + Unpin>,
 }
 
@@ -66,6 +67,7 @@ pub async fn open_artifact(
         .map_err(|err| ARTIFACT_UNREADABLE.error(err))?;
     Ok(ArtifactContent {
         size_bytes: reader.len(),
+        sha256: (!reader.meta.sha256.is_empty()).then_some(reader.meta.sha256),
         body: reader.body,
     })
 }

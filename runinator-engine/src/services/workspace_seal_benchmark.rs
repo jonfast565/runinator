@@ -9,21 +9,56 @@ use runinator_models::{
 use runinator_store::{DatabaseImpl, roles::DurableWorkspaceStore};
 use std::sync::Arc;
 
+struct ValidationTimings {
+    graph: std::time::Duration,
+    view: std::time::Duration,
+    usage: std::time::Duration,
+    results: std::time::Duration,
+    links: std::time::Duration,
+    total: std::time::Duration,
+}
+
 fn validate<S: runinator_workspace::storage::store::ReadStore>(
     store: S,
     revision: runinator_workspace::storage::Id,
-) -> WorkspaceUsage {
+    verified_info: bool,
+) -> (WorkspaceUsage, ValidationTimings) {
     use runinator_workspace::{
         revision,
         storage::{gc, view::View},
     };
     let scratch = tempfile::tempdir().unwrap();
-    gc::verify_roots(&store, &[revision], scratch.path(), false).unwrap();
+    let total = std::time::Instant::now();
+    let phase = std::time::Instant::now();
+    if verified_info {
+        gc::verify_roots_with_verified_info(&store, &[revision], scratch.path(), false).unwrap();
+    } else {
+        gc::verify_roots(&store, &[revision], scratch.path(), false).unwrap();
+    }
+    let graph = phase.elapsed();
+    let phase = std::time::Instant::now();
     let view = View::new(store, revision).unwrap();
+    let view_time = phase.elapsed();
+    let phase = std::time::Instant::now();
     let usage = revision::usage(&view).unwrap();
+    let usage_time = phase.elapsed();
+    let phase = std::time::Instant::now();
     revision::validate_results(&view).unwrap();
+    let results = phase.elapsed();
+    let phase = std::time::Instant::now();
     revision::validate_links(&view).unwrap();
-    usage
+    let links = phase.elapsed();
+    (
+        usage,
+        ValidationTimings {
+            graph,
+            view: view_time,
+            usage: usage_time,
+            results,
+            links,
+            total: total.elapsed(),
+        },
+    )
 }
 
 #[tokio::test]
@@ -149,16 +184,18 @@ async fn compare_seal_validation_backends() {
     tokio::task::spawn_blocking(move || {
         let revision = revision_id.parse().unwrap();
         let start = std::time::Instant::now();
-        let before = validate(old, revision);
+        let (before, old_phases) = validate(old, revision, false);
         let old_time = start.elapsed();
         let start = std::time::Instant::now();
-        let after = validate(&optimized, revision);
+        let (after, optimized_phases) = validate(&optimized, revision, true);
         let new_time = start.elapsed();
         let (queries, blob_reads) = optimized.io_counts();
         assert!(queries < 100);
         assert!(blob_reads <= 2);
         assert_eq!(before, after);
         println!("seal benchmark: entries={} logical_bytes={} previous={old_time:?} optimized={new_time:?}", after.entries, after.logical_bytes);
+        println!("previous phases: graph={:?} view={:?} usage={:?} results={:?} links={:?} total={:?}", old_phases.graph, old_phases.view, old_phases.usage, old_phases.results, old_phases.links, old_phases.total);
+        println!("optimized phases: graph={:?} view={:?} usage={:?} results={:?} links={:?} total={:?}", optimized_phases.graph, optimized_phases.view, optimized_phases.usage, optimized_phases.results, optimized_phases.links, optimized_phases.total);
         println!("optimized database_queries={queries} blob_reads={blob_reads}");
     }).await.unwrap();
 }

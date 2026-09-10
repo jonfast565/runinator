@@ -32,6 +32,7 @@ where
     });
     crate::artifact_storage::ArtifactContent {
         size_bytes: size,
+        sha256: None,
         body: Box::new(reader),
     }
 }
