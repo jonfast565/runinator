@@ -27,3 +27,11 @@ desktop agent below to run actions on your own machine.
 ## Workflow run timing
 
 The Workflow Runs detail view includes an analog elapsed-time clock. Its hour, minute, and second hands start at 12 and tick each second while the run is active, including waits and pauses. After the run finishes, the clock stays visible at the recorded final duration. The numeric hours/minutes/seconds display preserves total hours beyond one dial revolution. Queued runs stay at zero until they start; completed runs without timing data show “Timing unavailable.”
+
+## Timeline categories
+
+Workflow run events are labeled by category. Authored workflow activity defaults to **User**, while
+runtime-managed workspace lifecycle activity is **System**. Category chips above the step list
+control visibility in both the step list and proportional timeline, and the choice is stored in the
+browser. Event projections may provide another non-empty `timeline_category`; the command center
+humanizes unknown category names and gives them the same visibility control automatically.

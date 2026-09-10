@@ -4,6 +4,7 @@ export type AppTheme = "system" | "light" | "dark";
 
 const THEME_KEY = "command-center.theme";
 const DEFAULT_TAB_KEY = "command-center.defaultTab";
+const HIDDEN_TIMELINE_EVENT_CATEGORIES_KEY = "command-center.timeline.hiddenCategories";
 const SHOW_SYSTEM_TIMELINE_EVENTS_KEY = "command-center.timeline.showSystemEvents";
 
 export const DEFAULT_TAB_OPTIONS = [
@@ -21,7 +22,7 @@ const ALLOWED_TABS = DEFAULT_TAB_OPTIONS.map((option) => option.value);
 export interface DisplayPreferencesState {
   theme: AppTheme;
   defaultTab: string;
-  showSystemTimelineEvents: boolean;
+  hiddenTimelineEventCategories: string[];
 }
 
 function readStored<T extends string>(key: string, allowed: T[], fallback: T): T {
@@ -60,11 +61,33 @@ function readStoredBoolean(key: string, fallback: boolean): boolean {
   return fallback;
 }
 
+function readHiddenTimelineEventCategories(): string[] {
+  try {
+    const stored = localStorage.getItem(HIDDEN_TIMELINE_EVENT_CATEGORIES_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : null;
+
+    if (Array.isArray(parsed)) {
+      return [
+        ...new Set(
+          parsed
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      ];
+    }
+  } catch {
+    // invalid or unavailable storage falls through to the legacy preference.
+  }
+
+  return readStoredBoolean(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, true) ? [] : ["system"];
+}
+
 export function createDisplayPreferencesService() {
   const store = createStore<DisplayPreferencesState>({
     theme: readStored(THEME_KEY, ALLOWED_THEMES, "system"),
     defaultTab: readStored(DEFAULT_TAB_KEY, ALLOWED_TABS as unknown as string[], "Workflows"),
-    showSystemTimelineEvents: readStoredBoolean(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, true),
+    hiddenTimelineEventCategories: readHiddenTimelineEventCategories(),
   });
 
   const service = {
@@ -77,9 +100,29 @@ export function createDisplayPreferencesService() {
       store.setState((state) => ({ ...state, defaultTab }));
       writeStored(DEFAULT_TAB_KEY, defaultTab);
     },
-    setShowSystemTimelineEvents(showSystemTimelineEvents: boolean) {
-      store.setState((state) => ({ ...state, showSystemTimelineEvents }));
-      writeStored(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, String(showSystemTimelineEvents));
+    setTimelineEventCategoryVisible(categoryId: string, visible: boolean) {
+      const normalized = categoryId.trim().toLowerCase();
+
+      if (!normalized) {
+        return;
+      }
+
+      store.setState((state) => {
+        const hidden = new Set(state.hiddenTimelineEventCategories);
+
+        if (visible) {
+          hidden.delete(normalized);
+        } else {
+          hidden.add(normalized);
+        }
+
+        const hiddenTimelineEventCategories = [...hidden].sort();
+        writeStored(
+          HIDDEN_TIMELINE_EVENT_CATEGORIES_KEY,
+          JSON.stringify(hiddenTimelineEventCategories),
+        );
+        return { ...state, hiddenTimelineEventCategories };
+      });
     },
   };
 

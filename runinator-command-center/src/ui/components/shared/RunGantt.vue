@@ -112,7 +112,7 @@ const runInFlight = computed(() => {
 
 const layout = computed(() =>
   buildGanttLayout(props.detail, now.value, {
-    showSystemEvents: prefs.showSystemTimelineEvents,
+    hiddenEventCategories: prefs.hiddenTimelineEventCategories,
   }),
 );
 

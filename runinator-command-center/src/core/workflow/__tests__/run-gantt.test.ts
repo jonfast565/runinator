@@ -154,13 +154,13 @@ describe("buildGanttLayout", () => {
     const system = node({
       id: "system",
       node_id: "workspace · materialize files",
-      state: { workspace_phase: "workspace.restore.materialize" },
+      timeline_category: "system",
       started_at: "2026-07-16T00:00:01Z",
       finished_at: "2026-07-16T00:00:02Z",
     });
 
     const layout = buildGanttLayout(detail([authored, system]), Date.now(), {
-      showSystemEvents: false,
+      hiddenEventCategories: ["system"],
     });
 
     expect(layout.rows.map((row) => row.id)).toEqual(["authored"]);

@@ -198,9 +198,12 @@
                 <input
                   class="mt-0.5 size-4 shrink-0"
                   type="checkbox"
-                  :checked="prefs.showSystemTimelineEvents"
+                  :checked="prefs.isTimelineEventCategoryVisible('system')"
                   @change="
-                    prefs.setShowSystemTimelineEvents(($event.target as HTMLInputElement).checked)
+                    prefs.setTimelineEventCategoryVisible(
+                      'system',
+                      ($event.target as HTMLInputElement).checked,
+                    )
                   "
                 />
               </label>

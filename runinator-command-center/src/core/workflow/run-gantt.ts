@@ -1,7 +1,7 @@
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../domain/models";
 import { runWorkflowSnapshot } from "../domain/models";
 import { type InterruptOrigin, interruptRegionOrigins } from "./interrupt-regions";
-import { isSystemTimelineEvent } from "./timeline-events";
+import { timelineEventCategory } from "./timeline-events";
 
 // statuses that mean a node run has settled; anything else is still in flight and its bar counts up.
 const TERMINAL = new Set(["succeeded", "failed", "timed_out", "canceled"]);
@@ -57,7 +57,7 @@ export interface GanttLayout {
 }
 
 export interface GanttLayoutOptions {
-  showSystemEvents?: boolean;
+  hiddenEventCategories?: readonly string[];
 }
 
 function parseMs(value: string | null | undefined): number | null {
@@ -128,8 +128,9 @@ export function buildGanttLayout(
     bottleneckNodeId: null,
   };
 
+  const hiddenCategories = new Set(options.hiddenEventCategories ?? []);
   const nodes = (detail?.nodes ?? []).filter(
-    (node) => options.showSystemEvents !== false || !isSystemTimelineEvent(node),
+    (node) => !hiddenCategories.has(timelineEventCategory(node).id),
   );
 
   if (nodes.length === 0) {

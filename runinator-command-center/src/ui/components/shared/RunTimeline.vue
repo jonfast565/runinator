@@ -54,21 +54,29 @@
         {{ option.label }}
         <span class="rt-filter-count font-tabular text-fg-faint">{{ option.count }}</span>
       </button>
+      <span
+        v-if="categoryOptions.length"
+        class="ml-1 self-center text-[10px] font-semibold tracking-wide text-fg-faint uppercase"
+        >Categories</span
+      >
       <button
-        v-if="systemNodeCount"
+        v-for="category in categoryOptions"
+        :key="category.id"
         type="button"
         class="cursor-pointer rounded-pill border border-border-strong bg-surface-subtle px-2 py-0.5 text-[11px] font-semibold text-fg-subtle"
         :class="
-          prefs.showSystemTimelineEvents
+          category.visible
             ? 'border-accent bg-accent-soft text-accent-text [&_.rt-filter-count]:text-accent-text'
             : ''
         "
-        :aria-pressed="prefs.showSystemTimelineEvents"
-        :title="prefs.showSystemTimelineEvents ? 'Hide system events' : 'Show system events'"
-        @click="prefs.setShowSystemTimelineEvents(!prefs.showSystemTimelineEvents)"
+        :aria-pressed="category.visible"
+        :title="
+          category.visible ? `Hide ${category.label} events` : `Show ${category.label} events`
+        "
+        @click="prefs.setTimelineEventCategoryVisible(category.id, !category.visible)"
       >
-        System
-        <span class="rt-filter-count font-tabular text-fg-faint">{{ systemNodeCount }}</span>
+        {{ category.label }}
+        <span class="rt-filter-count font-tabular text-fg-faint">{{ category.count }}</span>
       </button>
     </div>
 
@@ -102,6 +110,11 @@
             <span class="overflow-hidden font-semibold text-ellipsis whitespace-nowrap">{{
               node.node_id
             }}</span>
+            <span
+              class="rounded-pill border border-border-strong bg-surface px-1.5 py-px text-[9px] leading-[14px] font-semibold tracking-wide whitespace-nowrap text-fg-subtle uppercase"
+              :title="timelineEventCategory(node).title"
+              >{{ timelineEventCategory(node).label }}</span
+            >
             <span
               v-for="tag in timelineProvenanceTags(node)"
               :key="tag.id"
@@ -205,6 +218,7 @@ import StatusBadge from "./StatusBadge.vue";
 import { workflowRunExtrasService } from "../../../core/services";
 import { useDisplayPreferencesStore } from "../../../ui/adapters/pinia/displayPreferences";
 import { formatErrorMessage } from "../../../core/utils/format";
+import { timelineEventCategory } from "../../../core/workflow/timeline-events";
 import {
   workflowEffectId,
   type WorkflowNodeRun,
@@ -212,7 +226,6 @@ import {
 } from "../../../core/domain/models";
 import {
   formatMs,
-  isSystemTimelineEvent,
   isFailedNode,
   outputText,
   previewOf,
@@ -262,12 +275,40 @@ const orderedNodes = computed(() => {
   return [...nodes].sort(compareStepsAscending);
 });
 
-const systemNodeCount = computed(() => orderedNodes.value.filter(isSystemTimelineEvent).length);
+const categoryOptions = computed(() => {
+  const categories = new Map<string, { id: string; label: string; count: number }>();
+
+  for (const node of orderedNodes.value) {
+    const category = timelineEventCategory(node);
+    const existing = categories.get(category.id);
+    categories.set(category.id, {
+      id: category.id,
+      label: category.label,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+
+  const order = new Map([
+    ["user", 0],
+    ["system", 1],
+  ]);
+
+  return [...categories.values()]
+    .sort(
+      (left, right) =>
+        (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(right.id) ?? Number.MAX_SAFE_INTEGER) || left.label.localeCompare(right.label),
+    )
+    .map((category) => ({
+      ...category,
+      visible: prefs.isTimelineEventCategoryVisible(category.id),
+    }));
+});
 
 const displayNodes = computed(() =>
-  prefs.showSystemTimelineEvents
-    ? orderedNodes.value
-    : orderedNodes.value.filter((node) => !isSystemTimelineEvent(node)),
+  orderedNodes.value.filter((node) =>
+    prefs.isTimelineEventCategoryVisible(timelineEventCategory(node).id),
+  ),
 );
 
 const executionOrdinals = computed(() => {
@@ -337,8 +378,8 @@ const emptyMessage = computed(() => {
     return "No steps recorded yet.";
   }
 
-  if (!prefs.showSystemTimelineEvents && displayNodes.value.length === 0 && systemNodeCount.value) {
-    return "System events are hidden.";
+  if (displayNodes.value.length === 0 && categoryOptions.value.length > 0) {
+    return "Timeline event categories are hidden.";
   }
 
   return "No steps match this filter.";

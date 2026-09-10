@@ -9,6 +9,8 @@ export interface WorkflowNodeRun {
   parameters: JsonRecord;
   output_json?: JsonValue;
   state?: JsonRecord;
+  /** Presentation category for this lifecycle event. Unknown values remain valid and filterable. */
+  timeline_category?: string;
   transition_reason?: string | null;
   prev_node_run_id?: string | null;
   /** the thread of control that produced this run, so a run with fan-out (or an interrupt handler)

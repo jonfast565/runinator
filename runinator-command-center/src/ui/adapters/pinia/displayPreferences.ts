@@ -27,20 +27,18 @@ export const useDisplayPreferencesStore = defineStore("displayPreferences", () =
         displayPreferencesService.setDefaultTab(defaultTab);
       },
     }),
-    showSystemTimelineEvents: computed({
-      get: () => state.value.showSystemTimelineEvents,
-      set: (showSystemTimelineEvents: boolean) => {
-        displayPreferencesService.setShowSystemTimelineEvents(showSystemTimelineEvents);
-      },
-    }),
+    hiddenTimelineEventCategories: computed(() => state.value.hiddenTimelineEventCategories),
     setTheme: (theme: AppTheme) => {
       displayPreferencesService.setTheme(theme);
     },
     setDefaultTab: (defaultTab: string) => {
       displayPreferencesService.setDefaultTab(defaultTab);
     },
-    setShowSystemTimelineEvents: (showSystemTimelineEvents: boolean) => {
-      displayPreferencesService.setShowSystemTimelineEvents(showSystemTimelineEvents);
+    isTimelineEventCategoryVisible: (categoryId: string) => {
+      return !state.value.hiddenTimelineEventCategories.includes(categoryId);
+    },
+    setTimelineEventCategoryVisible: (categoryId: string, visible: boolean) => {
+      displayPreferencesService.setTimelineEventCategoryVisible(categoryId, visible);
     },
   };
 });

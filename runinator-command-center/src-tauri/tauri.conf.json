@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Runinator Command Center",
-  "version": "0.21.691",
+  "version": "0.21.692",
   "identifier": "dev.runinator.command-center",
   "build": {
     "beforeDevCommand": "pnpm dev",

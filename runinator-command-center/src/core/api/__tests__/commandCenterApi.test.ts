@@ -112,11 +112,31 @@ describe("command center catalog metadata API", () => {
             sequence: 0,
             attempt: 0,
             node_id: "publish",
-            request: { type: "action" },
+            request: { type: "action", workspace_affinity: { key: "repo" } },
             status: "succeeded",
             created_at: 0,
             updated_at: 0,
             finished_at: 1,
+          },
+        ],
+        fetch_workflow_effect_output: [
+          {
+            event_id: "workspace-phase-1",
+            workflow_run_id: "run-1",
+            continuation_id: "continuation-1",
+            attempt: 0,
+            output: {
+              type: "chunk",
+              stream: "runinator.workspace",
+              content: JSON.stringify({
+                phase: "workspace.restore.materialize",
+                status: "succeeded",
+                started_at: "1970-01-01T00:00:00.000Z",
+                finished_at: "1970-01-01T00:00:01.000Z",
+                duration_ms: 1000,
+                details: {},
+              }),
+            },
           },
         ],
         fetch_workflow_journal: [
@@ -171,10 +191,15 @@ describe("command center catalog metadata API", () => {
           id: "effect-1",
           node_id: "publish",
           status: "succeeded",
+          timeline_category: "user",
           state: expect.objectContaining({
             node_entered_journal_id: "journal-2",
             effect_receipt_id: "effect-1",
           }),
+        }),
+        expect.objectContaining({
+          id: "workspace-phase-1",
+          timeline_category: "system",
         }),
       ]),
     );

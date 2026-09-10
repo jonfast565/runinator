@@ -1300,6 +1300,7 @@ function workspacePhaseNodes(
         attempt: event.attempt,
         parameters: { type: "workspace_phase", phase: phase.phase },
         output_json: phase.details as JsonValue,
+        timeline_category: "system",
         state: {
           workspace_phase: phase.phase,
           workspace_parent_node_id: parentNodeId,
@@ -1536,6 +1537,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
         attempt: 0,
         parameters: {},
+        timeline_category: "user",
         state: {
           journal_entry_id: record.id,
           node_entered_journal_id: record.id,
@@ -1587,6 +1589,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         status: "retrying",
         attempt,
         parameters: workflowEffectRequest(effect),
+        timeline_category: "user",
         state: {
           effect_id: effect.id,
           journal_entry_id: record.id,
@@ -1636,6 +1639,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
         attempt: effect.attempt,
         parameters: request,
         output_json: effect.result ?? null,
+        timeline_category: "user",
         state: {
           ...request,
           effect_id: effect.id,

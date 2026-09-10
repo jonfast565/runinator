@@ -20,28 +20,42 @@ describe("display preferences", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows system timeline events by default and persists changes", () => {
+  it("shows every timeline category by default and persists hidden categories", () => {
     const storage = storageMock();
     vi.stubGlobal("localStorage", storage);
     const preferences = createDisplayPreferencesService();
 
-    expect(preferences.getState().showSystemTimelineEvents).toBe(true);
+    expect(preferences.getState().hiddenTimelineEventCategories).toEqual([]);
 
-    preferences.setShowSystemTimelineEvents(false);
+    preferences.setTimelineEventCategoryVisible("system", false);
 
-    expect(preferences.getState().showSystemTimelineEvents).toBe(false);
+    expect(preferences.getState().hiddenTimelineEventCategories).toEqual(["system"]);
     expect(storage.setItem).toHaveBeenCalledWith(
-      "command-center.timeline.showSystemEvents",
-      "false",
+      "command-center.timeline.hiddenCategories",
+      '["system"]',
     );
   });
 
-  it("restores the system timeline preference", () => {
+  it("restores generic hidden timeline categories", () => {
+    vi.stubGlobal(
+      "localStorage",
+      storageMock({ "command-center.timeline.hiddenCategories": '["system","orchestration"]' }),
+    );
+
+    expect(createDisplayPreferencesService().getState().hiddenTimelineEventCategories).toEqual([
+      "system",
+      "orchestration",
+    ]);
+  });
+
+  it("migrates the legacy system visibility preference", () => {
     vi.stubGlobal(
       "localStorage",
       storageMock({ "command-center.timeline.showSystemEvents": "false" }),
     );
 
-    expect(createDisplayPreferencesService().getState().showSystemTimelineEvents).toBe(false);
+    expect(createDisplayPreferencesService().getState().hiddenTimelineEventCategories).toEqual([
+      "system",
+    ]);
   });
 });

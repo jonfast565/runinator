@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { WorkflowNodeRun } from "../../../../core/domain/models";
 import {
   compareStepsAscending,
-  isSystemTimelineEvent,
   stepTimestamp,
   timelineProvenanceTags,
 } from "../run-timeline-format";
@@ -83,8 +82,6 @@ describe("run timeline formatting", () => {
     });
     phase.state = { workspace_phase: "workspace.restore.materialize" };
 
-    expect(isSystemTimelineEvent(phase)).toBe(true);
-    expect(timelineProvenanceTags(phase).map((tag) => tag.label)).toEqual(["system"]);
-    expect(isSystemTimelineEvent(node("authored", {}))).toBe(false);
+    expect(timelineProvenanceTags(phase).map((tag) => tag.label)).toEqual(["workspace"]);
   });
 });
