@@ -4,7 +4,11 @@
     <template v-else>
       <div class="rg-summary">
         <span class="rg-total">Total {{ formatDuration(layout.totalMs) }}</span>
-        <span v-if="layout.bottleneckNodeId" class="rg-bottleneck" title="Longest step (critical path)">
+        <span
+          v-if="layout.bottleneckNodeId"
+          class="rg-bottleneck"
+          title="Longest step (critical path)"
+        >
           <span class="rg-swatch"></span>
           Bottleneck: <code>{{ layout.bottleneckNodeId }}</code>
         </span>
@@ -40,7 +44,9 @@
               >⤷ {{ row.interrupt.source }}</span
             >
             <span class="rg-node">{{ row.nodeId }}</span>
-            <span v-if="row.attempt > 1" class="rg-attempt" title="Attempts">↻{{ row.attempt }}</span>
+            <span v-if="row.attempt > 1" class="rg-attempt" title="Attempts"
+              >↻{{ row.attempt }}</span
+            >
           </div>
           <div class="rg-track">
             <!-- gridlines aligned to the axis ticks -->
@@ -60,7 +66,10 @@
             <!-- active segment -->
             <span
               class="rg-bar"
-              :class="[statusBadgeClass(row.status), { critical: row.critical, running: row.running }]"
+              :class="[
+                statusBadgeClass(row.status),
+                { critical: row.critical, running: row.running },
+              ]"
               :style="{ left: `${row.barLeftPct}%`, width: `${row.barWidthPct}%` }"
               :title="barTitle(row)"
             >
@@ -78,12 +87,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { statusBadgeClass } from "../../../core/utils/status";
-import {
-  buildGanttLayout,
-  formatDuration,
-  type GanttRow,
-} from "../../../core/workflow/run-gantt";
+import { buildGanttLayout, formatDuration, type GanttRow } from "../../../core/workflow/run-gantt";
 import type { WorkflowRunDetail } from "../../../core/domain/models";
+import { useDisplayPreferencesStore } from "../../../ui/adapters/pinia/displayPreferences";
 
 const props = defineProps<{
   detail: WorkflowRunDetail | null;
@@ -91,6 +97,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ select: [nodeId: string] }>();
+const prefs = useDisplayPreferencesStore();
 
 // ticks once a second while the run is in flight so active bars count up.
 const now = ref(Date.now());
@@ -103,7 +110,11 @@ const runInFlight = computed(() => {
   );
 });
 
-const layout = computed(() => buildGanttLayout(props.detail, now.value));
+const layout = computed(() =>
+  buildGanttLayout(props.detail, now.value, {
+    showSystemEvents: prefs.showSystemTimelineEvents,
+  }),
+);
 
 /** the row's own tooltip: which thread produced it, and — for a handler — which interrupt.
  *
@@ -136,4 +147,3 @@ onBeforeUnmount(() => {
   window.clearInterval(clockTimer);
 });
 </script>
-

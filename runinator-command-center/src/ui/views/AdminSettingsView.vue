@@ -170,7 +170,7 @@
               </div>
 
               <div
-                class="flex items-center justify-between gap-6 px-4 py-3.5 max-md:flex-col max-md:items-start max-md:gap-2.5"
+                class="flex items-center justify-between gap-6 border-b border-border-faint px-4 py-3.5 max-md:flex-col max-md:items-start max-md:gap-2.5"
               >
                 <div class="flex flex-col gap-0.5">
                   <span class="font-semibold">Default page</span>
@@ -185,6 +185,25 @@
                   </option>
                 </select>
               </div>
+
+              <label
+                class="flex cursor-pointer items-center justify-between gap-6 px-4 py-3.5 max-md:items-start"
+              >
+                <span class="flex flex-col gap-0.5">
+                  <span class="font-semibold">System timeline events</span>
+                  <span class="text-[0.84rem] text-fg-muted">
+                    Show workspace lifecycle activity alongside authored workflow steps.
+                  </span>
+                </span>
+                <input
+                  class="mt-0.5 size-4 shrink-0"
+                  type="checkbox"
+                  :checked="prefs.showSystemTimelineEvents"
+                  @change="
+                    prefs.setShowSystemTimelineEvents(($event.target as HTMLInputElement).checked)
+                  "
+                />
+              </label>
             </div>
           </template>
 

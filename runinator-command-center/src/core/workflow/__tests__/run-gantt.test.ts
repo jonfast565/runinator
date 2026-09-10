@@ -143,6 +143,28 @@ describe("buildGanttLayout", () => {
     expect(row.running).toBe(true);
     expect(row.durationMs).toBe(6000);
   });
+
+  it("can omit system-managed workspace events", () => {
+    const authored = node({
+      id: "authored",
+      node_id: "build",
+      started_at: "2026-07-16T00:00:00Z",
+      finished_at: "2026-07-16T00:00:08Z",
+    });
+    const system = node({
+      id: "system",
+      node_id: "workspace · materialize files",
+      state: { workspace_phase: "workspace.restore.materialize" },
+      started_at: "2026-07-16T00:00:01Z",
+      finished_at: "2026-07-16T00:00:02Z",
+    });
+
+    const layout = buildGanttLayout(detail([authored, system]), Date.now(), {
+      showSystemEvents: false,
+    });
+
+    expect(layout.rows.map((row) => row.id)).toEqual(["authored"]);
+  });
 });
 
 describe("formatDuration", () => {

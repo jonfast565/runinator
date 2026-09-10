@@ -54,6 +54,22 @@
         {{ option.label }}
         <span class="rt-filter-count font-tabular text-fg-faint">{{ option.count }}</span>
       </button>
+      <button
+        v-if="systemNodeCount"
+        type="button"
+        class="cursor-pointer rounded-pill border border-border-strong bg-surface-subtle px-2 py-0.5 text-[11px] font-semibold text-fg-subtle"
+        :class="
+          prefs.showSystemTimelineEvents
+            ? 'border-accent bg-accent-soft text-accent-text [&_.rt-filter-count]:text-accent-text'
+            : ''
+        "
+        :aria-pressed="prefs.showSystemTimelineEvents"
+        :title="prefs.showSystemTimelineEvents ? 'Hide system events' : 'Show system events'"
+        @click="prefs.setShowSystemTimelineEvents(!prefs.showSystemTimelineEvents)"
+      >
+        System
+        <span class="rt-filter-count font-tabular text-fg-faint">{{ systemNodeCount }}</span>
+      </button>
     </div>
 
     <div v-if="!detail" class="px-0 py-2.5 text-[13px] text-fg-muted">No run selected.</div>
@@ -177,7 +193,7 @@
       </li>
     </ol>
     <div v-else class="px-0 py-2.5 text-[13px] text-fg-muted">
-      {{ orderedNodes.length ? "No steps match this filter." : "No steps recorded yet." }}
+      {{ emptyMessage }}
     </div>
   </div>
 </template>
@@ -187,6 +203,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { workflowRunExtrasService } from "../../../core/services";
+import { useDisplayPreferencesStore } from "../../../ui/adapters/pinia/displayPreferences";
 import { formatErrorMessage } from "../../../core/utils/format";
 import {
   workflowEffectId,
@@ -195,6 +212,7 @@ import {
 } from "../../../core/domain/models";
 import {
   formatMs,
+  isSystemTimelineEvent,
   isFailedNode,
   outputText,
   previewOf,
@@ -212,6 +230,7 @@ const props = defineProps<{
   // when true, show a status filter bar above the steps.
   filterable?: boolean;
 }>();
+const prefs = useDisplayPreferencesStore();
 
 type TimelineFilter = "all" | "running" | "failed" | "succeeded";
 const filter = ref<TimelineFilter>("all");
@@ -242,6 +261,14 @@ const orderedNodes = computed(() => {
   const nodes = props.detail?.nodes ?? [];
   return [...nodes].sort(compareStepsAscending);
 });
+
+const systemNodeCount = computed(() => orderedNodes.value.filter(isSystemTimelineEvent).length);
+
+const displayNodes = computed(() =>
+  prefs.showSystemTimelineEvents
+    ? orderedNodes.value
+    : orderedNodes.value.filter((node) => !isSystemTimelineEvent(node)),
+);
 
 const executionOrdinals = computed(() => {
   const totals = new Map<string, number>();
@@ -291,18 +318,30 @@ function matchesFilter(node: WorkflowNodeRun, active: TimelineFilter): boolean {
 }
 
 const visibleNodes = computed(() =>
-  orderedNodes.value.filter((node) => matchesFilter(node, filter.value)),
+  displayNodes.value.filter((node) => matchesFilter(node, filter.value)),
 );
 
 const filterOptions = computed(() => {
   const count = (id: TimelineFilter) =>
-    orderedNodes.value.filter((node) => matchesFilter(node, id)).length;
+    displayNodes.value.filter((node) => matchesFilter(node, id)).length;
   return [
-    { id: "all" as const, label: "All", count: orderedNodes.value.length },
+    { id: "all" as const, label: "All", count: displayNodes.value.length },
     { id: "running" as const, label: "Active", count: count("running") },
     { id: "failed" as const, label: "Failed", count: count("failed") },
     { id: "succeeded" as const, label: "OK", count: count("succeeded") },
   ];
+});
+
+const emptyMessage = computed(() => {
+  if (!orderedNodes.value.length) {
+    return "No steps recorded yet.";
+  }
+
+  if (!prefs.showSystemTimelineEvents && displayNodes.value.length === 0 && systemNodeCount.value) {
+    return "System events are hidden.";
+  }
+
+  return "No steps match this filter.";
 });
 
 const failure = computed(() => {

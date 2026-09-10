@@ -1,6 +1,7 @@
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../domain/models";
 import { runWorkflowSnapshot } from "../domain/models";
 import { type InterruptOrigin, interruptRegionOrigins } from "./interrupt-regions";
+import { isSystemTimelineEvent } from "./timeline-events";
 
 // statuses that mean a node run has settled; anything else is still in flight and its bar counts up.
 const TERMINAL = new Set(["succeeded", "failed", "timed_out", "canceled"]);
@@ -53,6 +54,10 @@ export interface GanttLayout {
   bottleneckId: string | null;
   /** node id (authored id) of the bottleneck, for labelling. */
   bottleneckNodeId: string | null;
+}
+
+export interface GanttLayoutOptions {
+  showSystemEvents?: boolean;
 }
 
 function parseMs(value: string | null | undefined): number | null {
@@ -110,7 +115,11 @@ export function formatDuration(ms: number): string {
 /** build a proportional Gantt layout from a run's persisted node timing. Pure: `now` is injected so
  * the caller controls the live clock. Rows are ordered by start time; the longest active segment is
  * flagged as the critical-path bottleneck. */
-export function buildGanttLayout(detail: WorkflowRunDetail | null, now: number): GanttLayout {
+export function buildGanttLayout(
+  detail: WorkflowRunDetail | null,
+  now: number,
+  options: GanttLayoutOptions = {},
+): GanttLayout {
   const empty: GanttLayout = {
     rows: [],
     totalMs: 0,
@@ -119,7 +128,9 @@ export function buildGanttLayout(detail: WorkflowRunDetail | null, now: number):
     bottleneckNodeId: null,
   };
 
-  const nodes = detail?.nodes ?? [];
+  const nodes = (detail?.nodes ?? []).filter(
+    (node) => options.showSystemEvents !== false || !isSystemTimelineEvent(node),
+  );
 
   if (nodes.length === 0) {
     return empty;

@@ -4,6 +4,7 @@ export type AppTheme = "system" | "light" | "dark";
 
 const THEME_KEY = "command-center.theme";
 const DEFAULT_TAB_KEY = "command-center.defaultTab";
+const SHOW_SYSTEM_TIMELINE_EVENTS_KEY = "command-center.timeline.showSystemEvents";
 
 export const DEFAULT_TAB_OPTIONS = [
   { value: "Workflows", label: "Workflows" },
@@ -20,6 +21,7 @@ const ALLOWED_TABS = DEFAULT_TAB_OPTIONS.map((option) => option.value);
 export interface DisplayPreferencesState {
   theme: AppTheme;
   defaultTab: string;
+  showSystemTimelineEvents: boolean;
 }
 
 function readStored<T extends string>(key: string, allowed: T[], fallback: T): T {
@@ -44,10 +46,25 @@ function writeStored(key: string, value: string) {
   }
 }
 
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const stored = localStorage.getItem(key);
+
+    if (stored === "true" || stored === "false") {
+      return stored === "true";
+    }
+  } catch {
+    // storage unavailable; use fallback.
+  }
+
+  return fallback;
+}
+
 export function createDisplayPreferencesService() {
   const store = createStore<DisplayPreferencesState>({
     theme: readStored(THEME_KEY, ALLOWED_THEMES, "system"),
     defaultTab: readStored(DEFAULT_TAB_KEY, ALLOWED_TABS as unknown as string[], "Workflows"),
+    showSystemTimelineEvents: readStoredBoolean(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, true),
   });
 
   const service = {
@@ -59,6 +76,10 @@ export function createDisplayPreferencesService() {
     setDefaultTab(defaultTab: string) {
       store.setState((state) => ({ ...state, defaultTab }));
       writeStored(DEFAULT_TAB_KEY, defaultTab);
+    },
+    setShowSystemTimelineEvents(showSystemTimelineEvents: boolean) {
+      store.setState((state) => ({ ...state, showSystemTimelineEvents }));
+      writeStored(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, String(showSystemTimelineEvents));
     },
   };
 

@@ -1,4 +1,7 @@
 import type { WorkflowNodeRun } from "../../../core/domain/models";
+import { isSystemTimelineEvent } from "../../../core/workflow/timeline-events";
+
+export { isSystemTimelineEvent };
 
 const FAILED_STATUSES = new Set(["failed", "timed_out"]);
 
@@ -104,8 +107,8 @@ export function timelineProvenanceTags(node: WorkflowNodeRun): TimelineProvenanc
   if (typeof node.state?.workspace_phase === "string") {
     tags.push({
       id: "workspace",
-      label: "workspace",
-      title: "A durable workspace lifecycle phase recorded by the worker.",
+      label: "system",
+      title: "A system-managed workspace lifecycle phase recorded by the worker.",
     });
   }
 

@@ -27,11 +27,20 @@ export const useDisplayPreferencesStore = defineStore("displayPreferences", () =
         displayPreferencesService.setDefaultTab(defaultTab);
       },
     }),
+    showSystemTimelineEvents: computed({
+      get: () => state.value.showSystemTimelineEvents,
+      set: (showSystemTimelineEvents: boolean) => {
+        displayPreferencesService.setShowSystemTimelineEvents(showSystemTimelineEvents);
+      },
+    }),
     setTheme: (theme: AppTheme) => {
       displayPreferencesService.setTheme(theme);
     },
     setDefaultTab: (defaultTab: string) => {
       displayPreferencesService.setDefaultTab(defaultTab);
+    },
+    setShowSystemTimelineEvents: (showSystemTimelineEvents: boolean) => {
+      displayPreferencesService.setShowSystemTimelineEvents(showSystemTimelineEvents);
     },
   };
 });
