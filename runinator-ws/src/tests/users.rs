@@ -13,7 +13,7 @@ use runinator_models::auth::{
     AgentEnrollmentRequestBody, AgentEnrollmentToken, AgentEnrollmentTokenRecord,
     EnrollAgentRequest, LoginRequest,
 };
-use runinator_models::rbac::PlatformRole;
+use runinator_models::rbac::{PlatformRole, SystemRole};
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
 };
@@ -582,6 +582,55 @@ async fn agent_enrollment_is_single_use_and_mints_a_scoped_non_admin_key() {
     assert!(record.key.org_id.is_some());
     assert!(record.key.expires_at.is_some());
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn worker_settings_are_readable_by_agents_and_report_when_configured() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let agent = AuthContext {
+        principal_id: Some(Uuid::now_v7()),
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: Some(SystemRole::Agent),
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::Service,
+        org_id: None,
+    };
+
+    let (status, Json(body)) = crate::handlers::auth::worker_settings::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(agent.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = serde_json::to_value(body).unwrap();
+    assert_eq!(body["configured"], false);
+    assert_eq!(body["values"]["max_concurrent_actions"], 4);
+
+    let (status, _) = crate::handlers::auth::worker_settings::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(user_ctx(Uuid::now_v7())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let mut settings = runinator_models::server_settings::ServerSettings::default();
+    settings.workers.max_concurrent_actions = 12;
+    runinator_engine::settings::save_server_settings(db.as_ref(), &settings)
+        .await
+        .unwrap();
+    let (status, Json(body)) =
+        crate::handlers::auth::worker_settings::<SqliteDb>(Extension(db.clone()), Extension(agent))
+            .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = serde_json::to_value(body).unwrap();
+    assert_eq!(body["configured"], true);
+    assert_eq!(body["values"]["max_concurrent_actions"], 12);
+
+    drop(db);
     let _ = std::fs::remove_file(path);
 }
 

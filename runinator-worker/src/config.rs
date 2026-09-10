@@ -274,6 +274,8 @@ impl Config {
             dll_paths: self.dll_paths.clone(),
             max_concurrent_actions: self.max_concurrent_actions,
             shutdown_grace: Duration::from_secs(self.shutdown_grace_seconds),
+            use_server_worker_settings: true,
+            worker_settings_refresh_interval: Duration::from_secs(5),
             liveness_file: self.liveness_file.clone(),
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             stale_after: Duration::from_secs(30),

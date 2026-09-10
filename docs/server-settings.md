@@ -10,9 +10,11 @@ range, unit, label, and description. New struct fields use their compiled defaul
 stored document is read.
 
 The Command Center exposes the catalog under Settings → Server, grouped into Authentication,
-Orchestration, Notifications, and Replicas. Saving writes the full document atomically. Embedded
-and standalone engines share a cached snapshot and refresh it at the configured refresh interval;
-request-time replica and synchronous-invocation policy is read directly from the store.
+Orchestration, Notifications, Workers, Replicas, and Archiver. Saving writes the full document
+atomically. Embedded and standalone engines share a cached snapshot and refresh it at the configured
+refresh interval; standalone workers read only the worker subset through `GET /worker/settings` and
+gracefully drain and rebuild their action loop when that policy changes. Desktop agents retain their
+machine-local settings.
 
 The current catalog covers:
 
@@ -21,6 +23,7 @@ The current catalog covers:
   grace, timer horizon, workspace reconciliation, usage/metrics sampling, settings refresh, and
   synchronous invocation wait/poll timing;
 - notification scanning, batch size, default secret-expiry warning, and delivery timeout;
+- standalone worker concurrency, shutdown grace, reconnect budget, and settings refresh timing;
 - replica stale/reap/delete windows, cleanup cadence, telemetry retention/window, and point limit.
 
 Replica windows also have relational validation: `reap_after_seconds` must exceed
@@ -44,9 +47,9 @@ The audit does not turn every numeric literal into mutable policy. These categor
 - per-workflow/action values such as action timeout, retry policy, debounce, approval expiry, and
   gate polling, which are authored into the durable workflow/effect and must not change underneath a
   running execution;
-- worker-, waker-, broker-, and blob-process local settings, because those services do not read the
-  web service database. Their existing CLI/environment configuration remains the correct ownership
-  boundary.
+- desktop-agent, waker, broker, and blob-process local settings. Standalone workers preserve their
+  CLI configuration until an administrator first saves the unified policy; after that, the Workers
+  section becomes authoritative for the worker fields it contains.
 
 The reserved policy row is omitted from the generic credentials list and workflow config type tree.
 Generic credential writes, moves, deletes, and pack imports reject that coordinate, so all policy

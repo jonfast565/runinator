@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use runinator_api::{AsyncApiClient, StaticLocator};
-use runinator_models::errors::SendableError;
+use runinator_models::{errors::SendableError, server_settings::WorkerSettings};
 use runinator_observability::resource_telemetry::TelemetryCollector;
 use runinator_platform::liveness;
 use tokio::sync::watch;
@@ -169,7 +169,7 @@ struct AgentLifecycle {
 
 async fn run_lifecycle(lifecycle: AgentLifecycle) -> Result<(), SendableError> {
     let AgentLifecycle {
-        config,
+        mut config,
         api_client,
         libraries,
         telemetry,
@@ -186,6 +186,22 @@ async fn run_lifecycle(lifecycle: AgentLifecycle) -> Result<(), SendableError> {
         liveness::DEFAULT_LIVENESS_INTERVAL,
         shutdown.notify(),
     );
+
+    let mut using_server_worker_settings = false;
+    if config.use_server_worker_settings {
+        match api_client.worker_settings().await {
+            Ok(policy) if policy.configured => {
+                apply_worker_settings(&mut config, &policy.values);
+                using_server_worker_settings = true;
+                report_context.update_worker_settings(&config, "server");
+                reporter.log("Applied platform worker settings.");
+            }
+            Ok(_) => reporter.log("No platform worker settings are saved; using process settings."),
+            Err(error) => reporter.log(format!(
+                "Could not load platform worker settings; using process settings: {error}"
+            )),
+        }
+    }
 
     // A broker-announced replica knows its identity before the asynchronous ingress consumer
     // writes the row. That same id is safe to put in effect claims and targeted broker profiles.
@@ -233,14 +249,68 @@ async fn run_lifecycle(lifecycle: AgentLifecycle) -> Result<(), SendableError> {
         replica_id,
         runtime_id,
         reporter: Arc::clone(&reporter),
-        report_context,
+        report_context: Arc::clone(&report_context),
         telemetry,
         shutdown: shutdown.clone(),
     });
     reporter.log(format!("Broker: {}", config.broker_description));
 
-    let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries, result_outbox);
-    let outcome = run_supervised(inputs, Arc::clone(&reporter), shutdown.clone()).await;
+    let outcome = loop {
+        if shutdown.is_stopping() {
+            break Ok(());
+        }
+
+        let inputs = SupervisedLoop::new(
+            &config,
+            api_client.clone(),
+            replica_id,
+            Arc::clone(&libraries),
+            Arc::clone(&result_outbox),
+        );
+        if !config.use_server_worker_settings {
+            break run_supervised(inputs, Arc::clone(&reporter), shutdown.clone()).await;
+        }
+
+        let attempt_shutdown = Shutdown::new();
+        let mut supervised = std::pin::pin!(run_supervised(
+            inputs,
+            Arc::clone(&reporter),
+            attempt_shutdown.clone(),
+        ));
+        let current = worker_settings_from_config(&config);
+        let refresh = wait_for_worker_settings_change(
+            &api_client,
+            &current,
+            using_server_worker_settings,
+            &reporter,
+            config.workers_refresh_interval(),
+        );
+        tokio::pin!(refresh);
+        let shutdown_notify = shutdown.notify();
+
+        tokio::select! {
+            result = &mut supervised => break result,
+            _ = shutdown_notify.notified() => {
+                attempt_shutdown.trigger();
+                break supervised.await;
+            }
+            next = &mut refresh => {
+                reporter.log("Worker settings changed; draining before applying them.");
+                attempt_shutdown.trigger();
+                if let Err(error) = supervised.await {
+                    reporter.log(format!("Worker loop stopped while applying settings: {error}"));
+                }
+                apply_worker_settings(&mut config, &next);
+                using_server_worker_settings = true;
+                report_context.update_worker_settings(&config, "server");
+                reporter.log(format!(
+                    "Applied worker settings: {} concurrent actions, {}s shutdown grace.",
+                    config.max_concurrent_actions,
+                    config.shutdown_grace.as_secs(),
+                ));
+            }
+        }
+    };
 
     // An intentional stop is normally already latched, but an unexpected terminal loop result
     // must also retire the broker-announced replica. Wait briefly so the offline message has a
@@ -258,6 +328,54 @@ async fn run_lifecycle(lifecycle: AgentLifecycle) -> Result<(), SendableError> {
     outcome?;
     reporter.log("Agent stopped.");
     Ok(())
+}
+
+impl AgentRuntimeConfig {
+    fn workers_refresh_interval(&self) -> Duration {
+        Duration::from_secs(worker_settings_from_config(self).settings_refresh_interval_seconds)
+    }
+}
+
+fn worker_settings_from_config(config: &AgentRuntimeConfig) -> WorkerSettings {
+    WorkerSettings {
+        max_concurrent_actions: config.max_concurrent_actions as u64,
+        shutdown_grace_seconds: config.shutdown_grace.as_secs(),
+        reconnect_max_attempts: config.reconnect_max_attempts as u64,
+        settings_refresh_interval_seconds: config.worker_settings_refresh_interval.as_secs(),
+    }
+}
+
+fn apply_worker_settings(config: &mut AgentRuntimeConfig, settings: &WorkerSettings) {
+    config.max_concurrent_actions = usize::try_from(settings.max_concurrent_actions)
+        .unwrap_or(usize::MAX)
+        .max(1);
+    config.shutdown_grace = Duration::from_secs(settings.shutdown_grace_seconds.max(1));
+    config.reconnect_max_attempts =
+        u32::try_from(settings.reconnect_max_attempts).unwrap_or(u32::MAX);
+    config.worker_settings_refresh_interval =
+        Duration::from_secs(settings.settings_refresh_interval_seconds.max(1));
+}
+
+async fn wait_for_worker_settings_change(
+    api_client: &AsyncApiClient<StaticLocator>,
+    current: &WorkerSettings,
+    using_server_settings: bool,
+    reporter: &StatusReporter,
+    mut interval: Duration,
+) -> WorkerSettings {
+    loop {
+        tokio::time::sleep(interval).await;
+        match api_client.worker_settings().await {
+            Ok(policy) if policy.configured => {
+                interval = Duration::from_secs(policy.values.settings_refresh_interval_seconds);
+                if !using_server_settings || policy.values != *current {
+                    return policy.values;
+                }
+            }
+            Ok(_) => {}
+            Err(error) => reporter.log(format!("Could not refresh worker settings: {error}")),
+        }
+    }
 }
 
 // return the status to its terminal shape and stop touching the liveness file, so a stopped agent

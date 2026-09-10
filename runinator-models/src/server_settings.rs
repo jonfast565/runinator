@@ -25,6 +25,7 @@ pub struct ServerSettings {
     pub authentication: AuthenticationSettings,
     pub orchestration: OrchestrationSettings,
     pub notifications: NotificationSettings,
+    pub workers: WorkerSettings,
     pub replicas: ReplicaSettings,
     pub archiver: ArchiverSettings,
 }
@@ -103,6 +104,36 @@ impl Default for NotificationSettings {
             delivery_timeout_seconds: 30,
         }
     }
+}
+
+/// platform defaults applied by standalone workers. desktop agents keep their machine-local
+/// settings because their capacity and lifecycle are controlled by the person running them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkerSettings {
+    pub max_concurrent_actions: u64,
+    pub shutdown_grace_seconds: u64,
+    pub reconnect_max_attempts: u64,
+    pub settings_refresh_interval_seconds: u64,
+}
+
+impl Default for WorkerSettings {
+    fn default() -> Self {
+        Self {
+            max_concurrent_actions: 4,
+            shutdown_grace_seconds: 30,
+            reconnect_max_attempts: 0,
+            settings_refresh_interval_seconds: 5,
+        }
+    }
+}
+
+/// worker-facing policy response. until the unified policy has been saved, workers preserve their
+/// explicit CLI configuration instead of replacing it with compiled server defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerSettingsResponse {
+    pub configured: bool,
+    pub values: WorkerSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -512,6 +543,54 @@ pub fn server_setting_catalog() -> Vec<ServerSettingDefinition> {
             120
         ),
         setting!(
+            "workers.max_concurrent_actions",
+            "Workers",
+            "Maximum concurrent actions",
+            "Maximum provider actions each standalone worker executes at once.",
+            "actions",
+            4,
+            1,
+            1_024,
+            1,
+            32
+        ),
+        setting!(
+            "workers.shutdown_grace_seconds",
+            "Workers",
+            "Shutdown grace",
+            "Time a standalone worker allows in-flight actions to finish while restarting or stopping.",
+            "seconds",
+            30,
+            1,
+            3_600,
+            10,
+            300
+        ),
+        setting!(
+            "workers.reconnect_max_attempts",
+            "Workers",
+            "Reconnect attempts",
+            "Consecutive connection failures tolerated before a standalone worker exits. Zero retries indefinitely.",
+            "attempts",
+            0,
+            0,
+            100_000,
+            0,
+            100
+        ),
+        setting!(
+            "workers.settings_refresh_interval_seconds",
+            "Workers",
+            "Settings refresh interval",
+            "Maximum delay before standalone workers check for updated worker policy.",
+            "seconds",
+            5,
+            1,
+            300,
+            2,
+            30
+        ),
+        setting!(
             "replicas.stale_after_seconds",
             "Replicas",
             "Stale after",
@@ -909,6 +988,12 @@ impl ServerSettings {
                 self.notifications.secret_expiry_warning_seconds
             }
             "notifications.delivery_timeout_seconds" => self.notifications.delivery_timeout_seconds,
+            "workers.max_concurrent_actions" => self.workers.max_concurrent_actions,
+            "workers.shutdown_grace_seconds" => self.workers.shutdown_grace_seconds,
+            "workers.reconnect_max_attempts" => self.workers.reconnect_max_attempts,
+            "workers.settings_refresh_interval_seconds" => {
+                self.workers.settings_refresh_interval_seconds
+            }
             "replicas.stale_after_seconds" => self.replicas.stale_after_seconds,
             "replicas.reap_after_seconds" => self.replicas.reap_after_seconds,
             "replicas.delete_after_seconds" => self.replicas.delete_after_seconds,
@@ -991,6 +1076,26 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .contains("reap_after_seconds")
+        );
+    }
+
+    #[test]
+    fn older_policy_documents_receive_worker_defaults() {
+        let settings: ServerSettings = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(settings.workers, WorkerSettings::default());
+    }
+
+    #[test]
+    fn worker_capacity_uses_the_catalog_bounds() {
+        let mut settings = ServerSettings::default();
+        settings.workers.max_concurrent_actions = 0;
+
+        assert!(
+            settings
+                .validate()
+                .unwrap_err()
+                .contains("workers.max_concurrent_actions")
         );
     }
 }

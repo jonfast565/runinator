@@ -128,6 +128,12 @@ pub struct AgentStatusReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_version: Option<String>,
     pub config_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_actions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_grace_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_settings_source: Option<String>,
     pub provider_count: usize,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,

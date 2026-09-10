@@ -207,6 +207,40 @@ describe("admin settings store", () => {
     });
   });
 
+  it("edits worker concurrency through the server settings catalog", async () => {
+    vi.mocked(fetchServerSettings).mockResolvedValue({
+      values: {
+        authentication: { max_refreshes: 100 },
+        workers: { max_concurrent_actions: 4 },
+      },
+      catalog: [
+        {
+          key: "workers.max_concurrent_actions",
+          section: "Workers",
+          label: "Maximum concurrent actions",
+          description: "Maximum provider actions each standalone worker executes at once.",
+          unit: "actions",
+          default: 4,
+          minimum: 1,
+          maximum: 1024,
+          usual_minimum: 1,
+          usual_maximum: 32,
+        },
+      ],
+    });
+    const settings = useAdminSettingsStore();
+
+    await settings.refreshServerSettings();
+    settings.updateServerSetting("workers.max_concurrent_actions", 12);
+    await settings.saveServerSettings();
+
+    expect(settings.serverValues.workers.max_concurrent_actions).toBe(12);
+    expect(saveServerSettings).toHaveBeenCalledWith({
+      authentication: { max_refreshes: 100 },
+      workers: { max_concurrent_actions: 12 },
+    });
+  });
+
   it("updates boolean archiver settings without coercing them to numbers", async () => {
     vi.mocked(fetchServerSettings).mockResolvedValue({
       values: {

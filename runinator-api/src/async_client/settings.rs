@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use runinator_models::{
-    api_routes::API_CREDENTIALS,
+    api_routes::{API_CREDENTIALS, API_WORKER_SETTINGS},
     json,
+    server_settings::WorkerSettingsResponse,
     settings::{SettingKind, SettingSummary},
     value::Value,
 };
@@ -19,6 +20,14 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<SettingSummary>>().await?)
+    }
+
+    /// fetch the central policy used by standalone worker runtimes.
+    pub async fn worker_settings(&self) -> Result<WorkerSettingsResponse> {
+        let url = self.build_url(API_WORKER_SETTINGS).await?;
+        let response = self.send(self.http_get(url.clone())).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkerSettingsResponse>().await?)
     }
 
     pub async fn get_setting(&self, kind: SettingKind, scope: &str, name: &str) -> Result<Value> {

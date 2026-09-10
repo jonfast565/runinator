@@ -140,6 +140,10 @@ pub struct AgentRuntimeConfig {
     pub dll_paths: Vec<String>,
     pub max_concurrent_actions: usize,
     pub shutdown_grace: Duration,
+    /// when true, replace these process defaults with the persisted platform worker policy and
+    /// refresh it while the runtime is active. desktop agents keep their machine-local policy.
+    pub use_server_worker_settings: bool,
+    pub worker_settings_refresh_interval: Duration,
     /// path touched on an interval to signal liveness; empty disables the probe.
     pub liveness_file: String,
     pub heartbeat_interval: Duration,

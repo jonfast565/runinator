@@ -187,6 +187,21 @@
                           selectedAgentStatus.provider_count
                         }}
                       </div>
+                      <div v-if="selectedAgentStatus.max_concurrent_actions != null">
+                        <span class="text-fg-muted">Concurrency</span><br />{{
+                          selectedAgentStatus.max_concurrent_actions
+                        }}
+                      </div>
+                      <div v-if="selectedAgentStatus.shutdown_grace_seconds != null">
+                        <span class="text-fg-muted">Shutdown grace</span><br />{{
+                          selectedAgentStatus.shutdown_grace_seconds
+                        }}s
+                      </div>
+                      <div v-if="selectedAgentStatus.worker_settings_source">
+                        <span class="text-fg-muted">Worker settings</span><br />{{
+                          selectedAgentStatus.worker_settings_source
+                        }}
+                      </div>
                       <div>
                         <span class="text-fg-muted">Outbox</span><br />{{
                           selectedAgentStatus.outbox_depth

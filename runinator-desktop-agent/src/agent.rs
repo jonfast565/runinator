@@ -670,6 +670,8 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         dll_paths: Vec::new(),
         max_concurrent_actions: config.max_concurrent_actions.max(1),
         shutdown_grace: Duration::from_secs(config.shutdown_grace_seconds.max(1)),
+        use_server_worker_settings: false,
+        worker_settings_refresh_interval: Duration::from_secs(5),
         liveness_file: config.liveness_file.clone(),
         heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
         stale_after: Duration::from_secs(90),

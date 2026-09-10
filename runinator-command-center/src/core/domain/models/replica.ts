@@ -33,6 +33,9 @@ export interface AgentStatusReport {
   outbox_depth: number;
   agent_version?: string | null;
   config_hash: string;
+  max_concurrent_actions?: number | null;
+  shutdown_grace_seconds?: number | null;
+  worker_settings_source?: string | null;
   provider_count: number;
   labels: Record<string, string>;
   uptime_seconds: number;

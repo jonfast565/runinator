@@ -199,7 +199,8 @@ This uses `runinator-supervisor.json` to start:
 
 The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
-workflow action pickup.
+workflow action pickup. Once an administrator saves the platform policy in the Command Center, the
+Settings → Server → Workers values supersede these standalone-worker process defaults.
 
 ### On-demand nodes
 

@@ -21,7 +21,7 @@ use runinator_models::auth::{
 };
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::server_settings::{
-    RuntimeSettingDefinition, ServerSettings, server_setting_catalog,
+    RuntimeSettingDefinition, ServerSettings, WorkerSettingsResponse, server_setting_catalog,
 };
 use runinator_models::validation::{Validate, ValidationError};
 use runinator_models::value::Value;
@@ -704,6 +704,24 @@ pub async fn server_settings<T: AuthStore + RbacStore + RuntimeStore + SettingSt
             values,
             catalog: server_setting_catalog(),
             runtime_catalog: runtime_setting_catalog(),
+        }),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn worker_settings<T: SettingStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    if let Err(reply) = ctx.require_system_role(&[SystemRole::Worker, SystemRole::Agent]) {
+        return reply.into_reply();
+    }
+    match runinator_engine::settings::load_persisted_server_settings(db.as_ref()).await {
+        Ok(settings) => ok_value(&WorkerSettingsResponse {
+            configured: settings.is_some(),
+            values: settings
+                .map(|settings| settings.workers)
+                .unwrap_or_default(),
         }),
         Err(err) => api_error(err.to_string()),
     }
@@ -1885,6 +1903,10 @@ pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>
                 .layer(Extension(pool.clone())),
         )
         .route(
+            "/worker/settings",
+            get(worker_settings::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/auth/login",
             post(login::<T>).layer(Extension(pool.clone())),
         )
@@ -2063,6 +2085,19 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "saved server settings catalog",
+        Example::None,
+    ),
+    endpoint!(
+        "get",
+        "/worker/settings",
+        "Settings",
+        "Read worker operating policy",
+        "Returns the persisted standalone-worker concurrency, shutdown, reconnect, and refresh policy. An unset policy tells workers to preserve their process configuration.",
+        false,
+        None,
+        &[],
+        200,
+        "worker settings",
         Example::None,
     ),
     endpoint!(

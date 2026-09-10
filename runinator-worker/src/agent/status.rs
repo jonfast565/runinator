@@ -2,7 +2,7 @@
 //! running action counters. both the headless binary and a gui host read the same types, so a
 //! degraded agent looks the same in a log line as it does in a status header.
 
-use std::time::Instant;
+use std::{sync::RwLock, time::Instant};
 
 use chrono::{DateTime, Utc};
 use runinator_models::replicas::{AgentConnectionState, AgentStatusReport};
@@ -81,11 +81,18 @@ pub struct AgentReportContext {
     broker_mode: String,
     broker_endpoint: String,
     agent_version: Option<String>,
-    config_hash: String,
+    worker_settings: RwLock<ActiveWorkerSettings>,
     provider_count: usize,
     labels: std::collections::BTreeMap<String, String>,
     stale_after_seconds: u64,
     outbox: std::sync::Arc<dyn ResultOutbox>,
+}
+
+struct ActiveWorkerSettings {
+    config_hash: String,
+    max_concurrent_actions: u64,
+    shutdown_grace_seconds: u64,
+    source: String,
 }
 
 impl AgentReportContext {
@@ -104,7 +111,10 @@ impl AgentReportContext {
             broker_mode: broker_mode.to_string(),
             broker_endpoint: config.broker.broker_endpoint.clone(),
             agent_version: config.version.clone(),
-            config_hash: config_hash(config),
+            worker_settings: RwLock::new(active_worker_settings(
+                config,
+                initial_settings_source(config),
+            )),
             provider_count,
             labels: config.labels.clone(),
             stale_after_seconds: config.stale_after.as_secs(),
@@ -118,6 +128,10 @@ impl AgentReportContext {
         heartbeat_seq: u64,
         clock_skew_ms: i64,
     ) -> AgentStatusReport {
+        let worker_settings = self
+            .worker_settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (mut connection_state, reconnect_retry_seconds, reconnect_attempt, reconnect_budget) =
             match &status.connection {
                 AgentConnection::Stopped => (AgentConnectionState::Stopped, None, None, None),
@@ -165,7 +179,10 @@ impl AgentReportContext {
             last_error_at: status.last_error_at,
             outbox_depth: self.outbox.depth(),
             agent_version: self.agent_version.clone(),
-            config_hash: self.config_hash.clone(),
+            config_hash: worker_settings.config_hash.clone(),
+            max_concurrent_actions: Some(worker_settings.max_concurrent_actions),
+            shutdown_grace_seconds: Some(worker_settings.shutdown_grace_seconds),
+            worker_settings_source: Some(worker_settings.source.clone()),
             provider_count: self.provider_count,
             labels: self.labels.clone(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
@@ -173,6 +190,31 @@ impl AgentReportContext {
             clock_skew_ms,
             stale_after_seconds: Some(self.stale_after_seconds),
         }
+    }
+
+    pub fn update_worker_settings(&self, config: &AgentRuntimeConfig, source: &str) {
+        *self
+            .worker_settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            active_worker_settings(config, source);
+    }
+}
+
+fn initial_settings_source(config: &AgentRuntimeConfig) -> &'static str {
+    if config.use_server_worker_settings {
+        "process"
+    } else {
+        "desktop"
+    }
+}
+
+fn active_worker_settings(config: &AgentRuntimeConfig, source: &str) -> ActiveWorkerSettings {
+    ActiveWorkerSettings {
+        config_hash: config_hash(config),
+        max_concurrent_actions: config.max_concurrent_actions as u64,
+        shutdown_grace_seconds: config.shutdown_grace.as_secs(),
+        source: source.to_string(),
     }
 }
 
@@ -189,6 +231,7 @@ fn config_hash(config: &AgentRuntimeConfig) -> String {
         "broker_endpoint": config.broker.broker_endpoint,
         "max_concurrent_actions": config.max_concurrent_actions,
         "shutdown_grace_seconds": config.shutdown_grace.as_secs(),
+        "worker_settings_refresh_seconds": config.worker_settings_refresh_interval.as_secs(),
         "heartbeat_seconds": config.heartbeat_interval.as_secs(),
         "stale_after_seconds": config.stale_after.as_secs(),
         "outbox_file": config.outbox_file,
