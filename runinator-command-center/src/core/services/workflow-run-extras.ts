@@ -41,7 +41,10 @@ export function createWorkflowRunExtrasService(app: AppService) {
     fetchNodeRunChunks(effectId: string) {
       return app.runOperation("Loading workflow effect log", async () =>
         (await fetchWorkflowEffectOutput(effectId))
-          .filter((event) => event.output.type === "chunk")
+          .filter(
+            (event) =>
+              event.output.type === "chunk" && event.output.stream !== "runinator.workspace",
+          )
           .map((event) => ({
             id: event.event_id,
             effect_id: event.effect_id,
@@ -67,12 +70,7 @@ export function createWorkflowRunExtrasService(app: AppService) {
         deliverSignal(workflowRunId, name, payload),
       );
     },
-    resolveInput(
-      effectId: string,
-      outputJson: unknown,
-      resolvedBy?: string,
-      message?: string,
-    ) {
+    resolveInput(effectId: string, outputJson: unknown, resolvedBy?: string, message?: string) {
       return app.runOperation("Resolving workflow input", () =>
         settleWorkflowEffect(effectId, "succeeded", outputJson as JsonValue, message ?? null),
       );

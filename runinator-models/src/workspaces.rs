@@ -4,6 +4,20 @@ use uuid::Uuid;
 
 use crate::value::Value;
 
+/// Effect-output stream reserved for bounded durable workspace lifecycle summaries.
+pub const WORKSPACE_TIMELINE_STREAM: &str = "runinator.workspace";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkspacePhaseEvent {
+    pub version: u8,
+    pub phase: String,
+    pub status: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    pub duration_ms: u64,
+    pub details: Value,
+}
+
 /// Reserved worker label used to route filesystem-bound effects to a stable machine identity.
 /// A worker runtime may mint a new replica id after restart; its instance id remains stable.
 pub const WORKSPACE_INSTANCE_LABEL: &str = "runinator.instance";

@@ -75,4 +75,13 @@ describe("run timeline formatting", () => {
       "effect receipt",
     ]);
   });
+
+  it("labels durable workspace lifecycle phases", () => {
+    const phase = node("workspace · materialize files", {
+      created_at: "2026-08-29T03:05:31Z",
+    });
+    phase.state = { workspace_phase: "workspace.restore.materialize" };
+
+    expect(timelineProvenanceTags(phase).map((tag) => tag.label)).toEqual(["workspace"]);
+  });
 });

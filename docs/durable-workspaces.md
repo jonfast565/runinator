@@ -179,9 +179,14 @@ or cyclic relative symlinks are rejected. Symlink restoration currently requires
 
 Restore is one native archive request per checkout. The engine resolves the revision through
 pack-batched location pages and bounded local pack copies, and the worker imports that archive into
-a local logical store retained for the full action before materialization. A logical object lookup
-must not cross the HTTP boundary; the object endpoint is a compatibility fallback, not the normal
-restore path.
+a validated, pack-backed local store retained for the full action before materialization. Restore
+must not expand logical objects into individual temporary files. A logical object lookup must not
+cross the HTTP boundary; the object endpoint is a compatibility fallback, not the normal restore
+path.
+
+Workspace-affined effects publish bounded lifecycle records for archive download and indexing,
+materialization, change capture, pack upload, and sealing. The run timeline projects those records
+as timed workspace phases. Lifecycle reporting is per phase, never per file or logical object.
 
 Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
 deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops

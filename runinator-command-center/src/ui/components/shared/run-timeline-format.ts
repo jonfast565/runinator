@@ -92,7 +92,7 @@ export function timelineDotClass(status: string): string {
 }
 
 export interface TimelineProvenanceTag {
-  id: "entered" | "effect_receipt";
+  id: "entered" | "effect_receipt" | "workspace";
   label: string;
   title: string;
 }
@@ -100,6 +100,14 @@ export interface TimelineProvenanceTag {
 /** Durable records represented by one projected timeline row. */
 export function timelineProvenanceTags(node: WorkflowNodeRun): TimelineProvenanceTag[] {
   const tags: TimelineProvenanceTag[] = [];
+
+  if (typeof node.state?.workspace_phase === "string") {
+    tags.push({
+      id: "workspace",
+      label: "workspace",
+      title: "A durable workspace lifecycle phase recorded by the worker.",
+    });
+  }
 
   if (typeof node.state?.node_entered_journal_id === "string") {
     tags.push({

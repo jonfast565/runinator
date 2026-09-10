@@ -7,13 +7,13 @@ use runinator_workspace::storage::{
 use std::{fs, io::Write, time::Instant};
 
 pub(super) struct LocalObjects {
-    store: storage::staging::Staging<storage::staging::EmptyStore>,
+    store: runinator_workspace::native::PackedStore,
     _scratch: tempfile::TempDir,
 }
 
 impl LocalObjects {
     pub(super) fn new(
-        store: storage::staging::Staging<storage::staging::EmptyStore>,
+        store: runinator_workspace::native::PackedStore,
         scratch: tempfile::TempDir,
     ) -> Self {
         Self {

@@ -1219,6 +1219,97 @@ function workflowEffectRequest(effect: WorkflowEffect): JsonRecord {
     : {};
 }
 
+const WORKSPACE_TIMELINE_STREAM = "runinator.workspace";
+
+interface WorkspacePhasePayload {
+  phase: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  details: JsonRecord;
+}
+
+function workspacePhasePayload(event: WorkflowEffectOutputEvent): WorkspacePhasePayload | null {
+  if (event.output.type !== "chunk" || event.output.stream !== WORKSPACE_TIMELINE_STREAM) {
+    return null;
+  }
+
+  try {
+    const value = asJsonRecord(JSON.parse(event.output.content));
+
+    if (
+      typeof value.phase !== "string" ||
+      typeof value.status !== "string" ||
+      typeof value.started_at !== "string" ||
+      typeof value.finished_at !== "string" ||
+      typeof value.duration_ms !== "number"
+    ) {
+      return null;
+    }
+
+    return {
+      phase: value.phase,
+      status: value.status,
+      started_at: value.started_at,
+      finished_at: value.finished_at,
+      duration_ms: value.duration_ms,
+      details: asJsonRecord(value.details),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function workspacePhaseLabel(phase: string): string {
+  const labels: Record<string, string> = {
+    "workspace.restore.download": "workspace · download archive",
+    "workspace.restore.index": "workspace · validate and index archive",
+    "workspace.restore.materialize": "workspace · materialize files",
+    "workspace.snapshot.capture": "workspace · scan and capture changes",
+    "workspace.snapshot.pack_upload": "workspace · pack and upload changes",
+    "workspace.snapshot.seal": "workspace · seal snapshot",
+    "workspace.snapshot.rebind": "workspace · rebind cached snapshot",
+  };
+  return labels[phase] ?? phase.replaceAll(".", " · ");
+}
+
+function workspacePhaseNodes(
+  effect: WorkflowEffect,
+  parentNodeId: string,
+  events: WorkflowEffectOutputEvent[],
+): WorkflowNodeRun[] {
+  return events.flatMap((event) => {
+    const phase = workspacePhasePayload(event);
+
+    if (!phase) {
+      return [];
+    }
+
+    return [
+      {
+        id: event.event_id,
+        workflow_run_id: event.workflow_run_id,
+        node_id: workspacePhaseLabel(phase.phase),
+        status: phase.status === "failed" ? "failed" : "succeeded",
+        attempt: event.attempt,
+        parameters: { type: "workspace_phase", phase: phase.phase },
+        output_json: phase.details as JsonValue,
+        state: {
+          workspace_phase: phase.phase,
+          workspace_parent_node_id: parentNodeId,
+          workspace_effect_id: effect.id,
+        },
+        cursor_id: event.continuation_id,
+        created_at: phase.started_at,
+        started_at: phase.started_at,
+        finished_at: phase.finished_at,
+        message: null,
+      },
+    ];
+  });
+}
+
 /** Earliest durable journal boundary for each effect, used to order same-second executions. */
 function journalEffectSequences(journal: WorkflowJournalRecord[]): Map<string, number> {
   const sequences = new Map<string, number>();
@@ -1373,6 +1464,19 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     fetchWorkflowJournal(workflowRunId).catch(() => []),
     fetchWorkflowVmCursors(workflowRunId).catch(() => []),
   ]);
+  const workspaceOutputByEffect = new Map(
+    await Promise.all(
+      effects
+        .filter((effect) => {
+          const affinity = workflowEffectRequest(effect).workspace_affinity;
+          return typeof affinity === "object" && affinity !== null;
+        })
+        .map(async (effect) => {
+          const output = await fetchWorkflowEffectOutput(effect.id).catch(() => []);
+          return [effect.id, output] as const;
+        }),
+    ),
+  );
   const cursorByContinuation = new Map(
     vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
   );
@@ -1545,12 +1649,23 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
       },
     ];
   });
+  const phaseNodes = effects.flatMap((effect) => {
+    const nodeId = projectedEffectNodeId(effect, cursorByContinuation, journalNodesByEffect);
+    return nodeId
+      ? workspacePhaseNodes(effect, nodeId, workspaceOutputByEffect.get(effect.id) ?? [])
+      : [];
+  });
   return {
     ...detail,
     // Mixed-version servers can materialize only infrastructure steps while the VM endpoints own
     // action history. Merge both sources or ordinary actions disappear from the graph, step log,
     // timeline, and Gantt whenever one materialized row happens to be present.
-    nodes: mergeWorkflowRunNodes(detail.nodes, [...enteredNodes, ...retryNodes, ...effectNodes]),
+    nodes: mergeWorkflowRunNodes(detail.nodes, [
+      ...enteredNodes,
+      ...retryNodes,
+      ...effectNodes,
+      ...phaseNodes,
+    ]),
     continuations,
     effects,
     journal,

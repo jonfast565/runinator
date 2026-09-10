@@ -37,20 +37,38 @@ fn cached_base_omits_only_verified_remote_objects() -> storage::Result<()> {
 }
 
 #[test]
-fn downloaded_base_is_used_without_a_remote_object_cache_entry() -> storage::Result<()> {
-    use storage::{model::Kind, staging::Staging, store::WriteStore};
+fn downloaded_base_is_used_without_a_remote_object_cache_entry()
+-> Result<(), runinator_models::errors::SendableError> {
+    use storage::staging::{EmptyStore, Staging};
 
     let cache = tempfile::tempdir()?;
+    let source = tempfile::tempdir()?;
     let scratch = tempfile::tempdir()?;
-    let store = Staging::new(storage::staging::EmptyStore, scratch.path())?;
-    let id = store.put(Kind::Chunk, b"downloaded base object")?;
-    let local = LocalObjects::new(store, scratch);
+    fs::write(source.path().join("file"), b"downloaded base object")?;
+    let (edit, _) = runinator_workspace::revision::capture(
+        Staging::new(EmptyStore, scratch.path())?,
+        source.path(),
+        &Default::default(),
+        Default::default(),
+        scratch.path(),
+    )?;
+    let id = edit.finish("test", None)?;
+    let mut archive = Vec::new();
+    runinator_workspace::native::export(&edit.store, id, scratch.path(), &mut archive)?;
+    let import_scratch = tempfile::tempdir()?;
+    let (store, imported, _) = runinator_workspace::native::import_packed(
+        archive.as_slice(),
+        import_scratch.path(),
+        Default::default(),
+    )?;
+    assert_eq!(imported, id);
+    let local = LocalObjects::new(store, import_scratch);
     let base = CachedObjects {
         path: cache.path(),
         local: Some(&local),
     };
 
-    assert_eq!(&*base.get(id)?.bytes, b"downloaded base object");
+    assert_eq!(base.get(id)?.kind, storage::model::Kind::Revision);
     assert!(!cache.path().join(id.to_string()).exists());
     Ok(())
 }

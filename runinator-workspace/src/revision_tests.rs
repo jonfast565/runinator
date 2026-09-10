@@ -31,6 +31,15 @@ fn native_layout_contains_selected_revision_and_results() -> Result<(), Sendable
     let view = View::new(&store, imported)?;
     assert_eq!(read_results(&view)?, results);
     assert_eq!(view.read_range("file", 1, 3)?, b"ati");
+    let (packed, imported, packed_usage) = crate::native::import_packed(
+        archive.as_slice(),
+        scratch.path(),
+        WorkspaceLimits::default(),
+    )?;
+    assert_eq!(packed_usage, expected);
+    let packed = View::new(&packed, imported)?;
+    assert_eq!(read_results(&packed)?, results);
+    assert_eq!(packed.read_range("file", 1, 3)?, b"ati");
     Ok(())
 }
 

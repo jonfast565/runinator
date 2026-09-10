@@ -506,6 +506,7 @@ async fn process_provider_effect(
     .unwrap_or(0);
     let workspace_deadline =
         std::time::Instant::now() + Duration::from_secs(workspace_remaining.max(0) as u64);
+    let workspace_phases = crate::durable_workspace::WorkspacePhaseReporter::default();
     let portable_workspace = if let Some(value) = workspace_affinity
         .as_ref()
         .filter(|value| value.get("key").is_some())
@@ -517,6 +518,7 @@ async fn process_provider_effect(
                     value,
                     replica_id,
                     workspace_deadline,
+                    workspace_phases.clone(),
                 )
                 .await
             }
@@ -526,6 +528,13 @@ async fn process_provider_effect(
         match restored {
             Ok(workspace) => Some(workspace),
             Err(error) => {
+                publish_workspace_phases(
+                    broker.as_ref(),
+                    result_outbox.as_ref(),
+                    &command,
+                    workspace_phases.drain(),
+                )
+                .await?;
                 publish_terminal(
                     broker.as_ref(),
                     result_outbox.as_ref(),
@@ -545,6 +554,15 @@ async fn process_provider_effect(
     } else {
         None
     };
+    if let Some(workspace) = &portable_workspace {
+        publish_workspace_phases(
+            broker.as_ref(),
+            result_outbox.as_ref(),
+            &command,
+            workspace.drain_phases(),
+        )
+        .await?;
+    }
     let workspace_affinity = if let Some(workspace) = &portable_workspace {
         Some(workspace.exposed()?)
     } else {
@@ -703,6 +721,13 @@ async fn process_provider_effect(
                         .save(&api_client, recorded.output_json.as_ref())
                         .await
                 };
+                publish_workspace_phases(
+                    broker.as_ref(),
+                    result_outbox.as_ref(),
+                    &command,
+                    workspace.drain_phases(),
+                )
+                .await?;
                 replay.workspace_commit = match restored {
                     Ok(commit) => commit.map(Box::new),
                     Err(error) => {
@@ -903,6 +928,13 @@ async fn process_provider_effect(
                 }
             }
         }
+        publish_workspace_phases(
+            broker.as_ref(),
+            result_outbox.as_ref(),
+            &command,
+            workspace.drain_phases(),
+        )
+        .await?;
         if status == WorkflowEffectStatus::Succeeded {
             let reference = workspace.reference(workspace_commit.as_ref());
             let mut json: serde_json::Value = output.take().unwrap_or_default().into();
@@ -1068,6 +1100,36 @@ async fn publish_terminal(
     let mut result = EffectResult::status(command, status, output, message);
     result.event_id = stable_event_id(command.effect_id, "terminal");
     publish_result(broker, outbox, &mut result, true).await
+}
+
+async fn publish_workspace_phases(
+    broker: &dyn Broker,
+    outbox: &dyn crate::agent::outbox::ResultOutbox,
+    command: &runinator_comm::EffectCommand,
+    phases: Vec<runinator_models::workspaces::WorkspacePhaseEvent>,
+) -> Result<(), SendableError> {
+    for phase in phases {
+        let boundary = format!("workspace-phase:{}:{}", command.attempt, phase.phase);
+        let timestamp = phase.finished_at;
+        let mut result = EffectResult {
+            workspace_commit: None,
+            version: command.version,
+            event_id: stable_event_id(command.effect_id, &boundary),
+            effect_id: command.effect_id,
+            workflow_run_id: command.workflow_run_id,
+            continuation_id: command.continuation_id,
+            attempt: command.attempt,
+            kind: EffectResultKind::Chunk {
+                stream: runinator_models::workspaces::WORKSPACE_TIMELINE_STREAM.into(),
+                content: serde_json::to_string(&phase)?,
+            },
+            timestamp,
+            trace_id: command.trace_id,
+            notification_delivery_id: command.notification_delivery_id,
+        };
+        publish_result(broker, outbox, &mut result, true).await?;
+    }
+    Ok(())
 }
 
 async fn publish_result(

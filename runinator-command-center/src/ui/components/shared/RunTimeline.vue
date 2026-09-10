@@ -432,7 +432,8 @@ async function loadLogs(node: WorkflowNodeRun) {
 }
 
 function onSelect(node: WorkflowNodeRun) {
-  emit("select", node.node_id);
+  const parentNodeId = node.state?.workspace_parent_node_id;
+  emit("select", typeof parentNodeId === "string" ? parentNodeId : node.node_id);
   expandedId.value = expandedId.value === node.id ? null : node.id;
 
   if (expandedId.value === node.id) {
