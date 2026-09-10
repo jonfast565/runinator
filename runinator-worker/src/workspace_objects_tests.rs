@@ -72,3 +72,51 @@ fn downloaded_base_is_used_without_a_remote_object_cache_entry()
     assert!(!cache.path().join(id.to_string()).exists());
     Ok(())
 }
+
+#[tokio::test]
+async fn downloaded_base_miss_never_falls_back_to_the_object_endpoint()
+-> Result<(), runinator_models::errors::SendableError> {
+    use storage::{
+        model::Kind,
+        staging::{EmptyStore, Staging},
+    };
+
+    let source = tempfile::tempdir()?;
+    let scratch = tempfile::tempdir()?;
+    fs::write(source.path().join("file"), b"complete downloaded base")?;
+    let (edit, _) = runinator_workspace::revision::capture(
+        Staging::new(EmptyStore, scratch.path())?,
+        source.path(),
+        &Default::default(),
+        Default::default(),
+        scratch.path(),
+    )?;
+    let revision = edit.finish("test", None)?;
+    let mut archive = Vec::new();
+    runinator_workspace::native::export(&edit.store, revision, scratch.path(), &mut archive)?;
+    let import_scratch = tempfile::tempdir()?;
+    let (store, imported, _) = runinator_workspace::native::import_packed(
+        archive.as_slice(),
+        import_scratch.path(),
+        Default::default(),
+    )?;
+    assert_eq!(imported, revision);
+
+    let objects = WorkerObjects::new(
+        AsyncApiClient::new(StaticLocator::new("http://127.0.0.1:1"))?,
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+        Instant::now() + std::time::Duration::from_secs(5),
+        Some(LocalObjects::new(store, import_scratch)),
+    )?;
+    let missing = storage::Id::object(Kind::Revision, b"not in the complete archive");
+    assert!(matches!(
+        objects.info(missing),
+        Err(storage::Error::NotFound(_))
+    ));
+    assert!(matches!(
+        objects.get(missing),
+        Err(storage::Error::NotFound(_))
+    ));
+    Ok(())
+}

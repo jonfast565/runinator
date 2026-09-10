@@ -156,11 +156,8 @@ fn io_error(error: impl std::error::Error + Send + Sync + 'static) -> storage::E
 impl ReadStore for WorkerObjects {
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
         if let Some(local) = &self.local {
-            match local.info(id) {
-                Ok(info) => return Ok(info),
-                Err(storage::Error::NotFound(_)) => {}
-                Err(error) => return Err(error),
-            }
+            // a downloaded archive is a complete closure, so a miss is authoritative.
+            return local.info(id);
         }
         let object = self.get(id)?;
         Ok(ObjectInfo {
@@ -171,11 +168,8 @@ impl ReadStore for WorkerObjects {
     fn get(&self, id: Id) -> storage::Result<Object> {
         self.remaining()?;
         if let Some(local) = &self.local {
-            match local.get(id) {
-                Ok(object) => return Ok(object),
-                Err(storage::Error::NotFound(_)) => {}
-                Err(error) => return Err(error),
-            }
+            // a packed local base is complete, so its negative lookups are authoritative too.
+            return local.get(id);
         }
         let path = self.cache.path().join(id.to_string());
         match fs::File::open(&path) {

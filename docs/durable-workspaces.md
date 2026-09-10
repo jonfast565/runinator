@@ -181,8 +181,8 @@ Restore is one native archive request per checkout. The engine resolves the revi
 pack-batched location pages and bounded local pack copies, and the worker imports that archive into
 a validated, pack-backed local store retained for the full action before materialization. Restore
 must not expand logical objects into individual temporary files. A logical object lookup must not
-cross the HTTP boundary; the object endpoint is a compatibility fallback, not the normal restore
-path.
+cross the HTTP boundary. Once a complete archive is present, a local miss is authoritative and
+must not fall through to the compatibility object endpoint.
 
 Snapshot staging is also one append-only spool, not one temporary file per logical object. When a
 complete local base archive is present, content-addressed deduplication consults its in-memory index
