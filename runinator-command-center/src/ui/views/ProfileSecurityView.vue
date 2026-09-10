@@ -91,7 +91,11 @@
           <Icon name="lock" />Sign out other sessions
         </button>
       </div>
-      <DataTable>
+      <LoadingPanel
+        v-if="(initialLoadPending || loadingProfile) && !profile.sessions.length"
+        message="Loading sessions…"
+      />
+      <DataTable v-else>
         <thead>
           <tr>
             <th>Client</th>
@@ -169,7 +173,11 @@
           </button>
         </div>
       </div>
-      <DataTable>
+      <LoadingPanel
+        v-if="(initialLoadPending || loadingProfile) && !profile.apiKeys.length"
+        message="Loading API keys…"
+      />
+      <DataTable v-else>
         <thead>
           <tr>
             <th>Name</th>
@@ -274,6 +282,8 @@ import { useAuthStore } from "../adapters/pinia/auth";
 import { useProfileSecurityStore } from "../adapters/pinia/profileSecurity";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import { useOperationLoading } from "../composables/useOperationLoading";
 
 type Tab = "account" | "sessions" | "keys";
 const tabs: { id: Tab; label: string }[] = [
@@ -285,6 +295,8 @@ const activeTab = ref<Tab>("account");
 const app = useAppStore();
 const auth = useAuthStore();
 const profile = useProfileSecurityStore();
+const initialLoadPending = ref(!profile.sessions.length && !profile.apiKeys.length);
+const { isLoading: loadingProfile } = useOperationLoading("Loading profile security");
 const username = computed(() =>
   typeof auth.user?.username === "string" ? auth.user.username : "User",
 );
@@ -307,7 +319,13 @@ watch(
   },
   { immediate: true },
 );
-onMounted(() => void profile.refresh());
+onMounted(async () => {
+  try {
+    await profile.refresh();
+  } finally {
+    initialLoadPending.value = false;
+  }
+});
 
 async function saveProfile() {
   await profile.updateEmail(email.value || null);

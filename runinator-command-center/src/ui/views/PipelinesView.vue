@@ -43,8 +43,13 @@
 
           <p v-if="pipeline.error" class="error m-0 px-3 py-1.5 text-sm">{{ pipeline.error }}</p>
 
+          <LoadingPanel
+            v-if="(initialLoadPending || pipeline.loading) && !pipeline.pipelines.length"
+            compact
+            message="Loading pipelines…"
+          />
           <EmptyState
-            v-if="!pipeline.pipelines.length"
+            v-else-if="!pipeline.pipelines.length"
             compact
             icon="branch"
             title="No pipelines yet"
@@ -454,6 +459,7 @@ import {
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
 import SplitPane from "../components/shared/SplitPane.vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import Modal from "../components/shared/Modal.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import HelpBubble from "../components/shared/HelpBubble.vue";
@@ -467,6 +473,7 @@ import PipelineRexRapEditor from "../components/pipeline/PipelineRexRapEditor.vu
 import JsonEditor from "../components/shared/JsonEditor.vue";
 
 const pipeline = usePipelineStore();
+const initialLoadPending = ref(!pipeline.pipelines.length);
 const pipelineRuns = usePipelineRunsStore();
 const workflows = useWorkflowsStore();
 const app = useAppStore();
@@ -836,7 +843,11 @@ function openWorkflow(workflowId: string) {
   }
 }
 
-onMounted(() => {
-  void pipeline.refresh();
+onMounted(async () => {
+  try {
+    await pipeline.refresh();
+  } finally {
+    initialLoadPending.value = false;
+  }
 });
 </script>

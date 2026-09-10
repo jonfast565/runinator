@@ -78,6 +78,10 @@
             title="Console unavailable"
             description="Using the console requires the console:use action. A line can start a workflow run, so it is a privilege rather than a view."
           />
+          <LoadingPanel
+            v-else-if="(initialLoadPending || loadingConsole) && !notebook.activeSession"
+            message="Loading console…"
+          />
           <div v-else class="terminal-surface flex min-h-0 flex-1 flex-col" @click="focusPrompt">
             <TerminalStatusBar
               :session="notebook.activeSession?.name ?? 'no session'"
@@ -132,6 +136,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import ConsoleXterm from "../components/console/ConsoleXterm.vue";
 import TerminalStatusBar from "../components/console/TerminalStatusBar.vue";
@@ -139,14 +144,20 @@ import { useConsoleStore } from "../adapters/pinia/console";
 import { useConsoleTerminalStore } from "../adapters/pinia/console-terminal";
 import { useOrgsStore } from "../adapters/pinia/orgs";
 import { useCan } from "../composables/useCan";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import type { JsonValue } from "../../core/domain/json";
 
 // not named `console`: vue's template compiler treats that identifier as the global one, so
 // `console.sessions` in a template would silently read `window.console`.
 const notebook = useConsoleStore();
+const initialLoadPending = ref(!notebook.activeSession);
 const terminal = useConsoleTerminalStore();
 const orgs = useOrgsStore();
 const { can } = useCan();
+const { isLoading: loadingConsole } = useOperationLoading([
+  "Refreshing console sessions",
+  "Opening console session",
+]);
 // the backend enforces this; the empty state exists so the reason is visible rather than the page
 // simply failing to load.
 const canUse = computed(() => can("console:use"));
@@ -233,6 +244,12 @@ async function focusPrompt(event?: MouseEvent) {
   await prompt.value?.focus();
 }
 
-onMounted(refresh);
+onMounted(async () => {
+  try {
+    await refresh();
+  } finally {
+    initialLoadPending.value = false;
+  }
+});
 watch(() => orgs.activeOrgId, refresh);
 </script>
