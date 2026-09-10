@@ -1268,8 +1268,10 @@ function workspacePhaseLabel(phase: string): string {
     "workspace.restore.materialize": "workspace · materialize files",
     "workspace.snapshot.capture": "workspace · scan and capture changes",
     "workspace.snapshot.pack_upload": "workspace · pack and upload changes",
+    "workspace.snapshot.cleanup": "workspace · clean staging spool",
     "workspace.snapshot.seal": "workspace · seal snapshot",
     "workspace.snapshot.rebind": "workspace · rebind cached snapshot",
+    "workspace.snapshot.reuse": "workspace · reuse read-only snapshot",
   };
   return labels[phase] ?? phase.replaceAll(".", " · ");
 }

@@ -211,6 +211,11 @@ impl ActiveWorkspace {
         output: Option<&Value>,
     ) -> Result<Option<WorkspaceCommit>, SendableError> {
         if self.execution.checkout.access == WorkspaceAccess::Read {
+            let phase = self.phases.start("workspace.snapshot.reuse");
+            phase.succeeded(runinator_models::json!({
+                "version": self.execution.checkout.base_version,
+                "reason": "read-only checkout",
+            }));
             return Ok(None);
         }
         let mut results = self.results.clone();
@@ -244,8 +249,13 @@ impl ActiveWorkspace {
         let revision_id = tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
             use runinator_workspace::storage::{packs, staging::Staging};
             let scratch = tempfile::tempdir()?;
+            let staging = if objects.has_complete_local_base() {
+                Staging::new_deduplicating(objects.as_ref(), scratch.path())?
+            } else {
+                Staging::new(objects.as_ref(), scratch.path())?
+            };
             let stage = super::workspace_objects::CheckedStore {
-                inner: Staging::new(objects.as_ref(), scratch.path())?,
+                inner: staging,
                 deadline: objects.clone(),
             };
             let parent = parent.map(|value| value.parse()).transpose()?;
@@ -281,6 +291,12 @@ impl ActiveWorkspace {
             pack_phase.succeeded(runinator_models::json!({
                 "packs": packs_uploaded,
                 "bytes": bytes_uploaded,
+            }));
+            let cleanup_phase = phases.start("workspace.snapshot.cleanup");
+            drop(edit);
+            drop(scratch);
+            cleanup_phase.succeeded(runinator_models::json!({
+                "staging": "single_spool",
             }));
             Ok(revision.to_string())
         })

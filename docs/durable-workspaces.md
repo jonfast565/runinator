@@ -184,9 +184,17 @@ must not expand logical objects into individual temporary files. A logical objec
 cross the HTTP boundary; the object endpoint is a compatibility fallback, not the normal restore
 path.
 
+Snapshot staging is also one append-only spool, not one temporary file per logical object. When a
+complete local base archive is present, content-addressed deduplication consults its in-memory index
+and stages only new objects. Pack omission checks use index or record-header metadata and must not
+load or decompress object content merely to answer whether an object already exists. Read-only
+actions should override a writing workflow default with `@workspace({ ..., access: "read" })` so
+they reuse the restored snapshot and never scan, pack, upload, or seal unchanged content.
+
 Workspace-affined effects publish bounded lifecycle records for archive download and indexing,
-materialization, change capture, pack upload, and sealing. The run timeline projects those records
-as timed workspace phases. Lifecycle reporting is per phase, never per file or logical object.
+materialization, change capture, pack upload, staging cleanup, read-only reuse, rebinding, and
+sealing. The run timeline projects those records as timed workspace phases. Lifecycle reporting is
+per phase, never per file or logical object.
 
 Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
 deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops

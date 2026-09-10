@@ -44,6 +44,10 @@ pub struct WorkerObjects {
 }
 
 impl WorkerObjects {
+    pub(super) fn has_complete_local_base(&self) -> bool {
+        self.local.is_some()
+    }
+
     pub(super) fn cached(&self) -> CachedObjects<'_> {
         CachedObjects {
             path: self.cache.path(),
@@ -99,11 +103,28 @@ pub(super) struct CachedObjects<'a> {
 
 impl ReadStore for CachedObjects<'_> {
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
-        let object = self.get(id)?;
-        Ok(ObjectInfo {
-            kind: object.kind,
-            raw_len: object.bytes.len(),
-        })
+        if let Some(local) = self.local {
+            match local.info(id) {
+                Ok(info) => return Ok(info),
+                Err(storage::Error::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        match fs::File::open(self.path.join(id.to_string())) {
+            Ok(file) => {
+                let header = storage::record::header(&file, 0)?;
+                if header.id != id || header.record_len()? != file.metadata()?.len() {
+                    return Err(storage::Error::Corrupt(
+                        "cached record metadata mismatch".into(),
+                    ));
+                }
+                Ok(header.info())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Err(storage::Error::NotFound(id.to_string()))
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     fn get(&self, id: Id) -> storage::Result<Object> {

@@ -31,6 +31,7 @@ workflow "Clone GitHub Repository" v1 {
         @id("capture_revision")
         @timeout(30s)
         @runner("kubernetes")
+        @workspace({ key: params.workspace_name, access: "read", follow_run: true })
         git.capture_revision()
     }
 }
