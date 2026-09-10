@@ -208,3 +208,9 @@ locations, receipts, effect-atomic publication, fenced GC, transfer jobs, and re
 materialize isolated directories and submit validated roots; command-center/API clients browse
 immutable versions with bounded pages and ranges. See `docs/durable-workspaces.md` for limits,
 retention, transfer commands and the no-compatibility cutover.
+
+`WorkspaceService` keeps identity, authorization-facing operations, and durable job scheduling
+separate from byte representation. It routes restore, staging and sealing, version reads,
+transfers, and storage retention through the internal `WorkspaceStorageProvider` boundary. The
+object-graph provider is the sole implementation until another representation is deliberately
+registered; changing providers must not fork receipt or effect-atomic publication semantics.

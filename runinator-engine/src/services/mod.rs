@@ -80,6 +80,7 @@ mod workspace_retention;
 #[cfg(test)]
 mod workspace_seal_benchmark;
 mod workspace_seal_objects;
+mod workspace_storage;
 mod workspace_stream;
 mod workspace_validation;
 pub use durable_workspaces::{WorkspaceContent, WorkspaceService, run_workspace_storage_cleanup};

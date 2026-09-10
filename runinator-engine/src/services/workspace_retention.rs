@@ -1,5 +1,5 @@
 //! Generation-fenced pack collection over explicit retained revision roots.
-use super::durable_workspaces::WorkspaceService;
+use super::workspace_storage::ObjectGraphStorageProvider;
 use runinator_models::{
     errors::{SendableError, WORKSPACE_CONFLICT},
     workspaces::*,
@@ -46,7 +46,7 @@ impl Drop for Renewal {
     }
 }
 
-impl<T: DurableWorkspaceStore> WorkspaceService<T> {
+impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
     pub(super) async fn cleanup_native_orphans(
         &self,
         cursor: Option<String>,
@@ -85,7 +85,7 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         }
         Ok(page.next_continuation_token)
     }
-    pub async fn collect_workspace(&self, id: uuid::Uuid) -> Result<(), SendableError> {
+    pub(super) async fn collect_workspace(&self, id: uuid::Uuid) -> Result<(), SendableError> {
         self.collect_retired_packs(id).await?;
         let Some(lease) = self.store.claim_workspace_gc(id).await? else {
             return Ok(());
@@ -207,13 +207,6 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             let uri = crate::artifact_storage::workspace_pack_uri(id, &pack)?;
             crate::artifact_storage::delete_artifact_checked(&self.blobs, &uri).await?;
             self.store.finish_workspace_pack_cleanup(id, pack).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn collect_workspaces(&self) -> Result<(), SendableError> {
-        for id in self.store.workspace_gc_candidates().await? {
-            self.collect_workspace(id).await?;
         }
         Ok(())
     }

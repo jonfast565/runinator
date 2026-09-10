@@ -13,22 +13,46 @@ pub struct WorkspaceService<T> {
     pub(super) store: std::sync::Arc<T>,
     pub(super) limits: WorkspaceLimits,
     pub(super) blobs: std::sync::Arc<dyn runinator_blob_core::BlobStore>,
+    pub(super) storage: std::sync::Arc<dyn super::workspace_storage::WorkspaceStorageProvider<T>>,
 }
 
 impl<T: DurableWorkspaceStore> WorkspaceService<T> {
     pub fn new(
         store: std::sync::Arc<T>,
         blobs: std::sync::Arc<dyn runinator_blob_core::BlobStore>,
-    ) -> Self {
-        Self {
-            store,
-            blobs,
-            limits: WorkspaceLimits::default(),
-        }
+    ) -> Self
+    where
+        T: runinator_store::roles::WorkflowVmStore,
+    {
+        let limits = WorkspaceLimits::default();
+        let context = super::workspace_storage::WorkspaceStorageContext {
+            store: store.clone(),
+            blobs: blobs.clone(),
+            limits: std::sync::Arc::new(std::sync::RwLock::new(limits)),
+        };
+        let storage = std::sync::Arc::new(
+            super::workspace_storage::ObjectGraphStorageProvider::new(context),
+        );
+        Self::with_storage_provider(store, blobs, limits, storage)
     }
     pub fn with_limits(mut self, limits: WorkspaceLimits) -> Self {
         self.limits = limits;
+        self.storage.configure_limits(limits);
         self
+    }
+
+    pub(crate) fn with_storage_provider(
+        store: std::sync::Arc<T>,
+        blobs: std::sync::Arc<dyn runinator_blob_core::BlobStore>,
+        limits: WorkspaceLimits,
+        storage: std::sync::Arc<dyn super::workspace_storage::WorkspaceStorageProvider<T>>,
+    ) -> Self {
+        Self {
+            store,
+            limits,
+            blobs,
+            storage,
+        }
     }
     pub async fn list(
         &self,
@@ -88,13 +112,36 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
     }
     pub async fn cleanup(&self) -> Result<(), SendableError> {
         self.store.prune_workspace_leases().await?;
-        for snapshot in self.store.pending_workspace_cleanup().await? {
-            // objects remain addressable until generation-fenced collection has marked retained roots.
-            self.store
-                .finish_workspace_cleanup(snapshot.workspace_id, snapshot.version)
-                .await?;
-        }
-        Ok(())
+        self.cleanup_deleted_snapshots().await
+    }
+
+    pub(super) async fn cleanup_deleted_snapshots(&self) -> Result<(), SendableError> {
+        self.storage.cleanup_deleted_snapshots().await
+    }
+
+    pub(super) async fn collect_workspaces(&self) -> Result<(), SendableError> {
+        self.storage.collect_workspaces().await
+    }
+
+    pub(super) async fn cleanup_effect_orphans(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<Option<String>, SendableError> {
+        self.storage.cleanup_effect_orphans(cursor).await
+    }
+
+    pub(super) async fn cleanup_native_orphans(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<Option<String>, SendableError> {
+        self.storage.cleanup_native_orphans(cursor).await
+    }
+
+    pub(super) async fn cleanup_transfer_orphans(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<Option<String>, SendableError> {
+        self.storage.cleanup_transfer_orphans(cursor).await
     }
 }
 
@@ -151,13 +198,13 @@ pub async fn run_workspace_storage_cleanup<
     let mut transfer_cursor = None;
     loop {
         match service
-            .cleanup_transfer_archives(transfer_cursor.take())
+            .cleanup_transfer_orphans(transfer_cursor.take())
             .await
         {
             Ok(next) => transfer_cursor = next,
             Err(error) => tracing::warn!(%error, "workspace transfer cleanup will retry"),
         }
-        match service.cleanup_orphans(cursor.take()).await {
+        match service.cleanup_effect_orphans(cursor.take()).await {
             Ok(next) => cursor = next,
             Err(error) => tracing::warn!(%error, "workspace orphan cleanup will retry"),
         }
@@ -178,8 +225,10 @@ pub async fn run_workspace_storage_cleanup<
     }
 }
 
-impl<T: DurableWorkspaceStore + runinator_store::roles::WorkflowVmStore> WorkspaceService<T> {
-    async fn cleanup_orphans(
+impl<T: DurableWorkspaceStore + runinator_store::roles::WorkflowVmStore>
+    super::workspace_storage::ObjectGraphStorageProvider<T>
+{
+    pub(super) async fn cleanup_effect_orphans(
         &self,
         cursor: Option<String>,
     ) -> Result<Option<String>, SendableError> {

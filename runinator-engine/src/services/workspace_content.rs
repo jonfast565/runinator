@@ -1,5 +1,8 @@
 //! Native revision data-plane operations.
-use super::durable_workspaces::{WorkspaceContent, WorkspaceService};
+use super::{
+    durable_workspaces::{WorkspaceContent, WorkspaceService},
+    workspace_storage::ObjectGraphStorageProvider,
+};
 use chrono::Utc;
 use runinator_models::{
     errors::{SendableError, WORKSPACE_CONFLICT, WORKSPACE_INVALID},
@@ -50,7 +53,7 @@ fn encode_cursor(
         .transpose()
 }
 
-impl<T: DurableWorkspaceStore> WorkspaceService<T> {
+impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
     pub(super) fn objects(
         &self,
         workspace: uuid::Uuid,
@@ -517,6 +520,9 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             Ok(())
         }))
     }
+}
+
+impl<T: DurableWorkspaceStore> WorkspaceService<T> {
     pub async fn download_ticket(
         &self,
         workspace_id: uuid::Uuid,

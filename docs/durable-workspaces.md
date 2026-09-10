@@ -150,6 +150,12 @@ Namespace and path-projection roots change together. New objects live in bounded
 `runinator-workspaces` blob bucket; SQL maps workspace-scoped logical IDs to validated pack ranges.
 No replica-local repository ref or index is authoritative.
 
+The engine reaches this representation through its internal `WorkspaceStorageProvider` lifecycle
+boundary. `ObjectGraphStorageProvider` preserves the current pack, receipt, transfer, read-lease,
+and generation-fenced collection behavior; the service retains identity and durable job
+orchestration. This seam permits controlled storage comparisons without changing HTTP or persisted
+workspace contracts.
+
 Uploading objects does not publish a version. The server validates the selected closure, namespace,
 results, links, parent and frozen limits, then issues a checkout/fence/effect/attempt-bound receipt.
 Successful effect settlement consumes that exact receipt and publishes the head atomically. A

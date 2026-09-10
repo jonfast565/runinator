@@ -1,5 +1,6 @@
 //! Restartable transfers with shared archives, fenced publication, and cancellation.
 use super::durable_workspaces::{WorkspaceContent, WorkspaceService};
+use super::workspace_storage::ObjectGraphStorageProvider;
 use runinator_models::{
     errors::{SendableError, WORKSPACE_CONFLICT, WORKSPACE_INVALID, WORKSPACE_MISSING},
     workspaces::*,
@@ -11,18 +12,18 @@ use std::sync::{
 };
 use uuid::Uuid;
 
-struct Progress {
-    alive: Arc<AtomicBool>,
-    bytes: Arc<AtomicU64>,
+pub(crate) struct WorkspaceTransferProgress {
+    pub(super) alive: Arc<AtomicBool>,
+    pub(super) bytes: Arc<AtomicU64>,
     task: tokio::task::JoinHandle<()>,
 }
-impl Drop for Progress {
+impl Drop for WorkspaceTransferProgress {
     fn drop(&mut self) {
         self.task.abort();
         self.alive.store(false, Ordering::Release);
     }
 }
-impl Progress {
+impl WorkspaceTransferProgress {
     fn start<T: DurableWorkspaceStore>(store: Arc<T>, job: WorkspaceTransfer) -> Self {
         let alive = Arc::new(AtomicBool::new(true));
         let bytes = Arc::new(AtomicU64::new(0));
@@ -43,6 +44,15 @@ impl Progress {
             }
         });
         Self { alive, bytes, task }
+    }
+
+    #[cfg(test)]
+    pub(super) fn testing() -> Self {
+        Self {
+            alive: Arc::new(AtomicBool::new(true)),
+            bytes: Arc::new(AtomicU64::new(0)),
+            task: tokio::spawn(std::future::pending()),
+        }
     }
 }
 struct GuardedStore<S> {
@@ -159,7 +169,7 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             .claim_workspace_transfer(id, true)
             .await?
             .ok_or_else(|| WORKSPACE_CONFLICT.error("transfer is not awaiting upload"))?;
-        let progress = Progress::start(self.store.clone(), job.clone());
+        let progress = WorkspaceTransferProgress::start(self.store.clone(), job.clone());
         let reader = Reader {
             inner: reader,
             alive: progress.alive.clone(),
@@ -213,49 +223,13 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         )
         .await
     }
-    pub(super) async fn cleanup_transfer_archives(
-        &self,
-        cursor: Option<String>,
-    ) -> Result<Option<String>, SendableError> {
-        let page =
-            crate::artifact_storage::workspace_transfer_upload_page(&self.blobs, cursor).await?;
-        for object in page.objects {
-            if object.last_modified > chrono::Utc::now() - chrono::Duration::hours(24) {
-                continue;
-            }
-            let Some(path) = object.key.strip_prefix("transfers/") else {
-                continue;
-            };
-            let Some((id, _)) = path.split_once('/') else {
-                continue;
-            };
-            let Ok(id) = id.parse::<Uuid>() else {
-                continue;
-            };
-            let key = runinator_blob_core::ObjectKey::parse(&object.key)?;
-            let uri = runinator_blob_core::blob_uri(runinator_blob_core::WORKSPACE_BUCKET, &key);
-            if let Some(job) = self.store.fetch_workspace_transfer(id).await?
-                && job.expires_at > chrono::Utc::now()
-                && (job.archive_uri.as_ref() == Some(&uri)
-                    || ["receiving", "running"].contains(&job.state.as_str()))
-            {
-                continue;
-            }
-            crate::artifact_storage::delete_artifact_checked(&self.blobs, &uri).await?;
-        }
-        Ok(page.next_continuation_token)
-    }
     pub async fn run_transfers(&self) -> Result<(), SendableError> {
         for id in self.store.workspace_transfer_candidates().await? {
             let Some(job) = self.store.claim_workspace_transfer(id, false).await? else {
                 continue;
             };
-            let progress = Progress::start(self.store.clone(), job.clone());
-            let result = if job.importing {
-                self.import_transfer(&job, &progress).await
-            } else {
-                self.export_transfer(&job, &progress).await
-            };
+            let progress = WorkspaceTransferProgress::start(self.store.clone(), job.clone());
+            let result = self.process_storage_transfer(&job, &progress).await;
             if let Err(error) = result {
                 tracing::warn!(%error, transfer_id = %id, "workspace transfer failed");
                 let _ = self
@@ -272,10 +246,21 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         }
         Ok(())
     }
-    async fn export_transfer(
+
+    pub(super) async fn process_storage_transfer(
         &self,
         job: &WorkspaceTransfer,
-        progress: &Progress,
+        progress: &WorkspaceTransferProgress,
+    ) -> Result<(), SendableError> {
+        self.storage.process_transfer(job, progress).await
+    }
+}
+
+impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
+    pub(super) async fn export_transfer(
+        &self,
+        job: &WorkspaceTransfer,
+        progress: &WorkspaceTransferProgress,
     ) -> Result<(), SendableError> {
         let snapshot = self.snapshot(job.workspace_id, job.version).await?;
         let objects = GuardedStore {
@@ -339,10 +324,10 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             .finish_workspace_transfer(job.clone(), "ready".into(), Some(uri), None, None)
             .await
     }
-    async fn import_transfer(
+    pub(super) async fn import_transfer(
         &self,
         job: &WorkspaceTransfer,
-        progress: &Progress,
+        progress: &WorkspaceTransferProgress,
     ) -> Result<(), SendableError> {
         use tokio::io::AsyncWriteExt;
         let archive = crate::artifact_storage::open_artifact(
