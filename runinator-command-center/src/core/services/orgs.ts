@@ -1,3 +1,4 @@
+import { browserPreferences, type PreferenceStorage } from "./preference-storage";
 import { defaultApi, type OrgsApi } from "../api/ports/orgs";
 import type { OrgMembershipView, OrgRole } from "../api/commandCenterApi";
 import { createStore } from "./event-bus";
@@ -18,27 +19,32 @@ export interface RefreshOrgsOptions {
   selectDefault?: boolean;
 }
 
-function safeGet(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function safeSet(key: string, value: string | null) {
-  try {
-    if (value) {
-      localStorage.setItem(key, value);
-    } else {
-      localStorage.removeItem(key);
+export function createOrgsService(
+  app: AppService,
+  auth: AuthService,
+  api: OrgsApi = defaultApi,
+  storage: PreferenceStorage = browserPreferences,
+) {
+  function safeGet(key: string): string | null {
+    try {
+      return storage.getItem(key);
+    } catch {
+      return null;
     }
-  } catch {
-    // storage unavailable; active org is then memory-only.
   }
-}
 
-export function createOrgsService(app: AppService, auth: AuthService, api: OrgsApi = defaultApi) {
+  function safeSet(key: string, value: string | null) {
+    try {
+      if (value) {
+        storage.setItem(key, value);
+      } else {
+        storage.removeItem(key);
+      }
+    } catch {
+      // storage unavailable; active org is then memory-only.
+    }
+  }
+
   const store = createStore<OrgsState>({
     memberships: [],
     activeOrgId: safeGet(ACTIVE_ORG_KEY),

@@ -1,7 +1,6 @@
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use runinator_models::json;
 use runinator_models::value::Value;
@@ -11,7 +10,7 @@ use runinator_models::{
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
-use runinator_provider_support::process::ProcessOutputPump;
+use runinator_provider_support::process_runner::{ProcessFailure, ProcessRequest, ProcessRunner};
 use runinator_provider_support::terminal::{self, CommandBuilder, TerminalError};
 
 use crate::errors::{
@@ -24,6 +23,7 @@ pub(crate) fn run_claude_code(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
     token: CancellationToken,
+    runner: &dyn ProcessRunner,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: ClaudeCodeParams = parse_params(request)?;
     if token.is_cancelled() {
@@ -56,14 +56,28 @@ pub(crate) fn run_claude_code(
         command.envs(&profile.environment);
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|err| CLAUDE_SPAWN.error(format!("failed to spawn {}: {err}", params.binary)))?;
-
-    let output = ProcessOutputPump::start(&mut child, sink)?;
-    let status = wait_for_child(&mut child, request.timeout_secs, token);
-    let output = output.finish();
-    let status = status?;
+    let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
+    let result = runner
+        .run(ProcessRequest {
+            command: &mut command,
+            input: None,
+            timeout,
+            cancellation: &token,
+            sink,
+        })
+        .map_err(|error| match error {
+            ProcessFailure::Canceled => CLAUDE_CANCELED.bare(),
+            ProcessFailure::TimedOut => CLAUDE_TIMEOUT.error(format!(
+                "Claude Code timed out after {} seconds",
+                timeout.as_secs()
+            )),
+            ProcessFailure::Spawn(error) => {
+                CLAUDE_SPAWN.error(format!("failed to spawn {}: {error}", params.binary))
+            }
+            ProcessFailure::Io(error) => Box::new(error) as SendableError,
+        })?;
+    let status = result.status;
+    let output = result.output;
 
     if !status.success() {
         return Err(
@@ -137,40 +151,6 @@ fn run_claude_interactive(
     })
 }
 
-fn wait_for_child(
-    child: &mut Child,
-    timeout_secs: i64,
-    token: CancellationToken,
-) -> Result<ExitStatus, SendableError> {
-    let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
-    let started = Instant::now();
-    loop {
-        if token.is_cancelled() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CLAUDE_CANCELED.bare());
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CLAUDE_TIMEOUT.error(format!(
-                "Claude Code timed out after {} seconds",
-                timeout.as_secs()
-            )));
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Box::new(error));
-            }
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
 fn build_claude_argv(params: &ClaudeCodeParams) -> Vec<String> {
     let mut argv = vec![
         "-p".into(),
@@ -220,3 +200,7 @@ fn parse_claude_output(format: &str, stdout: &str) -> Result<Value, SendableErro
         _ => Ok(json!({ "text": stdout })),
     }
 }
+
+#[cfg(test)]
+#[path = "claude_runner_tests.rs"]
+mod runner_tests;

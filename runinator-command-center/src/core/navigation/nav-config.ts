@@ -1,3 +1,4 @@
+import { browserPreferences, type PreferenceStorage } from "../services/preference-storage";
 import type { Action } from "../domain/models";
 import type { AppTab, NavItem, NavSection } from "./app";
 
@@ -30,7 +31,8 @@ export const navSections: NavSection[] = [
         tab: "Workspaces",
         label: "Workspaces",
         icon: "folder",
-        description: "Inspect saved workspace versions, files, and results shared across workflows.",
+        description:
+          "Inspect saved workspace versions, files, and results shared across workflows.",
         searchPlaceholder: "Search workspace keys",
       },
       {
@@ -95,7 +97,8 @@ export const navSections: NavSection[] = [
         tab: "ExecutionProfiles",
         label: "Execution Profiles",
         icon: "key",
-        description: "Configure and monitor file-backed identities materialized for provider actions.",
+        description:
+          "Configure and monitor file-backed identities materialized for provider actions.",
         requires: "credentials:manage",
         searchPlaceholder: "Search execution profiles",
       },
@@ -219,7 +222,8 @@ export const navSections: NavSection[] = [
         tab: "IngressControl",
         label: "Ingress Control",
         icon: "flag",
-        description: "Observe, hold, approve, or drop scoped ingress before it reaches orchestration.",
+        description:
+          "Observe, hold, approve, or drop scoped ingress before it reaches orchestration.",
       },
       {
         tab: "AuditLog",
@@ -304,9 +308,9 @@ export function visibleNavSections(options: {
     .filter((section) => section.items.length > 0);
 }
 
-export function readStoredDefaultTab(): AppTab {
+export function readStoredDefaultTab(storage: PreferenceStorage = browserPreferences): AppTab {
   try {
-    const stored = localStorage.getItem("command-center.defaultTab");
+    const stored = storage.getItem("command-center.defaultTab");
 
     if (stored && (tabs as string[]).includes(stored)) {
       return stored as AppTab;
@@ -318,9 +322,9 @@ export function readStoredDefaultTab(): AppTab {
   return "Workflows";
 }
 
-export function readSidebarCollapsed(): boolean {
+export function readSidebarCollapsed(storage: PreferenceStorage = browserPreferences): boolean {
   try {
-    return localStorage.getItem("command-center.sidebar.collapsed") === "true";
+    return storage.getItem("command-center.sidebar.collapsed") === "true";
   } catch {
     return false;
   }

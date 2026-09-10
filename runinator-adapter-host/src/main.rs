@@ -1,3 +1,4 @@
+mod builtins;
 use std::{
     collections::BTreeMap,
     ffi::{CStr, CString},
@@ -616,8 +617,9 @@ unsafe fn invoke_file_operation(
 }
 
 fn builtin_catalog() -> BTreeMap<String, AdapterKindCatalogEntry> {
-    [generic_metadata(), jira_metadata(), github_metadata()]
-        .into_iter()
+    builtins::registry()
+        .values()
+        .map(|adapter| adapter.metadata())
         .map(|metadata| {
             (
                 metadata.kind.clone(),
@@ -873,27 +875,16 @@ fn github_metadata() -> AdapterKindMetadata {
 }
 
 fn builtin_handle(kind: &str, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
-    match kind {
-        "generic_webhook" => handle_generic(request, body_limit),
-        "github" => handle_github(request, body_limit),
-        "jira" => handle_jira(request, body_limit),
-        _ => AdapterResponse::rejected("unknown built-in adapter"),
-    }
+    builtins::registry().get(kind).map_or_else(
+        || AdapterResponse::rejected("unknown built-in adapter"),
+        |adapter| adapter.handle(request, body_limit),
+    )
 }
 
-/// Built-in polling deliberately produces the same normalized identities as webhook ingestion.
-/// Checkpoints are high-water timestamps, not opaque page tokens, so a failed claim can replay an
-/// overlap without losing updates; delivery IDs include the upstream update marker for dedupe.
 async fn builtin_poll(kind: &str, request: AdapterPollRequest) -> AdapterPollResponse {
-    match kind {
-        "github" => poll_github(request).await,
-        "jira" => poll_jira(request).await,
-        _ => AdapterPollResponse {
-            events: Vec::new(),
-            checkpoint: request.checkpoint,
-            retry_after_seconds: None,
-            error: Some("adapter kind does not support polling".into()),
-        },
+    match builtins::registry().get(kind) {
+        Some(adapter) => adapter.poll(request).await,
+        None => builtins::unsupported_poll(request),
     }
 }
 

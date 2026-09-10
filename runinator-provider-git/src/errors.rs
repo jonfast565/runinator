@@ -40,7 +40,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     IO_ERROR,
 ];
 
-impl ProviderErrors for GitProvider {
+impl<R> ProviderErrors for GitProvider<R> {
     fn error_dictionary() -> &'static [ErrorDescriptor] {
         DICTIONARY
     }

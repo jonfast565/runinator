@@ -1,3 +1,4 @@
+import { browserPreferences, type PreferenceStorage } from "../preference-storage";
 import { defaultApi, type WorkflowsRunsApi } from "../../api/ports/workflows-runs";
 
 import type { ManagedRunOverrideOptions } from "../../api/commandCenterApi";
@@ -22,7 +23,11 @@ import { nodeRef, nodeRefId } from "../../workflow/index";
 
 import { buildInputSkeleton } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
-import { createWorkflowRunWatchService } from "./run-watches";
+import {
+  WatchExpressionStorage,
+  type WatchExpressionRepository,
+  createWorkflowRunWatchService,
+} from "./run-watches";
 
 const MAX_OPEN_RUN_TABS = 8;
 const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
@@ -34,33 +39,6 @@ const DEBUG_PRESET_PREFIX = "runinator.debug.";
 interface DebugPreset {
   breakpoints: string[];
   pauseOnFailure: boolean;
-}
-
-function loadDebugPreset(workflowId: string): DebugPreset {
-  if (typeof window === "undefined") {
-    return { breakpoints: [], pauseOnFailure: false };
-  }
-
-  try {
-    const value: unknown = JSON.parse(
-      window.localStorage.getItem(`${DEBUG_PRESET_PREFIX}${workflowId}`) ?? "{}",
-    );
-    const record = isJsonRecord(value) ? value : {};
-    return {
-      breakpoints: (Array.isArray(record.breakpoints) ? record.breakpoints : []).filter(
-        (entry): entry is string => typeof entry === "string",
-      ),
-      pauseOnFailure: record.pauseOnFailure === true,
-    };
-  } catch {
-    return { breakpoints: [], pauseOnFailure: false };
-  }
-}
-
-function saveDebugPreset(workflowId: string, preset: DebugPreset) {
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(`${DEBUG_PRESET_PREFIX}${workflowId}`, JSON.stringify(preset));
-  }
 }
 
 /** Pick typed file descriptors out of nested form data without mistaking ordinary JSON for files. */
@@ -101,9 +79,32 @@ function collectFileIds(value: unknown): string[] {
 export function createWorkflowRunService(
   host: WorkflowServiceHost,
   api: WorkflowsRunsApi = defaultApi,
+  preferences: PreferenceStorage = browserPreferences,
+  watches: WatchExpressionRepository = new WatchExpressionStorage(preferences),
 ) {
+  function loadDebugPreset(workflowId: string): DebugPreset {
+    try {
+      const value: unknown = JSON.parse(
+        preferences.getItem(`${DEBUG_PRESET_PREFIX}${workflowId}`) ?? "{}",
+      );
+      const record = isJsonRecord(value) ? value : {};
+      return {
+        breakpoints: (Array.isArray(record.breakpoints) ? record.breakpoints : []).filter(
+          (entry): entry is string => typeof entry === "string",
+        ),
+        pauseOnFailure: record.pauseOnFailure === true,
+      };
+    } catch {
+      return { breakpoints: [], pauseOnFailure: false };
+    }
+  }
+
+  function saveDebugPreset(workflowId: string, preset: DebugPreset) {
+    preferences.setItem(`${DEBUG_PRESET_PREFIX}${workflowId}`, JSON.stringify(preset));
+  }
+
   const { internal } = host;
-  const watchService = createWorkflowRunWatchService(host);
+  const watchService = createWorkflowRunWatchService(host, watches);
   const asRecord = asJsonRecord;
   const isRecord = isJsonRecord;
   const asArray = jsonRecordArray;

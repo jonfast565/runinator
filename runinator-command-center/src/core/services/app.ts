@@ -1,3 +1,4 @@
+import { browserPreferences, type PreferenceStorage } from "./preference-storage";
 import { defaultApi, type AppApi } from "../api/ports/app";
 
 import type { AppTab } from "../navigation/app";
@@ -73,10 +74,13 @@ export function isNetworkError(error: unknown): boolean {
   );
 }
 
-export function createAppService(api: AppApi = defaultApi) {
+export function createAppService(
+  api: AppApi = defaultApi,
+  preferences: PreferenceStorage = browserPreferences,
+) {
   const store = createStore<AppState>({
-    activeTab: readStoredDefaultTab(),
-    sidebarCollapsed: readSidebarCollapsed(),
+    activeTab: readStoredDefaultTab(preferences),
+    sidebarCollapsed: readSidebarCollapsed(preferences),
     mobileNavOpen: false,
     serviceUrl: null,
     backendReachable: false,
@@ -208,8 +212,8 @@ export function createAppService(api: AppApi = defaultApi) {
 
       toastTimers.clear();
       store.setState(() => ({
-        activeTab: readStoredDefaultTab(),
-        sidebarCollapsed: readSidebarCollapsed(),
+        activeTab: readStoredDefaultTab(preferences),
+        sidebarCollapsed: readSidebarCollapsed(preferences),
         mobileNavOpen: false,
         serviceUrl: null,
         backendReachable: false,
@@ -247,7 +251,7 @@ export function createAppService(api: AppApi = defaultApi) {
         const sidebarCollapsed = !state.sidebarCollapsed;
 
         try {
-          localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
+          preferences.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
         } catch {
           /* storage unavailable */
         }

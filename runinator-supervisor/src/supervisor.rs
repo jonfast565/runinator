@@ -1,9 +1,11 @@
+use crate::process_backend::{ManagedChild, NativeProcessBackend, ProcessBackend};
+use std::sync::Arc;
 use std::{
     collections::{HashSet, VecDeque},
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -52,7 +54,8 @@ struct ManagedProcess {
     config: ProcessConfig,
     command_path: PathBuf,
     cwd_path: PathBuf,
-    child: Option<Child>,
+    child: Option<Box<dyn ManagedChild>>,
+    backend: Arc<dyn ProcessBackend>,
     status: ProcStatus,
     started_at_utc: Option<DateTime<Utc>>,
     started_instant: Option<Instant>,
@@ -305,6 +308,7 @@ fn build_one_process(process: &ProcessConfig, paths: &Paths) -> ManagedProcess {
         command_path,
         cwd_path,
         child: None,
+        backend: Arc::new(NativeProcessBackend),
         status: ProcStatus::Stopped,
         started_at_utc: None,
         started_instant: None,
@@ -368,7 +372,7 @@ fn stop_one(process: &mut ManagedProcess) {
     process.next_restart_at = None;
     process.started_instant = None;
     if let Some(mut child) = process.child.take() {
-        let _ = send_terminate(child.id());
+        let _ = child.terminate();
         let deadline = Instant::now() + Duration::from_millis(500);
         loop {
             if let Ok(Some(status)) = child.try_wait() {
@@ -443,7 +447,7 @@ fn attempt_start(process: &mut ManagedProcess, restart_delay: Duration) -> Resul
         cmd.env(key, value);
     }
 
-    match cmd.spawn() {
+    match process.backend.spawn(&mut cmd) {
         Ok(child) => {
             process.started_at_utc = Some(started_at);
             process.started_instant = Some(Instant::now());
@@ -562,9 +566,9 @@ fn schedule_restart(process: &mut ManagedProcess, restart_delay: Duration) {
 
 fn stop_children(processes: &mut [ManagedProcess], timeout: Duration) -> Result<(), DynError> {
     for process in processes.iter_mut() {
-        if let Some(pid) = process.child.as_ref().map(Child::id) {
+        if let Some(child) = process.child.as_mut() {
             process.status = ProcStatus::Stopping;
-            send_terminate(pid)?;
+            child.terminate()?;
         }
     }
 
@@ -614,7 +618,7 @@ fn build_snapshot(
         .map(|process| ProcessSnapshot {
             name: process.config.name.clone(),
             status: process.status.as_str().to_string(),
-            pid: process.child.as_ref().map(Child::id),
+            pid: process.child.as_ref().map(|child| child.id()),
             restarts: process.restarts,
             uptime_seconds: process.started_instant.map(|t| t.elapsed().as_secs()),
             last_exit_code: process.last_exit_code,
@@ -887,3 +891,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "supervisor_process_tests.rs"]
+mod process_tests;

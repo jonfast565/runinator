@@ -66,7 +66,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     UNSUPPORTED_ACTION,
 ];
 
-impl ProviderErrors for GitHubCliProvider {
+impl<R> ProviderErrors for GitHubCliProvider<R> {
     fn error_dictionary() -> &'static [ErrorDescriptor] {
         DICTIONARY
     }

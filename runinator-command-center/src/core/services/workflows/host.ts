@@ -1,3 +1,5 @@
+import { type PreferenceStorage } from "../preference-storage";
+import { type WatchExpressionRepository } from "./run-watches";
 import type { WorkflowsApi } from "../../api/ports/workflows";
 import type {
   ControlFrame,
@@ -18,6 +20,8 @@ import type { WorkflowServicesInternal, WorkflowServicesState } from "./state";
 
 export interface WorkflowServiceDeps {
   api?: WorkflowsApi;
+  preferences?: PreferenceStorage;
+  watches?: WatchExpressionRepository;
   app: AppService;
   getProviders: () => ProviderMetadata[];
   getNodeKinds: () => WorkflowNodeKindMetadata[];

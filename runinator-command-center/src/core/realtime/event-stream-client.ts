@@ -4,8 +4,36 @@ import { ReconnectBackoff } from "./reconnect-backoff";
 
 const FALLBACK_INTERVAL = 30000;
 const CONNECT_TIMEOUT = 5000;
+const SOCKET_OPEN = 1;
 
 export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
+
+export type EventSocket = Pick<
+  WebSocket,
+  "onopen" | "onmessage" | "onclose" | "onerror" | "readyState" | "close"
+>;
+export interface WebSocketFactory {
+  create(url: string, protocols: string[]): EventSocket;
+}
+export interface EventStreamTimers {
+  setTimeout(callback: () => void, delay: number): number;
+  clearTimeout(handle: number): void;
+  setInterval(callback: () => void, delay: number): number;
+  clearInterval(handle: number): void;
+}
+const browserSockets: WebSocketFactory = {
+  create: (url, protocols) => new WebSocket(url, protocols),
+};
+const browserTimers: EventStreamTimers = {
+  setTimeout: (callback, delay) => window.setTimeout(callback, delay),
+  clearTimeout: (handle) => {
+    window.clearTimeout(handle);
+  },
+  setInterval: (callback, delay) => window.setInterval(callback, delay),
+  clearInterval: (handle) => {
+    window.clearInterval(handle);
+  },
+};
 
 export interface EventStreamClientOptions {
   getServiceUrl: () => string | null;
@@ -13,21 +41,35 @@ export interface EventStreamClientOptions {
   onStateChange: (state: EventStreamState) => void;
   onFallbackTick: () => void;
   router: EventStreamRouter;
+  sockets?: WebSocketFactory;
+  timers?: EventStreamTimers;
 }
 
 export class EventStreamClient {
-  private ws: WebSocket | null = null;
+  private ws: EventSocket | null = null;
   private fallbackTimer: number | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: number | null = null;
+  private connectTimer: number | null = null;
   private connectionId = 0;
   private readonly backoff = new ReconnectBackoff();
 
-  constructor(private readonly options: EventStreamClientOptions) {}
+  private readonly sockets: WebSocketFactory;
+  private readonly timers: EventStreamTimers;
+  constructor(private readonly options: EventStreamClientOptions) {
+    this.sockets = options.sockets ?? browserSockets;
+    this.timers = options.timers ?? browserTimers;
+  }
 
   connect() {
     this.clearReconnectTimer();
     this.clearConnectTimer();
+    const currentConnection = ++this.connectionId;
+
+    if (this.ws?.readyState === SOCKET_OPEN) {
+      this.ws.close();
+    }
+
+    this.ws = null;
     const serviceUrl = this.options.getServiceUrl();
 
     if (!serviceUrl) {
@@ -35,12 +77,11 @@ export class EventStreamClient {
       return;
     }
 
-    const currentConnection = ++this.connectionId;
     this.options.onStateChange("connecting");
     const url = buildWebSocketUrl(serviceUrl, "/ws/events");
-    const socket = new WebSocket(url, buildWebSocketProtocols());
+    const socket = this.sockets.create(url, buildWebSocketProtocols());
     this.ws = socket;
-    this.connectTimer = setTimeout(() => {
+    this.connectTimer = this.timers.setTimeout(() => {
       if (currentConnection !== this.connectionId) {
         return;
       }
@@ -90,7 +131,9 @@ export class EventStreamClient {
       this.startFallback();
 
       if (this.options.getServiceKnown()) {
-        this.reconnectTimer = setTimeout(() => { this.connect(); }, this.backoff.next());
+        this.reconnectTimer = this.timers.setTimeout(() => {
+          this.connect();
+        }, this.backoff.next());
       }
     };
 
@@ -99,9 +142,8 @@ export class EventStreamClient {
         return;
       }
 
-      this.clearConnectTimer();
-
-      if (socket.readyState === WebSocket.OPEN) {
+      if (socket.readyState === SOCKET_OPEN) {
+        this.clearConnectTimer();
         socket.close();
       }
     };
@@ -113,7 +155,7 @@ export class EventStreamClient {
     this.clearConnectTimer();
     this.backoff.reset();
 
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === SOCKET_OPEN) {
       this.ws.close();
     }
 
@@ -128,15 +170,14 @@ export class EventStreamClient {
     }
 
     this.options.onStateChange("fallback");
-    this.fallbackTimer = window.setInterval(
-      () => { this.options.onFallbackTick(); },
-      FALLBACK_INTERVAL,
-    );
+    this.fallbackTimer = this.timers.setInterval(() => {
+      this.options.onFallbackTick();
+    }, FALLBACK_INTERVAL);
   }
 
   private stopFallback() {
     if (this.fallbackTimer !== null) {
-      clearInterval(this.fallbackTimer);
+      this.timers.clearInterval(this.fallbackTimer);
       this.fallbackTimer = null;
     }
   }
@@ -146,7 +187,7 @@ export class EventStreamClient {
       return;
     }
 
-    clearTimeout(this.reconnectTimer);
+    this.timers.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
   }
 
@@ -155,7 +196,7 @@ export class EventStreamClient {
       return;
     }
 
-    clearTimeout(this.connectTimer);
+    this.timers.clearTimeout(this.connectTimer);
     this.connectTimer = null;
   }
 }

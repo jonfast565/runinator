@@ -4,11 +4,9 @@ pub mod errors;
 
 use std::{
     collections::BTreeMap,
-    io::Write,
     process::{Command, Stdio},
     sync::Arc,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use runinator_models::{
@@ -25,7 +23,10 @@ use runinator_plugin::{
     cancel::CancellationToken,
     provider::{Provider, ProviderEventSink},
 };
-use runinator_provider_support::{process::ProcessOutputPump, resolve_working_dir};
+use runinator_provider_support::{
+    process_runner::{NativeProcessRunner, ProcessFailure, ProcessRequest, ProcessRunner},
+    resolve_working_dir,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -35,7 +36,18 @@ const ALLOWED_COMMANDS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub struct GitHubCliProvider;
+pub struct GitHubCliProvider<R = NativeProcessRunner> {
+    runner: R,
+}
+#[allow(non_upper_case_globals)]
+pub const GitHubCliProvider: GitHubCliProvider = GitHubCliProvider {
+    runner: NativeProcessRunner,
+};
+impl<R: ProcessRunner> GitHubCliProvider<R> {
+    pub fn with_runner(runner: R) -> Self {
+        Self { runner }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct ApiParams {
@@ -70,7 +82,7 @@ fn default_method() -> String {
     "GET".into()
 }
 
-impl Provider for GitHubCliProvider {
+impl<R: ProcessRunner + Clone + 'static> Provider for GitHubCliProvider<R> {
     fn name(&self) -> String {
         "github_cli".into()
     }
@@ -205,38 +217,19 @@ impl Provider for GitHubCliProvider {
             command.env("HOME", home);
         }
         command.envs(&profile.environment);
-        let mut child = command
-            .spawn()
-            .map_err(|error| errors::COMMAND_START.error(error))?;
-        let output = ProcessOutputPump::start(&mut child, None)
-            .map_err(|error| errors::COMMAND_START.error(error))?;
-        if let Some(bytes) = stdin
-            && let Some(mut input) = child.stdin.take()
-        {
-            input.write_all(&bytes)?;
-        }
-        drop(child.stdin.take());
-        let started = Instant::now();
         let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
-        let status = loop {
-            if token.is_cancelled() {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(errors::COMMAND_CANCELED.bare());
-            }
-            if started.elapsed() >= timeout {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(errors::COMMAND_TIMEOUT
-                    .error(format!("timed out after {} seconds", timeout.as_secs())));
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => thread::sleep(Duration::from_millis(100)),
-                Err(error) => return Err(errors::COMMAND_FAILED.error(error)),
-            }
-        };
-        let output = output.finish();
+        let result = self
+            .runner
+            .run(ProcessRequest {
+                command: &mut command,
+                input: stdin,
+                timeout,
+                cancellation: &token,
+                sink: None,
+            })
+            .map_err(|error| process_failure(error, timeout))?;
+        let status = result.status;
+        let output = result.output;
         if output.stdout.len().saturating_add(output.stderr.len()) > MAX_OUTPUT_BYTES {
             return Err(
                 errors::OUTPUT_TOO_LARGE.error(format!("maximum is {MAX_OUTPUT_BYTES} bytes"))
@@ -302,28 +295,18 @@ pub fn resolve_auth_token(
         command.env("HOME", home);
     }
     command.envs(&profile.environment);
-    let mut child = command
-        .spawn()
-        .map_err(|error| errors::COMMAND_START.error(error))?;
-    let output = ProcessOutputPump::start(&mut child, None)
-        .map_err(|error| errors::COMMAND_START.error(error))?;
-    let started = Instant::now();
-    let status = loop {
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(errors::COMMAND_TIMEOUT.error(format!(
-                "gh auth token timed out after {} seconds",
-                timeout.as_secs()
-            )));
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(100)),
-            Err(error) => return Err(errors::COMMAND_FAILED.error(error)),
-        }
-    };
-    let output = output.finish();
+    let cancellation = CancellationToken::new();
+    let result = NativeProcessRunner
+        .run(ProcessRequest {
+            command: &mut command,
+            input: None,
+            timeout,
+            cancellation: &cancellation,
+            sink: None,
+        })
+        .map_err(|error| process_failure(error, timeout))?;
+    let status = result.status;
+    let output = result.output;
     if !status.success() {
         return Err(errors::COMMAND_FAILED.error(sanitize_stderr(&output.stderr)));
     }
@@ -334,6 +317,20 @@ pub fn resolve_auth_token(
     Ok(token.to_string())
 }
 
+fn process_failure(error: ProcessFailure, timeout: Duration) -> SendableError {
+    match error {
+        ProcessFailure::Spawn(error) => errors::COMMAND_START.error(error),
+        ProcessFailure::Io(error) => errors::COMMAND_FAILED.error(error),
+        ProcessFailure::Canceled => errors::COMMAND_CANCELED.bare(),
+        ProcessFailure::TimedOut => {
+            errors::COMMAND_TIMEOUT.error(format!("timed out after {} seconds", timeout.as_secs()))
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod runner_tests;

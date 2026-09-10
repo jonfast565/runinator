@@ -1,3 +1,5 @@
+import { browserPreferences } from "../preference-storage";
+import { WatchExpressionStorage } from "./run-watches";
 import { defaultApi } from "../../api/ports/workflows";
 import type {
   ControlFrame,
@@ -68,6 +70,8 @@ function defaultDownloadTextFile(fileName: string, contents: string, mimeType = 
 export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   const deps: Required<WorkflowServiceDeps> = {
     api: defaultApi,
+    preferences: browserPreferences,
+    watches: new WatchExpressionStorage(inputDeps.preferences ?? browserPreferences),
     confirm: defaultConfirm,
     downloadBlob: defaultDownloadBlob,
     downloadTextFile: defaultDownloadTextFile,
@@ -403,7 +407,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     ensureWorkflowNodes,
   };
 
-  const runs = createWorkflowRunService(host, deps.api);
+  const runs = createWorkflowRunService(host, deps.api, deps.preferences, deps.watches);
   const catalogPeer: { saveSelectedWorkflowBundle: () => Promise<void> } = {
     saveSelectedWorkflowBundle: () => Promise.resolve(),
   };

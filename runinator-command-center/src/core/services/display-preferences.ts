@@ -1,3 +1,4 @@
+import { browserPreferences, type PreferenceStorage } from "./preference-storage";
 import { createStore } from "./event-bus";
 
 export type AppTheme = "system" | "light" | "dark";
@@ -25,65 +26,65 @@ export interface DisplayPreferencesState {
   hiddenTimelineEventCategories: string[];
 }
 
-function readStored<T extends string>(key: string, allowed: T[], fallback: T): T {
-  try {
-    const stored = localStorage.getItem(key);
+export function createDisplayPreferencesService(storage: PreferenceStorage = browserPreferences) {
+  function readStored<T extends string>(key: string, allowed: T[], fallback: T): T {
+    try {
+      const stored = storage.getItem(key);
 
-    if (stored && (allowed as string[]).includes(stored)) {
-      return stored as T;
+      if (stored && (allowed as string[]).includes(stored)) {
+        return stored as T;
+      }
+    } catch {
+      // storage unavailable; use fallback.
     }
-  } catch {
-    // storage unavailable; use fallback.
+
+    return fallback;
   }
 
-  return fallback;
-}
-
-function writeStored(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // storage unavailable; preference is memory-only.
-  }
-}
-
-function readStoredBoolean(key: string, fallback: boolean): boolean {
-  try {
-    const stored = localStorage.getItem(key);
-
-    if (stored === "true" || stored === "false") {
-      return stored === "true";
+  function writeStored(key: string, value: string) {
+    try {
+      storage.setItem(key, value);
+    } catch {
+      // storage unavailable; preference is memory-only.
     }
-  } catch {
-    // storage unavailable; use fallback.
   }
 
-  return fallback;
-}
+  function readStoredBoolean(key: string, fallback: boolean): boolean {
+    try {
+      const stored = storage.getItem(key);
 
-function readHiddenTimelineEventCategories(): string[] {
-  try {
-    const stored = localStorage.getItem(HIDDEN_TIMELINE_EVENT_CATEGORIES_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : null;
-
-    if (Array.isArray(parsed)) {
-      return [
-        ...new Set(
-          parsed
-            .filter((value): value is string => typeof value === "string")
-            .map((value) => value.trim().toLowerCase())
-            .filter(Boolean),
-        ),
-      ];
+      if (stored === "true" || stored === "false") {
+        return stored === "true";
+      }
+    } catch {
+      // storage unavailable; use fallback.
     }
-  } catch {
-    // invalid or unavailable storage falls through to the legacy preference.
+
+    return fallback;
   }
 
-  return readStoredBoolean(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, true) ? [] : ["system"];
-}
+  function readHiddenTimelineEventCategories(): string[] {
+    try {
+      const stored = storage.getItem(HIDDEN_TIMELINE_EVENT_CATEGORIES_KEY);
+      const parsed: unknown = stored ? JSON.parse(stored) : null;
 
-export function createDisplayPreferencesService() {
+      if (Array.isArray(parsed)) {
+        return [
+          ...new Set(
+            parsed
+              .filter((value): value is string => typeof value === "string")
+              .map((value) => value.trim().toLowerCase())
+              .filter(Boolean),
+          ),
+        ];
+      }
+    } catch {
+      // invalid or unavailable storage falls through to the legacy preference.
+    }
+
+    return readStoredBoolean(SHOW_SYSTEM_TIMELINE_EVENTS_KEY, true) ? [] : ["system"];
+  }
+
   const store = createStore<DisplayPreferencesState>({
     theme: readStored(THEME_KEY, ALLOWED_THEMES, "system"),
     defaultTab: readStored(DEFAULT_TAB_KEY, ALLOWED_TABS as unknown as string[], "Workflows"),

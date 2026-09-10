@@ -65,7 +65,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CLAUDE_INTERACTIVE_NOT_PERMITTED,
 ];
 
-impl ProviderErrors for AiCommandProvider {
+impl<R> ProviderErrors for AiCommandProvider<R> {
     fn error_dictionary() -> &'static [ErrorDescriptor] {
         DICTIONARY
     }

@@ -1,0 +1,30 @@
+//! injectable Claude execution keeps CLI construction and error mapping in the provider.
+use super::*;
+use runinator_provider_support::process_runner::ProcessResult;
+struct Runner;
+impl ProcessRunner for Runner {
+    fn run(&self, request: ProcessRequest<'_>) -> Result<ProcessResult, ProcessFailure> {
+        assert_eq!(request.command.get_program(), "test-claude");
+        let args: Vec<_> = request.command.get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("prompt text")));
+        assert_eq!(request.timeout, Duration::from_secs(5));
+        Err(ProcessFailure::TimedOut)
+    }
+}
+#[test]
+fn preserves_timeout_descriptor() {
+    let request = ProviderExecutionRequest {
+        run_id: None,
+        action_name: "ai-command".into(),
+        action_function: "claude_code".into(),
+        parameters: json!({"binary":"test-claude","prompt":"prompt text"}),
+        timeout_secs: 5,
+        artifact_dir: String::new(),
+        events_jsonl_path: String::new(),
+        idempotency_key: None,
+        workspace_path: None,
+        execution_profile: None,
+    };
+    let error = run_claude_code(&request, None, CancellationToken::new(), &Runner).unwrap_err();
+    assert!(error.to_string().contains(CLAUDE_TIMEOUT.code));
+}

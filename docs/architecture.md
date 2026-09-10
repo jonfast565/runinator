@@ -125,6 +125,18 @@ accept a typed API object, defaulting to the existing command-runtime facade. Wo
 composition forwards its injected API to each child service; console factories use the same API for
 name lookup and execution. Tests can supply independent clients without replacing global modules.
 
+The adapter host registers built-in metadata, webhook handling, and polling through `BuiltinAdapter`.
+Dynamic adapters retain disposable-process isolation. `runinator-provider-support::process_runner`
+provides `ProcessRunner` for non-interactive Git, Claude Code, and GitHub CLI subprocesses; providers
+accept a runner through `with_runner` and map its failures to their own error dictionaries. Interactive
+terminals continue through the PTY/ConPTY contract. Supervisor restart/shutdown behavior uses
+`ProcessBackend` and `ManagedChild`, with native process creation and signaling behind that boundary.
+
+Command Center realtime accepts a `WebSocketFactory` and `EventStreamTimers`. Non-secret display,
+organization, and debug preferences use `PreferenceStorage`; watch expressions use a
+`WatchExpressionRepository`. Workflow composition forwards both dependencies. The LSP metadata cache
+accepts `MetadataSource` and preserves each last successful result independently during failures.
+
 ### Workflow definition and evaluation
 
 REXRAP is the authored workflow language. The language family is split by compile stage: `runinator-rexrap-syntax` parses and formats, `runinator-rexrap-sema` resolves and type-checks, and `runinator-rexrap-codegen` lowers to or decompiles from the workflow model. `runinator-rexrap` is the public facade and unified `.rrx` container front end; `runinator-rexrap-ide` adds editor completion and hover without affecting compilation.

@@ -1,24 +1,24 @@
+import { browserPreferences, type PreferenceStorage } from "../preference-storage";
 import type { WorkflowServiceHost } from "./host";
 
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
 
-class WatchExpressionStorage {
+export interface WatchExpressionRepository {
+  loadAll(): Record<string, string[]>;
+  save(workflowId: string, expressions: readonly string[]): void;
+}
+
+export class WatchExpressionStorage implements WatchExpressionRepository {
   constructor(
-    private readonly storage: Storage | undefined,
+    private readonly storage: PreferenceStorage = browserPreferences,
     private readonly prefix = WATCH_STORAGE_PREFIX,
   ) {}
 
   loadAll(): Record<string, string[]> {
-    if (!this.storage) {
-      return {};
-    }
-
     const result: Record<string, string[]> = {};
 
-    for (let i = 0; i < this.storage.length; i++) {
-      const key = this.storage.key(i);
-
-      if (!key?.startsWith(this.prefix)) {
+    for (const key of this.storage.keys()) {
+      if (!key.startsWith(this.prefix)) {
         continue;
       }
 
@@ -43,15 +43,14 @@ class WatchExpressionStorage {
   }
 
   save(workflowId: string, expressions: readonly string[]) {
-    this.storage?.setItem(`${this.prefix}${workflowId}`, JSON.stringify(expressions));
+    this.storage.setItem(`${this.prefix}${workflowId}`, JSON.stringify(expressions));
   }
 }
 
-export function createWorkflowRunWatchService(host: WorkflowServiceHost) {
-  const storage = new WatchExpressionStorage(
-    typeof window !== "undefined" ? window.localStorage : undefined,
-  );
-
+export function createWorkflowRunWatchService(
+  host: WorkflowServiceHost,
+  storage: WatchExpressionRepository = new WatchExpressionStorage(),
+) {
   function loadAllWatchExpressions(): Record<string, string[]> {
     return storage.loadAll();
   }

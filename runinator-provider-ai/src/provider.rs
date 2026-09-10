@@ -1,3 +1,4 @@
+use runinator_provider_support::process_runner::{NativeProcessRunner, ProcessRunner};
 use std::sync::Arc;
 
 use runinator_models::json;
@@ -16,9 +17,20 @@ use crate::params::{default_binary, default_model, default_output_format};
 use crate::shell::run_shell_command;
 
 #[derive(Clone)]
-pub struct AiCommandProvider;
+pub struct AiCommandProvider<R = NativeProcessRunner> {
+    runner: R,
+}
+#[allow(non_upper_case_globals)]
+pub const AiCommandProvider: AiCommandProvider = AiCommandProvider {
+    runner: NativeProcessRunner,
+};
+impl<R: ProcessRunner> AiCommandProvider<R> {
+    pub fn with_runner(runner: R) -> Self {
+        Self { runner }
+    }
+}
 
-impl Provider for AiCommandProvider {
+impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
     fn name(&self) -> String {
         "ai-command".into()
     }
@@ -73,7 +85,7 @@ impl Provider for AiCommandProvider {
         token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         match request.action_function.as_str() {
-            "claude_code" => run_claude_code(&request, sink, token),
+            "claude_code" => run_claude_code(&request, sink, token, &self.runner),
             // legacy default: shell-command execution.
             _ => run_shell_command(&request, sink, token),
         }

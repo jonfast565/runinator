@@ -1,3 +1,4 @@
+use runinator_provider_support::process_runner::{NativeProcessRunner, ProcessRunner};
 use std::{fs, path::Path, sync::Arc};
 
 use runinator_models::json;
@@ -29,9 +30,20 @@ struct GitResult {
 }
 
 #[derive(Clone)]
-pub struct GitProvider;
+pub struct GitProvider<R = NativeProcessRunner> {
+    runner: R,
+}
+#[allow(non_upper_case_globals)]
+pub const GitProvider: GitProvider = GitProvider {
+    runner: NativeProcessRunner,
+};
+impl<R: ProcessRunner> GitProvider<R> {
+    pub fn with_runner(runner: R) -> Self {
+        Self { runner }
+    }
+}
 
-impl Provider for GitProvider {
+impl<R: ProcessRunner + Clone + 'static> Provider for GitProvider<R> {
     fn name(&self) -> String {
         "git".into()
     }
@@ -157,6 +169,7 @@ impl Provider for GitProvider {
                 let params: WorktreeParams = parse_params(&request)?;
                 let repo = params.repo.as_deref().unwrap_or(".");
                 let stdout = run_command(
+                    &self.runner,
                     "git",
                     &[
                         "-C",
@@ -206,6 +219,7 @@ impl Provider for GitProvider {
                         })?;
                     } else {
                         let current = run_command_output(
+                            &self.runner,
                             "git",
                             &["-C", path, "branch", "--show-current"],
                             timeout,
@@ -229,7 +243,8 @@ impl Provider for GitProvider {
                 if let Some(base_ref) = params.base_ref.as_deref() {
                     args.push(base_ref);
                 }
-                let stdout = run_command("git", &args, timeout, &token, sink.as_ref())?;
+                let stdout =
+                    run_command(&self.runner, "git", &args, timeout, &token, sink.as_ref())?;
                 return git_result(function, stdout, Some(path.to_string()));
             }
             "branch" => {
@@ -240,6 +255,7 @@ impl Provider for GitProvider {
                     .or(params.repo.as_deref())
                     .unwrap_or(".");
                 run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "branch", "--show-current"],
                     timeout,
@@ -251,6 +267,7 @@ impl Provider for GitProvider {
                 let params: CommitParams = parse_params(&request)?;
                 let ws = params.workspace.as_deref().unwrap_or(".");
                 run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "add", "."],
                     timeout,
@@ -258,6 +275,7 @@ impl Provider for GitProvider {
                     sink.as_ref(),
                 )?;
                 run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "commit", "-m", &params.message],
                     timeout,
@@ -271,6 +289,7 @@ impl Provider for GitProvider {
                 let remote = params.remote.as_deref().unwrap_or("origin");
                 if params.set_upstream.unwrap_or(true) {
                     run_command(
+                        &self.runner,
                         "git",
                         &["-C", ws, "push", "-u", remote, &params.branch],
                         timeout,
@@ -279,6 +298,7 @@ impl Provider for GitProvider {
                     )?
                 } else {
                     run_command(
+                        &self.runner,
                         "git",
                         &["-C", ws, "push", remote, &params.branch],
                         timeout,
@@ -295,6 +315,7 @@ impl Provider for GitProvider {
                     .or(params.repo.as_deref())
                     .unwrap_or(".");
                 run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "diff", "--stat"],
                     timeout,
@@ -308,12 +329,20 @@ impl Provider for GitProvider {
                     &request,
                     params.workspace.as_deref().or(params.repo.as_deref()),
                 );
-                return capture_revision(function, ws, timeout, &token, sink.as_ref());
+                return capture_revision(
+                    &self.runner,
+                    function,
+                    ws,
+                    timeout,
+                    &token,
+                    sink.as_ref(),
+                );
             }
             "archive_patch" => {
                 let params: ArchivePatchParams = parse_params(&request)?;
                 let ws = workspace_path(&request, params.workspace.as_deref());
                 let sha = run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "rev-parse", "HEAD"],
                     timeout,
@@ -321,6 +350,7 @@ impl Provider for GitProvider {
                     sink.as_ref(),
                 )?;
                 let patch = run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "diff", "--binary", "HEAD"],
                     timeout,
@@ -341,6 +371,7 @@ impl Provider for GitProvider {
                     IO_ERROR.error(format!("could not write {}: {error}", path.display()))
                 })?;
                 let status = run_command(
+                    &self.runner,
                     "git",
                     &["-C", ws, "status", "--porcelain"],
                     timeout,
@@ -373,7 +404,7 @@ impl Provider for GitProvider {
             "promote_revision" => {
                 let params: PromoteRevisionParams = parse_params(&request)?;
                 let ws = workspace_path(&request, params.workspace.as_deref());
-                return promote_revision(&params, ws, timeout, &token, sink.as_ref());
+                return promote_revision(&self.runner, &params, ws, timeout, &token, sink.as_ref());
             }
             "cleanup" => {
                 let params: CleanupParams = parse_params(&request)?;
@@ -386,6 +417,7 @@ impl Provider for GitProvider {
                     );
                 }
                 run_command(
+                    &self.runner,
                     "git",
                     &["-C", repo, "worktree", "remove", &params.path],
                     timeout,
@@ -441,6 +473,7 @@ fn git_result(
 }
 
 fn capture_revision(
+    runner: &dyn ProcessRunner,
     action: &str,
     workspace: &str,
     timeout: i64,
@@ -448,6 +481,7 @@ fn capture_revision(
     sink: Option<&Arc<dyn ProviderEventSink>>,
 ) -> Result<TaskExecutionResult, SendableError> {
     let sha = run_command(
+        runner,
         "git",
         &["-C", workspace, "rev-parse", "HEAD"],
         timeout,
@@ -455,6 +489,7 @@ fn capture_revision(
         sink,
     )?;
     let branch = run_command(
+        runner,
         "git",
         &["-C", workspace, "branch", "--show-current"],
         timeout,
@@ -462,6 +497,7 @@ fn capture_revision(
         sink,
     )?;
     let status = run_command(
+        runner,
         "git",
         &["-C", workspace, "status", "--porcelain"],
         timeout,
@@ -482,6 +518,7 @@ fn capture_revision(
 }
 
 fn promote_revision(
+    runner: &dyn ProcessRunner,
     params: &PromoteRevisionParams,
     workspace: &str,
     timeout: i64,
@@ -494,6 +531,7 @@ fn promote_revision(
     let repo = params.repo.as_deref().unwrap_or(workspace);
     let candidate_expression = format!("{}^{{commit}}", params.candidate_sha);
     let candidate = run_command(
+        runner,
         "git",
         &["-C", repo, "rev-parse", "--verify", &candidate_expression],
         timeout,
@@ -502,6 +540,7 @@ fn promote_revision(
     )?;
     let candidate = candidate.trim();
     let workspace_head = run_command(
+        runner,
         "git",
         &["-C", workspace, "rev-parse", "HEAD"],
         timeout,
@@ -516,6 +555,7 @@ fn promote_revision(
     }
 
     let current = run_command_output(
+        runner,
         "git",
         &["-C", repo, "rev-parse", "--verify", &params.target_ref],
         timeout,
@@ -537,13 +577,14 @@ fn promote_revision(
         if let Some(expected) = params.expected_target_sha.as_deref() {
             args.push(expected);
         }
-        run_command("git", &args, timeout, token, sink)?;
+        run_command(runner, "git", &args, timeout, token, sink)?;
     }
 
     let mut pushed = false;
     if params.push.unwrap_or(false) {
         let remote = params.remote.as_deref().unwrap_or("origin");
         let remote_ref = run_command(
+            runner,
             "git",
             &["-C", repo, "ls-remote", remote, &params.target_ref],
             timeout,
@@ -565,6 +606,7 @@ fn promote_revision(
             if let Some(expected) = params.expected_target_sha.as_deref() {
                 let lease = format!("--force-with-lease={}:{}", params.target_ref, expected);
                 run_command(
+                    runner,
                     "git",
                     &["-C", repo, "push", &lease, remote, &refspec],
                     timeout,
@@ -573,6 +615,7 @@ fn promote_revision(
                 )?;
             } else {
                 run_command(
+                    runner,
                     "git",
                     &["-C", repo, "push", remote, &refspec],
                     timeout,
