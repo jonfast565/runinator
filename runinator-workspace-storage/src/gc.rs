@@ -414,12 +414,14 @@ pub fn verify_workspace<S: ReadStore + ?Sized>(s: &S, w: &Workspace, scratch: &P
             continue;
         }
         let i = namespace::inode(s, w, n)?;
-        if let InodeData::Directory(entries) = i.data {
-            radix::visit(s, entries, &mut |_, id| {
-                stack.push(load::<Link, _>(s, id, Kind::Link)?.0.to_be_bytes())?;
-                Ok(())
-            })?;
-        }
+        let InodeData::Directory(entries) = i.data else {
+            continue;
+        };
+
+        radix::visit(s, entries, &mut |_, id| {
+            stack.push(load::<Link, _>(s, id, Kind::Link)?.0.to_be_bytes())?;
+            Ok(())
+        })?;
     }
     radix::visit(s, w.inodes, &mut |key, id| {
         let n = u64::from_be_bytes(key.try_into().map_err(|_| corrupt("bad inode-map key"))?);
@@ -467,13 +469,15 @@ fn verify_file_from_verified_info<S: ReadStore + ?Sized>(s: &S, f: &FileObject) 
         }
         let mut final_chunk = None;
         for extent in &manifest.extents {
-            if let PageExtent::Data(chunk) = extent {
-                let info = s.info(chunk.id)?;
-                if info.kind != Kind::Chunk || info.raw_len != chunk.len as usize {
-                    return Err(corrupt("invalid chunk reference"));
-                }
-                final_chunk = Some(chunk.id);
+            let PageExtent::Data(chunk) = extent else {
+                continue;
+            };
+
+            let info = s.info(chunk.id)?;
+            if info.kind != Kind::Chunk || info.raw_len != chunk.len as usize {
+                return Err(corrupt("invalid chunk reference"));
             }
+            final_chunk = Some(chunk.id);
         }
         let final_chunk = final_chunk.ok_or_else(|| corrupt("page has no data extent"))?;
         let object = s.get(final_chunk)?;

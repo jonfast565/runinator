@@ -344,16 +344,16 @@ fn build_result_parts(
         command: command_text,
     };
 
-    if result.success {
-        Ok(TaskExecutionResult {
-            message: Some(format!("Console command exited with code {exit_code}")),
-            output_json: serde_json::to_value(result).ok().map(Into::into),
-            chunks: Vec::new(),
-            artifacts: Vec::new(),
-        })
-    } else {
-        Err(NONZERO_EXIT.error(format!("exit code {exit_code}")))
+    if !(result.success) {
+        return Err(NONZERO_EXIT.error(format!("exit code {exit_code}")));
     }
+
+    Ok(TaskExecutionResult {
+        message: Some(format!("Console command exited with code {exit_code}")),
+        output_json: serde_json::to_value(result).ok().map(Into::into),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
 }
 
 #[cfg(test)]

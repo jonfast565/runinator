@@ -101,59 +101,50 @@ pub async fn run_adapter_control_loop<T: BackgroundEngineStore>(
         }
         for _ in 0..16 {
             let token = Uuid::now_v7();
-            match store
+            let record = match store
                 .claim_approved_external_ingress(token, Utc::now())
                 .await
             {
-                Ok(Some(record)) => {
-                    let outcome =
-                        apply_external(store.clone(), runs.clone(), &pipelines, &record).await;
-                    let error = outcome.as_ref().err().cloned();
-                    match store
-                        .finish_approved_external_ingress(
-                            record.id,
-                            token,
-                            error.clone(),
-                            Utc::now(),
-                        )
-                        .await
-                    {
-                        Ok(true) => {
-                            if let Some(id) =
-                                record.adapter.and_then(|origin| origin.delivery_record_id)
-                            {
-                                match store.fetch_adapter_delivery(id).await {
-                                    Ok(Some(mut delivery)) => {
-                                        delivery.state =
-                                            if error.is_some() { "failed" } else { "applied" }
-                                                .into();
-                                        delivery.error = error;
-                                        delivery.outcome = outcome.unwrap_or(Value::Null);
-                                        delivery.updated_at = Utc::now();
-                                        if let Err(error) =
-                                            store.update_adapter_delivery(delivery).await
-                                        {
-                                            warn!(%error,"could not correlate reviewed delivery");
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => warn!(%error,"could not find reviewed delivery"),
-                                }
-                            }
-                        }
-                        Ok(false) => {
-                            warn!(record_id=%record.id,"approved ingress application lease was lost")
-                        }
-                        Err(error) => {
-                            warn!(%error,"could not finish approved ingress; lease will recover")
-                        }
-                    }
-                }
+                Ok(Some(record)) => record,
                 Ok(None) => break,
                 Err(error) => {
                     warn!(%error,"could not claim approved ingress");
                     break;
                 }
+            };
+            let outcome = apply_external(store.clone(), runs.clone(), &pipelines, &record).await;
+            let error = outcome.as_ref().err().cloned();
+            match store
+                .finish_approved_external_ingress(record.id, token, error.clone(), Utc::now())
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(record_id=%record.id,"approved ingress application lease was lost");
+                    continue;
+                }
+                Err(error) => {
+                    warn!(%error,"could not finish approved ingress; lease will recover");
+                    continue;
+                }
+            }
+            let Some(id) = record.adapter.and_then(|origin| origin.delivery_record_id) else {
+                continue;
+            };
+            let mut delivery = match store.fetch_adapter_delivery(id).await {
+                Ok(Some(delivery)) => delivery,
+                Ok(None) => continue,
+                Err(error) => {
+                    warn!(%error,"could not find reviewed delivery");
+                    continue;
+                }
+            };
+            delivery.state = if error.is_some() { "failed" } else { "applied" }.into();
+            delivery.error = error;
+            delivery.outcome = outcome.unwrap_or(Value::Null);
+            delivery.updated_at = Utc::now();
+            if let Err(error) = store.update_adapter_delivery(delivery).await {
+                warn!(%error,"could not correlate reviewed delivery");
             }
         }
         if Utc::now() - last_cleanup >= chrono::Duration::minutes(1) {

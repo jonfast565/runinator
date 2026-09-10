@@ -448,16 +448,18 @@ fn walk_dir(
         }
         // descend only when recursion is enabled and the depth cap allows another level.
         let within_cap = max_depth.map(|cap| depth < cap).unwrap_or(true);
-        if file_type.is_dir() && recursive && within_cap {
-            walk_dir(
-                &entry.path(),
-                &relative,
-                depth + 1,
-                recursive,
-                max_depth,
-                out,
-            )?;
+        if !(file_type.is_dir() && recursive && within_cap) {
+            continue;
         }
+
+        walk_dir(
+            &entry.path(),
+            &relative,
+            depth + 1,
+            recursive,
+            max_depth,
+            out,
+        )?;
     }
     Ok(())
 }

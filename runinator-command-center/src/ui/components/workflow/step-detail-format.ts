@@ -226,15 +226,17 @@ export function actionParameterSettings(
       continue;
     }
 
-    if (parameter.default_value != null) {
-      settings.push({
-        name: parameter.name,
-        type: renderType(parameter.ty),
-        value: valueLabel(parameter.default_value),
-        source: "default",
-        secret: parameter.secret,
-      });
+    if (!(parameter.default_value != null)) {
+      continue;
     }
+
+    settings.push({
+      name: parameter.name,
+      type: renderType(parameter.ty),
+      value: valueLabel(parameter.default_value),
+      source: "default",
+      secret: parameter.secret,
+    });
   }
 
   return settings;

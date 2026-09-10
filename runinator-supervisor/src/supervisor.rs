@@ -576,15 +576,17 @@ fn stop_children(processes: &mut [ManagedProcess], timeout: Duration) -> Result<
     while start.elapsed() < timeout {
         let mut all_stopped = true;
         for process in processes.iter_mut() {
-            if let Some(child) = process.child.as_mut() {
-                if let Some(status) = child.try_wait()? {
-                    process.last_exit_code = status.code();
-                    process.child = None;
-                    process.status = ProcStatus::Stopped;
-                    append_process_log_event(process, &format!("stopped status={status}"));
-                } else {
-                    all_stopped = false;
-                }
+            let Some(child) = process.child.as_mut() else {
+                continue;
+            };
+
+            if let Some(status) = child.try_wait()? {
+                process.last_exit_code = status.code();
+                process.child = None;
+                process.status = ProcStatus::Stopped;
+                append_process_log_event(process, &format!("stopped status={status}"));
+            } else {
+                all_stopped = false;
             }
         }
         if all_stopped {
@@ -594,14 +596,16 @@ fn stop_children(processes: &mut [ManagedProcess], timeout: Duration) -> Result<
     }
 
     for process in processes.iter_mut() {
-        if let Some(child) = process.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
-            process.child = None;
-            process.status = ProcStatus::Stopped;
-            process.last_error = Some("Force-killed during shutdown timeout".to_string());
-            append_process_log_event(process, "force_killed during_shutdown_timeout");
-        }
+        let Some(child) = process.child.as_mut() else {
+            continue;
+        };
+
+        let _ = child.kill();
+        let _ = child.wait();
+        process.child = None;
+        process.status = ProcStatus::Stopped;
+        process.last_error = Some("Force-killed during shutdown timeout".to_string());
+        append_process_log_event(process, "force_killed during_shutdown_timeout");
     }
 
     Ok(())
@@ -665,19 +669,21 @@ fn process_log_path(
 
 fn append_process_log_event(process: &ManagedProcess, message: &str) {
     let now = Utc::now();
-    if let Ok(mut file) = fs::OpenOptions::new()
+    let Ok(mut file) = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&process.log_path)
-    {
-        let _ = writeln!(
-            file,
-            "----- {} process={} {} -----",
-            now.to_rfc3339(),
-            process.config.name,
-            message
-        );
-    }
+    else {
+        return;
+    };
+
+    let _ = writeln!(
+        file,
+        "----- {} process={} {} -----",
+        now.to_rfc3339(),
+        process.config.name,
+        message
+    );
 }
 
 #[derive(Debug)]

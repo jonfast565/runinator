@@ -927,12 +927,14 @@ async function save() {
 
 async function remove(p: ExecutionProfile) {
   if (
-    window.confirm(
+    !window.confirm(
       `Delete execution profile “${p.name}”? Its encrypted revisions will also be removed.`,
     )
   ) {
-    await runProfileAction(p, () => profileStore.remove(p.id));
+    return;
   }
+
+  await runProfileAction(p, () => profileStore.remove(p.id));
 }
 
 async function rotate(p: ExecutionProfile) {

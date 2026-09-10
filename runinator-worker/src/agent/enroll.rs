@@ -265,13 +265,15 @@ fn apply(config: &mut AgentRuntimeConfig, stored: StoredAgentCredential) {
     config.api_key = Some(stored.api_key.clone());
     config.instance_id = stored.instance_id;
     config.labels = stored.labels;
-    if config.broker.broker_backend == "ws" {
-        if let Ok(endpoint) = derive_relay_url(&config.service_url) {
-            config.broker.broker_endpoint = endpoint;
-        }
-        config.broker.api_key = Some(stored.api_key);
-        config.broker_description = format!("relay via {}", config.broker.broker_endpoint);
+    if config.broker.broker_backend != "ws" {
+        return;
     }
+
+    if let Ok(endpoint) = derive_relay_url(&config.service_url) {
+        config.broker.broker_endpoint = endpoint;
+    }
+    config.broker.api_key = Some(stored.api_key);
+    config.broker_description = format!("relay via {}", config.broker.broker_endpoint);
 }
 
 #[cfg(test)]

@@ -129,23 +129,25 @@ async fn enabled_admin_count<T: AuthStore + RbacStore + RuntimeStore>(
         .map_err(|err| api_error(err.to_string()))?;
     let mut count = 0;
     for assignment in assignments {
-        if assignment.role == Role::Platform(PlatformRole::Admin)
-            && assignment.principal_kind == PrincipalKind::User
+        if !(assignment.role == Role::Platform(PlatformRole::Admin)
+            && assignment.principal_kind == PrincipalKind::User)
         {
-            let enabled = match assignment.principal_kind {
-                PrincipalKind::User => db
-                    .fetch_user(assignment.principal_id)
-                    .await
-                    .map_err(|err| api_error(err.to_string()))?
-                    .is_some_and(|user| !user.disabled),
-                PrincipalKind::Service => db
-                    .fetch_service_account(assignment.principal_id)
-                    .await
-                    .map_err(|err| api_error(err.to_string()))?
-                    .is_some_and(|account| !account.disabled),
-            };
-            count += usize::from(enabled);
+            continue;
         }
+
+        let enabled = match assignment.principal_kind {
+            PrincipalKind::User => db
+                .fetch_user(assignment.principal_id)
+                .await
+                .map_err(|err| api_error(err.to_string()))?
+                .is_some_and(|user| !user.disabled),
+            PrincipalKind::Service => db
+                .fetch_service_account(assignment.principal_id)
+                .await
+                .map_err(|err| api_error(err.to_string()))?
+                .is_some_and(|account| !account.disabled),
+        };
+        count += usize::from(enabled);
     }
     Ok(count)
 }

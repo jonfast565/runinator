@@ -138,16 +138,18 @@ export function createAuthService(api: AuthApi = defaultApi) {
       authenticated: true,
     }));
 
-    if (Number.isFinite(result.expires_in) && result.expires_in > 0) {
-      if (refreshTimer !== null) {
-        clearTimeout(refreshTimer);
-      }
-
-      refreshTimer = setTimeout(
-        () => void refreshCurrentSession(),
-        Math.max(5000, result.expires_in * 750),
-      );
+    if (!(Number.isFinite(result.expires_in) && result.expires_in > 0)) {
+      return;
     }
+
+    if (refreshTimer !== null) {
+      clearTimeout(refreshTimer);
+    }
+
+    refreshTimer = setTimeout(
+      () => void refreshCurrentSession(),
+      Math.max(5000, result.expires_in * 750),
+    );
   }
 
   function scheduleAccessTokenRefresh(access: string) {

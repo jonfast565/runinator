@@ -182,10 +182,12 @@ impl S3BlobClient {
             .unwrap_or_default();
         let mut metadata = BTreeMap::new();
         for (name, value) in headers {
-            if let Some(suffix) = name.as_str().strip_prefix("x-amz-meta-") {
-                if let Ok(value) = value.to_str() {
-                    metadata.insert(suffix.to_string(), value.to_string());
-                }
+            let Some(suffix) = name.as_str().strip_prefix("x-amz-meta-") else {
+                continue;
+            };
+
+            if let Ok(value) = value.to_str() {
+                metadata.insert(suffix.to_string(), value.to_string());
             }
         }
         ObjectMeta {

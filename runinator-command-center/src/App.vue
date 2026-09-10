@@ -305,12 +305,14 @@ watch(
       void permissions.refreshAll();
     }
 
-    if (isResourceTab(tab)) {
-      const endpoint = endpointForTab(tab);
+    if (!isResourceTab(tab)) {
+      return;
+    }
 
-      if (endpoint) {
-        void resources.refreshResourcesFor(endpoint);
-      }
+    const endpoint = endpointForTab(tab);
+
+    if (endpoint) {
+      void resources.refreshResourcesFor(endpoint);
     }
   },
 );

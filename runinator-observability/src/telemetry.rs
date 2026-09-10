@@ -606,15 +606,17 @@ where
         .with_unit("%")
         .with_callback(move |o| {
             for gpu in collector.sample().gpus {
-                if let Some(value) = value(&gpu) {
-                    o.observe(
-                        value,
-                        &[
-                            opentelemetry::KeyValue::new("service", service.clone()),
-                            opentelemetry::KeyValue::new("gpu", gpu.name),
-                        ],
-                    );
-                }
+                let Some(value) = value(&gpu) else {
+                    continue;
+                };
+
+                o.observe(
+                    value,
+                    &[
+                        opentelemetry::KeyValue::new("service", service.clone()),
+                        opentelemetry::KeyValue::new("gpu", gpu.name),
+                    ],
+                );
             }
         })
         .build()
@@ -636,15 +638,17 @@ where
         .with_unit("By")
         .with_callback(move |o| {
             for gpu in collector.sample().gpus {
-                if let Some(value) = value(&gpu) {
-                    o.observe(
-                        value,
-                        &[
-                            opentelemetry::KeyValue::new("service", service.clone()),
-                            opentelemetry::KeyValue::new("gpu", gpu.name),
-                        ],
-                    );
-                }
+                let Some(value) = value(&gpu) else {
+                    continue;
+                };
+
+                o.observe(
+                    value,
+                    &[
+                        opentelemetry::KeyValue::new("service", service.clone()),
+                        opentelemetry::KeyValue::new("gpu", gpu.name),
+                    ],
+                );
             }
         })
         .build()

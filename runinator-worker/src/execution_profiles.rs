@@ -274,13 +274,15 @@ fn unpack(
         let mut file = fs::File::create(&output)?;
         std::io::copy(&mut entry.by_ref().take(MAX_EXPANDED_BYTES + 1), &mut file)?;
         set_file_permissions(&output)?;
-        if path != Path::new(".runinator-profile.json") {
-            let contents = fs::read(&output)?;
-            extracted.insert(
-                path.to_string_lossy().replace('\\', "/"),
-                (format!("{:x}", Sha256::digest(&contents)), contents.len()),
-            );
+        if path == Path::new(".runinator-profile.json") {
+            continue;
         }
+
+        let contents = fs::read(&output)?;
+        extracted.insert(
+            path.to_string_lossy().replace('\\', "/"),
+            (format!("{:x}", Sha256::digest(&contents)), contents.len()),
+        );
     }
     let manifest_path = target.join(".runinator-profile.json");
     let manifest: BundleManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;

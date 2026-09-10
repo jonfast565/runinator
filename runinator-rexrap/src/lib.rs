@@ -108,13 +108,15 @@ pub fn workflow_signature_from_source(src: &str) -> Result<Vec<WorkflowSignature
             input: input.clone(),
             output: output.clone(),
         });
-        if let Some(namespace) = &workflow.namespace {
-            signatures.push(WorkflowSignature {
-                name: format!("{namespace}.{}", workflow.name),
-                input,
-                output,
-            });
-        }
+        let Some(namespace) = &workflow.namespace else {
+            continue;
+        };
+
+        signatures.push(WorkflowSignature {
+            name: format!("{namespace}.{}", workflow.name),
+            input,
+            output,
+        });
     }
     Ok(signatures)
 }

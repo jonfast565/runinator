@@ -226,16 +226,16 @@ impl Broker for InMemoryBroker {
 
     async fn nack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.control_inflight.remove(&delivery_id) {
-            guard
-                .control_queue
-                .push_front(redeliver_control(leased.delivery));
-            drop(guard);
-            self.control_notify.notify_waiters();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
+        let Some(leased) = guard.control_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        guard
+            .control_queue
+            .push_front(redeliver_control(leased.delivery));
+        drop(guard);
+        self.control_notify.notify_waiters();
+        Ok(())
     }
 
     async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
@@ -269,16 +269,16 @@ impl Broker for InMemoryBroker {
 
     async fn nack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.agent_inflight.remove(&delivery_id) {
-            guard
-                .agent_queue
-                .push_front(redeliver_agent(leased.delivery));
-            drop(guard);
-            self.agent_notify.notify_waiters();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
+        let Some(leased) = guard.agent_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        guard
+            .agent_queue
+            .push_front(redeliver_agent(leased.delivery));
+        drop(guard);
+        self.agent_notify.notify_waiters();
+        Ok(())
     }
 
     async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
@@ -331,20 +331,20 @@ impl Broker for InMemoryBroker {
 
     async fn nack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.effect_inflight.remove(&delivery_id) {
-            if leased.delivery.is_expired_at(chrono::Utc::now()) {
-                guard.effect_dedupe.remove(&leased.delivery.dedupe_key);
-                return Ok(());
-            }
-            guard
-                .effect_queue
-                .push_front(redeliver_effect(leased.delivery));
-            drop(guard);
-            self.effect_notify.notify_one();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
+        let Some(leased) = guard.effect_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        if leased.delivery.is_expired_at(chrono::Utc::now()) {
+            guard.effect_dedupe.remove(&leased.delivery.dedupe_key);
+            return Ok(());
         }
+        guard
+            .effect_queue
+            .push_front(redeliver_effect(leased.delivery));
+        drop(guard);
+        self.effect_notify.notify_one();
+        Ok(())
     }
 
     async fn publish_effect_result(&self, message: EffectResultMessage) -> Result<(), BrokerError> {
@@ -389,14 +389,14 @@ impl Broker for InMemoryBroker {
         delivery_id: Uuid,
     ) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.effect_result_inflight.remove(&delivery_id) {
-            guard
-                .effect_result_dedupe
-                .remove(&leased.delivery.dedupe_key);
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
+        let Some(leased) = guard.effect_result_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        guard
+            .effect_result_dedupe
+            .remove(&leased.delivery.dedupe_key);
+        Ok(())
     }
 
     async fn nack_effect_result(
@@ -405,16 +405,16 @@ impl Broker for InMemoryBroker {
         delivery_id: Uuid,
     ) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.effect_result_inflight.remove(&delivery_id) {
-            guard
-                .effect_result_queue
-                .push_front(redeliver_effect_result(leased.delivery));
-            drop(guard);
-            self.effect_result_notify.notify_one();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
+        let Some(leased) = guard.effect_result_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        guard
+            .effect_result_queue
+            .push_front(redeliver_effect_result(leased.delivery));
+        drop(guard);
+        self.effect_result_notify.notify_one();
+        Ok(())
     }
 
     async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
@@ -471,14 +471,14 @@ impl Broker for InMemoryBroker {
 
     async fn nack_wake(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.wake_inflight.remove(&delivery_id) {
-            guard.wake_queue.push_front(redeliver_wake(leased.delivery));
-            drop(guard);
-            self.wake_notify.notify_one();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
+        let Some(leased) = guard.wake_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        guard.wake_queue.push_front(redeliver_wake(leased.delivery));
+        drop(guard);
+        self.wake_notify.notify_one();
+        Ok(())
     }
 
     async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError> {
@@ -535,16 +535,16 @@ impl Broker for InMemoryBroker {
 
     async fn nack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(leased) = guard.ingress_inflight.remove(&delivery_id) {
-            guard
-                .ingress_queue
-                .push_front(redeliver_ingress(leased.delivery));
-            drop(guard);
-            self.ingress_notify.notify_one();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
+        let Some(leased) = guard.ingress_inflight.remove(&delivery_id) else {
+            return Err(BrokerError::UnknownDelivery(delivery_id));
+        };
+
+        guard
+            .ingress_queue
+            .push_front(redeliver_ingress(leased.delivery));
+        drop(guard);
+        self.ingress_notify.notify_one();
+        Ok(())
     }
 
     async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
@@ -602,13 +602,15 @@ impl BrokerState {
 
     fn reclaim_expired_effects(&mut self, now: Instant, wall_now: chrono::DateTime<chrono::Utc>) {
         for id in expired_ids(&self.effect_inflight, now) {
-            if let Some(leased) = self.effect_inflight.remove(&id) {
-                if leased.delivery.is_expired_at(wall_now) {
-                    self.effect_dedupe.remove(&leased.delivery.dedupe_key);
-                } else {
-                    self.effect_queue
-                        .push_front(redeliver_effect(leased.delivery));
-                }
+            let Some(leased) = self.effect_inflight.remove(&id) else {
+                continue;
+            };
+
+            if leased.delivery.is_expired_at(wall_now) {
+                self.effect_dedupe.remove(&leased.delivery.dedupe_key);
+            } else {
+                self.effect_queue
+                    .push_front(redeliver_effect(leased.delivery));
             }
         }
     }

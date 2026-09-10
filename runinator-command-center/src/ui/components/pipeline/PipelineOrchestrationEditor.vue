@@ -574,8 +574,7 @@ interface PhaseDraft {
 
 const metadata = props.pipeline.metadata;
 const existingIngress = metadata.ingress as
-  | (Omit<IngressPolicy, "routes"> & { routes: IngressRouteWire[] })
-  | undefined;
+  (Omit<IngressPolicy, "routes"> & { routes: IngressRouteWire[] }) | undefined;
 const existingPolicy = metadata.orchestration as OrchestrationPolicy | undefined;
 const enabled = ref(Boolean(existingPolicy));
 const disableConfirmOpen = ref(false);
@@ -864,15 +863,14 @@ function validate(): ValidationIssue[] {
         );
       }
 
-      if (predicate.operator !== "exists") {
-        try {
-          parseJson(predicate.valueText);
-        } catch {
-          add(
-            "Admission Routes",
-            `Condition ${predicate.pointer || "(unnamed)"} has invalid JSON.`,
-          );
-        }
+      if (predicate.operator === "exists") {
+        continue;
+      }
+
+      try {
+        parseJson(predicate.valueText);
+      } catch {
+        add("Admission Routes", `Condition ${predicate.pointer || "(unnamed)"} has invalid JSON.`);
       }
     }
   }
@@ -905,20 +903,22 @@ function validate(): ValidationIssue[] {
       }
     }
 
-    if (phase.workspace_enabled) {
-      if (!phase.workspace_scope.trim()) {
-        add("Workspaces", `${phase.member} workspace scope is required.`);
-      }
+    if (!phase.workspace_enabled) {
+      continue;
+    }
 
-      if (!Number.isInteger(phase.lease_seconds) || phase.lease_seconds < 1) {
-        add("Workspaces", `${phase.member} lease must be at least one whole second.`);
-      }
+    if (!phase.workspace_scope.trim()) {
+      add("Workspaces", `${phase.member} workspace scope is required.`);
+    }
 
-      try {
-        parseJson(phase.requirementsText);
-      } catch {
-        add("Workspaces", `${phase.member} workspace requirements are invalid JSON.`);
-      }
+    if (!Number.isInteger(phase.lease_seconds) || phase.lease_seconds < 1) {
+      add("Workspaces", `${phase.member} lease must be at least one whole second.`);
+    }
+
+    try {
+      parseJson(phase.requirementsText);
+    } catch {
+      add("Workspaces", `${phase.member} workspace requirements are invalid JSON.`);
     }
   }
 

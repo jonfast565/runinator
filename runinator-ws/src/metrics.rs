@@ -124,13 +124,15 @@ pub(crate) fn request_completed(
         .record(duration_ms);
     handles().requests.add(1, &attrs);
     handles().duration_ms.record(duration_ms, &attrs[..2]);
-    if let Some(reason) = rejection_reason(response) {
-        runinator_observability::tui::counter("web service", "HTTP rejections", 1);
-        metrics::counter!(HTTP_REJECTIONS, "reason" => reason).increment(1);
-        handles()
-            .rejections
-            .add(1, &[KeyValue::new("reason", reason)]);
-    }
+    let Some(reason) = rejection_reason(response) else {
+        return;
+    };
+
+    runinator_observability::tui::counter("web service", "HTTP rejections", 1);
+    metrics::counter!(HTTP_REJECTIONS, "reason" => reason).increment(1);
+    handles()
+        .rejections
+        .add(1, &[KeyValue::new("reason", reason)]);
 }
 
 pub(crate) fn websocket_connected(kind: &'static str) -> WebSocketGuard {

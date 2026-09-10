@@ -1043,15 +1043,17 @@ pub async fn cancel_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
         }
     }
     for attempt in db.fetch_pipeline_member_attempts(pipeline_run_id).await? {
-        if !attempt.status.is_terminal() {
-            db.update_pipeline_member_attempt(
-                attempt.id,
-                runinator_models::pipelines::PipelineMemberAttemptStatus::Canceled,
-                attempt.result,
-                Some("Pipeline run canceled".into()),
-            )
-            .await?;
+        if attempt.status.is_terminal() {
+            continue;
         }
+
+        db.update_pipeline_member_attempt(
+            attempt.id,
+            runinator_models::pipelines::PipelineMemberAttemptStatus::Canceled,
+            attempt.result,
+            Some("Pipeline run canceled".into()),
+        )
+        .await?;
     }
     db.update_pipeline_run_status(
         pipeline_run_id,

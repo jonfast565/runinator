@@ -230,19 +230,21 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
             };
             let progress = WorkspaceTransferProgress::start(self.store.clone(), job.clone());
             let result = self.process_storage_transfer(&job, &progress).await;
-            if let Err(error) = result {
-                tracing::warn!(%error, transfer_id = %id, "workspace transfer failed");
-                let _ = self
-                    .store
-                    .finish_workspace_transfer(
-                        job,
-                        "failed".into(),
-                        None,
-                        None,
-                        Some(error.to_string()),
-                    )
-                    .await;
-            }
+            let Err(error) = result else {
+                continue;
+            };
+
+            tracing::warn!(%error, transfer_id = %id, "workspace transfer failed");
+            let _ = self
+                .store
+                .finish_workspace_transfer(
+                    job,
+                    "failed".into(),
+                    None,
+                    None,
+                    Some(error.to_string()),
+                )
+                .await;
         }
         Ok(())
     }
@@ -398,16 +400,16 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                             length: location.length,
                             member: location.member,
                         });
-                        if batch.len() == 1000 {
-                            runtime
-                                .block_on(db.stage_workspace_transfer(
-                                    owned.clone(),
-                                    std::mem::take(&mut batch),
-                                ))
-                                .map_err(|error| {
-                                    storage::Error::Io(std::io::Error::other(error))
-                                })?;
+                        if batch.len() != 1000 {
+                            continue;
                         }
+
+                        runtime
+                            .block_on(db.stage_workspace_transfer(
+                                owned.clone(),
+                                std::mem::take(&mut batch),
+                            ))
+                            .map_err(|error| storage::Error::Io(std::io::Error::other(error)))?;
                     }
                     if !batch.is_empty() {
                         runtime

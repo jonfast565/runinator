@@ -73,12 +73,14 @@ impl WorkspacePhaseTimer {
 
 impl Drop for WorkspacePhaseTimer {
     fn drop(&mut self) {
-        if !self.recorded {
-            self.finish(
-                "failed",
-                runinator_models::json!({"message": "phase did not complete"}),
-            );
+        if self.recorded {
+            return;
         }
+
+        self.finish(
+            "failed",
+            runinator_models::json!({"message": "phase did not complete"}),
+        );
     }
 }
 
@@ -461,12 +463,14 @@ fn workspace_attempt_timed_out() -> SendableError {
 
 impl Drop for ActiveWorkspace {
     fn drop(&mut self) {
-        if let Some(directory) = self.directory.take() {
-            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn_blocking(move || drop(directory));
-            } else {
-                drop(directory);
-            }
+        let Some(directory) = self.directory.take() else {
+            return;
+        };
+
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn_blocking(move || drop(directory));
+        } else {
+            drop(directory);
         }
     }
 }

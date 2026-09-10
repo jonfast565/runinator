@@ -325,45 +325,47 @@ export function createAdminSettingsService(app: AppService, api: AdminSettingsAp
         );
         const value = detail.value;
 
-        if (value && typeof value === "object") {
-          runtime.image =
-            typeof value.image === "string" && value.image.trim()
-              ? value.image
-              : runtime.defaultImage;
-          runtime.setup_script =
-            typeof value.setup_script === "string"
-              ? value.setup_script
-              : (runtime.defaultSetupScript ?? "");
+        if (!(value && typeof value === "object")) {
+          continue;
+        }
 
-          const environment = value.environment;
-          runtime.environment_text =
-            environment && typeof environment === "object"
-              ? Object.entries(environment)
-                  .map(([name, entry]) => `${name}=${entry}`)
-                  .join("\n")
-              : "";
+        runtime.image =
+          typeof value.image === "string" && value.image.trim()
+            ? value.image
+            : runtime.defaultImage;
+        runtime.setup_script =
+          typeof value.setup_script === "string"
+            ? value.setup_script
+            : (runtime.defaultSetupScript ?? "");
 
-          const toolchain = value.toolchain;
-          runtime.executable =
-            typeof toolchain?.executable === "string" && toolchain.executable.trim()
-              ? toolchain.executable
-              : runtime.defaultExecutable;
-          runtime.build_args_text = Array.isArray(toolchain?.build_args)
-            ? toolchain.build_args.join("\n")
-            : "";
-          runtime.run_args_text = Array.isArray(toolchain?.run_args)
-            ? toolchain.run_args.join("\n")
+        const environment = value.environment;
+        runtime.environment_text =
+          environment && typeof environment === "object"
+            ? Object.entries(environment)
+                .map(([name, entry]) => `${name}=${entry}`)
+                .join("\n")
             : "";
 
-          const limits = value.limits;
+        const toolchain = value.toolchain;
+        runtime.executable =
+          typeof toolchain?.executable === "string" && toolchain.executable.trim()
+            ? toolchain.executable
+            : runtime.defaultExecutable;
+        runtime.build_args_text = Array.isArray(toolchain?.build_args)
+          ? toolchain.build_args.join("\n")
+          : "";
+        runtime.run_args_text = Array.isArray(toolchain?.run_args)
+          ? toolchain.run_args.join("\n")
+          : "";
 
-          for (const [field, fallback] of Object.entries(DEFAULT_LIMITS)) {
-            const configured = limits?.[field as keyof typeof DEFAULT_LIMITS];
-            runtime[field as keyof typeof DEFAULT_LIMITS] =
-              typeof configured === "number" && Number.isInteger(configured) && configured > 0
-                ? configured
-                : fallback;
-          }
+        const limits = value.limits;
+
+        for (const [field, fallback] of Object.entries(DEFAULT_LIMITS)) {
+          const configured = limits?.[field as keyof typeof DEFAULT_LIMITS];
+          runtime[field as keyof typeof DEFAULT_LIMITS] =
+            typeof configured === "number" && Number.isInteger(configured) && configured > 0
+              ? configured
+              : fallback;
         }
       }
 

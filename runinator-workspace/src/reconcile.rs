@@ -10,17 +10,19 @@ pub(crate) fn prepare<S: WriteStore>(edit: &mut Edit<S>, root: &Path) -> Result<
     for aliases in groups.values().filter(|aliases| aliases.len() > 1) {
         let mut identity = None;
         for path in aliases {
-            if let Ok(metadata) = fs::symlink_metadata(root.join(path)) {
-                if !metadata.is_file() {
-                    continue;
-                }
-                let next = super::revision::file_identity(&metadata);
-                if next.is_none() || identity.is_some_and(|before| Some(before) != next) {
-                    split.extend(aliases.iter().cloned());
-                    break;
-                }
-                identity = next;
+            let Ok(metadata) = fs::symlink_metadata(root.join(path)) else {
+                continue;
+            };
+
+            if !metadata.is_file() {
+                continue;
             }
+            let next = super::revision::file_identity(&metadata);
+            if next.is_none() || identity.is_some_and(|before| Some(before) != next) {
+                split.extend(aliases.iter().cloned());
+                break;
+            }
+            identity = next;
         }
     }
     purge(edit, root, "", &split)

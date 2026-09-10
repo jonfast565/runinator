@@ -67,15 +67,17 @@ fn validate_link_graph(
             continue;
         }
         resolved.push(&part);
-        if let Some(target) = links.get(&resolved) {
-            followed += 1;
-            if followed > 40 {
-                return Err(WORKSPACE_INVALID.error("symbolic link cycle"));
-            }
-            resolved.pop();
-            for part in target.components().rev() {
-                pending.push_front(part.as_os_str().to_owned());
-            }
+        let Some(target) = links.get(&resolved) else {
+            continue;
+        };
+
+        followed += 1;
+        if followed > 40 {
+            return Err(WORKSPACE_INVALID.error("symbolic link cycle"));
+        }
+        resolved.pop();
+        for part in target.components().rev() {
+            pending.push_front(part.as_os_str().to_owned());
         }
     }
     Ok(())

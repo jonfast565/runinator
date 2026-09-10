@@ -295,13 +295,15 @@ pub fn loop_iteration(loop_name: &'static str, succeeded: bool, elapsed: std::ti
     otel_counters()
         .loop_duration_ms
         .record(millis, &[KeyValue::new("loop", loop_name)]);
-    if succeeded {
-        let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
-        metrics::gauge!(METRIC_LOOP_LAST_SUCCESS, "loop" => loop_name).set(timestamp as f64);
-        otel_counters()
-            .loop_last_success
-            .record(timestamp, &[KeyValue::new("loop", loop_name)]);
+    if !succeeded {
+        return;
     }
+
+    let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
+    metrics::gauge!(METRIC_LOOP_LAST_SUCCESS, "loop" => loop_name).set(timestamp as f64);
+    otel_counters()
+        .loop_last_success
+        .record(timestamp, &[KeyValue::new("loop", loop_name)]);
 }
 
 pub fn cleanup(job: &'static str, succeeded: bool, count: u64) {

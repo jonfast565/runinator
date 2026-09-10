@@ -100,17 +100,19 @@ impl BrokerMetrics {
                 KeyValue::new("outcome", outcome),
             ],
         );
-        if timed {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-            self.duration_ms.record(
-                elapsed_ms,
-                &[
-                    KeyValue::new("backend", self.backend.clone()),
-                    KeyValue::new("channel", channel),
-                    KeyValue::new("op", op),
-                ],
-            );
+        if !timed {
+            return;
         }
+
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.duration_ms.record(
+            elapsed_ms,
+            &[
+                KeyValue::new("backend", self.backend.clone()),
+                KeyValue::new("channel", channel),
+                KeyValue::new("op", op),
+            ],
+        );
     }
 }
 

@@ -166,16 +166,15 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                             length: location.length,
                             member: location.member,
                         });
-                        if batch.len() == 1000 {
-                            runtime
-                                .block_on(db.stage_workspace_gc(
-                                    staging.clone(),
-                                    std::mem::take(&mut batch),
-                                ))
-                                .map_err(|error| {
-                                    storage::Error::Io(std::io::Error::other(error))
-                                })?;
+                        if batch.len() != 1000 {
+                            continue;
                         }
+
+                        runtime
+                            .block_on(
+                                db.stage_workspace_gc(staging.clone(), std::mem::take(&mut batch)),
+                            )
+                            .map_err(|error| storage::Error::Io(std::io::Error::other(error)))?;
                     }
                     if !batch.is_empty() {
                         runtime

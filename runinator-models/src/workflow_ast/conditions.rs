@@ -101,12 +101,14 @@ impl From<&Value> for ConditionNode {
             return ConditionNode::Other(value.clone());
         };
         for op in CompareOp::ORDER {
-            if let Some(right) = object.get(op.key()) {
-                let Ok(right) = WorkflowExpression::try_from(right) else {
-                    return ConditionNode::Other(value.clone());
-                };
-                return ConditionNode::Compare { left, op, right };
-            }
+            let Some(right) = object.get(op.key()) else {
+                continue;
+            };
+
+            let Ok(right) = WorkflowExpression::try_from(right) else {
+                return ConditionNode::Other(value.clone());
+            };
+            return ConditionNode::Compare { left, op, right };
         }
         if let Some(exists) = object.get(COND_EXISTS) {
             return ConditionNode::Exists {

@@ -654,17 +654,17 @@ fn run_command(
     }
     let mut child = Command::new(resolve_command_program(program));
     child.args(args).stdin(Stdio::null());
-    if command.interactive {
-        child.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-        let status = child.status()?;
-        Ok(std::process::Output {
-            status,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        })
-    } else {
-        Ok(child.output()?)
+    if !(command.interactive) {
+        return Ok(child.output()?);
     }
+
+    child.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    let status = child.status()?;
+    Ok(std::process::Output {
+        status,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    })
 }
 
 /// locate the bundled macOS Keychain collector when a profile uses its portable command name.

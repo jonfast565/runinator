@@ -196,14 +196,16 @@ async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>)
         let guard = in_flight.lock().await;
         guard.values().cloned().collect::<Vec<_>>()
     };
-    if !effects.is_empty() {
-        warn!(
-            count = effects.len(),
-            "canceling in-flight provider effect(s) during shutdown"
-        );
-        for effect in effects {
-            effect.token.cancel();
-        }
+    if effects.is_empty() {
+        return;
+    }
+
+    warn!(
+        count = effects.len(),
+        "canceling in-flight provider effect(s) during shutdown"
+    );
+    for effect in effects {
+        effect.token.cancel();
     }
 }
 

@@ -544,20 +544,22 @@ impl DesktopAgentApp {
         }
         let close_requested =
             ctx.input(|i| i.viewport().events.contains(&egui::ViewportEvent::Close));
-        if close_requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            match self.draft.window_close_action {
-                Some(WindowCloseAction::HideToTray) if self.tray.is_some() => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                }
-                Some(WindowCloseAction::Exit) => {
-                    self.quitting = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                _ => {
-                    self.exit_dont_ask_again = false;
-                    self.exit_dialog = true;
-                }
+        if !close_requested {
+            return;
+        }
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        match self.draft.window_close_action {
+            Some(WindowCloseAction::HideToTray) if self.tray.is_some() => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
+            Some(WindowCloseAction::Exit) => {
+                self.quitting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            _ => {
+                self.exit_dont_ask_again = false;
+                self.exit_dialog = true;
             }
         }
     }
@@ -843,20 +845,19 @@ impl DesktopAgentApp {
             }
         });
 
-        if let Some(last) = &metrics.last_completed {
-            let (label, color) = outcome_presentation(last.outcome);
-            ui.horizontal_wrapped(|ui| {
-                outcome_mark(ui, last.outcome).on_hover_text(label);
-                ui.colored_label(
-                    color,
-                    egui::RichText::new(format!(
-                        "Last: {} ({} ms)",
-                        last.summary, last.duration_ms
-                    ))
+        let Some(last) = &metrics.last_completed else {
+            return;
+        };
+
+        let (label, color) = outcome_presentation(last.outcome);
+        ui.horizontal_wrapped(|ui| {
+            outcome_mark(ui, last.outcome).on_hover_text(label);
+            ui.colored_label(
+                color,
+                egui::RichText::new(format!("Last: {} ({} ms)", last.summary, last.duration_ms))
                     .small(),
-                );
-            });
-        }
+            );
+        });
     }
 
     fn runtime_lifecycle(ui: &mut egui::Ui, dashboard: &RuntimeDashboard<'_>) {

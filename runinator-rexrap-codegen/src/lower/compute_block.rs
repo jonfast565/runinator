@@ -112,12 +112,14 @@ impl Lowerer {
     fn callable_catalog(&self) -> CallableCatalog {
         let mut catalog = CallableCatalog::builtin();
         for entry in &self.lowered_functions {
-            if let Some(name) = entry.get("name").and_then(Value::as_str) {
-                // arity and effect are the type checker's business, and it has already run: the
-                // assembler only needs to know that this name is a module function rather than a
-                // provider dispatch.
-                catalog.add_local(name, 0, EffectClass::Pure);
-            }
+            let Some(name) = entry.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+
+            // arity and effect are the type checker's business, and it has already run: the
+            // assembler only needs to know that this name is a module function rather than a
+            // provider dispatch.
+            catalog.add_local(name, 0, EffectClass::Pure);
         }
         for provider in &self.provider_metadata {
             catalog.add_provider(provider);

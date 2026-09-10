@@ -73,15 +73,14 @@ pub(super) fn resolve_effect_request(
                 required_labels,
                 workspace_affinity: workspace_affinity
                     .map(|value| {
-                        if let Some(default) = value.get("$workspace_default") {
-                            let resolved = resolve(default.clone())?;
-                            let mut attachment: runinator_models::workspaces::WorkspaceAttachment =
-                                resolved.decode().map_err(|error| error.to_string())?;
-                            attachment.follow_run = true;
-                            Value::encode(&attachment).map_err(|error| error.to_string())
-                        } else {
-                            resolve(value)
-                        }
+                        let Some(default) = value.get("$workspace_default") else {
+                            return resolve(value);
+                        };
+                        let resolved = resolve(default.clone())?;
+                        let mut attachment: runinator_models::workspaces::WorkspaceAttachment =
+                            resolved.decode().map_err(|error| error.to_string())?;
+                        attachment.follow_run = true;
+                        Value::encode(&attachment).map_err(|error| error.to_string())
                     })
                     .transpose()?,
                 execution_profile,

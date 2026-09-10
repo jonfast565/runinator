@@ -255,7 +255,10 @@ fn scan<S: WriteStore>(
                 edit.mkdir(&path)?;
             }
             scan(edit, root, &path, limits, usage, links)?;
-        } else if metadata.file_type().is_symlink() {
+            edit.set_metadata(&path, stored_metadata(&metadata))?;
+            continue;
+        }
+        if metadata.file_type().is_symlink() {
             let target = fs::read_link(entry.path())?;
             super::validate_link(Path::new(&path), &target)?;
             let target = target
@@ -264,47 +267,49 @@ fn scan<S: WriteStore>(
             if edit.stat(&path).is_err() {
                 edit.symlink(&path, target)?;
             }
-        } else if metadata.is_file() {
-            let identity = file_identity(&metadata);
-            if let Some(source) = identity.and_then(|key| links.get(&key)) {
-                let source_number = edit.stat(source)?.0;
-                match edit.stat(&path) {
-                    Ok((number, _)) if number == source_number => {}
-                    Ok(_) => {
-                        edit.unlink(&path)?;
-                        edit.hard_link(source, &path)?;
-                    }
-                    Err(storage::Error::NotFound(_)) => edit.hard_link(source, &path)?,
-                    Err(error) => return Err(error.into()),
-                }
-            } else {
-                usage.logical_bytes = usage
-                    .logical_bytes
-                    .checked_add(metadata.len())
-                    .ok_or_else(|| WORKSPACE_INVALID.error("workspace size overflow"))?;
-                limits.check(*usage)?;
-                let file = fs::File::open(entry.path())?;
-                // check the opened file before consuming bytes, including replacement races.
-                let opened = file.metadata()?;
-                if !opened.is_file()
-                    || opened.len() != metadata.len()
-                    || file_identity(&opened) != identity
-                {
-                    return Err(WORKSPACE_INVALID.error("workspace changed during capture"));
-                }
-                edit.put_sized(&path, &file, metadata.len())?;
-                if file.metadata()?.modified()? != opened.modified()?
-                    || file.metadata()?.len() != opened.len()
-                {
-                    return Err(WORKSPACE_INVALID.error("workspace changed during capture"));
-                }
-                if let Some(identity) = identity {
-                    links.insert(identity, path.clone());
-                }
-            }
-        } else {
+            edit.set_metadata(&path, stored_metadata(&metadata))?;
+            continue;
+        }
+        if !metadata.is_file() {
             return Err(WORKSPACE_INVALID.error("workspace contains a special file"));
         }
+        let identity = file_identity(&metadata);
+        if let Some(source) = identity.and_then(|key| links.get(&key)) {
+            let source_number = edit.stat(source)?.0;
+            match edit.stat(&path) {
+                Ok((number, _)) if number == source_number => {}
+                Ok(_) => {
+                    edit.unlink(&path)?;
+                    edit.hard_link(source, &path)?;
+                }
+                Err(storage::Error::NotFound(_)) => edit.hard_link(source, &path)?,
+                Err(error) => return Err(error.into()),
+            }
+            edit.set_metadata(&path, stored_metadata(&metadata))?;
+            continue;
+        }
+        usage.logical_bytes = usage
+            .logical_bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| WORKSPACE_INVALID.error("workspace size overflow"))?;
+        limits.check(*usage)?;
+        let file = fs::File::open(entry.path())?;
+        // check the opened file before consuming bytes, including replacement races.
+        let opened = file.metadata()?;
+        if !opened.is_file() || opened.len() != metadata.len() || file_identity(&opened) != identity
+        {
+            return Err(WORKSPACE_INVALID.error("workspace changed during capture"));
+        }
+        edit.put_sized(&path, &file, metadata.len())?;
+        if file.metadata()?.modified()? != opened.modified()?
+            || file.metadata()?.len() != opened.len()
+        {
+            return Err(WORKSPACE_INVALID.error("workspace changed during capture"));
+        }
+        if let Some(identity) = identity {
+            links.insert(identity, path.clone());
+        }
+
         edit.set_metadata(&path, stored_metadata(&metadata))?;
     }
     Ok(())

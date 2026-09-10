@@ -62,16 +62,18 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
             ConcurrencyPolicy::CancelPrevious => {
                 for prior in existing.iter().filter(|run| run.status.is_active()) {
                     for member in db.fetch_workflow_runs_for_pipeline_run(prior.id).await? {
-                        if member.status.is_active() {
-                            db.update_workflow_run_status(
-                                member.id,
-                                WorkflowStatus::Canceled,
-                                None,
-                                None,
-                                Some("Canceled by pipeline concurrency policy".into()),
-                            )
-                            .await?;
+                        if !member.status.is_active() {
+                            continue;
                         }
+
+                        db.update_workflow_run_status(
+                            member.id,
+                            WorkflowStatus::Canceled,
+                            None,
+                            None,
+                            Some("Canceled by pipeline concurrency policy".into()),
+                        )
+                        .await?;
                     }
                     cancel_open_member_attempts(db, prior.id).await?;
                     db.update_pipeline_run_status(
@@ -122,15 +124,17 @@ async fn cancel_open_member_attempts<T: RuntimeStore + WorkflowVmStore>(
     pipeline_run_id: Uuid,
 ) -> Result<(), SendableError> {
     for attempt in db.fetch_pipeline_member_attempts(pipeline_run_id).await? {
-        if !attempt.status.is_terminal() {
-            db.update_pipeline_member_attempt(
-                attempt.id,
-                PipelineMemberAttemptStatus::Canceled,
-                attempt.result,
-                Some("Canceled by pipeline concurrency policy".into()),
-            )
-            .await?;
+        if attempt.status.is_terminal() {
+            continue;
         }
+
+        db.update_pipeline_member_attempt(
+            attempt.id,
+            PipelineMemberAttemptStatus::Canceled,
+            attempt.result,
+            Some("Canceled by pipeline concurrency policy".into()),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -195,16 +199,18 @@ pub async fn start_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
                     .filter(|candidate| candidate.id != run.id && candidate.status.is_active())
                 {
                     for member in db.fetch_workflow_runs_for_pipeline_run(prior.id).await? {
-                        if member.status.is_active() {
-                            db.update_workflow_run_status(
-                                member.id,
-                                WorkflowStatus::Canceled,
-                                None,
-                                None,
-                                Some("Canceled by pipeline concurrency policy".into()),
-                            )
-                            .await?;
+                        if !member.status.is_active() {
+                            continue;
                         }
+
+                        db.update_workflow_run_status(
+                            member.id,
+                            WorkflowStatus::Canceled,
+                            None,
+                            None,
+                            Some("Canceled by pipeline concurrency policy".into()),
+                        )
+                        .await?;
                     }
                     cancel_open_member_attempts(db, prior.id).await?;
                     db.update_pipeline_run_status(

@@ -137,12 +137,13 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
   // refetch the open detail when one of its member workflow runs changes, so step status/timing in
   // the detail track live rather than waiting on the next pipeline-run event or fallback poll.
   async function refreshDetailIfMember(workflowRunId: string): Promise<void> {
-    if (
-      selectedRunId.value &&
-      detail.value?.members.some((member) => member.id === workflowRunId)
-    ) {
-      await loadDetail(selectedRunId.value);
+    if (!(
+      selectedRunId.value && detail.value?.members.some((member) => member.id === workflowRunId)
+    )) {
+      return;
     }
+
+    await loadDetail(selectedRunId.value);
   }
 
   return {

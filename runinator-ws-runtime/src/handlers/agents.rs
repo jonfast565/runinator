@@ -173,14 +173,14 @@ async fn require_visible_replica<T: ReplicaStore>(
     ctx: &AuthContext,
     replica_id: Uuid,
 ) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    if let Some(org_id) = ctx.org_id {
-        match registry.fetch(replica_id).await {
-            Ok(Some(replica)) if replica.registered_by_org_id == Some(org_id) => Ok(()),
-            Ok(_) => Err(not_found("Replica not found")),
-            Err(err) => Err(api_error(err.to_string())),
-        }
-    } else {
-        Ok(())
+    let Some(org_id) = ctx.org_id else {
+        return Ok(());
+    };
+
+    match registry.fetch(replica_id).await {
+        Ok(Some(replica)) if replica.registered_by_org_id == Some(org_id) => Ok(()),
+        Ok(_) => Err(not_found("Replica not found")),
+        Err(err) => Err(api_error(err.to_string())),
     }
 }
 

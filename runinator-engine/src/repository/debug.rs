@@ -421,10 +421,12 @@ pub fn ancestors_in_snapshot(
                 node.kind
             )));
         }
-        if let Some(parents) = reverse.get(&node_id) {
-            for parent in parents {
-                queue.push_back(parent.clone());
-            }
+        let Some(parents) = reverse.get(&node_id) else {
+            continue;
+        };
+
+        for parent in parents {
+            queue.push_back(parent.clone());
         }
     }
 

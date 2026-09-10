@@ -101,25 +101,29 @@ pub fn validate_workflow(
             validate_node_ref(node, &slot.target, slot.label, slot.rule, &node_map)?;
         }
         for reference in value_refs(node)? {
-            if let WorkflowRefSource::NodeOutput(target) = reference.source {
-                validate_node_ref(
-                    node,
-                    &target,
-                    "node output reference",
-                    TargetRule::OutputProducing,
-                    &node_map,
-                )?;
-            }
-        }
-        if let Some(target) = node.reentry.on_exhausted.as_ref() {
+            let WorkflowRefSource::NodeOutput(target) = reference.source else {
+                continue;
+            };
+
             validate_node_ref(
                 node,
-                target,
-                "reentry on_exhausted",
-                TargetRule::NonEntry,
+                &target,
+                "node output reference",
+                TargetRule::OutputProducing,
                 &node_map,
             )?;
         }
+        let Some(target) = node.reentry.on_exhausted.as_ref() else {
+            continue;
+        };
+
+        validate_node_ref(
+            node,
+            target,
+            "reentry on_exhausted",
+            TargetRule::NonEntry,
+            &node_map,
+        )?;
     }
 
     validate_graph_cycles(&start, &nodes)?;

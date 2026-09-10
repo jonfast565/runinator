@@ -318,18 +318,20 @@ impl TryFrom<&Value> for WorkflowExpression {
                     (EXPR_DIV, WorkflowExpression::Div),
                     (EXPR_MOD, WorkflowExpression::Mod),
                 ] {
-                    if let Some(items) = map.get(key) {
-                        let items = items
-                            .as_array()
-                            .filter(|items| !items.is_empty())
-                            .ok_or_else(|| invalid(value))?;
-                        return Ok(ctor(
-                            items
-                                .iter()
-                                .map(WorkflowExpression::try_from)
-                                .collect::<Result<Vec<_>, _>>()?,
-                        ));
-                    }
+                    let Some(items) = map.get(key) else {
+                        continue;
+                    };
+
+                    let items = items
+                        .as_array()
+                        .filter(|items| !items.is_empty())
+                        .ok_or_else(|| invalid(value))?;
+                    return Ok(ctor(
+                        items
+                            .iter()
+                            .map(WorkflowExpression::try_from)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ));
                 }
                 if let Some(operand) = map.get(EXPR_NEG) {
                     return Ok(WorkflowExpression::Neg(Box::new(

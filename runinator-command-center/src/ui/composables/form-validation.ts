@@ -52,14 +52,20 @@ export function applyDefaultConstraints(root: ParentNode): void {
       control.maxLength = DEFAULT_TEXTAREA_MAX_LENGTH;
     }
 
-    if (control instanceof HTMLInputElement && isTextualInput(control) && control.maxLength < 0) {
-      control.maxLength =
-        control.type === "password"
-          ? DEFAULT_TEXTAREA_MAX_LENGTH
-          : control.type === "url"
-            ? DEFAULT_URL_MAX_LENGTH
-            : DEFAULT_INPUT_MAX_LENGTH;
+    if (!(
+      control instanceof HTMLInputElement &&
+      isTextualInput(control) &&
+      control.maxLength < 0
+    )) {
+      continue;
     }
+
+    control.maxLength =
+      control.type === "password"
+        ? DEFAULT_TEXTAREA_MAX_LENGTH
+        : control.type === "url"
+          ? DEFAULT_URL_MAX_LENGTH
+          : DEFAULT_INPUT_MAX_LENGTH;
   }
 }
 

@@ -221,7 +221,12 @@ Authorization is deny-by-default and hierarchical; `docs/permissions.md` is the 
 
 ## Coding and Change Hygiene
 
-- Favor guard clauses over deep nesting and traits for behavior with multiple implementations.
+- Require guard clauses for preconditions, missing/invalid values, and inapplicable work: use early
+  `return`, `continue`, or Rust `let ... else` to keep the main path flat. Do not nest the main path
+  inside success-only `if`/`else` branches when a guard preserves behavior. Extract a focused helper
+  when guards would otherwise skip required cleanup or later work. Retain branching when it
+  produces a value or when flattening would change evaluation order, resource lifetimes, or behavior.
+- Prefer traits for behavior with multiple implementations.
 - Keep comments lower case, single-line, and punctuated where practical. Keep public RustDoc short,
   dense, and dispassionate.
 - Split libraries into focused modules. Prefer one primary struct or trait per file; treat 500 lines

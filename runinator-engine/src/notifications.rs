@@ -78,15 +78,17 @@ pub async fn on_run_terminal<T: RuntimeStore + NotificationStore + RunStore + Wo
 
     // a failed run is also where an exhausted node retry surfaces; report the specific node so an
     // on-call reader sees which step burned its attempts rather than only that the run died.
-    if let Some(node_context) = context_builder.retry_exhausted().await {
-        dispatcher
-            .dispatch_event(
-                NotificationEvent::NodeRetryExhausted,
-                run.workflow_id,
-                &node_context,
-            )
-            .await;
-    }
+    let Some(node_context) = context_builder.retry_exhausted().await else {
+        return;
+    };
+
+    dispatcher
+        .dispatch_event(
+            NotificationEvent::NodeRetryExhausted,
+            run.workflow_id,
+            &node_context,
+        )
+        .await;
 }
 
 /// periodically emit scan-based events, which have no transition to hang off. each policy's

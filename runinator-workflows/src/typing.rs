@@ -57,11 +57,13 @@ pub fn validate_workflow_types(
     };
 
     for node in nodes {
-        if let Some(output_type) = spec_for(&node.kind).output_type(node, &provider_actions)? {
-            context
-                .node_outputs
-                .insert(node.id.as_str().to_string(), output_type);
-        }
+        let Some(output_type) = spec_for(&node.kind).output_type(node, &provider_actions)? else {
+            continue;
+        };
+
+        context
+            .node_outputs
+            .insert(node.id.as_str().to_string(), output_type);
     }
     for (node_id, output_type) in declared_node_output_types(workflow)? {
         context.node_outputs.insert(node_id, output_type);
@@ -72,11 +74,13 @@ pub fn validate_workflow_types(
             WorkflowNodeKind::Map => context.map_node_output_type(node)?,
             _ => None,
         };
-        if let Some(output_type) = output_type {
-            context
-                .node_outputs
-                .insert(node.id.as_str().to_string(), output_type);
-        }
+        let Some(output_type) = output_type else {
+            continue;
+        };
+
+        context
+            .node_outputs
+            .insert(node.id.as_str().to_string(), output_type);
     }
 
     for node in nodes {

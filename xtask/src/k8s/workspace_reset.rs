@@ -74,17 +74,19 @@ fn active(root: &Path, context: Option<&str>) -> Result<String> {
 fn resume(root: &Path, context: Option<&str>, replicas: &Value) -> Result<()> {
     if let Some(items) = replicas.as_object() {
         for (name, count) in items {
-            if PAUSE.contains(&name.as_str()) {
-                run(
-                    root,
-                    context,
-                    &[
-                        "scale",
-                        &format!("deployment/{name}"),
-                        &format!("--replicas={}", count.as_u64().unwrap_or(0)),
-                    ],
-                )?;
+            if !PAUSE.contains(&name.as_str()) {
+                continue;
             }
+
+            run(
+                root,
+                context,
+                &[
+                    "scale",
+                    &format!("deployment/{name}"),
+                    &format!("--replicas={}", count.as_u64().unwrap_or(0)),
+                ],
+            )?;
         }
     }
     Ok(())
@@ -118,16 +120,18 @@ pub fn reset(root: &Path, context: Option<&str>, restore: bool) -> Result<()> {
         )?)?;
         let mut replicas = serde_json::Map::new();
         for item in deployments["items"].as_array().into_iter().flatten() {
-            if let Some(name) = item
+            let Some(name) = item
                 .pointer("/metadata/name")
                 .and_then(Value::as_str)
                 .filter(|name| PAUSE.contains(name))
-            {
-                replicas.insert(
-                    name.into(),
-                    item.pointer("/spec/replicas").cloned().unwrap_or(json!(1)),
-                );
-            }
+            else {
+                continue;
+            };
+
+            replicas.insert(
+                name.into(),
+                item.pointer("/spec/replicas").cloned().unwrap_or(json!(1)),
+            );
         }
         Value::Object(replicas)
     };

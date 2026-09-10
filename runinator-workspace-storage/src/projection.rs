@@ -402,15 +402,17 @@ fn verify_directory_refs<S: ReadStore + ?Sized>(
     for (name, child_id) in node.entries(store)? {
         let child: PathNode = load(store, child_id, Kind::PathNode)?;
         let child_inode: Inode = load(store, child.inode_id, Kind::Inode)?;
-        if matches!(child_inode.data, InodeData::Directory(_)) {
-            let reference_id = directory_ref(store, projection, child.inode_number)?
-                .ok_or_else(|| corrupt("projected directory is missing parent ref"))?;
-            let reference: PathRef = load(store, reference_id, Kind::PathRef)?;
-            if reference.parent_inode != node.inode_number || reference.name != name {
-                return Err(corrupt("projected directory parent ref mismatch"));
-            }
-            verify_directory_refs(store, projection, child_id)?;
+        if !matches!(child_inode.data, InodeData::Directory(_)) {
+            continue;
         }
+
+        let reference_id = directory_ref(store, projection, child.inode_number)?
+            .ok_or_else(|| corrupt("projected directory is missing parent ref"))?;
+        let reference: PathRef = load(store, reference_id, Kind::PathRef)?;
+        if reference.parent_inode != node.inode_number || reference.name != name {
+            return Err(corrupt("projected directory parent ref mismatch"));
+        }
+        verify_directory_refs(store, projection, child_id)?;
     }
     Ok(())
 }

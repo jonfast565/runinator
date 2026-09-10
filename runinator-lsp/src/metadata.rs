@@ -56,13 +56,15 @@ impl MetadataCache {
     pub async fn refresh(&self) {
         let providers = self.source.providers().await;
         let settings = self.source.settings().await;
-        if let Ok(mut snapshot) = self.snapshot.write() {
-            if let Ok(providers) = providers {
-                snapshot.providers = providers;
-            }
-            if let Ok(settings) = settings {
-                snapshot.settings = settings;
-            }
+        let Ok(mut snapshot) = self.snapshot.write() else {
+            return;
+        };
+
+        if let Ok(providers) = providers {
+            snapshot.providers = providers;
+        }
+        if let Ok(settings) = settings {
+            snapshot.settings = settings;
         }
     }
 

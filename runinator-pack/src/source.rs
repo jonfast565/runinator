@@ -155,32 +155,34 @@ pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
     for source_path in paths {
         let data = fs::read_to_string(&source_path)?;
         let blocks = parse_pack_source(&source_path, &data)?;
-        if !blocks.pipelines.trim().is_empty() {
-            let bundle = runinator_rexrap::parse_pipeline_str(&blocks.pipelines).map_err(|e| {
-                PackError::compile(format!(
-                    "failed to parse {} pipelines:\n{}",
-                    source_path.display(),
-                    e.render(&blocks.pipelines)
-                ))
-            })?;
-            for pipeline in &bundle.pipelines {
-                if pipeline.key.is_none() {
-                    return Err(PackError::compile(format!(
-                        "pipeline '{}' in {} must declare a stable `key`",
-                        pipeline.name,
-                        source_path.display()
-                    )));
-                }
-                if pipeline.namespace.is_none() {
-                    return Err(PackError::compile(format!(
-                        "pipeline '{}' in {} must declare a `namespace`",
-                        pipeline.name,
-                        source_path.display()
-                    )));
-                }
-            }
-            pipelines.extend(bundle.pipelines);
+        if blocks.pipelines.trim().is_empty() {
+            continue;
         }
+
+        let bundle = runinator_rexrap::parse_pipeline_str(&blocks.pipelines).map_err(|e| {
+            PackError::compile(format!(
+                "failed to parse {} pipelines:\n{}",
+                source_path.display(),
+                e.render(&blocks.pipelines)
+            ))
+        })?;
+        for pipeline in &bundle.pipelines {
+            if pipeline.key.is_none() {
+                return Err(PackError::compile(format!(
+                    "pipeline '{}' in {} must declare a stable `key`",
+                    pipeline.name,
+                    source_path.display()
+                )));
+            }
+            if pipeline.namespace.is_none() {
+                return Err(PackError::compile(format!(
+                    "pipeline '{}' in {} must declare a `namespace`",
+                    pipeline.name,
+                    source_path.display()
+                )));
+            }
+        }
+        pipelines.extend(bundle.pipelines);
     }
     Ok((!pipelines.is_empty()).then_some(PipelineBundle { pipelines }))
 }

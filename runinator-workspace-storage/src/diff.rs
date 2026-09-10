@@ -302,14 +302,16 @@ pub fn page<L: ReadStore, R: ReadStore>(
         cursor.results_after = Some(name.clone());
         let a = a.filter(|a| a.0 == name).map(|a| a.1);
         let b = b.filter(|b| b.0 == name).map(|b| b.1);
-        if a != b {
-            changes.push(Change {
-                path: String::from_utf8(name).map_err(|_| invalid("invalid result name"))?,
-                left: a,
-                right: b,
-                result: true,
-            });
+        if a == b {
+            continue;
         }
+
+        changes.push(Change {
+            path: String::from_utf8(name).map_err(|_| invalid("invalid result name"))?,
+            left: a,
+            right: b,
+            result: true,
+        });
     }
     Ok(Page {
         changes,

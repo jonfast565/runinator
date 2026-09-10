@@ -84,18 +84,19 @@ fn foreign_language_runtime(language: &str) -> Option<ForeignLanguageRuntime> {
 }
 
 fn merge_runtime_value(target: &mut Value, override_value: &Value) {
-    if let (Some(target), Some(override_object)) =
+    let (Some(target), Some(override_object)) =
         (target.as_object_mut(), override_value.as_object())
-    {
-        for (key, value) in override_object {
-            if let Some(existing) = target.get_mut(key) {
-                merge_runtime_value(existing, value);
-            } else {
-                target.insert(key.clone(), value.clone());
-            }
-        }
-    } else {
+    else {
         *target = override_value.clone();
+        return;
+    };
+
+    for (key, value) in override_object {
+        if let Some(existing) = target.get_mut(key) {
+            merge_runtime_value(existing, value);
+        } else {
+            target.insert(key.clone(), value.clone());
+        }
     }
 }
 

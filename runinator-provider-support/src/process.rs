@@ -112,12 +112,14 @@ where
 }
 
 fn emit(sink: Option<&Arc<dyn ProviderEventSink>>, stream: &str, content: String) {
-    if let Some(sink) = sink {
-        sink.emit(ProviderExecutionEvent::Chunk {
-            stream: stream.to_string(),
-            content,
-        });
-    }
+    let Some(sink) = sink else {
+        return;
+    };
+
+    sink.emit(ProviderExecutionEvent::Chunk {
+        stream: stream.to_string(),
+        content,
+    });
 }
 
 #[cfg(test)]

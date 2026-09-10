@@ -105,12 +105,14 @@ function addArg() {
 }
 
 function removeArg(index: number) {
-  if (props.modelValue) {
-    emit("update:modelValue", {
-      ...props.modelValue,
-      argv: props.modelValue.argv.filter((_, position) => position !== index),
-    });
+  if (!props.modelValue) {
+    return;
   }
+
+  emit("update:modelValue", {
+    ...props.modelValue,
+    argv: props.modelValue.argv.filter((_, position) => position !== index),
+  });
 }
 
 function updateInteractive(interactive: boolean) {

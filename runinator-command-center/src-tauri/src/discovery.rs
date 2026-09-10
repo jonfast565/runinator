@@ -102,11 +102,13 @@ fn run_discovery_loop(app: AppHandle, state: CommandCenterState) -> Result<(), S
 
 fn configured_service_url_from_env() -> Result<Option<String>, String> {
     for name in DIRECT_SERVICE_URL_ENV {
-        if let Ok(value) = std::env::var(name) {
-            println!("Checking env var {}: {}", name, value);
-            if let Some(url) = configured_service_url_from_pairs(vec![(name.to_string(), value)])? {
-                return Ok(Some(url));
-            }
+        let Ok(value) = std::env::var(name) else {
+            continue;
+        };
+
+        println!("Checking env var {}: {}", name, value);
+        if let Some(url) = configured_service_url_from_pairs(vec![(name.to_string(), value)])? {
+            return Ok(Some(url));
         }
     }
 

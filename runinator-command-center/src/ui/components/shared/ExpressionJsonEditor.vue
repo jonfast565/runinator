@@ -235,12 +235,14 @@ onMounted(() => {
         }
 
         // claim/release the dialog-level insert slot so the reference chips target this field.
-        if (update.focusChanged && !props.readonly) {
-          if (update.view.hasFocus) {
-            setExpressionInsertTarget(insertReference);
-          } else {
-            clearExpressionInsertTarget(insertReference);
-          }
+        if (!(update.focusChanged && !props.readonly)) {
+          return;
+        }
+
+        if (update.view.hasFocus) {
+          setExpressionInsertTarget(insertReference);
+        } else {
+          clearExpressionInsertTarget(insertReference);
         }
       }),
       EditorView.theme({

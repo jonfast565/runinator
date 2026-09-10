@@ -1263,11 +1263,17 @@ impl<'a> Decompiler<'a> {
                     .get("value")
                     .ok_or_else(|| RexRapError::Decompile("compute let missing value".into()))?;
                 out.push_str(&format!("{pad}let {name} = {}\n", self.expr(value)?));
-            } else if let Some(value) = object.get("$return") {
+                continue;
+            }
+            if let Some(value) = object.get("$return") {
                 out.push_str(&format!("{pad}return {}\n", self.expr(value)?));
-            } else if let Some(target) = object.get("$goto").and_then(Value::as_str) {
+                continue;
+            }
+            if let Some(target) = object.get("$goto").and_then(Value::as_str) {
                 out.push_str(&format!("{pad}goto {}\n", self.target_label(target)));
-            } else if let Some(condition) = object.get("$if") {
+                continue;
+            }
+            if let Some(condition) = object.get("$if") {
                 out.push_str(&format!("{pad}if {} {{\n", self.cond(condition)?));
                 let then_branch = object
                     .get("then")
@@ -1287,10 +1293,10 @@ impl<'a> Decompiler<'a> {
                     self.render_compute_lines(out, &else_branch, indent + 1)?;
                     out.push_str(&format!("{pad}}}\n"));
                 }
-            } else {
-                // a bare expression statement (e.g. a side-effecting call).
-                out.push_str(&format!("{pad}{}\n", self.expr(statement)?));
+                continue;
             }
+            // a bare expression statement (e.g. a side-effecting call).
+            out.push_str(&format!("{pad}{}\n", self.expr(statement)?));
         }
         Ok(())
     }
@@ -2719,20 +2725,22 @@ impl<'a> Decompiler<'a> {
             }
             let wait_for = node_ref_ids(node.parameters.get("wait_for"));
             let actual: HashSet<&str> = wait_for.iter().map(String::as_str).collect();
-            if actual == target {
-                let mode = node
-                    .parameters
-                    .get("mode")
-                    .and_then(Value::as_str)
-                    .unwrap_or("all")
-                    .to_string();
-                let cont = node
-                    .transitions
-                    .next
-                    .as_ref()
-                    .map(|target| target.as_str().to_string());
-                return Some((node.id.clone(), mode, cont));
+            if actual != target {
+                continue;
             }
+
+            let mode = node
+                .parameters
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("all")
+                .to_string();
+            let cont = node
+                .transitions
+                .next
+                .as_ref()
+                .map(|target| target.as_str().to_string());
+            return Some((node.id.clone(), mode, cont));
         }
         None
     }
@@ -2765,12 +2773,14 @@ impl<'a> Decompiler<'a> {
         let mut best: Option<String> = None;
         let mut best_score = usize::MAX;
         for node in distance_maps[0].keys() {
-            if distance_maps.iter().all(|map| map.contains_key(node)) {
-                let score: usize = distance_maps.iter().map(|map| map[node]).sum();
-                if score < best_score {
-                    best_score = score;
-                    best = Some(node.clone());
-                }
+            if !distance_maps.iter().all(|map| map.contains_key(node)) {
+                continue;
+            }
+
+            let score: usize = distance_maps.iter().map(|map| map[node]).sum();
+            if score < best_score {
+                best_score = score;
+                best = Some(node.clone());
             }
         }
         best

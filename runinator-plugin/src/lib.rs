@@ -26,14 +26,16 @@ pub fn load_libraries_from_path(path: &str) -> Result<HashMap<String, Plugin>, S
     let extension = get_library_extension();
     for entry in fs::read_dir(canonical_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
-            match load_plugin_with_timeout(path.clone(), PLUGIN_LOAD_TIMEOUT) {
-                Ok(plugin) => {
-                    libraries.insert(plugin.name.clone(), plugin);
-                }
-                Err(err) => {
-                    warn!("Skipping plugin {}: {}", path.display(), err);
-                }
+        if path.extension().and_then(|ext| ext.to_str()) != Some(extension) {
+            continue;
+        }
+
+        match load_plugin_with_timeout(path.clone(), PLUGIN_LOAD_TIMEOUT) {
+            Ok(plugin) => {
+                libraries.insert(plugin.name.clone(), plugin);
+            }
+            Err(err) => {
+                warn!("Skipping plugin {}: {}", path.display(), err);
             }
         }
     }

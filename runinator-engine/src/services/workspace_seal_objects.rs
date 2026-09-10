@@ -97,15 +97,17 @@ impl<T: DurableWorkspaceStore> PackObjects<T> {
     fn find(&self, id: Id) -> storage::Result<Option<FoundObject>> {
         let mut packs = self.packs.lock().map_err(|_| storage::Error::Poisoned)?;
         for i in 0..packs.len() {
-            if let Some((location, info)) = packs[i].lookup(id)? {
-                let pack = packs.remove(i).ok_or(storage::Error::Poisoned)?;
-                packs.push_back(pack.clone());
-                return Ok(Some(FoundObject {
-                    pack,
-                    location,
-                    info,
-                }));
-            }
+            let Some((location, info)) = packs[i].lookup(id)? else {
+                continue;
+            };
+
+            let pack = packs.remove(i).ok_or(storage::Error::Poisoned)?;
+            packs.push_back(pack.clone());
+            return Ok(Some(FoundObject {
+                pack,
+                location,
+                info,
+            }));
         }
         Ok(None)
     }

@@ -264,12 +264,14 @@ fn insert_status(attributes: &mut Value, status: runinator_models::replicas::Age
     if !attributes.is_object() {
         *attributes = Value::Object(Default::default());
     }
-    if let Some(object) = attributes.as_object_mut() {
-        let status = serde_json::to_value(status)
-            .map(Value::from)
-            .unwrap_or(Value::Null);
-        object.insert("status".to_string(), status);
-    }
+    let Some(object) = attributes.as_object_mut() else {
+        return;
+    };
+
+    let status = serde_json::to_value(status)
+        .map(Value::from)
+        .unwrap_or(Value::Null);
+    object.insert("status".to_string(), status);
 }
 
 #[cfg(test)]

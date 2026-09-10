@@ -169,11 +169,13 @@ pub fn encode(members: &[(Id, Vec<u8>)]) -> Result<(Vec<u8>, Vec<Id>)> {
         // recent full candidates, favoring those with more matching lanes.
         let mut candidates = Vec::new();
         for shift in [0, 16, 32, 48] {
-            if let Some(v) = buckets.get(&(((sig >> shift) & 0xffff) as u16)) {
-                for &c in v.iter().rev().take(6) {
-                    if !candidates.contains(&c) {
-                        candidates.push(c)
-                    }
+            let Some(v) = buckets.get(&(((sig >> shift) & 0xffff) as u16)) else {
+                continue;
+            };
+
+            for &c in v.iter().rev().take(6) {
+                if !candidates.contains(&c) {
+                    candidates.push(c)
                 }
             }
         }

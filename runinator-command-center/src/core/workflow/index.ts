@@ -426,52 +426,56 @@ export function buildGraphEdgeModels(
     for (const key of directTransitionKeys) {
       const target = nodeRefId(transitions[key]);
 
-      if (target && nodeIds.has(target)) {
-        const handles = edgeHandles(definition, source, key);
-        const metadata = findNodeKindMetadata(workflowNodeKind(node.kind));
-        const label =
-          metadata?.edge_slots.find((slot) => slot.taxonomy === "direct" && slot.key === key)
-            ?.label ?? key;
-        edges.push(
-          graphEdge(
-            source,
-            target,
-            label,
-            edgeData(source, key, {
-              kind: "direct",
-              transitionKey: key,
-              ...handles,
-              editable: true,
-            }),
-          ),
-        );
+      if (!target || !nodeIds.has(target)) {
+        continue;
       }
+
+      const handles = edgeHandles(definition, source, key);
+      const metadata = findNodeKindMetadata(workflowNodeKind(node.kind));
+      const label =
+        metadata?.edge_slots.find((slot) => slot.taxonomy === "direct" && slot.key === key)
+          ?.label ?? key;
+      edges.push(
+        graphEdge(
+          source,
+          target,
+          label,
+          edgeData(source, key, {
+            kind: "direct",
+            transitionKey: key,
+            ...handles,
+            editable: true,
+          }),
+        ),
+      );
     }
 
     for (const [index, entry] of asArray(transitions.branches).entries()) {
       const branch = asRecord(entry);
       const target = nodeRefId(branch.target);
 
-      if (target && nodeIds.has(target)) {
-        const semanticKey = `branches.${String(index)}`;
-        const handles = edgeHandles(definition, source, semanticKey);
-        const base = displayValue(branch.label) || `branch ${String(index + 1)}`;
-        const label =
-          typeof branch.priority === "number" ? `#${String(branch.priority)} ${base}` : base;
-        edges.push(
-          graphEdge(
-            source,
-            target,
-            label,
-            edgeData(source, semanticKey, {
-              kind: "branch",
-              branchIndex: index,
-              ...handles,
-              editable: true,
-            }),
-          ),
-        );
+      if (!target || !nodeIds.has(target)) {
+        continue;
       }
+
+      const semanticKey = `branches.${String(index)}`;
+      const handles = edgeHandles(definition, source, semanticKey);
+      const base = displayValue(branch.label) || `branch ${String(index + 1)}`;
+      const label =
+        typeof branch.priority === "number" ? `#${String(branch.priority)} ${base}` : base;
+      edges.push(
+        graphEdge(
+          source,
+          target,
+          label,
+          edgeData(source, semanticKey, {
+            kind: "branch",
+            branchIndex: index,
+            ...handles,
+            editable: true,
+          }),
+        ),
+      );
     }
 
     edges.push(...controlFlowEdges(definition, node, nodeIds, issuesByEdge));
@@ -1697,13 +1701,15 @@ function removeEdgeHandlesForEdge(definition: JsonRecord, edge: GraphEdgeLike) {
     removeWorkflowEdgeHandles(definition, edge.source, `branches.${String(data.branchIndex)}`);
   }
 
-  if (data?.parameterKey) {
-    removeWorkflowEdgeHandles(
-      definition,
-      edge.source,
-      parameterSemanticKey(data.parameterKey, data.parameterIndex),
-    );
+  if (!data?.parameterKey) {
+    return;
   }
+
+  removeWorkflowEdgeHandles(
+    definition,
+    edge.source,
+    parameterSemanticKey(data.parameterKey, data.parameterIndex),
+  );
 }
 
 function swapWorkflowEdgeHandles(
@@ -1851,12 +1857,14 @@ export function removeWorkflowNodeReferences(definition: JsonRecord, nodeId: str
     let currentTransitions = transitions;
 
     for (const key of directTransitionKeys) {
-      if (nodeRefId(currentTransitions[key]) === nodeId) {
-        currentTransitions = Object.fromEntries(
-          Object.entries(currentTransitions).filter(([entryKey]) => entryKey !== key),
-        );
-        node.transitions = currentTransitions;
+      if (nodeRefId(currentTransitions[key]) !== nodeId) {
+        continue;
       }
+
+      currentTransitions = Object.fromEntries(
+        Object.entries(currentTransitions).filter(([entryKey]) => entryKey !== key),
+      );
+      node.transitions = currentTransitions;
     }
 
     if (Array.isArray(transitions.branches)) {
@@ -1870,12 +1878,14 @@ export function removeWorkflowNodeReferences(definition: JsonRecord, nodeId: str
     let currentParameters = parameters;
 
     for (const key of ["default", "body", "catch", "finally", "target"]) {
-      if (nodeRefId(currentParameters[key]) === nodeId) {
-        currentParameters = Object.fromEntries(
-          Object.entries(currentParameters).filter(([entryKey]) => entryKey !== key),
-        );
-        node.parameters = currentParameters;
+      if (nodeRefId(currentParameters[key]) !== nodeId) {
+        continue;
       }
+
+      currentParameters = Object.fromEntries(
+        Object.entries(currentParameters).filter(([entryKey]) => entryKey !== key),
+      );
+      node.parameters = currentParameters;
     }
 
     for (const key of ["branches", "wait_for", "cases"]) {
@@ -1894,15 +1904,17 @@ export function removeWorkflowNodeReferences(definition: JsonRecord, nodeId: str
   // remove that link too, or it would point at a handler that no longer exists in the graph.
   const metadata = isRecord(definition.metadata) ? definition.metadata : null;
 
-  if (metadata && Array.isArray(metadata.interrupts)) {
-    const interrupts = recordArray(metadata.interrupts).filter(
-      (entry) => displayValue(entry.handler) !== nodeId,
-    );
-    metadata.interrupts = interrupts;
+  if (!(metadata && Array.isArray(metadata.interrupts))) {
+    return;
+  }
 
-    if (interrupts.length === 0) {
-      delete metadata.interrupts;
-    }
+  const interrupts = recordArray(metadata.interrupts).filter(
+    (entry) => displayValue(entry.handler) !== nodeId,
+  );
+  metadata.interrupts = interrupts;
+
+  if (interrupts.length === 0) {
+    delete metadata.interrupts;
   }
 }
 

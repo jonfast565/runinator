@@ -430,13 +430,14 @@ async function saveKey() {
 }
 
 async function rotateSelectedKey() {
-  if (
-    selectedKey.value?.id &&
-    window.confirm("Rotate this key? The old secret will stop working.")
-  ) {
-    await profile.rotateKey(selectedKey.value.id);
-    closeKeyModal();
+  if (!(
+    selectedKey.value?.id && window.confirm("Rotate this key? The old secret will stop working.")
+  )) {
+    return;
   }
+
+  await profile.rotateKey(selectedKey.value.id);
+  closeKeyModal();
 }
 
 async function revokeSelectedKey() {

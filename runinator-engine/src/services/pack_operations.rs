@@ -489,18 +489,20 @@ impl<
                 None => Vec::new(),
             };
             for pipeline in &pipelines {
-                if let Some(pipeline_id) = pipeline.id {
-                    ensure_pack_ownership(
-                        transaction.as_ref(),
-                        ResourceType::Pipeline,
-                        pipeline_id,
-                        tenant,
-                        owner,
-                        created_by,
-                    )
-                    .await
-                    .map_err(|error| PackImportError::internal(error.to_string()))?;
-                }
+                let Some(pipeline_id) = pipeline.id else {
+                    continue;
+                };
+
+                ensure_pack_ownership(
+                    transaction.as_ref(),
+                    ResourceType::Pipeline,
+                    pipeline_id,
+                    tenant,
+                    owner,
+                    created_by,
+                )
+                .await
+                .map_err(|error| PackImportError::internal(error.to_string()))?;
             }
 
             Ok(PackImportResult {

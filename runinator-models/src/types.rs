@@ -1302,16 +1302,18 @@ fn reject_unsupported_schema(schema: &Value, path: &str) -> Result<(), String> {
         }
     }
     for key in ["oneOf", "anyOf", "allOf"] {
-        if let Some(items) = object.get(key) {
-            let Some(items) = items.as_array() else {
-                return Err(format!("{path}.{key} must be an array"));
-            };
-            if items.is_empty() {
-                return Err(format!("{path}.{key} must not be empty"));
-            }
-            for (index, item) in items.iter().enumerate() {
-                reject_unsupported_schema(item, &format!("{path}.{key}[{index}]"))?;
-            }
+        let Some(items) = object.get(key) else {
+            continue;
+        };
+
+        let Some(items) = items.as_array() else {
+            return Err(format!("{path}.{key} must be an array"));
+        };
+        if items.is_empty() {
+            return Err(format!("{path}.{key} must not be empty"));
+        }
+        for (index, item) in items.iter().enumerate() {
+            reject_unsupported_schema(item, &format!("{path}.{key}[{index}]"))?;
         }
     }
     if let Some(items) = object.get("items") {

@@ -1221,7 +1221,9 @@ fn apply_tar_pass<R: Read, S: WriteStore>(
             prepare_path(tx, &path, FsKind::Directory)?;
             tx.mkdir_all(&path)?;
             tx.set_metadata(&path, metadata_from_tar(entry.header()))?;
-        } else if kind.is_file() {
+            continue;
+        }
+        if kind.is_file() {
             prepare_path(tx, &path, FsKind::File)?;
             if !parent.is_empty() {
                 tx.mkdir_all(parent)?;
@@ -1229,7 +1231,9 @@ fn apply_tar_pass<R: Read, S: WriteStore>(
             let metadata = metadata_from_tar(entry.header());
             tx.put(&path, &mut entry)?;
             tx.set_metadata(&path, metadata)?;
-        } else if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_symlink() {
             prepare_path(tx, &path, FsKind::Symlink)?;
             if !parent.is_empty() {
                 tx.mkdir_all(parent)?;
@@ -1243,7 +1247,9 @@ fn apply_tar_pass<R: Read, S: WriteStore>(
                 .ok_or_else(|| invalid("symlink target must be UTF-8"))?;
             tx.symlink(&path, target)?;
             tx.set_metadata(&path, metadata)?;
-        } else if kind.is_hard_link() {
+            continue;
+        }
+        if kind.is_hard_link() {
             if tx.stat(&path).is_ok() {
                 remove_tree(tx, &path)?;
             }
@@ -1255,11 +1261,11 @@ fn apply_tar_pass<R: Read, S: WriteStore>(
                 .ok_or_else(|| corrupt("hard link has no target"))?;
             let target = clean_tar_path(&target)?;
             tx.hard_link(&target, &path)?;
-        } else {
-            return Err(invalid(format!(
-                "unsupported OCI tar entry type for {path}"
-            )));
+            continue;
         }
+        return Err(invalid(format!(
+            "unsupported OCI tar entry type for {path}"
+        )));
     }
     Ok(())
 }

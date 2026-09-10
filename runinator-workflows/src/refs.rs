@@ -20,41 +20,42 @@ pub(crate) fn expand_refs_in_value(
 ) -> Result<(), WorkflowValidationError> {
     match value {
         Value::Object(map) => {
-            if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string) {
-                if let Some(pointer) = reference.strip_prefix("#/$defs/") {
-                    if stack.iter().any(|item| item == &reference) {
-                        return Err(WorkflowValidationError::RefCycle(reference));
-                    }
-                    let path = format!("/{pointer}");
-                    let mut replacement = defs
-                        .pointer(&path)
-                        .cloned()
-                        .ok_or_else(|| WorkflowValidationError::MissingRef(reference.clone()))?;
-                    stack.push(reference.clone());
-                    expand_refs_in_value(&mut replacement, defs, stack)?;
-                    stack.pop();
-                    for (key, overlay) in map.clone() {
-                        if key != "$ref"
-                            && key != "with"
-                            && let Value::Object(replacement_map) = &mut replacement
-                        {
-                            replacement_map.insert(key, overlay);
-                        }
-                    }
-                    if let Some(with) = map.get("with") {
-                        merge_overlay(&mut replacement, with.clone());
-                    }
-                    *value = replacement;
-                    return Ok(());
+            let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string)
+            else {
+                for nested in map.values_mut() {
+                    expand_refs_in_value(nested, defs, stack)?;
                 }
-                if reference.starts_with("runinator://") {
-                    return Ok(());
-                }
+                return Ok(());
+            };
+            if reference.starts_with("runinator://") {
+                return Ok(());
+            }
+            let Some(pointer) = reference.strip_prefix("#/$defs/") else {
                 return Err(WorkflowValidationError::MissingRef(reference));
+            };
+            if stack.iter().any(|item| item == &reference) {
+                return Err(WorkflowValidationError::RefCycle(reference));
             }
-            for nested in map.values_mut() {
-                expand_refs_in_value(nested, defs, stack)?;
+            let path = format!("/{pointer}");
+            let mut replacement = defs
+                .pointer(&path)
+                .cloned()
+                .ok_or_else(|| WorkflowValidationError::MissingRef(reference.clone()))?;
+            stack.push(reference.clone());
+            expand_refs_in_value(&mut replacement, defs, stack)?;
+            stack.pop();
+            if let Value::Object(replacement_map) = &mut replacement {
+                for (key, overlay) in map.clone() {
+                    if key == "$ref" || key == "with" {
+                        continue;
+                    }
+                    replacement_map.insert(key, overlay);
+                }
             }
+            if let Some(with) = map.get("with") {
+                merge_overlay(&mut replacement, with.clone());
+            }
+            *value = replacement;
         }
         Value::Array(items) => {
             for item in items {

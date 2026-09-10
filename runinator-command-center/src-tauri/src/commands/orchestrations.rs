@@ -23,13 +23,15 @@ pub async fn fetch_orchestrations(
         let mut serializer = url::form_urlencoded::Serializer::new(String::new());
         if let Some(filters) = filters.and_then(|value| value.as_object().cloned()) {
             for (key, value) in filters {
-                if !value.is_null() {
-                    let rendered = value
-                        .as_str()
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| value.to_string());
-                    serializer.append_pair(&key, &rendered);
+                if value.is_null() {
+                    continue;
                 }
+
+                let rendered = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string());
+                serializer.append_pair(&key, &rendered);
             }
         }
         serializer.finish()

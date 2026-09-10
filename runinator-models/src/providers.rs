@@ -289,17 +289,19 @@ fn validate_action_metadata(
                 provider.name, action.function_name, parameter.name
             ));
         }
-        if let Some(default_value) = &parameter.default_value {
-            parameter
-                .ty
-                .validate_value(default_value)
-                .map_err(|violation| {
-                    violation.message_with_label(&format!(
-                        "provider '{}.{}' parameter '{}'",
-                        provider.name, action.function_name, parameter.name
-                    ))
-                })?;
-        }
+        let Some(default_value) = &parameter.default_value else {
+            continue;
+        };
+
+        parameter
+            .ty
+            .validate_value(default_value)
+            .map_err(|violation| {
+                violation.message_with_label(&format!(
+                    "provider '{}.{}' parameter '{}'",
+                    provider.name, action.function_name, parameter.name
+                ))
+            })?;
     }
     Ok(())
 }

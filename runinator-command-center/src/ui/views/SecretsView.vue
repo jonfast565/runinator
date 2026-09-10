@@ -234,7 +234,11 @@
             <span>Delete</span>
           </button>
           <button class="btn" type="button" @click="closeEditor">Cancel</button>
-          <button class="btn btn-primary" type="submit" :disabled="Boolean(editorError) || !canMutate">
+          <button
+            class="btn btn-primary"
+            type="submit"
+            :disabled="Boolean(editorError) || !canMutate"
+          >
             <Icon name="save" />
             <span>{{ saveLabel }}</span>
           </button>
@@ -420,13 +424,15 @@ async function saveEditor() {
   secrets.draft.kind = props.settingKind;
   await secrets.saveDraft();
 
-  if (!app.errorText) {
-    if (isConfig.value && secrets.selectedSecret) {
-      await secrets.loadConfigValue(secrets.selectedSecret);
-    }
-
-    editorOpen.value = false;
+  if (app.errorText) {
+    return;
   }
+
+  if (isConfig.value && secrets.selectedSecret) {
+    await secrets.loadConfigValue(secrets.selectedSecret);
+  }
+
+  editorOpen.value = false;
 }
 
 async function deleteEditorSetting() {

@@ -242,16 +242,16 @@ async fn apply_workflow_source(
                         .collect(),
                 );
             for source in &function_sources {
-                if client
+                if !client
                     .fetch_function_artifact(&source.archive.digest)
                     .await?
                     .is_none()
                 {
-                    builder = builder.function_artifact(
-                        source.archive.digest.clone(),
-                        source.archive.bytes.clone(),
-                    );
+                    continue;
                 }
+
+                builder = builder
+                    .function_artifact(source.archive.digest.clone(), source.archive.bytes.clone());
             }
             client
                 .import_reviewed_pack_zip(builder.build()?, true, contract_override_reason)

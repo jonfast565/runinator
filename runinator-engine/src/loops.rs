@@ -1168,68 +1168,7 @@ pub async fn run_workflow_vm_driver<
                         _ => None,
                     };
                     if let Some(run_id) = settled_run_id {
-                        match db
-                            .settle_and_promote_ingress_workflow_run(run_id, chrono::Utc::now())
-                            .await
-                        {
-                            Ok(Some(promotion)) => {
-                                start_ingress_promotion(db.as_ref(), promotion).await
-                            }
-                            Ok(None) => {}
-                            Err(err) => {
-                                warn!(workflow_run_id = %run_id, error = %err, "ingress workflow settlement failed")
-                            }
-                        }
-                        if let Err(err) =
-                            repository::advance_pipeline_from_vm_terminal(db.as_ref(), run_id).await
-                        {
-                            warn!(workflow_run_id = %run_id, error = %err, "VM pipeline advancement failed");
-                        }
-                        match db.fetch_workflow_run(run_id).await {
-                            Ok(Some(run)) => {
-                                if let Some(pipeline_run_id) = run.pipeline_run_id {
-                                    match db.fetch_pipeline_run(pipeline_run_id).await {
-                                        Ok(Some(pipeline_run))
-                                            if pipeline_run.status.is_terminal()
-                                                && pipeline_run
-                                                    .orchestration_binding_id
-                                                    .is_none() =>
-                                        {
-                                            match db
-                                                .settle_and_promote_ingress_pipeline_run(
-                                                    pipeline_run_id,
-                                                    chrono::Utc::now(),
-                                                )
-                                                .await
-                                            {
-                                                Ok(Some(promotion)) => {
-                                                    start_ingress_promotion(db.as_ref(), promotion)
-                                                        .await
-                                                }
-                                                Ok(None) => {}
-                                                Err(err) => {
-                                                    warn!(pipeline_run_id = %pipeline_run_id, error = %err, "ingress pipeline settlement failed")
-                                                }
-                                            }
-                                        }
-                                        Ok(_) => {}
-                                        Err(err) => {
-                                            warn!(pipeline_run_id = %pipeline_run_id, error = %err, "failed to load pipeline run for ingress settlement")
-                                        }
-                                    }
-                                }
-                                if let Err(err) =
-                                    repository::maybe_start_chained_pipelines(db.as_ref(), &run)
-                                        .await
-                                {
-                                    warn!(workflow_run_id = %run_id, error = %err, "VM chained pipeline advancement failed");
-                                }
-                            }
-                            Ok(None) => {}
-                            Err(err) => {
-                                warn!(workflow_run_id = %run_id, error = %err, "failed to load terminal VM run for pipeline chaining")
-                            }
-                        }
+                        settle_terminal_vm_run(db.as_ref(), run_id).await;
                     }
                     emit_workflow_run_resolved(db.as_ref(), &events, workflow_run_id).await;
                 }
@@ -1268,6 +1207,70 @@ pub async fn run_workflow_vm_driver<
             _ = shutdown.notified() => return,
             _ = ready_nudge.notified() => {}
             _ = tokio::time::sleep(Duration::from_millis(policy.orchestration.workflow_vm_poll_interval_ms)) => {}
+        }
+    }
+}
+
+async fn settle_terminal_vm_run<
+    T: RuntimeStore + WorkflowVmStore + IngressStore + DefinitionStore,
+>(
+    db: &T,
+    run_id: uuid::Uuid,
+) {
+    match db
+        .settle_and_promote_ingress_workflow_run(run_id, chrono::Utc::now())
+        .await
+    {
+        Ok(Some(promotion)) => start_ingress_promotion(db, promotion).await,
+        Ok(None) => {}
+        Err(err) => {
+            warn!(workflow_run_id = %run_id, error = %err, "ingress workflow settlement failed")
+        }
+    }
+    if let Err(err) = repository::advance_pipeline_from_vm_terminal(db, run_id).await {
+        warn!(workflow_run_id = %run_id, error = %err, "VM pipeline advancement failed");
+    }
+    let run = match db.fetch_workflow_run(run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => return,
+        Err(err) => {
+            warn!(workflow_run_id = %run_id, error = %err, "failed to load terminal VM run for pipeline chaining");
+            return;
+        }
+    };
+    if let Some(pipeline_run_id) = run.pipeline_run_id {
+        settle_terminal_pipeline_ingress(db, pipeline_run_id).await;
+    }
+    if let Err(err) = repository::maybe_start_chained_pipelines(db, &run).await {
+        warn!(workflow_run_id = %run_id, error = %err, "VM chained pipeline advancement failed");
+    }
+}
+
+async fn settle_terminal_pipeline_ingress<
+    T: RuntimeStore + WorkflowVmStore + IngressStore + DefinitionStore,
+>(
+    db: &T,
+    pipeline_run_id: uuid::Uuid,
+) {
+    let pipeline_run = match db.fetch_pipeline_run(pipeline_run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => return,
+        Err(err) => {
+            warn!(pipeline_run_id = %pipeline_run_id, error = %err, "failed to load pipeline run for ingress settlement");
+            return;
+        }
+    };
+    if !pipeline_run.status.is_terminal() || pipeline_run.orchestration_binding_id.is_some() {
+        return;
+    }
+    match db
+        .settle_and_promote_ingress_pipeline_run(pipeline_run_id, chrono::Utc::now())
+        .await
+    {
+        Ok(Some(promotion)) => start_ingress_promotion(db, promotion).await,
+        Ok(None) => {}
+        Err(err) => {
+            warn!(pipeline_run_id = %pipeline_run_id, error = %err, "ingress pipeline settlement failed")
         }
     }
 }

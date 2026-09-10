@@ -385,13 +385,15 @@ function transitionsSection(current: StepEditorNode): DetailSection {
     const branch = asRecord(entry);
     const target = nodeRefId(branch.target);
 
-    if (target) {
-      rows.push({
-        label: displayValue(branch.label ?? `branch ${String(index + 1)}`),
-        value: target,
-        note: conditionLabel(branch.when),
-      });
+    if (!target) {
+      return;
     }
+
+    rows.push({
+      label: displayValue(branch.label ?? `branch ${String(index + 1)}`),
+      value: target,
+      note: conditionLabel(branch.when),
+    });
   });
 
   return section("Transitions", [], [], rows);

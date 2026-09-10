@@ -22,7 +22,7 @@ export function errorMessage(err: unknown): string {
   }
 
   if (err && typeof err === "object" && "message" in err) {
-    const message = (err).message;
+    const message = err.message;
     return typeof message === "string" ? message : String(message);
   }
 
@@ -72,12 +72,14 @@ function extractErrorText(value: unknown): string {
         return candidate;
       }
 
-      if (candidate && typeof candidate === "object") {
-        const nested = extractErrorText(candidate);
+      if (!(candidate && typeof candidate === "object")) {
+        continue;
+      }
 
-        if (nested) {
-          return nested;
-        }
+      const nested = extractErrorText(candidate);
+
+      if (nested) {
+        return nested;
       }
     }
   }

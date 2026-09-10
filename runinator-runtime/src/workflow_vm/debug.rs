@@ -79,23 +79,25 @@ pub(super) fn debug_boundary(
         })
     });
     let mut park_after_boundary = breakpoint_matches;
-    if let Some(position) = continuation
+    if let Some(frame) = continuation
         .frames
-        .iter()
-        .rposition(|frame| matches!(frame, WorkflowFrame::Debug(_)))
+        .iter_mut()
+        .rev()
+        .find_map(|frame| match frame {
+            WorkflowFrame::Debug(frame) => Some(frame),
+            _ => None,
+        })
     {
-        if let WorkflowFrame::Debug(frame) = &mut continuation.frames[position] {
-            if label.as_ref() == frame.run_to_node_id.as_ref() {
-                frame.run_to_node_id = None;
-            }
-            frame.breakpoint = label.clone();
-            if frame.step_requested {
-                frame.step_requested = false;
-                frame.paused = true;
-                park_after_boundary = true;
-            } else if breakpoint_matches {
-                frame.paused = true;
-            }
+        if label.as_ref() == frame.run_to_node_id.as_ref() {
+            frame.run_to_node_id = None;
+        }
+        frame.breakpoint = label.clone();
+        if frame.step_requested {
+            frame.step_requested = false;
+            frame.paused = true;
+            park_after_boundary = true;
+        } else if breakpoint_matches {
+            frame.paused = true;
         }
     } else {
         continuation.frames.push(WorkflowFrame::Debug(

@@ -462,15 +462,17 @@ impl Env {
             )),
             _ => None,
         };
-        if let Some(inferred) = inferred {
-            check_assignable(
-                &inferred,
-                &declared,
-                "node output annotation",
-                stmt.span,
-                diagnostics,
-            );
-        }
+        let Some(inferred) = inferred else {
+            return;
+        };
+
+        check_assignable(
+            &inferred,
+            &declared,
+            "node output annotation",
+            stmt.span,
+            diagnostics,
+        );
     }
 
     fn check_action(&self, action: &ActionStmt, span: Span, diagnostics: &mut Vec<Diagnostic>) {
@@ -957,26 +959,25 @@ impl Env {
                 let mut element: Option<RuninatorType> = None;
                 for item in items {
                     let item_ty = self.infer_expr(item, diagnostics);
-                    match &element {
-                        None => element = Some(item_ty),
-                        Some(existing) => {
-                            if let Some(common) = common_type(existing, &item_ty) {
-                                element = Some(common);
-                            } else {
-                                if self.type_policy == TypePolicy::Strict {
-                                    diagnostics.push(Diagnostic::error(
-                                        item.span,
-                                        format!(
-                                            "array item type {} is incompatible with {}",
-                                            item_ty.describe(),
-                                            existing.describe()
-                                        ),
-                                    ));
-                                }
-                                return RuninatorType::array(RuninatorType::Any);
-                            }
-                        }
+                    let Some(existing) = &element else {
+                        element = Some(item_ty);
+                        continue;
+                    };
+                    if let Some(common) = common_type(existing, &item_ty) {
+                        element = Some(common);
+                        continue;
                     }
+                    if self.type_policy == TypePolicy::Strict {
+                        diagnostics.push(Diagnostic::error(
+                            item.span,
+                            format!(
+                                "array item type {} is incompatible with {}",
+                                item_ty.describe(),
+                                existing.describe()
+                            ),
+                        ));
+                    }
+                    return RuninatorType::array(RuninatorType::Any);
                 }
                 RuninatorType::array(element.unwrap_or(RuninatorType::Any))
             }

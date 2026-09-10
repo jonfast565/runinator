@@ -452,35 +452,39 @@ fn run(
             );
             component_page = component_page.min(page_count.saturating_sub(1));
             terminal.draw(|frame| render(frame, &snapshot, &resource_history, component_page))?;
-            if event::poll(Duration::from_millis(250))?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
+            if !event::poll(Duration::from_millis(250))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            if let KeyCode::Char(character) = key.code
+                && !key.modifiers.contains(event::KeyModifiers::CONTROL)
+                && handle_key(character)
             {
-                if let KeyCode::Char(character) = key.code
-                    && !key.modifiers.contains(event::KeyModifiers::CONTROL)
-                    && handle_key(character)
-                {
-                    continue;
+                continue;
+            }
+            match key.code {
+                // Keep page navigation on unmodified arrows: this dashboard has no text
+                // editor or row selection competing for those keys.
+                KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
+                    component_page = component_page.saturating_sub(1);
                 }
-                match key.code {
-                    // Keep page navigation on unmodified arrows: this dashboard has no text
-                    // editor or row selection competing for those keys.
-                    KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
-                        component_page = component_page.saturating_sub(1);
-                    }
-                    KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
-                        component_page = (component_page + 1).min(page_count.saturating_sub(1));
-                    }
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        (request_shutdown)();
-                        break;
-                    }
-                    KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                        (request_shutdown)();
-                        break;
-                    }
-                    _ => {}
+                KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
+                    component_page = (component_page + 1).min(page_count.saturating_sub(1));
                 }
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    (request_shutdown)();
+                    break;
+                }
+                KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                    (request_shutdown)();
+                    break;
+                }
+                _ => {}
             }
         }
 

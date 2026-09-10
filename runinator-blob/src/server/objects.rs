@@ -209,10 +209,12 @@ fn put_options(headers: &HeaderMap) -> Result<PutOptions, BlobError> {
     }
     for (name, value) in headers {
         let name = name.as_str();
-        if let Some(key) = name.strip_prefix("x-amz-meta-") {
-            if let Ok(value) = value.to_str() {
-                options.metadata.insert(key.to_string(), value.to_string());
-            }
+        let Some(key) = name.strip_prefix("x-amz-meta-") else {
+            continue;
+        };
+
+        if let Ok(value) = value.to_str() {
+            options.metadata.insert(key.to_string(), value.to_string());
         }
     }
     Ok(options)

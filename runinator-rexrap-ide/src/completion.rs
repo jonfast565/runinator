@@ -1057,10 +1057,12 @@ pub(crate) fn type_fields(ty: &RuninatorType) -> Option<Vec<(String, RuninatorFi
         RuninatorType::Union(variants) => {
             let mut merged = BTreeMap::new();
             for variant in variants {
-                if let RuninatorType::Struct { fields, .. } = variant {
-                    for (key, field) in fields {
-                        merged.entry(key.clone()).or_insert_with(|| field.clone());
-                    }
+                let RuninatorType::Struct { fields, .. } = variant else {
+                    continue;
+                };
+
+                for (key, field) in fields {
+                    merged.entry(key.clone()).or_insert_with(|| field.clone());
                 }
             }
             if merged.is_empty() {

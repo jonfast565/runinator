@@ -192,18 +192,20 @@ pub async fn workflow_contract_impact<T: DefinitionStore + RuntimeStore>(
             continue;
         };
         for node in &workflow.definition.nodes {
-            if node.subflow.target_workflow_id().or(node.subflow_id) == Some(id) {
-                impact.dependents.push(ContractDependent {
-                    kind: "workflow".into(),
-                    id: dependent_id,
-                    name: workflow.name.clone(),
-                    pinned: node
-                        .subflow
-                        .target
-                        .as_ref()
-                        .is_some_and(|r| r.revision_pin.is_some()),
-                });
+            if node.subflow.target_workflow_id().or(node.subflow_id) != Some(id) {
+                continue;
             }
+
+            impact.dependents.push(ContractDependent {
+                kind: "workflow".into(),
+                id: dependent_id,
+                name: workflow.name.clone(),
+                pinned: node
+                    .subflow
+                    .target
+                    .as_ref()
+                    .is_some_and(|r| r.revision_pin.is_some()),
+            });
         }
     }
     for pipeline in db.fetch_pipelines().await? {
@@ -700,21 +702,23 @@ async fn prepare_workflows_for_save<T: DefinitionStore + RuntimeStore + Executio
         }
     }
     for workflow in &mut incoming {
-        if workflow.id.is_none() {
-            let identity = workflow_identity(workflow);
-            workflow.id = match stored_identities.get(&identity).map(Vec::as_slice) {
-                Some([id]) => Some(*id),
-                Some(ids) if ids.len() > 1 => {
-                    return Err(
-                        crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
-                            "workflow identity '{identity}' maps to {} existing UUIDs",
-                            ids.len()
-                        )),
-                    );
-                }
-                _ => Some(Uuid::new_v4()),
-            };
+        if !workflow.id.is_none() {
+            continue;
         }
+
+        let identity = workflow_identity(workflow);
+        workflow.id = match stored_identities.get(&identity).map(Vec::as_slice) {
+            Some([id]) => Some(*id),
+            Some(ids) if ids.len() > 1 => {
+                return Err(
+                    crate::errors::IMPORT_AMBIGUOUS_ARTIFACT_REFERENCE.error(format!(
+                        "workflow identity '{identity}' maps to {} existing UUIDs",
+                        ids.len()
+                    )),
+                );
+            }
+            _ => Some(Uuid::new_v4()),
+        };
     }
     for workflow in &incoming {
         let id = workflow

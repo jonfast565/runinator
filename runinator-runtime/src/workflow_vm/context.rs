@@ -24,14 +24,16 @@ pub(super) fn local_context(continuation: &WorkflowContinuation) -> Value {
         .cloned()
         .unwrap_or_default();
     for (name, output) in &continuation.locals {
-        if let Some(node_id) =
+        let Some(node_id) =
             name.strip_prefix(runinator_models::workflow_vm::WORKFLOW_NODE_OUTPUT_PREFIX)
-        {
-            steps.insert(
-                node_id.into(),
-                runinator_models::json!({ "output": output }),
-            );
-        }
+        else {
+            continue;
+        };
+
+        steps.insert(
+            node_id.into(),
+            runinator_models::json!({ "output": output }),
+        );
     }
     context.insert("steps".into(), Value::Object(steps));
     // Compute bytecode reads `let` references with `LoadLocal`. The invocation VM seeds its entry

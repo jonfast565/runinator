@@ -616,15 +616,17 @@ where
             let result = sqlx::query(&self.render("UPDATE orchestration_commands SET status = 'claimed', attempts = attempts + 1, claimed_by = ?, claimed_until = ?, updated_at = ? WHERE id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_until < ?))"))
                 .bind(owner.as_str()).bind(leased_until.timestamp()).bind(now.timestamp()).bind(command.id).bind(now.timestamp())
                 .execute(self.pool()).await?;
-            if result.affected() > 0 {
-                let row = sqlx::query(&self.render(&format!(
-                    "SELECT {COMMAND_COLUMNS} FROM orchestration_commands WHERE id = ?"
-                )))
-                .bind(command.id)
-                .fetch_one(self.pool())
-                .await?;
-                claimed.push(mappers::row_to_orchestration_command(&row)?);
+            if result.affected() == 0 {
+                continue;
             }
+
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {COMMAND_COLUMNS} FROM orchestration_commands WHERE id = ?"
+            )))
+            .bind(command.id)
+            .fetch_one(self.pool())
+            .await?;
+            claimed.push(mappers::row_to_orchestration_command(&row)?);
         }
         Ok(claimed)
     }
@@ -1052,24 +1054,26 @@ where
             let revision = row.get::<i64, _>("revision");
             let changed = sqlx::query(&self.render("UPDATE orchestration_adapter_polls SET claimed_by = ?, claimed_until = ?, last_attempt_at = ? WHERE adapter_id = ? AND revision = ? AND next_poll_at <= ? AND (claimed_until IS NULL OR claimed_until <= ?)"))
                 .bind(&instance_id).bind(lease_until.timestamp()).bind(now.timestamp()).bind(adapter_id).bind(revision).bind(now.timestamp()).bind(now.timestamp()).execute(self.pool()).await?;
-            if changed.affected() != 0 {
-                let at = |timestamp: i64| {
-                    chrono::TimeZone::timestamp_opt(&Utc, timestamp, 0)
-                        .single()
-                        .unwrap_or(now)
-                };
-                claimed.push(AdapterPollStatus {
-                    adapter_id,
-                    revision,
-                    checkpoint: serde_json::from_str(&row.get::<String, _>("checkpoint"))
-                        .unwrap_or_default(),
-                    next_poll_at: at(row.get("next_poll_at")),
-                    claimed_until: Some(lease_until),
-                    last_attempt_at: Some(now),
-                    last_success_at: row.get::<Option<i64>, _>("last_success_at").map(at),
-                    last_error: row.get("last_error"),
-                });
+            if changed.affected() == 0 {
+                continue;
             }
+
+            let at = |timestamp: i64| {
+                chrono::TimeZone::timestamp_opt(&Utc, timestamp, 0)
+                    .single()
+                    .unwrap_or(now)
+            };
+            claimed.push(AdapterPollStatus {
+                adapter_id,
+                revision,
+                checkpoint: serde_json::from_str(&row.get::<String, _>("checkpoint"))
+                    .unwrap_or_default(),
+                next_poll_at: at(row.get("next_poll_at")),
+                claimed_until: Some(lease_until),
+                last_attempt_at: Some(now),
+                last_success_at: row.get::<Option<i64>, _>("last_success_at").map(at),
+                last_error: row.get("last_error"),
+            });
         }
         Ok(claimed)
     }
