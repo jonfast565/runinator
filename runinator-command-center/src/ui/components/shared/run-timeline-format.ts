@@ -92,7 +92,7 @@ export function timelineDotClass(status: string): string {
 }
 
 export interface TimelineProvenanceTag {
-  id: "entered" | "effect_receipt" | "workspace";
+  id: "entered" | "effect_receipt" | "failure" | "workspace" | "vm_event";
   label: string;
   title: string;
 }
@@ -100,6 +100,15 @@ export interface TimelineProvenanceTag {
 /** Durable records represented by one projected timeline row. */
 export function timelineProvenanceTags(node: WorkflowNodeRun): TimelineProvenanceTag[] {
   const tags: TimelineProvenanceTag[] = [];
+
+  if (typeof node.state?.vm_event_type === "string") {
+    const eventType = node.state.vm_event_type.replaceAll("_", " ");
+    tags.push({
+      id: "vm_event",
+      label: eventType,
+      title: `A durable ${eventType} lifecycle event recorded by the workflow VM.`,
+    });
+  }
 
   if (typeof node.state?.workspace_phase === "string") {
     tags.push({
@@ -114,6 +123,14 @@ export function timelineProvenanceTags(node: WorkflowNodeRun): TimelineProvenanc
       id: "entered",
       label: "entered",
       title: "The workflow journal recorded this node entry.",
+    });
+  }
+
+  if (typeof node.state?.failure_journal_id === "string") {
+    tags.push({
+      id: "failure",
+      label: "failure",
+      title: "The workflow journal recorded this node failure.",
     });
   }
 

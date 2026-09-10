@@ -76,6 +76,16 @@ describe("run timeline formatting", () => {
     ]);
   });
 
+  it("labels a failure merged into its exact node visit", () => {
+    const failed = node("transform", { created_at: "2026-08-29T03:05:31Z" });
+    failed.state = {
+      node_entered_journal_id: "journal-entered",
+      failure_journal_id: "journal-failed",
+    };
+
+    expect(timelineProvenanceTags(failed).map((tag) => tag.label)).toEqual(["entered", "failure"]);
+  });
+
   it("labels durable workspace lifecycle phases", () => {
     const phase = node("workspace · materialize files", {
       created_at: "2026-08-29T03:05:31Z",
@@ -83,5 +93,18 @@ describe("run timeline formatting", () => {
     phase.state = { workspace_phase: "workspace.restore.materialize" };
 
     expect(timelineProvenanceTags(phase).map((tag) => tag.label)).toEqual(["workspace"]);
+  });
+
+  it("labels durable VM lifecycle events", () => {
+    const interrupted = node("work", { created_at: "2026-08-29T03:05:31Z" });
+    interrupted.state = { vm_event_type: "interrupt_resolved" };
+
+    expect(timelineProvenanceTags(interrupted)).toEqual([
+      {
+        id: "vm_event",
+        label: "interrupt resolved",
+        title: "A durable interrupt resolved lifecycle event recorded by the workflow VM.",
+      },
+    ]);
   });
 });

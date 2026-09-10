@@ -220,6 +220,10 @@ function workflowRunExecutionCounts(nodes: WorkflowRunDetail["nodes"]): Map<stri
   const byNode = new Map<string, WorkflowRunDetail["nodes"]>();
 
   for (const node of nodes) {
+    if (isVmLifecycleEvent(node)) {
+      continue;
+    }
+
     const rows = byNode.get(node.node_id) ?? [];
     rows.push(node);
     byNode.set(node.node_id, rows);
@@ -278,6 +282,10 @@ function latestWorkflowNodeRuns(
   const latest = new Map<string, WorkflowRunDetail["nodes"][number]>();
 
   for (const node of nodes) {
+    if (isVmLifecycleEvent(node)) {
+      continue;
+    }
+
     // The run-detail projection is chronological within each collection and appends mutable
     // effects after immutable journal rows. Last visit wins, which matters when a loop revisits a
     // node that succeeded earlier but is running or parked now.
@@ -285,6 +293,12 @@ function latestWorkflowNodeRuns(
   }
 
   return latest;
+}
+
+function isVmLifecycleEvent(node: WorkflowRunDetail["nodes"][number]): boolean {
+  return ["forked", "interrupted", "interrupt_resolved"].includes(
+    typeof node.state?.vm_event_type === "string" ? node.state.vm_event_type : "",
+  );
 }
 
 /**

@@ -1228,17 +1228,17 @@ impl WorkflowEffectRequest {
 impl WorkflowJournalEntry {
     pub fn timeline_category(&self) -> WorkflowTimelineCategory {
         match self {
+            Self::NodeEntered { .. } | Self::EffectRetryScheduled { .. } | Self::Failed { .. } => {
+                WorkflowTimelineCategory::User
+            }
             Self::Entered { .. }
             | Self::Transitioned { .. }
-            | Self::NodeEntered { .. }
             | Self::Forked { .. }
             | Self::EffectRequested { .. }
             | Self::EffectSettled { .. }
-            | Self::EffectRetryScheduled { .. }
             | Self::Completed { .. }
-            | Self::Failed { .. }
             | Self::Interrupted { .. }
-            | Self::InterruptResolved { .. } => WorkflowTimelineCategory::User,
+            | Self::InterruptResolved { .. } => WorkflowTimelineCategory::System,
         }
     }
 }
@@ -1334,7 +1334,7 @@ mod tests {
             sequence: 0,
             continuation_id: Some(Uuid::nil()),
             effect_id: None,
-            timeline_category: WorkflowTimelineCategory::User,
+            timeline_category: WorkflowTimelineCategory::System,
             entry: WorkflowJournalEntry::Entered {
                 continuation_id: Uuid::nil(),
                 instruction_pointer: 0,
@@ -1356,7 +1356,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&journal).unwrap(),
-            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","sequence":0,"continuation_id":"00000000-0000-0000-0000-000000000000","timeline_category":"user","entry":{"type":"entered","continuation_id":"00000000-0000-0000-0000-000000000000","instruction_pointer":0},"created_at":0}"#
+            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","sequence":0,"continuation_id":"00000000-0000-0000-0000-000000000000","timeline_category":"system","entry":{"type":"entered","continuation_id":"00000000-0000-0000-0000-000000000000","instruction_pointer":0},"created_at":0}"#
         );
     }
 
@@ -1383,13 +1383,71 @@ mod tests {
             WorkflowEffectRequest::Timer { due_at: 1 }.timeline_category(),
             WorkflowTimelineCategory::User
         );
-        assert_eq!(
+        let user_entries = [
+            WorkflowJournalEntry::NodeEntered {
+                continuation_id: Uuid::nil(),
+                node_id: "node".into(),
+            },
+            WorkflowJournalEntry::EffectRetryScheduled {
+                effect_id: Uuid::nil(),
+                attempt: 2,
+                available_at: 1,
+            },
+            WorkflowJournalEntry::Failed {
+                continuation_id: Uuid::nil(),
+                message: "failed".into(),
+                node_id: Some("node".into()),
+            },
+        ];
+        assert!(
+            user_entries
+                .iter()
+                .all(|entry| entry.timeline_category() == WorkflowTimelineCategory::User)
+        );
+
+        let system_entries = [
+            WorkflowJournalEntry::Entered {
+                continuation_id: Uuid::nil(),
+                instruction_pointer: 0,
+            },
+            WorkflowJournalEntry::Transitioned {
+                continuation_id: Uuid::nil(),
+                instruction_pointer: 1,
+            },
+            WorkflowJournalEntry::Forked {
+                continuation_id: Uuid::nil(),
+                children: vec![Uuid::nil()],
+                join_key: "join".into(),
+            },
+            WorkflowJournalEntry::EffectRequested {
+                effect_id: Uuid::nil(),
+                instruction_pointer: Some(1),
+            },
+            WorkflowJournalEntry::EffectSettled {
+                effect_id: Uuid::nil(),
+                status: WorkflowEffectStatus::Succeeded,
+            },
             WorkflowJournalEntry::Completed {
                 continuation_id: Uuid::nil(),
                 value: Value::Null,
-            }
-            .timeline_category(),
-            WorkflowTimelineCategory::User
+            },
+            WorkflowJournalEntry::Interrupted {
+                continuation_id: Uuid::nil(),
+                handler_continuation_id: Uuid::nil(),
+                source: InterruptSource::Timer,
+            },
+            WorkflowJournalEntry::InterruptResolved {
+                continuation_id: Uuid::nil(),
+                handler_continuation_id: Uuid::nil(),
+                outcome: WorkflowInterruptOutcome::Resume {
+                    instruction_pointer: 1,
+                },
+            },
+        ];
+        assert!(
+            system_entries
+                .iter()
+                .all(|entry| entry.timeline_category() == WorkflowTimelineCategory::System)
         );
     }
 

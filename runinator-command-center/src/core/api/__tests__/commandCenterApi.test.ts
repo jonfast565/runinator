@@ -535,12 +535,40 @@ describe("command center catalog metadata API", () => {
           },
           {
             version: 1,
-            id: "journal-2",
+            id: "journal-revisit",
             workflow_run_id: "run-1",
             sequence: 2,
             continuation_id: "continuation-1",
-            entry: { type: "failed", continuation_id: "continuation-1", node_id: "config" },
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
             created_at: 1,
+          },
+          {
+            version: 1,
+            id: "journal-2",
+            workflow_run_id: "run-1",
+            sequence: 3,
+            continuation_id: "continuation-1",
+            entry: {
+              type: "failed",
+              continuation_id: "continuation-1",
+              node_id: "config",
+              message: "expression failed",
+            },
+            created_at: 2,
+          },
+          {
+            version: 1,
+            id: "journal-unmatched-failure",
+            workflow_run_id: "run-1",
+            sequence: 4,
+            continuation_id: "legacy-continuation",
+            entry: {
+              type: "failed",
+              continuation_id: "legacy-continuation",
+              node_id: "legacy-transform",
+              message: "legacy evaluation failed",
+            },
+            created_at: 3,
           },
         ],
         fetch_workflow_vm_cursors: [],
@@ -550,7 +578,160 @@ describe("command center catalog metadata API", () => {
 
     const detail = await fetchWorkflowRun("run-1");
 
-    expect(detail.nodes).toMatchObject([{ node_id: "config", status: "failed" }]);
+    expect(detail.nodes.filter((node) => node.node_id === "config")).toEqual([
+      expect.objectContaining({ id: "journal-1", status: "succeeded", message: null }),
+      expect.objectContaining({
+        id: "journal-revisit",
+        status: "failed",
+        message: "expression failed",
+        finished_at: "1970-01-01T00:00:02.000Z",
+        state: expect.objectContaining({ failure_journal_id: "journal-2" }),
+      }),
+    ]);
+    expect(detail.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "journal-unmatched-failure",
+          node_id: "legacy-transform",
+          status: "failed",
+          message: "legacy evaluation failed",
+        }),
+      ]),
+    );
+  });
+
+  it("projects branch and interrupt lifecycle events onto their graph nodes", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "succeeded" },
+          nodes: [
+            {
+              id: "materialized-parallel",
+              workflow_run_id: "run-1",
+              node_id: "parallel",
+              status: "succeeded",
+              attempt: 0,
+              parameters: {},
+              message: null,
+            },
+          ],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: [],
+        fetch_workflow_journal: [
+          {
+            version: 1,
+            id: "entered-parallel",
+            workflow_run_id: "run-1",
+            sequence: 1,
+            continuation_id: "main",
+            timeline_category: "user",
+            entry: { type: "node_entered", continuation_id: "main", node_id: "parallel" },
+            created_at: 1,
+          },
+          {
+            version: 1,
+            id: "forked",
+            workflow_run_id: "run-1",
+            sequence: 2,
+            continuation_id: "main",
+            timeline_category: "system",
+            entry: {
+              type: "forked",
+              continuation_id: "main",
+              children: ["child-1", "child-2"],
+              join_key: "parallel:join",
+            },
+            created_at: 2,
+          },
+          {
+            version: 1,
+            id: "entered-work",
+            workflow_run_id: "run-1",
+            sequence: 3,
+            continuation_id: "main",
+            timeline_category: "user",
+            entry: { type: "node_entered", continuation_id: "main", node_id: "work" },
+            created_at: 3,
+          },
+          {
+            version: 1,
+            id: "interrupted",
+            workflow_run_id: "run-1",
+            sequence: 4,
+            continuation_id: "main",
+            timeline_category: "system",
+            entry: {
+              type: "interrupted",
+              continuation_id: "main",
+              handler_continuation_id: "handler",
+              source: "timer",
+            },
+            created_at: 4,
+          },
+          {
+            version: 1,
+            id: "entered-handler",
+            workflow_run_id: "run-1",
+            sequence: 5,
+            continuation_id: "handler",
+            timeline_category: "user",
+            entry: { type: "node_entered", continuation_id: "handler", node_id: "recover" },
+            created_at: 5,
+          },
+          {
+            version: 1,
+            id: "resolved",
+            workflow_run_id: "run-1",
+            sequence: 6,
+            continuation_id: "handler",
+            timeline_category: "system",
+            entry: {
+              type: "interrupt_resolved",
+              continuation_id: "main",
+              handler_continuation_id: "handler",
+              outcome: { type: "resume", instruction_pointer: 12 },
+            },
+            created_at: 6,
+          },
+        ],
+        fetch_workflow_vm_cursors: [],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "forked",
+          node_id: "parallel",
+          status: "forked",
+          timeline_category: "system",
+          state: expect.objectContaining({ vm_event_type: "forked" }),
+        }),
+        expect.objectContaining({
+          id: "interrupted",
+          node_id: "work",
+          status: "interrupted",
+          timeline_category: "system",
+          state: expect.objectContaining({ vm_event_type: "interrupted" }),
+        }),
+        expect.objectContaining({
+          id: "resolved",
+          node_id: "recover",
+          status: "resolved",
+          timeline_category: "system",
+          state: expect.objectContaining({ vm_event_type: "interrupt_resolved" }),
+        }),
+      ]),
+    );
+    expect(detail.nodes.filter((node) => node.node_id === "parallel")).toHaveLength(2);
+    expect(
+      detail.nodes.find((node) => node.id === "materialized-parallel")?.state?.vm_event_type,
+    ).toBeUndefined();
   });
 
   it("keeps every scheduled retry in the projected node history", async () => {

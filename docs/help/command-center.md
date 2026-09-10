@@ -30,8 +30,10 @@ The Workflow Runs detail view includes an analog elapsed-time clock. Its hour, m
 
 ## Timeline categories
 
-The backend labels workflow run events by semantic category. Authored workflow activity is **User**,
-while runtime-managed workspace lifecycle activity is **System**. Category chips above the step
-list control visibility in both the step list and proportional timeline, and the choice is stored
-in the browser. When the backend adds another non-empty `timeline_category`, the command center
-humanizes it and gives it the same visibility control automatically.
+The backend labels workflow run events by semantic category. Authored node entry, retry, and failure
+activity is **User**, while runtime-managed workspace, branch-fork, and interrupt lifecycle activity
+is **System**. Category chips above the step list control visibility in both the step list and
+proportional timeline, and the choice is stored in the browser. When the backend adds another
+non-empty `timeline_category`, the command center humanizes it and gives it the same visibility
+control automatically. Internal continuation transitions and duplicate effect request/settlement
+boundaries remain available in the VM journal without becoming separate timeline rows.

@@ -1334,6 +1334,24 @@ describe("workflow graph utils", () => {
       data: { status: "failed", executionCount: 4 },
     });
 
+    detail.nodes.push({
+      id: "interrupt-b",
+      workflow_run_id: RUN_ID,
+      node_id: "b",
+      status: "interrupted",
+      attempt: 0,
+      parameters: {},
+      state: { journal_entry_id: "interrupt-b", vm_event_type: "interrupted" },
+      timeline_category: "system",
+      message: "timer interrupt started",
+    });
+    const withLifecycleEvent = buildGraphNodes(workflow, detail);
+    expect(withLifecycleEvent.find((node) => node.id === "b")).toMatchObject({
+      class: "node-danger",
+      data: { status: "failed", executionCount: 4 },
+    });
+    detail.nodes.pop();
+
     detail.run.status = "waiting";
     detail.run.finished_at = null;
     detail.nodes[detail.nodes.length - 1].status = "waiting";

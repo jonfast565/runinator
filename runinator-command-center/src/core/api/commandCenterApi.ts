@@ -3,6 +3,7 @@ import { reviewReplayPlan } from "./replayReview";
 import type { ReplayPlan, WorkflowContractImpact } from "../domain/models/workflow/replay";
 import { apiBaseUrl, httpAuthToken, setHttpAuthToken } from "./httpRuntime";
 import { asJsonRecord } from "../domain/json";
+import { journalFailures, vmLifecycleNodes } from "../workflow/vm-timeline-events";
 import type {
   JsonRecord,
   JsonValue,
@@ -1405,6 +1406,7 @@ function mergeWorkflowRunNodes(
 
   for (const node of projected) {
     const state = node.state;
+    const isStandaloneVmEvent = typeof state?.vm_event_type === "string";
     const effectId =
       state !== undefined &&
       typeof state.effect_id === "string" &&
@@ -1413,7 +1415,7 @@ function mergeWorkflowRunNodes(
         : null;
     const matchingUntimedRows = untimedIndexByNodeId.get(node.node_id) ?? [];
     const matchingUntimedIndex =
-      matchingUntimedRows.length === 1 ? matchingUntimedRows[0] : undefined;
+      !isStandaloneVmEvent && matchingUntimedRows.length === 1 ? matchingUntimedRows[0] : undefined;
     const existingIndex =
       indexById.get(node.id) ??
       (effectId ? indexByEffectId.get(effectId) : undefined) ??
@@ -1490,6 +1492,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   const journalSequencesByEffect = journalEffectSequences(journal);
   const journalNodeByEffect = new Map<string, JournalEffectNode>();
   const effectJournalEntryIds = new Set<string>();
+  const failures = journalFailures(journal);
 
   for (const effect of [...effects].sort(
     (left, right) =>
@@ -1511,12 +1514,6 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     effectJournalEntryIds.add(journalNode.journalEntryId);
   }
 
-  const failedNodeIds = new Set(
-    journal.flatMap((record) => {
-      const entry = asJsonRecord(record.entry);
-      return entry.type === "failed" && typeof entry.node_id === "string" ? [entry.node_id] : [];
-    }),
-  );
   const enteredNodes: WorkflowNodeRun[] = journal.flatMap((record) => {
     const entry = asJsonRecord(record.entry);
 
@@ -1529,27 +1526,51 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     }
 
     const timestamp = new Date(record.created_at * 1000).toISOString();
+    const failure = failures.byNodeEntryId.get(record.id);
     return [
       {
         id: record.id,
         workflow_run_id: record.workflow_run_id,
         node_id: entry.node_id,
-        status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
+        status: failure ? "failed" : "succeeded",
         attempt: 0,
         parameters: {},
         timeline_category: record.timeline_category,
         state: {
           journal_entry_id: record.id,
           node_entered_journal_id: record.id,
+          ...(failure ? { failure_journal_id: failure.record.id } : {}),
           timeline_sequence: record.sequence,
         },
         cursor_id: record.continuation_id ?? null,
         created_at: timestamp,
         started_at: timestamp,
-        finished_at: timestamp,
-        message: null,
+        finished_at: failure ? new Date(failure.record.created_at * 1000).toISOString() : timestamp,
+        message: failure?.message ?? null,
       },
     ];
+  });
+  const unmatchedFailureNodes: WorkflowNodeRun[] = failures.unmatched.map((failure) => {
+    const timestamp = new Date(failure.record.created_at * 1000).toISOString();
+    return {
+      id: failure.record.id,
+      workflow_run_id: failure.record.workflow_run_id,
+      node_id: failure.nodeId,
+      status: "failed",
+      attempt: 0,
+      parameters: {},
+      timeline_category: failure.record.timeline_category,
+      state: {
+        journal_entry_id: failure.record.id,
+        failure_journal_id: failure.record.id,
+        timeline_sequence: failure.record.sequence,
+      },
+      cursor_id: failure.continuationId,
+      created_at: timestamp,
+      started_at: timestamp,
+      finished_at: timestamp,
+      message: failure.message,
+    };
   });
   const retryNodes: WorkflowNodeRun[] = journal.flatMap((record) => {
     const entry = asJsonRecord(record.entry);
@@ -1664,6 +1685,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
       ? workspacePhaseNodes(effect, nodeId, workspaceOutputByEffect.get(effect.id) ?? [])
       : [];
   });
+  const lifecycleNodes = vmLifecycleNodes(journal);
   return {
     ...detail,
     // Mixed-version servers can materialize only infrastructure steps while the VM endpoints own
@@ -1671,9 +1693,11 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     // timeline, and Gantt whenever one materialized row happens to be present.
     nodes: mergeWorkflowRunNodes(detail.nodes, [
       ...enteredNodes,
+      ...unmatchedFailureNodes,
       ...retryNodes,
       ...effectNodes,
       ...phaseNodes,
+      ...lifecycleNodes,
     ]),
     continuations,
     effects,

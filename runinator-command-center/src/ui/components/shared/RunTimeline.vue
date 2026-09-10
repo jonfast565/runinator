@@ -331,6 +331,10 @@ const executionOrdinals = computed(() => {
 });
 
 function nodeExecutionCount(node: WorkflowNodeRun): number {
+  if (typeof node.state?.vm_event_type === "string") {
+    return 0;
+  }
+
   if (Number.isFinite(node.attempt) && node.attempt > 0) {
     return Math.floor(node.attempt);
   }
