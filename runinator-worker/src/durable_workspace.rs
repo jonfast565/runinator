@@ -1,10 +1,15 @@
 //! Restore and snapshot isolated portable workspaces around provider execution.
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::{ApiError, AsyncApiClient, StaticLocator};
 use runinator_models::{
     errors::{SendableError, WORKSPACE_INVALID},
     value::Value,
     workspaces::*,
 };
+
+const WORKSPACE_CLAIM_RETRY_INITIAL_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(25);
+const WORKSPACE_CLAIM_RETRY_MAX_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+const WORKSPACE_CLAIM_SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone, Default)]
 pub struct WorkspacePhaseReporter {
@@ -102,19 +107,13 @@ impl ActiveWorkspace {
             .map(|snapshot| snapshot.revision_id.clone());
         let archive = if revision_id.is_some() {
             let phase = phases.start("workspace.restore.download");
-            let remaining = deadline
-                .checked_duration_since(std::time::Instant::now())
-                .ok_or_else(|| {
-                    runinator_workspace::storage::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "workspace attempt deadline exceeded",
-                    ))
-                })?;
-            let bytes = tokio::time::timeout(
-                remaining,
-                api.download_workspace_checkout(execution.checkout.id, replica_id, remaining),
+            let bytes = download_workspace_checkout_after_claim(
+                api,
+                execution.checkout.id,
+                replica_id,
+                deadline,
             )
-            .await??;
+            .await?;
             phase.succeeded(runinator_models::json!({"bytes": bytes.len()}));
             Some(bytes)
         } else {
@@ -391,6 +390,70 @@ impl ActiveWorkspace {
     pub fn drain_phases(&self) -> Vec<WorkspacePhaseEvent> {
         self.phases.drain()
     }
+}
+
+async fn download_workspace_checkout_after_claim(
+    api: &AsyncApiClient<StaticLocator>,
+    checkout_id: uuid::Uuid,
+    replica_id: uuid::Uuid,
+    deadline: std::time::Instant,
+) -> Result<Vec<u8>, SendableError> {
+    retry_pending_workspace_claim(deadline, |remaining| {
+        api.download_workspace_checkout(checkout_id, replica_id, remaining)
+    })
+    .await
+}
+
+async fn retry_pending_workspace_claim<F, Fut>(
+    deadline: std::time::Instant,
+    mut download: F,
+) -> Result<Vec<u8>, SendableError>
+where
+    F: FnMut(std::time::Duration) -> Fut,
+    Fut: std::future::Future<Output = runinator_api::Result<Vec<u8>>>,
+{
+    let claim_deadline = std::cmp::min(
+        deadline,
+        std::time::Instant::now() + WORKSPACE_CLAIM_SYNC_TIMEOUT,
+    );
+    let mut delay = WORKSPACE_CLAIM_RETRY_INITIAL_DELAY;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .ok_or_else(workspace_attempt_timed_out)?;
+        match download(remaining).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(error)
+                if workspace_claim_is_pending(&error)
+                    && std::time::Instant::now() < claim_deadline =>
+            {
+                let wait =
+                    delay.min(claim_deadline.saturating_duration_since(std::time::Instant::now()));
+                tokio::time::sleep(wait).await;
+                delay = delay.saturating_mul(2).min(WORKSPACE_CLAIM_RETRY_MAX_DELAY);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn workspace_claim_is_pending(error: &ApiError) -> bool {
+    matches!(
+        error,
+        ApiError::Http {
+            status: reqwest::StatusCode::CONFLICT,
+            message,
+            ..
+        } if message.contains("replica has not claimed this active attempt")
+    )
+}
+
+fn workspace_attempt_timed_out() -> SendableError {
+    runinator_workspace::storage::Error::Io(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "workspace attempt deadline exceeded",
+    ))
+    .into()
 }
 
 impl Drop for ActiveWorkspace {
