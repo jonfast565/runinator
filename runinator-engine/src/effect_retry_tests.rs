@@ -14,6 +14,7 @@ fn effect(attempt: u32, retry: WorkflowRetry) -> WorkflowEffect {
         sequence: 0,
         node_id: Some("node-a".into()),
         attempt,
+        timeline_category: Default::default(),
         request: WorkflowEffectRequest::Action {
             provider: "test".into(),
             function: "execute".into(),

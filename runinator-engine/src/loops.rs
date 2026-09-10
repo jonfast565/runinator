@@ -1709,16 +1709,18 @@ async fn record_workspace_admission_wait<T: WorkflowVmStore>(
             "attempts": dispatch.attempts,
         }),
     };
+    let output = WorkflowEffectOutput::Chunk {
+        stream: WORKSPACE_TIMELINE_STREAM.into(),
+        content: serde_json::to_string(&phase)?,
+    };
     db.append_workflow_effect_output(WorkflowEffectOutputEvent {
         event_id: uuid::Uuid::new_v4(),
         effect_id: dispatch.command.effect_id,
         workflow_run_id: dispatch.command.workflow_run_id,
         continuation_id: dispatch.command.continuation_id,
         attempt: dispatch.command.attempt,
-        output: WorkflowEffectOutput::Chunk {
-            stream: WORKSPACE_TIMELINE_STREAM.into(),
-            content: serde_json::to_string(&phase)?,
-        },
+        timeline_category: output.timeline_category(),
+        output,
         created_at: finished_at.timestamp(),
     })
     .await?;

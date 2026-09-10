@@ -30,8 +30,8 @@ The Workflow Runs detail view includes an analog elapsed-time clock. Its hour, m
 
 ## Timeline categories
 
-Workflow run events are labeled by category. Authored workflow activity defaults to **User**, while
-runtime-managed workspace lifecycle activity is **System**. Category chips above the step list
-control visibility in both the step list and proportional timeline, and the choice is stored in the
-browser. Event projections may provide another non-empty `timeline_category`; the command center
-humanizes unknown category names and gives them the same visibility control automatically.
+The backend labels workflow run events by semantic category. Authored workflow activity is **User**,
+while runtime-managed workspace lifecycle activity is **System**. Category chips above the step
+list control visibility in both the step list and proportional timeline, and the choice is stored
+in the browser. When the backend adds another non-empty `timeline_category`, the command center
+humanizes it and gives it the same visibility control automatically.

@@ -564,6 +564,7 @@ async fn waiting_effect<T: DatabaseImpl + WorkflowVmStore>(
         sequence,
         attempt: 0,
         node_id: None,
+        timeline_category: Default::default(),
         request: *request.clone(),
         status: WorkflowEffectStatus::Requested,
         current_executor_replica_id: None,

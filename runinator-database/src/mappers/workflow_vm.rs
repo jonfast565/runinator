@@ -67,13 +67,15 @@ fallible_row_mapper!(row_to_workflow_effect(row) -> WorkflowEffect {
     if version != WORKFLOW_EFFECT_PROTOCOL_VERSION {
         return Err(corrupt(format!("unsupported stored effect version {version}")));
     }
+    let request = decode::<WorkflowEffectRequest>(&row.get::<String, _>("request_json"))?;
     Ok(WorkflowEffect {
         version,
         id: row.get("id"), workflow_run_id: row.get("workflow_run_id"),
         continuation_id: row.get("continuation_id"), sequence: u64_column(row.get("sequence"), "effect sequence")?,
         attempt: u32_column(row.get("attempt"), "effect attempt")?,
         node_id: None,
-        request: decode::<WorkflowEffectRequest>(&row.get::<String, _>("request_json"))?,
+        timeline_category: request.timeline_category(),
+        request,
         status: decode::<WorkflowEffectStatus>(&format!("\"{}\"", row.get::<String, _>("status")))?,
         current_executor_replica_id: row.get("current_executor_replica_id"),
         last_executor_replica_id: row.get("last_executor_replica_id"),
@@ -87,11 +89,13 @@ fallible_row_mapper!(row_to_workflow_journal_record(row) -> WorkflowJournalRecor
     if version != WORKFLOW_JOURNAL_VERSION {
         return Err(corrupt(format!("unsupported stored journal version {version}")));
     }
+    let entry = decode::<WorkflowJournalEntry>(&row.get::<String, _>("entry_json"))?;
     Ok(WorkflowJournalRecord {
         version,
         id: row.get("id"), workflow_run_id: row.get("workflow_run_id"), sequence: u64_column(row.get("sequence"), "journal sequence")?,
         continuation_id: row.get("continuation_id"), effect_id: row.get("effect_id"),
-        entry: decode::<WorkflowJournalEntry>(&row.get::<String, _>("entry_json"))?,
+        timeline_category: entry.timeline_category(),
+        entry,
         created_at: row.get("created_at"),
     })
 });

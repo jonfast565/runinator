@@ -562,13 +562,17 @@ where
         .await?;
         rows.iter()
             .map(|row| {
+                let output = serde_json::from_str::<WorkflowEffectOutput>(
+                    &row.try_get::<String, _>("output_json")?,
+                )?;
                 Ok(WorkflowEffectOutputEvent {
                     event_id: row.try_get("event_id")?,
                     effect_id: row.try_get("effect_id")?,
                     workflow_run_id: row.try_get("workflow_run_id")?,
                     continuation_id: row.try_get("continuation_id")?,
                     attempt: row.try_get::<i64, _>("attempt")? as u32,
-                    output: serde_json::from_str(&row.try_get::<String, _>("output_json")?)?,
+                    timeline_category: output.timeline_category(),
+                    output,
                     created_at: row.try_get("created_at")?,
                 })
             })

@@ -28,6 +28,8 @@ export interface WorkflowEffect {
   attempt: number;
   /** Projected from the VM journal and frozen module by the web service. */
   node_id?: string | null;
+  /** Backend-owned semantic category used by timeline consumers. */
+  timeline_category?: string;
   request: JsonValue;
   status: string;
   current_executor_replica_id?: string | null;
@@ -45,6 +47,8 @@ export interface WorkflowEffectOutputEvent {
   workflow_run_id: string;
   continuation_id: string;
   attempt: number;
+  /** Backend-owned semantic category used by timeline consumers. */
+  timeline_category?: string;
   output:
     | { type: "chunk"; stream: string; content: string }
     | { type: "artifact"; artifact: JsonValue }
@@ -66,6 +70,8 @@ export interface WorkflowJournalRecord {
   sequence: number;
   continuation_id?: string | null;
   effect_id?: string | null;
+  /** Backend-owned semantic category used by timeline consumers. */
+  timeline_category?: string;
   entry: JsonValue;
   created_at: number;
 }

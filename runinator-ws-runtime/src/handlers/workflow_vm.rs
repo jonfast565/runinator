@@ -345,6 +345,7 @@ mod tests {
             sequence,
             continuation_id: Some(continuation_id),
             effect_id: None,
+            timeline_category: Default::default(),
             entry: WorkflowJournalEntry::NodeEntered {
                 continuation_id,
                 node_id: node_id.to_owned(),

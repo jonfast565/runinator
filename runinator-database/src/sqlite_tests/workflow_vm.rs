@@ -457,6 +457,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         sequence,
         attempt: 0,
         node_id: None,
+        timeline_category: Default::default(),
         request: request.as_ref().clone(),
         status: WorkflowEffectStatus::Requested,
         current_executor_replica_id: None,
@@ -582,6 +583,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         workflow_run_id: run.id,
         continuation_id: continuation.id,
         attempt: 0,
+        timeline_category: Default::default(),
         output: WorkflowEffectOutput::Chunk {
             stream: "stdout".into(),
             content: "hello".into(),
@@ -608,6 +610,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         workflow_run_id: run.id,
         continuation_id: continuation.id,
         attempt: 0,
+        timeline_category: Default::default(),
         output: WorkflowEffectOutput::TerminalInteraction {
             interaction: TerminalInteraction {
                 sequence: 1,

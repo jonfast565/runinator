@@ -248,16 +248,18 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                 }
             }
             EffectResultKind::Chunk { stream, content } => {
+                let output = WorkflowEffectOutput::Chunk {
+                    stream: stream.clone(),
+                    content: content.clone(),
+                };
                 db.append_workflow_effect_output(WorkflowEffectOutputEvent {
                     event_id: delivery.result.event_id,
                     effect_id: delivery.result.effect_id,
                     workflow_run_id: delivery.result.workflow_run_id,
                     continuation_id: delivery.result.continuation_id,
                     attempt: delivery.result.attempt,
-                    output: WorkflowEffectOutput::Chunk {
-                        stream: stream.clone(),
-                        content: content.clone(),
-                    },
+                    timeline_category: output.timeline_category(),
+                    output,
                     created_at: delivery.result.timestamp.timestamp(),
                 })
                 .await
@@ -274,20 +276,25 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                 .await
             }
             EffectResultKind::Artifact { artifact } => {
+                let output = WorkflowEffectOutput::Artifact {
+                    artifact: artifact.clone(),
+                };
                 db.append_workflow_effect_output(WorkflowEffectOutputEvent {
                     event_id: delivery.result.event_id,
                     effect_id: delivery.result.effect_id,
                     workflow_run_id: delivery.result.workflow_run_id,
                     continuation_id: delivery.result.continuation_id,
                     attempt: delivery.result.attempt,
-                    output: WorkflowEffectOutput::Artifact {
-                        artifact: artifact.clone(),
-                    },
+                    timeline_category: output.timeline_category(),
+                    output,
                     created_at: delivery.result.timestamp.timestamp(),
                 })
                 .await
             }
             EffectResultKind::TerminalInteraction { interaction } => {
+                let output = WorkflowEffectOutput::TerminalInteraction {
+                    interaction: interaction.clone(),
+                };
                 db.record_workflow_terminal_interaction(
                     WorkflowEffectOutputEvent {
                         event_id: delivery.result.event_id,
@@ -295,9 +302,8 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                         workflow_run_id: delivery.result.workflow_run_id,
                         continuation_id: delivery.result.continuation_id,
                         attempt: delivery.result.attempt,
-                        output: WorkflowEffectOutput::TerminalInteraction {
-                            interaction: interaction.clone(),
-                        },
+                        timeline_category: output.timeline_category(),
+                        output,
                         created_at: delivery.result.timestamp.timestamp(),
                     },
                     delivery.result.timestamp,

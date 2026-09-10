@@ -15,6 +15,7 @@ use crate::interrupt::{InterruptMode, InterruptSource};
 use crate::invocation::InvocationModule;
 use crate::orchestration::GateKind;
 use crate::workflows::{WorkflowCondition, WorkflowNodeKind, WorkflowRetry};
+use crate::workspaces::WORKSPACE_TIMELINE_STREAM;
 use crate::{value::Value, workflows::WorkflowStatus};
 
 /// The workflow bytecode version understood by this runtime.
@@ -28,6 +29,15 @@ pub const WORKFLOW_JOURNAL_VERSION: u32 = 1;
 /// The effect broker envelope version. Kept separate so wire-only changes do not invalidate
 /// already-snapshotted workflow bytecode.
 pub const WORKFLOW_EFFECT_PROTOCOL_VERSION: u32 = 1;
+
+/// Backend-owned classification used by operator timelines and other event consumers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowTimelineCategory {
+    #[default]
+    User,
+    System,
+}
 
 /// Local-slot prefix for compiled node outputs exposed through `steps.<node>.output`.
 pub const WORKFLOW_NODE_OUTPUT_PREFIX: &str = "__workflow_vm_node_output:";
@@ -838,6 +848,9 @@ pub struct WorkflowEffectOutputEvent {
     pub workflow_run_id: Uuid,
     pub continuation_id: Uuid,
     pub attempt: u32,
+    /// Derived from the output kind by the backend rather than persisted independently.
+    #[serde(default)]
+    pub timeline_category: WorkflowTimelineCategory,
     pub output: WorkflowEffectOutput,
     pub created_at: i64,
 }
@@ -855,6 +868,19 @@ pub enum WorkflowEffectOutput {
     TerminalInteraction {
         interaction: crate::runs::TerminalInteraction,
     },
+}
+
+impl WorkflowEffectOutput {
+    pub fn timeline_category(&self) -> WorkflowTimelineCategory {
+        match self {
+            Self::Chunk { stream, .. } if stream == WORKSPACE_TIMELINE_STREAM => {
+                WorkflowTimelineCategory::System
+            }
+            Self::Chunk { .. } | Self::Artifact { .. } | Self::TerminalInteraction { .. } => {
+                WorkflowTimelineCategory::User
+            }
+        }
+    }
 }
 
 impl WorkflowContinuationStatus {
@@ -997,6 +1023,9 @@ pub struct WorkflowEffect {
     /// receipt, because the pinned module is the source of truth for that relationship.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    /// Derived from the effect request by the backend rather than persisted independently.
+    #[serde(default)]
+    pub timeline_category: WorkflowTimelineCategory,
     pub request: WorkflowEffectRequest,
     pub status: WorkflowEffectStatus,
     /// Replica currently executing this attempt, set when a host claims the delivery and cleared
@@ -1030,6 +1059,9 @@ pub struct WorkflowJournalRecord {
     pub continuation_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_id: Option<Uuid>,
+    /// Derived from the journal entry by the backend rather than persisted independently.
+    #[serde(default)]
+    pub timeline_category: WorkflowTimelineCategory,
     pub entry: WorkflowJournalEntry,
     pub created_at: i64,
 }
@@ -1174,6 +1206,43 @@ pub enum WorkflowJournalEntry {
     },
 }
 
+impl WorkflowEffectRequest {
+    pub fn timeline_category(&self) -> WorkflowTimelineCategory {
+        match self {
+            Self::Action { .. }
+            | Self::Timer { .. }
+            | Self::TimerDelay { .. }
+            | Self::Approval { .. }
+            | Self::Gate { .. }
+            | Self::Signal { .. }
+            | Self::Input { .. }
+            | Self::EventWait { .. }
+            | Self::ChildRun { .. }
+            | Self::AwaitRun { .. }
+            | Self::MutexAcquire { .. }
+            | Self::Coordination { .. } => WorkflowTimelineCategory::User,
+        }
+    }
+}
+
+impl WorkflowJournalEntry {
+    pub fn timeline_category(&self) -> WorkflowTimelineCategory {
+        match self {
+            Self::Entered { .. }
+            | Self::Transitioned { .. }
+            | Self::NodeEntered { .. }
+            | Self::Forked { .. }
+            | Self::EffectRequested { .. }
+            | Self::EffectSettled { .. }
+            | Self::EffectRetryScheduled { .. }
+            | Self::Completed { .. }
+            | Self::Failed { .. }
+            | Self::Interrupted { .. }
+            | Self::InterruptResolved { .. } => WorkflowTimelineCategory::User,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1208,6 +1277,7 @@ mod tests {
             sequence: 7,
             attempt: 2,
             node_id: None,
+            timeline_category: WorkflowTimelineCategory::User,
             request: WorkflowEffectRequest::Timer { due_at: 1 },
             status: WorkflowEffectStatus::Requested,
             current_executor_replica_id: None,
@@ -1246,6 +1316,7 @@ mod tests {
             sequence: 0,
             attempt: 0,
             node_id: None,
+            timeline_category: WorkflowTimelineCategory::User,
             request: WorkflowEffectRequest::Timer { due_at: 1 },
             status: WorkflowEffectStatus::Requested,
             current_executor_replica_id: None,
@@ -1263,6 +1334,7 @@ mod tests {
             sequence: 0,
             continuation_id: Some(Uuid::nil()),
             effect_id: None,
+            timeline_category: WorkflowTimelineCategory::User,
             entry: WorkflowJournalEntry::Entered {
                 continuation_id: Uuid::nil(),
                 instruction_pointer: 0,
@@ -1280,11 +1352,44 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&effect).unwrap(),
-            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","sequence":0,"attempt":0,"request":{"type":"timer","due_at":1},"status":"requested","created_at":0,"updated_at":0}"#
+            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","sequence":0,"attempt":0,"timeline_category":"user","request":{"type":"timer","due_at":1},"status":"requested","created_at":0,"updated_at":0}"#
         );
         assert_eq!(
             serde_json::to_string(&journal).unwrap(),
-            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","sequence":0,"continuation_id":"00000000-0000-0000-0000-000000000000","entry":{"type":"entered","continuation_id":"00000000-0000-0000-0000-000000000000","instruction_pointer":0},"created_at":0}"#
+            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","sequence":0,"continuation_id":"00000000-0000-0000-0000-000000000000","timeline_category":"user","entry":{"type":"entered","continuation_id":"00000000-0000-0000-0000-000000000000","instruction_pointer":0},"created_at":0}"#
+        );
+    }
+
+    #[test]
+    fn timeline_categories_are_owned_by_backend_event_semantics() {
+        let workspace = WorkflowEffectOutput::Chunk {
+            stream: WORKSPACE_TIMELINE_STREAM.into(),
+            content: "{}".into(),
+        };
+        let ordinary_output = WorkflowEffectOutput::Chunk {
+            stream: "stdout".into(),
+            content: "hello".into(),
+        };
+
+        assert_eq!(
+            workspace.timeline_category(),
+            WorkflowTimelineCategory::System
+        );
+        assert_eq!(
+            ordinary_output.timeline_category(),
+            WorkflowTimelineCategory::User
+        );
+        assert_eq!(
+            WorkflowEffectRequest::Timer { due_at: 1 }.timeline_category(),
+            WorkflowTimelineCategory::User
+        );
+        assert_eq!(
+            WorkflowJournalEntry::Completed {
+                continuation_id: Uuid::nil(),
+                value: Value::Null,
+            }
+            .timeline_category(),
+            WorkflowTimelineCategory::User
         );
     }
 

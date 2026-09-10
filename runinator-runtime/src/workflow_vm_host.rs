@@ -195,6 +195,7 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                     sequence,
                     attempt: 0,
                     node_id: None,
+                    timeline_category: request.timeline_category(),
                     request: request.as_ref().clone(),
                     status: WorkflowEffectStatus::Requested,
                     current_executor_replica_id: None,
