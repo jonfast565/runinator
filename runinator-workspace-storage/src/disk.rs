@@ -9,7 +9,9 @@ use crate::{
     store::{Object, ObjectInfo, ReadStore, WriteStore},
     tiny,
 };
+use rayon::prelude::*;
 use std::{
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File},
     io::{Seek, Write},
     path::{Path, PathBuf},
@@ -23,27 +25,38 @@ pub struct RawDisk {
     pub tiny_blocks: Arc<ByteCache>,
 }
 impl RawDisk {
-    fn locate(&self, id: Id) -> Result<(File, Location)> {
-        let loc = self
-            .index
-            .lookup(id)?
-            .ok_or_else(|| Error::NotFound(id.to_string()))?;
-        if loc.offset < 8 || loc.length < record::HEADER_LEN {
-            return Err(corrupt("invalid pack location"));
-        }
-        let file = File::open(self.root.join("packs").join(format!("{}.pack", loc.pack)))?;
+    fn open_pack(&self, pack: Id) -> Result<(File, u64)> {
+        let file = File::open(self.root.join("packs").join(format!("{pack}.pack")))?;
         let mut magic = [0; 8];
         io_util::read_at(&file, &mut magic, 0)?;
         if &magic != record::PACK_MAGIC {
             return Err(corrupt("invalid pack magic"));
         }
+        let length = file.metadata()?.len();
+        Ok((file, length))
+    }
+
+    fn validate_location(loc: &Location, pack_len: u64) -> Result<()> {
+        if loc.offset < 8 || loc.length < record::HEADER_LEN {
+            return Err(corrupt("invalid pack location"));
+        }
         let end = loc
             .offset
             .checked_add(loc.length)
             .ok_or_else(|| corrupt("pack location overflow"))?;
-        if end > file.metadata()?.len() {
+        if end > pack_len {
             return Err(corrupt("index points outside pack"));
         }
+        Ok(())
+    }
+
+    fn locate(&self, id: Id) -> Result<(File, Location)> {
+        let loc = self
+            .index
+            .lookup(id)?
+            .ok_or_else(|| Error::NotFound(id.to_string()))?;
+        let (file, pack_len) = self.open_pack(loc.pack)?;
+        Self::validate_location(&loc, pack_len)?;
         Ok((file, loc))
     }
 }
@@ -139,6 +152,48 @@ impl ReadStore for RawDisk {
             return Err(corrupt("record/index mismatch"));
         }
         Ok(object)
+    }
+    fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
+        let mut packs = BTreeMap::<Id, Vec<Location>>::new();
+        let mut seen = HashSet::with_capacity(ids.len());
+        for id in ids {
+            if !seen.insert(*id) {
+                continue;
+            }
+            let loc = self
+                .index
+                .lookup(*id)?
+                .ok_or_else(|| Error::NotFound(id.to_string()))?;
+            packs.entry(loc.pack).or_default().push(loc);
+        }
+        let groups = packs.into_iter().collect::<Vec<_>>();
+        let decoded = groups
+            .par_iter()
+            .map(|(pack, locations)| -> Result<Vec<(Id, Object)>> {
+                let (file, pack_len) = self.open_pack(*pack)?;
+                locations
+                    .iter()
+                    .map(|loc| {
+                        Self::validate_location(loc, pack_len)?;
+                        Ok((
+                            loc.id,
+                            record::read_indexed(&file, *loc, &self.tiny_blocks)?,
+                        ))
+                    })
+                    .collect()
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        let found = decoded.into_iter().flatten().collect::<HashMap<_, _>>();
+        ids.iter()
+            .map(|id| {
+                found
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| corrupt("batch read omitted indexed object"))
+            })
+            .collect()
     }
     fn contains(&self, id: Id) -> Result<bool> {
         Ok(self.index.lookup(id)?.is_some())
@@ -241,15 +296,20 @@ impl WriteStore for OverlayStore {
             return Err(invalid("object too large"));
         }
         let id = Id::object(kind, raw);
-        let _lock = self.write_lock.lock().map_err(|_| Error::Poisoned)?;
         if self.contains(id)? {
+            return Ok(id);
+        }
+        let mut encoded = Vec::new();
+        record::write(&mut encoded, kind, raw)?;
+        let _lock = self.write_lock.lock().map_err(|_| Error::Poisoned)?;
+        if self.path(id).try_exists()? {
             return Ok(id);
         }
         let path = self.path(id);
         let parent = path.parent().unwrap();
         fs::create_dir_all(parent)?;
         let mut tmp = NamedTempFile::new_in(parent)?;
-        record::write(&mut tmp, kind, raw)?;
+        tmp.write_all(&encoded)?;
         tmp.flush()?;
         tmp.persist_noclobber(path).map_err(|e| e.error)?;
         Ok(id)
@@ -312,6 +372,33 @@ impl PackBuilder {
         self.objects += 1;
         Ok(id)
     }
+    pub fn add_many(&mut self, objects: &[Object]) -> Result<()> {
+        let mut chunk_groups = Vec::new();
+        for object in objects {
+            if object.kind != Kind::Chunk {
+                self.add(object.kind, &object.bytes)?;
+                continue;
+            }
+            let id = Id::object(Kind::Chunk, &object.bytes);
+            if self.chunks.would_overflow(object.bytes.len())
+                && let Some(group) = self.chunks.take_members()
+            {
+                chunk_groups.push(group);
+            }
+            self.chunks.push(id, &object.bytes)?;
+            self.objects += 1;
+        }
+        let encoded = chunk_groups
+            .into_par_iter()
+            .map(|members| crate::chunkblock::encode(&members))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        for (raw, ids) in encoded {
+            self.write_chunk_block(&raw, ids)?;
+        }
+        Ok(())
+    }
     fn flush_tiny(&mut self) -> Result<()> {
         let Some((raw, ids)) = self.tiny.take()? else {
             return Ok(());
@@ -333,8 +420,11 @@ impl PackBuilder {
         let Some((raw, ids)) = self.chunks.take()? else {
             return Ok(());
         };
+        self.write_chunk_block(&raw, ids)
+    }
+    fn write_chunk_block(&mut self, raw: &[u8], ids: Vec<Id>) -> Result<()> {
         let offset = self.file.stream_position()?;
-        let (_, length) = record::write(&mut self.file, Kind::ChunkBlock, &raw)?;
+        let (_, length) = record::write(&mut self.file, Kind::ChunkBlock, raw)?;
         for (slot, id) in ids.into_iter().enumerate() {
             self.sort.push(Location {
                 id,

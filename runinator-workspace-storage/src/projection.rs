@@ -220,11 +220,11 @@ fn build_node<S: WriteStore + ?Sized>(
     workspace: &Workspace,
     number: u64,
     hardlinks: &mut BTreeMap<u64, Vec<Id>>,
-    directory_refs: &mut Option<Id>,
+    directory_refs: &mut Vec<(Vec<u8>, Id)>,
 ) -> Result<Id> {
     let object_id = inode_id(store, workspace, number)?;
     let inode: Inode = load(store, object_id, Kind::Inode)?;
-    let mut children = None;
+    let mut child_entries = Vec::new();
 
     if let InodeData::Directory(root) = inode.data {
         let mut links = Vec::new();
@@ -248,17 +248,14 @@ fn build_node<S: WriteStore + ?Sized>(
                 hardlinks.entry(child_number).or_default().push(child_ref);
             }
             if matches!(child_inode.data, InodeData::Directory(_)) {
-                *directory_refs = radix::set(
-                    store,
-                    *directory_refs,
-                    &child_number.to_be_bytes(),
-                    Some(child_ref),
-                )?;
+                directory_refs.push((child_number.to_be_bytes().to_vec(), child_ref));
             }
             let child = build_node(store, workspace, child_number, hardlinks, directory_refs)?;
-            children = radix::set(store, children, name.as_bytes(), Some(child))?;
+            child_entries.push((name.into_bytes(), child));
         }
     }
+
+    let children = radix::build_sorted(store, &child_entries)?;
 
     save(
         store,
@@ -275,12 +272,21 @@ fn build_node<S: WriteStore + ?Sized>(
 /// Normal transactions maintain this structure incrementally.
 pub fn build<S: WriteStore + ?Sized>(store: &S, workspace: &Workspace) -> Result<Id> {
     let mut hardlink_map = BTreeMap::new();
-    let mut directory_refs = None;
+    let mut directory_refs = Vec::new();
     let root = build_node(store, workspace, 1, &mut hardlink_map, &mut directory_refs)?;
-    let mut hardlinks = None;
+    directory_refs.sort_by(|a, b| a.0.cmp(&b.0));
+    let directory_refs = radix::build_sorted(store, &directory_refs)?;
+    let mut hardlink_entries = Vec::new();
     for (number, refs) in hardlink_map {
-        set_ref_list_root(store, &mut hardlinks, number, refs)?;
+        let refs = normalize_refs(refs);
+        if refs.len() >= 2 {
+            hardlink_entries.push((
+                number.to_be_bytes().to_vec(),
+                save(store, Kind::RefList, &RefList { refs })?,
+            ));
+        }
     }
+    let hardlinks = radix::build_sorted(store, &hardlink_entries)?;
     save(
         store,
         Kind::PathProjection,

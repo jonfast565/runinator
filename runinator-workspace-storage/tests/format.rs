@@ -69,7 +69,7 @@ fn external_sort_spills_and_merges_multiple_runs() -> Result<()> {
     let d = tempfile::tempdir()?;
     let mut sort = ExternalSorter::new(d.path())?;
     let pack = Id::sha256(b"pack");
-    for n in (0u64..10000).rev() {
+    for n in (0u64..140000).rev() {
         sort.push(Location {
             id: Id::sha256(&n.to_be_bytes()),
             pack: Id::default(),
@@ -80,9 +80,9 @@ fn external_sort_spills_and_merges_multiple_runs() -> Result<()> {
     }
     let f = sort.finish(pack, d.path())?;
     let index = DiskIndex::open(f.path())?;
-    assert_eq!(index.count, 10000);
+    assert_eq!(index.count, 140000);
     index.validate()?;
-    for n in [0u64, 4000, 9999] {
+    for n in [0u64, 70000, 139999] {
         let loc = index.lookup(Id::sha256(&n.to_be_bytes()))?.unwrap();
         assert_eq!(loc.pack, pack);
         assert_eq!(loc.offset, n + 8);

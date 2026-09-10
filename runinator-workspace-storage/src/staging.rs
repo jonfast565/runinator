@@ -8,7 +8,13 @@ use crate::{
     record,
     store::{Object, ObjectInfo, ReadStore, WriteStore},
 };
-use std::{collections::HashMap, fs::File, io::Seek, path::Path, sync::Mutex};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Seek, Write},
+    path::Path,
+    sync::Mutex,
+};
 
 pub struct EmptyStore;
 impl ReadStore for EmptyStore {
@@ -81,8 +87,10 @@ impl<S: ReadStore> Staging<S> {
 
     fn raw_get(&self, id: Id) -> Result<Object> {
         let state = self.state.lock().map_err(|_| Error::Poisoned)?;
-        if let Some(staged) = state.objects.get(&id) {
-            let (header, object) = record::read(&state.file, staged.offset, Some(id))?;
+        if let Some(staged) = state.objects.get(&id).copied() {
+            let file = state.file.try_clone()?;
+            drop(state);
+            let (header, object) = record::read(&file, staged.offset, Some(id))?;
             if header.info().kind != staged.info.kind
                 || header.info().raw_len != staged.info.raw_len
             {
@@ -125,16 +133,24 @@ impl<S: ReadStore> WriteStore for Staging<S> {
             return Err(invalid("invalid logical object"));
         }
         let id = Id::object(kind, raw);
-        let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
-        // stage locally without probing a potentially remote base for each new object.
-        if state.objects.contains_key(&id) {
-            return Ok(id);
+        {
+            let state = self.state.lock().map_err(|_| Error::Poisoned)?;
+            if state.objects.contains_key(&id) {
+                return Ok(id);
+            }
         }
         if self.deduplicate_base && self.base.contains(id)? {
             return Ok(id);
         }
+        // compression and checksumming happen outside the append lock so independent puts scale.
+        let mut encoded = Vec::new();
+        let (_, length) = record::write(&mut encoded, kind, raw)?;
+        let mut state = self.state.lock().map_err(|_| Error::Poisoned)?;
+        if state.objects.contains_key(&id) {
+            return Ok(id);
+        }
         let offset = state.file.seek(std::io::SeekFrom::End(0))?;
-        let (_, length) = record::write(&mut state.file, kind, raw)?;
+        state.file.write_all(&encoded)?;
         state.objects.insert(
             id,
             StagedObject {

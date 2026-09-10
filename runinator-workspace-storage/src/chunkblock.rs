@@ -51,12 +51,18 @@ impl Pending {
         Ok(())
     }
     pub fn take(&mut self) -> Result<Option<(Vec<u8>, Vec<Id>)>> {
-        if self.members.is_empty() {
+        let Some(members) = self.take_members() else {
             return Ok(None);
-        }
-        let members = std::mem::take(&mut self.members);
-        self.bytes = 0;
+        };
         encode(&members).map(Some)
+    }
+
+    pub(crate) fn take_members(&mut self) -> Option<Vec<(Id, Vec<u8>)>> {
+        if self.members.is_empty() {
+            return None;
+        }
+        self.bytes = 0;
+        Some(std::mem::take(&mut self.members))
     }
 }
 

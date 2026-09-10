@@ -52,6 +52,12 @@ pub fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<()> {
 pub fn install(tmp: NamedTempFile, dir: &Path, suffix: &str) -> Result<Id> {
     tmp.as_file().sync_all()?;
     let digest = hash_file(tmp.path())?;
+    install_known(tmp, dir, suffix, digest)
+}
+
+/// Install a blob whose digest was computed while it was written.
+pub fn install_known(tmp: NamedTempFile, dir: &Path, suffix: &str, digest: Id) -> Result<Id> {
+    tmp.as_file().sync_all()?;
     let path = dir.join(format!("{digest}{suffix}"));
     if path.exists() {
         verify_file(&path, digest)?;

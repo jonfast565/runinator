@@ -28,7 +28,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.21.703
+ARG RUNINATOR_VERSION=0.22.704
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder

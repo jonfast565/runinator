@@ -9,6 +9,7 @@ use crate::{
     store::{ReadStore, WriteStore, load, save},
 };
 use fastcdc::v2020::{FastCDC, Normalization};
+use rayon::prelude::*;
 use std::{
     io::{Read, Seek, SeekFrom, Write},
     sync::Arc,
@@ -22,18 +23,33 @@ fn chunk_data<S: WriteStore + ?Sized>(
     if bytes.is_empty() {
         return Ok(());
     }
-    for chunk in FastCDC::with_level_and_seed(
+    let chunks = FastCDC::with_level_and_seed(
         bytes,
         layout.min as usize,
         layout.avg as usize,
         layout.max as usize,
         Normalization::Level1,
         0,
-    ) {
-        let raw = &bytes[chunk.offset..chunk.offset + chunk.length];
+    )
+    .map(|chunk| &bytes[chunk.offset..chunk.offset + chunk.length])
+    .collect::<Vec<_>>();
+    let stored = if chunks.len() < 8 {
+        chunks
+            .iter()
+            .map(|raw| Ok((s.put(Kind::Chunk, raw)?, raw.len())))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        chunks
+            .par_iter()
+            .map(|raw| Ok((s.put(Kind::Chunk, raw)?, raw.len())))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+    };
+    for (id, len) in stored {
         out.push(PageExtent::Data(ChunkRef {
-            id: s.put(Kind::Chunk, raw)?,
-            len: raw.len() as u32,
+            id,
+            len: len as u32,
         }));
     }
     Ok(())
@@ -212,6 +228,16 @@ pub fn read_into<S: ReadStore + ?Sized>(
     output: &mut [u8],
 ) -> Result<usize> {
     let f: FileObject = load(s, file, Kind::File)?;
+    read_into_file(s, cache, &f, offset, output)
+}
+
+fn read_into_file<S: ReadStore + ?Sized>(
+    s: &S,
+    cache: &ByteCache,
+    f: &FileObject,
+    offset: u64,
+    output: &mut [u8],
+) -> Result<usize> {
     if offset >= f.size || output.is_empty() {
         return Ok(0);
     }
@@ -266,7 +292,7 @@ pub fn copy_to<S: ReadStore + ?Sized, W: Write>(
     let mut buf = vec![0; f.size.min(f.layout.page_size as u64) as usize];
     let mut pos = 0u64;
     while pos < f.size {
-        let n = read_into(s, cache, file, pos, &mut buf)?;
+        let n = read_into_file(s, cache, &f, pos, &mut buf)?;
         if n == 0 {
             return Err(corrupt("unexpected EOF"));
         }
@@ -310,17 +336,32 @@ pub fn write_range<S: WriteStore + ?Sized>(
     if input.is_empty() {
         return Ok(file);
     }
+    let mut f: FileObject = load(s, file, Kind::File)?;
+    write_range_file(s, cache, &mut f, offset, input)?;
+    save(s, Kind::File, &f)
+}
+
+fn write_range_file<S: WriteStore + ?Sized>(
+    s: &S,
+    cache: &ByteCache,
+    f: &mut FileObject,
+    offset: u64,
+    input: &[u8],
+) -> Result<()> {
+    if input.is_empty() {
+        return Ok(());
+    }
     let end = offset
         .checked_add(input.len() as u64)
         .ok_or_else(|| invalid("write offset overflow"))?;
-    let mut f: FileObject = load(s, file, Kind::File)?;
     if (f.small.is_some() || f.pages.is_none()) && f.size.max(end) <= TINY_LIMIT as u64 {
         let mut bytes = f.small.take().unwrap_or_else(|| vec![0; f.size as usize]);
         bytes.resize(f.size.max(end) as usize, 0);
         bytes[offset as usize..end as usize].copy_from_slice(input);
-        return save(s, Kind::File, &FileObject::from_small(f.layout, bytes)?);
+        *f = FileObject::from_small(f.layout, bytes)?;
+        return Ok(());
     }
-    promote(s, &mut f)?;
+    promote(s, f)?;
     let mut done = 0;
     while done < input.len() {
         let pos = offset + done as u64;
@@ -328,7 +369,7 @@ pub fn write_range<S: WriteStore + ?Sized>(
         let inside = (pos % f.layout.page_size as u64) as usize;
         let take = (input.len() - done).min(f.layout.page_size as usize - inside);
         let old = radix::get(s, f.pages, &no.to_be_bytes())?;
-        let mut buffer = mutable_page(s, cache, &f, no)?;
+        let mut buffer = mutable_page(s, cache, f, no)?;
         buffer[inside..inside + take].copy_from_slice(&input[done..done + take]);
         let new = store_page(s, f.layout, &buffer)?;
         if old != new {
@@ -337,7 +378,7 @@ pub fn write_range<S: WriteStore + ?Sized>(
         done += take;
     }
     f.size = f.size.max(end);
-    save(s, Kind::File, &f)
+    Ok(())
 }
 pub fn write_from<S: WriteStore + ?Sized, R: Read>(
     s: &S,
@@ -346,7 +387,7 @@ pub fn write_from<S: WriteStore + ?Sized, R: Read>(
     offset: u64,
     mut input: R,
 ) -> Result<(Id, u64)> {
-    let f: FileObject = load(s, file, Kind::File)?;
+    let mut f: FileObject = load(s, file, Kind::File)?;
     let mut buf = vec![0; f.layout.page_size as usize];
     let mut written = 0u64;
     loop {
@@ -361,11 +402,15 @@ pub fn write_from<S: WriteStore + ?Sized, R: Read>(
         let pos = offset
             .checked_add(written)
             .ok_or_else(|| invalid("write offset overflow"))?;
-        file = write_range(s, cache, file, pos, &buf[..n])?;
+        write_range_file(s, cache, &mut f, pos, &buf[..n])?;
         written = written
             .checked_add(n as u64)
             .ok_or_else(|| invalid("length overflow"))?;
     }
+    if written == 0 {
+        return Ok((file, 0));
+    }
+    file = save(s, Kind::File, &f)?;
     Ok((file, written))
 }
 pub fn append<S: WriteStore + ?Sized>(
@@ -374,8 +419,13 @@ pub fn append<S: WriteStore + ?Sized>(
     file: Id,
     input: &[u8],
 ) -> Result<Id> {
-    let f: FileObject = load(s, file, Kind::File)?;
-    write_range(s, cache, file, f.size, input)
+    if input.is_empty() {
+        return Ok(file);
+    }
+    let mut f: FileObject = load(s, file, Kind::File)?;
+    let offset = f.size;
+    write_range_file(s, cache, &mut f, offset, input)?;
+    save(s, Kind::File, &f)
 }
 pub fn truncate<S: WriteStore + ?Sized>(
     s: &S,

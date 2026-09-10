@@ -6,10 +6,11 @@ use crate::{
     error::{Result, corrupt},
     io_util::read_at,
 };
+use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -20,6 +21,7 @@ pub const ENTRY_BYTES: u64 = 52;
 pub const STANDALONE: u32 = u32::MAX;
 const MAX_PACKS: usize = 65536;
 const RAW_ENTRY: usize = 84;
+const SORT_RUN_ENTRIES: usize = 65_536;
 #[derive(Clone, Copy, Debug)]
 pub struct Location {
     pub id: Id,
@@ -81,11 +83,11 @@ impl DiskIndex {
         if file.metadata()?.len() != length {
             return Err(corrupt("incorrect index length"));
         }
+        let mut pack_bytes = vec![0; pack_count * 32];
+        read_at(&file, &mut pack_bytes, HEADER_BYTES)?;
         let mut packs = Vec::with_capacity(pack_count);
-        for slot in 0..pack_count {
-            let mut bytes = [0; 32];
-            read_at(&file, &mut bytes, HEADER_BYTES + slot as u64 * 32)?;
-            let id = Id(bytes);
+        for bytes in pack_bytes.chunks_exact(32) {
+            let id = Id(bytes.try_into().unwrap());
             if packs.last().is_some_and(|p| *p >= id) {
                 return Err(corrupt("unordered index pack table"));
             }
@@ -138,8 +140,8 @@ impl DiskIndex {
     }
     pub fn validate(&self) -> Result<()> {
         let mut previous = None;
-        for i in 0..self.count {
-            let e = self.entry(i)?;
+        let mut entries = self.entries()?;
+        while let Some(e) = entries.next()? {
             if previous.is_some_and(|id| id >= e.id) {
                 return Err(corrupt("index is not strictly sorted"));
             }
@@ -150,11 +152,67 @@ impl DiskIndex {
     pub fn pack_count(&self) -> usize {
         self.packs.len()
     }
+
+    fn entries(&self) -> Result<DiskEntries> {
+        if self.count == 0 {
+            return Ok(DiskEntries {
+                reader: None,
+                packs: self.packs.clone(),
+                remaining: 0,
+            });
+        }
+        let mut file = self
+            .file
+            .as_ref()
+            .ok_or_else(|| corrupt("missing index file"))?
+            .try_clone()?;
+        file.seek(SeekFrom::Start(self.entries_offset))?;
+        Ok(DiskEntries {
+            reader: Some(BufReader::new(file)),
+            packs: self.packs.clone(),
+            remaining: self.count,
+        })
+    }
+}
+
+struct DiskEntries {
+    reader: Option<BufReader<File>>,
+    packs: Arc<Vec<Id>>,
+    remaining: u64,
+}
+
+impl DiskEntries {
+    fn next(&mut self) -> Result<Option<Location>> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        let mut bytes = [0; ENTRY_BYTES as usize];
+        self.reader
+            .as_mut()
+            .ok_or_else(|| corrupt("missing index reader"))?
+            .read_exact(&mut bytes)?;
+        self.remaining -= 1;
+        decode_compact(bytes, &self.packs).map(Some)
+    }
+}
+
+fn decode_compact(bytes: [u8; ENTRY_BYTES as usize], packs: &[Id]) -> Result<Location> {
+    let slot = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
+    let pack = *packs
+        .get(slot)
+        .ok_or_else(|| corrupt("unknown compact pack slot"))?;
+    Ok(Location {
+        id: Id(bytes[..32].try_into().unwrap()),
+        pack,
+        offset: u64::from_le_bytes(bytes[36..44].try_into().unwrap()),
+        length: u32::from_le_bytes(bytes[44..48].try_into().unwrap()) as u64,
+        member: u32::from_le_bytes(bytes[48..52].try_into().unwrap()),
+    })
 }
 
 /// Spools entries on disk while collecting only the bounded pack dictionary.
 pub struct IndexWriter {
-    file: NamedTempFile,
+    file: BufWriter<NamedTempFile>,
     directory: PathBuf,
     packs: BTreeSet<Id>,
     count: u64,
@@ -163,7 +221,7 @@ pub struct IndexWriter {
 impl IndexWriter {
     pub fn new(dir: &Path) -> Result<Self> {
         Ok(Self {
-            file: NamedTempFile::new_in(dir)?,
+            file: BufWriter::new(NamedTempFile::new_in(dir)?),
             directory: dir.to_owned(),
             packs: BTreeSet::new(),
             count: 0,
@@ -191,74 +249,73 @@ impl IndexWriter {
     }
     pub fn finish(mut self) -> Result<NamedTempFile> {
         let mut out = NamedTempFile::new_in(&self.directory)?;
-        out.write_all(MAGIC)?;
-        out.write_all(&self.count.to_le_bytes())?;
-        out.write_all(&(self.packs.len() as u32).to_le_bytes())?;
-        out.write_all(&(ENTRY_BYTES as u32).to_le_bytes())?;
         let mut dictionary = BTreeMap::new();
-        for (slot, pack) in self.packs.iter().enumerate() {
-            dictionary.insert(*pack, slot as u32);
-            out.write_all(&pack.0)?;
-        }
         self.file.flush()?;
-        self.file.seek(SeekFrom::Start(0))?;
-        while let Some(entry) = next_raw(self.file.as_file_mut())? {
-            out.write_all(&entry.id.0)?;
-            let slot = dictionary
-                .get(&entry.pack)
-                .ok_or_else(|| corrupt("missing pack table entry"))?;
-            out.write_all(&slot.to_le_bytes())?;
-            out.write_all(&entry.offset.to_le_bytes())?;
-            out.write_all(&(entry.length as u32).to_le_bytes())?;
-            out.write_all(&entry.member.to_le_bytes())?;
+        let mut input = BufReader::new(self.file.into_inner().map_err(|error| error.into_error())?);
+        input.seek(SeekFrom::Start(0))?;
+        {
+            let mut writer = BufWriter::new(&mut out);
+            writer.write_all(MAGIC)?;
+            writer.write_all(&self.count.to_le_bytes())?;
+            writer.write_all(&(self.packs.len() as u32).to_le_bytes())?;
+            writer.write_all(&(ENTRY_BYTES as u32).to_le_bytes())?;
+            for (slot, pack) in self.packs.iter().enumerate() {
+                dictionary.insert(*pack, slot as u32);
+                writer.write_all(&pack.0)?;
+            }
+            while let Some(entry) = next_raw(&mut input)? {
+                writer.write_all(&entry.id.0)?;
+                let slot = dictionary
+                    .get(&entry.pack)
+                    .ok_or_else(|| corrupt("missing pack table entry"))?;
+                writer.write_all(&slot.to_le_bytes())?;
+                writer.write_all(&entry.offset.to_le_bytes())?;
+                writer.write_all(&(entry.length as u32).to_le_bytes())?;
+                writer.write_all(&entry.member.to_le_bytes())?;
+            }
+            writer.flush()?;
         }
-        out.flush()?;
         Ok(out)
     }
 }
 /// Both inputs are sorted; equal IDs reuse the old location.
 pub fn merge(old: &DiskIndex, new: &DiskIndex, dir: &Path) -> Result<NamedTempFile> {
     let mut out = IndexWriter::new(dir)?;
-    let (mut a, mut b) = (0, 0);
-    while a < old.count || b < new.count {
-        let x = if a < old.count {
-            Some(old.entry(a)?)
-        } else {
-            None
-        };
-        let y = if b < new.count {
-            Some(new.entry(b)?)
-        } else {
-            None
-        };
-        match (x, y) {
-            (Some(x), Some(y)) if x.id == y.id => {
-                out.push(x)?;
-                a += 1;
-                b += 1;
+    let mut old_entries = old.entries()?;
+    let mut new_entries = new.entries()?;
+    let mut x = old_entries.next()?;
+    let mut y = new_entries.next()?;
+    while x.is_some() || y.is_some() {
+        match (x.take(), y.take()) {
+            (Some(left), Some(right)) if left.id == right.id => {
+                out.push(left)?;
+                x = old_entries.next()?;
+                y = new_entries.next()?;
             }
-            (Some(x), Some(y)) if x.id < y.id => {
-                out.push(x)?;
-                a += 1;
+            (Some(left), Some(right)) if left.id < right.id => {
+                out.push(left)?;
+                x = old_entries.next()?;
+                y = Some(right);
             }
-            (Some(_), Some(y)) => {
-                out.push(y)?;
-                b += 1;
+            (Some(left), Some(right)) => {
+                out.push(right)?;
+                x = Some(left);
+                y = new_entries.next()?;
             }
-            (Some(x), None) => {
-                out.push(x)?;
-                a += 1;
+            (Some(left), None) => {
+                out.push(left)?;
+                x = old_entries.next()?;
             }
-            (None, Some(y)) => {
-                out.push(y)?;
-                b += 1;
+            (None, Some(right)) => {
+                out.push(right)?;
+                y = new_entries.next()?;
             }
             (None, None) => break,
         }
     }
     out.finish()
 }
-/// Spill 4096 entries at a time. Pairwise merging has constant merge memory and
+/// Spill bounded runs at a time. Pairwise merging has constant merge memory and
 /// keeps at most two input runs open, even for very large transactions.
 pub struct ExternalSorter {
     dir: TempDir,
@@ -269,7 +326,7 @@ impl ExternalSorter {
     pub fn new(dir: &Path) -> Result<Self> {
         Ok(Self {
             dir: TempDir::new_in(dir)?,
-            buffer: Vec::with_capacity(4096),
+            buffer: Vec::with_capacity(SORT_RUN_ENTRIES),
             runs: 0,
         })
     }
@@ -278,7 +335,7 @@ impl ExternalSorter {
     }
     pub fn push(&mut self, e: Location) -> Result<()> {
         self.buffer.push(e);
-        if self.buffer.len() == 4096 {
+        if self.buffer.len() == SORT_RUN_ENTRIES {
             self.flush()?;
         }
         Ok(())
@@ -288,7 +345,7 @@ impl ExternalSorter {
             return Ok(());
         }
         self.buffer.sort_unstable_by_key(|e| e.id);
-        let mut out = File::create(self.path(0, self.runs))?;
+        let mut out = BufWriter::new(File::create(self.path(0, self.runs))?);
         for e in self.buffer.drain(..) {
             out.write_all(&e.bytes())?;
         }
@@ -300,28 +357,34 @@ impl ExternalSorter {
         let mut round = 0;
         let mut count = self.runs;
         while count > 1 {
-            let mut output = 0;
-            let mut run = 0;
-            while run < count {
-                let a = self.path(round, run);
-                let target = self.path(round + 1, output);
-                if run + 1 == count {
-                    fs::rename(a, target)?;
-                } else {
-                    let b = self.path(round, run + 1);
-                    merge_raw(&a, &b, &target)?;
+            let jobs = (0..count)
+                .step_by(2)
+                .enumerate()
+                .map(|(output, run)| {
+                    (
+                        self.path(round, run),
+                        (run + 1 < count).then(|| self.path(round, run + 1)),
+                        self.path(round + 1, output as u64),
+                    )
+                })
+                .collect::<Vec<_>>();
+            jobs.par_iter()
+                .try_for_each(|(a, b, target)| -> Result<()> {
+                    let Some(b) = b else {
+                        fs::rename(a, target)?;
+                        return Ok(());
+                    };
+                    merge_raw(a, b, target)?;
                     fs::remove_file(a)?;
                     fs::remove_file(b)?;
-                }
-                output += 1;
-                run += 2;
-            }
-            count = output;
+                    Ok(())
+                })?;
+            count = jobs.len() as u64;
             round += 1;
         }
         let mut out = IndexWriter::new(output_dir)?;
         if count == 1 {
-            let mut input = File::open(self.path(round, 0))?;
+            let mut input = BufReader::new(File::open(self.path(round, 0))?);
             while let Some(mut e) = next_raw(&mut input)? {
                 e.pack = pack;
                 out.push(e)?;
@@ -330,7 +393,7 @@ impl ExternalSorter {
         out.finish()
     }
 }
-fn next_raw(file: &mut File) -> Result<Option<Location>> {
+fn next_raw(file: &mut impl Read) -> Result<Option<Location>> {
     let mut b = [0; RAW_ENTRY];
     let mut used = 0;
     while used < b.len() {
@@ -345,9 +408,9 @@ fn next_raw(file: &mut File) -> Result<Option<Location>> {
     Ok(Some(Location::decode(b)))
 }
 fn merge_raw(a: &Path, b: &Path, out: &Path) -> Result<()> {
-    let mut a = File::open(a)?;
-    let mut b = File::open(b)?;
-    let mut out = File::create(out)?;
+    let mut a = BufReader::new(File::open(a)?);
+    let mut b = BufReader::new(File::open(b)?);
+    let mut out = BufWriter::new(File::create(out)?);
     let mut x = next_raw(&mut a)?;
     let mut y = next_raw(&mut b)?;
     while x.is_some() || y.is_some() {

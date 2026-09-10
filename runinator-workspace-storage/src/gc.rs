@@ -13,9 +13,10 @@ use crate::{
     radix,
     store::{ReadStore, load},
 };
+use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File, OpenOptions},
+    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
 };
@@ -24,12 +25,16 @@ use tempfile::TempDir;
 const MEMORY_MARK_LIMIT: usize = 65_536;
 const MEMORY_STACK_LIMIT: usize = 65_536;
 const MEMORY_COUNTER_LIMIT: usize = 65_536;
+const MARK_SLOT_BYTES: u64 = 33;
+const MARK_BATCH: usize = 256;
+const COUNTER_SLOT_BYTES: u64 = 17;
 
 pub struct DiskMarks {
     dir: TempDir,
     memory: HashSet<Id>,
     memory_limit: usize,
-    spilled: bool,
+    table: Option<File>,
+    table_slots: usize,
     pub count: u64,
 }
 impl DiskMarks {
@@ -41,30 +46,33 @@ impl DiskMarks {
             dir: TempDir::new_in(parent)?,
             memory: HashSet::new(),
             memory_limit,
-            spilled: false,
+            table: None,
+            table_slots: 0,
             count: 0,
         })
     }
-    fn path(&self, id: Id) -> std::path::PathBuf {
-        let h = id.to_string();
-        self.dir.path().join(&h[..2]).join(&h[2..])
-    }
     pub fn contains(&self, id: Id) -> Result<bool> {
-        if !self.spilled {
+        if self.table.is_none() {
             return Ok(self.memory.contains(&id));
         }
-        Ok(self.path(id).try_exists()?)
+        self.contains_disk(id)
     }
     pub fn insert(&mut self, id: Id) -> Result<bool> {
-        if !self.spilled && self.memory.len() < self.memory_limit {
+        if self.table.is_none() && self.memory.len() < self.memory_limit {
             if self.memory.insert(id) {
                 self.count += 1;
                 return Ok(true);
             }
             return Ok(false);
         }
-        if !self.spilled {
+        if self.table.is_none() {
             self.spill()?;
+        }
+        if self.count.saturating_add(1).saturating_mul(10) >= self.table_slots as u64 * 7 {
+            if self.contains_disk(id)? {
+                return Ok(false);
+            }
+            self.grow()?;
         }
         if self.insert_disk(id)? {
             self.count += 1;
@@ -72,37 +80,104 @@ impl DiskMarks {
         }
         Ok(false)
     }
-    fn insert_disk(&self, id: Id) -> Result<bool> {
-        let path = self.path(id);
-        fs::create_dir_all(path.parent().unwrap())?;
-        match OpenOptions::new().write(true).create_new(true).open(path) {
-            Ok(_) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-            Err(e) => Err(e.into()),
+    fn slot(id: Id, slots: usize) -> usize {
+        let hash = u64::from_le_bytes(id.0[..8].try_into().unwrap()) as usize;
+        hash & (slots - 1)
+    }
+    fn contains_disk(&self, id: Id) -> Result<bool> {
+        let file = self
+            .table
+            .as_ref()
+            .ok_or_else(|| corrupt("missing mark table"))?;
+        let mut slot = Self::slot(id, self.table_slots);
+        for _ in 0..self.table_slots {
+            let mut bytes = [0; MARK_SLOT_BYTES as usize];
+            crate::io_util::read_at(file, &mut bytes, slot as u64 * MARK_SLOT_BYTES)?;
+            if bytes[0] == 0 {
+                return Ok(false);
+            }
+            if bytes[1..] == id.0 {
+                return Ok(true);
+            }
+            slot = (slot + 1) & (self.table_slots - 1);
         }
+        Ok(false)
+    }
+    fn insert_into(file: &mut File, slots: usize, id: Id) -> Result<bool> {
+        let mut slot = Self::slot(id, slots);
+        for _ in 0..slots {
+            let offset = slot as u64 * MARK_SLOT_BYTES;
+            let mut bytes = [0; MARK_SLOT_BYTES as usize];
+            crate::io_util::read_at(file, &mut bytes, offset)?;
+            if bytes[0] == 0 {
+                bytes[0] = 1;
+                bytes[1..].copy_from_slice(&id.0);
+                file.seek(SeekFrom::Start(offset))?;
+                file.write_all(&bytes)?;
+                return Ok(true);
+            }
+            if bytes[1..] == id.0 {
+                return Ok(false);
+            }
+            slot = (slot + 1) & (slots - 1);
+        }
+        Err(corrupt("mark table is full"))
+    }
+    fn insert_disk(&mut self, id: Id) -> Result<bool> {
+        Self::insert_into(
+            self.table
+                .as_mut()
+                .ok_or_else(|| corrupt("missing mark table"))?,
+            self.table_slots,
+            id,
+        )
     }
     fn spill(&mut self) -> Result<()> {
+        let slots = self.memory_limit.max(self.memory.len()).max(1) * 2;
+        self.table_slots = slots.next_power_of_two();
+        let mut table = tempfile::tempfile_in(self.dir.path())?;
+        table.set_len(self.table_slots as u64 * MARK_SLOT_BYTES)?;
         for &id in &self.memory {
-            self.insert_disk(id)?;
+            Self::insert_into(&mut table, self.table_slots, id)?;
         }
         self.memory.clear();
-        self.spilled = true;
+        self.table = Some(table);
+        Ok(())
+    }
+    fn grow(&mut self) -> Result<()> {
+        let old_slots = self.table_slots;
+        let slots = old_slots
+            .checked_mul(2)
+            .ok_or_else(|| corrupt("mark table size overflow"))?;
+        let old = self
+            .table
+            .take()
+            .ok_or_else(|| corrupt("missing mark table"))?;
+        let mut table = tempfile::tempfile_in(self.dir.path())?;
+        table.set_len(slots as u64 * MARK_SLOT_BYTES)?;
+        for slot in 0..old_slots {
+            let mut bytes = [0; MARK_SLOT_BYTES as usize];
+            crate::io_util::read_at(&old, &mut bytes, slot as u64 * MARK_SLOT_BYTES)?;
+            if bytes[0] != 0 {
+                Self::insert_into(&mut table, slots, Id(bytes[1..].try_into().unwrap()))?;
+            }
+        }
+        self.table_slots = slots;
+        self.table = Some(table);
         Ok(())
     }
     pub fn visit<F: FnMut(Id) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        if !self.spilled {
+        let Some(table) = &self.table else {
             for &id in &self.memory {
                 f(id)?;
             }
             return Ok(());
-        }
-        for bucket in fs::read_dir(self.dir.path())? {
-            let bucket = bucket?;
-            let prefix = bucket.file_name().to_string_lossy().into_owned();
-            for item in fs::read_dir(bucket.path())? {
-                let item = item?;
-                let name = item.file_name().to_string_lossy().into_owned();
-                f(format!("{prefix}{name}").parse()?)?;
+        };
+        for slot in 0..self.table_slots {
+            let mut bytes = [0; MARK_SLOT_BYTES as usize];
+            crate::io_util::read_at(table, &mut bytes, slot as u64 * MARK_SLOT_BYTES)?;
+            if bytes[0] != 0 {
+                f(Id(bytes[1..].try_into().unwrap()))?;
             }
         }
         Ok(())
@@ -274,26 +349,42 @@ pub fn mark_roots<S: ReadStore + ?Sized>(
     for &id in roots {
         stack.push(edge(id, Some(Kind::Revision)))?;
     }
-    while let Some(bytes) = stack.pop()? {
-        let id = Id(bytes[..32].try_into().unwrap());
-        let expected = if bytes[32] == 0 {
-            None
-        } else {
-            Some(Kind::try_from(bytes[32])?)
-        };
-        let info = s.info(id)?;
-        if expected.is_some_and(|k| k != info.kind) {
-            return Err(corrupt("object graph type mismatch"));
+    loop {
+        let mut frontier = Vec::with_capacity(MARK_BATCH);
+        while frontier.len() < MARK_BATCH {
+            let Some(bytes) = stack.pop()? else { break };
+            frontier.push(bytes);
         }
-        if !marks.insert(id)? {
-            continue;
+        if frontier.is_empty() {
+            break;
         }
-        if info.kind == Kind::Chunk {
-            continue;
+        let mut objects = Vec::with_capacity(frontier.len());
+        for bytes in frontier {
+            let id = Id(bytes[..32].try_into().unwrap());
+            let expected = if bytes[32] == 0 {
+                None
+            } else {
+                Some(Kind::try_from(bytes[32])?)
+            };
+            let info = s.info(id)?;
+            if expected.is_some_and(|kind| kind != info.kind) {
+                return Err(corrupt("object graph type mismatch"));
+            }
+            if marks.insert(id)? && info.kind != Kind::Chunk {
+                objects.push(id);
+            }
         }
-        let object = s.get(id)?;
-        for (child, kind) in references(object.kind, &object.bytes, include_ancestors)? {
-            stack.push(edge(child, kind))?;
+        let loaded = s.get_many(&objects)?;
+        let children = loaded
+            .par_iter()
+            .map(|object| references(object.kind, &object.bytes, include_ancestors))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        for children in children {
+            for (child, kind) in children {
+                stack.push(edge(child, kind))?;
+            }
         }
     }
     Ok(marks)
@@ -302,7 +393,9 @@ struct Counters {
     dir: TempDir,
     memory: HashMap<u64, u64>,
     memory_limit: usize,
-    spilled: bool,
+    table: Option<File>,
+    table_slots: usize,
+    table_entries: usize,
 }
 impl Counters {
     fn new(parent: &Path) -> Result<Self> {
@@ -313,29 +406,20 @@ impl Counters {
             dir: TempDir::new_in(parent)?,
             memory: HashMap::new(),
             memory_limit,
-            spilled: false,
+            table: None,
+            table_slots: 0,
+            table_entries: 0,
         })
     }
-    fn path(&self, n: u64) -> std::path::PathBuf {
-        let id = Id::sha256(&n.to_be_bytes()).to_string();
-        self.dir.path().join(&id[..2]).join(&id[2..])
-    }
     fn get(&self, n: u64) -> Result<u64> {
-        if !self.spilled {
+        let Some(table) = &self.table else {
             return Ok(self.memory.get(&n).copied().unwrap_or(0));
-        }
-        match File::open(self.path(n)) {
-            Ok(mut f) => {
-                let mut b = [0; 8];
-                f.read_exact(&mut b)?;
-                Ok(u64::from_le_bytes(b))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-            Err(e) => Err(e.into()),
-        }
+        };
+        Ok(Self::find_slot(table, self.table_slots, n)?.1.unwrap_or(0))
     }
     fn increment(&mut self, n: u64) -> Result<()> {
-        if !self.spilled && (self.memory.contains_key(&n) || self.memory.len() < self.memory_limit)
+        if self.table.is_none()
+            && (self.memory.contains_key(&n) || self.memory.len() < self.memory_limit)
         {
             let value = self.memory.entry(n).or_default();
             *value = value
@@ -343,27 +427,114 @@ impl Counters {
                 .ok_or_else(|| corrupt("link count overflow"))?;
             return Ok(());
         }
-        if !self.spilled {
+        if self.table.is_none() {
             self.spill()?;
         }
-        let value = self
-            .get(n)?
+        let (mut slot, current) = Self::find_slot(
+            self.table
+                .as_ref()
+                .ok_or_else(|| corrupt("missing counter table"))?,
+            self.table_slots,
+            n,
+        )?;
+        if current.is_none()
+            && self.table_entries.saturating_add(1).saturating_mul(10) >= self.table_slots * 7
+        {
+            self.grow()?;
+            slot = Self::find_slot(
+                self.table
+                    .as_ref()
+                    .ok_or_else(|| corrupt("missing counter table"))?,
+                self.table_slots,
+                n,
+            )?
+            .0;
+        }
+        let value = current
+            .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| corrupt("link count overflow"))?;
-        self.write_disk(n, value)
+        Self::write_slot(
+            self.table
+                .as_mut()
+                .ok_or_else(|| corrupt("missing counter table"))?,
+            slot,
+            n,
+            value,
+        )?;
+        if current.is_none() {
+            self.table_entries += 1;
+        }
+        Ok(())
     }
-    fn write_disk(&self, n: u64, value: u64) -> Result<()> {
-        let p = self.path(n);
-        fs::create_dir_all(p.parent().unwrap())?;
-        File::create(p)?.write_all(&value.to_le_bytes())?;
+    fn slot(n: u64, slots: usize) -> usize {
+        n.wrapping_mul(0x9e37_79b9_7f4a_7c15) as usize & (slots - 1)
+    }
+    fn find_slot(file: &File, slots: usize, n: u64) -> Result<(usize, Option<u64>)> {
+        let mut slot = Self::slot(n, slots);
+        for _ in 0..slots {
+            let mut bytes = [0; COUNTER_SLOT_BYTES as usize];
+            crate::io_util::read_at(file, &mut bytes, slot as u64 * COUNTER_SLOT_BYTES)?;
+            if bytes[0] == 0 {
+                return Ok((slot, None));
+            }
+            if u64::from_le_bytes(bytes[1..9].try_into().unwrap()) == n {
+                return Ok((
+                    slot,
+                    Some(u64::from_le_bytes(bytes[9..17].try_into().unwrap())),
+                ));
+            }
+            slot = (slot + 1) & (slots - 1);
+        }
+        Err(corrupt("counter table is full"))
+    }
+    fn write_slot(file: &mut File, slot: usize, n: u64, value: u64) -> Result<()> {
+        let mut bytes = [0; COUNTER_SLOT_BYTES as usize];
+        bytes[0] = 1;
+        bytes[1..9].copy_from_slice(&n.to_le_bytes());
+        bytes[9..17].copy_from_slice(&value.to_le_bytes());
+        file.seek(SeekFrom::Start(slot as u64 * COUNTER_SLOT_BYTES))?;
+        file.write_all(&bytes)?;
         Ok(())
     }
     fn spill(&mut self) -> Result<()> {
+        self.table_slots =
+            (self.memory_limit.max(self.memory.len()).max(1) * 2).next_power_of_two();
+        let mut table = tempfile::tempfile_in(self.dir.path())?;
+        table.set_len(self.table_slots as u64 * COUNTER_SLOT_BYTES)?;
         for (&n, &value) in &self.memory {
-            self.write_disk(n, value)?;
+            let (slot, _) = Self::find_slot(&table, self.table_slots, n)?;
+            Self::write_slot(&mut table, slot, n, value)?;
         }
+        self.table_entries = self.memory.len();
         self.memory.clear();
-        self.spilled = true;
+        self.table = Some(table);
+        Ok(())
+    }
+    fn grow(&mut self) -> Result<()> {
+        let old_slots = self.table_slots;
+        let new_slots = old_slots
+            .checked_mul(2)
+            .ok_or_else(|| corrupt("counter table size overflow"))?;
+        let old = self
+            .table
+            .take()
+            .ok_or_else(|| corrupt("missing counter table"))?;
+        let mut table = tempfile::tempfile_in(self.dir.path())?;
+        table.set_len(new_slots as u64 * COUNTER_SLOT_BYTES)?;
+        for slot in 0..old_slots {
+            let mut bytes = [0; COUNTER_SLOT_BYTES as usize];
+            crate::io_util::read_at(&old, &mut bytes, slot as u64 * COUNTER_SLOT_BYTES)?;
+            if bytes[0] == 0 {
+                continue;
+            }
+            let n = u64::from_le_bytes(bytes[1..9].try_into().unwrap());
+            let value = u64::from_le_bytes(bytes[9..17].try_into().unwrap());
+            let (slot, _) = Self::find_slot(&table, new_slots, n)?;
+            Self::write_slot(&mut table, slot, n, value)?;
+        }
+        self.table_slots = new_slots;
+        self.table = Some(table);
         Ok(())
     }
 }

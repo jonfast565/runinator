@@ -7,6 +7,54 @@ use crate::{
     model::{Kind, RadixNode},
     store::{ReadStore, WriteStore, load, load_many, save},
 };
+
+/// Build a canonical radix tree from strictly ordered keys without repeated copy-on-write updates.
+pub fn build_sorted<S: WriteStore + ?Sized>(
+    s: &S,
+    entries: &[(Vec<u8>, Id)],
+) -> Result<Option<Id>> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    for pair in entries.windows(2) {
+        if pair[0].0 >= pair[1].0 {
+            return Err(invalid("radix bulk keys must be strictly ordered"));
+        }
+    }
+    if entries.iter().any(|(key, _)| key.len() > 4096) {
+        return Err(invalid("radix key too long"));
+    }
+    fn build<S: WriteStore + ?Sized>(s: &S, entries: &[(Vec<u8>, Id)], depth: usize) -> Result<Id> {
+        let first = &entries.first().unwrap().0;
+        let last = &entries.last().unwrap().0;
+        let common = first[depth..]
+            .iter()
+            .zip(&last[depth..])
+            .take_while(|(a, b)| a == b)
+            .count();
+        let position = depth + common;
+        let mut node = RadixNode {
+            prefix: first[depth..position].to_vec(),
+            ..Default::default()
+        };
+        let mut index = 0;
+        if entries[0].0.len() == position {
+            node.value = Some(entries[0].1);
+            index = 1;
+        }
+        while index < entries.len() {
+            let edge = entries[index].0[position];
+            let begin = index;
+            while index < entries.len() && entries[index].0[position] == edge {
+                index += 1;
+            }
+            node.children
+                .insert(edge, build(s, &entries[begin..index], position + 1)?);
+        }
+        save(s, Kind::Radix, &node)
+    }
+    Ok(Some(build(s, entries, 0)?))
+}
 pub fn get<S: ReadStore + ?Sized>(
     s: &S,
     mut root: Option<Id>,

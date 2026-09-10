@@ -11,6 +11,7 @@ use crate::{
     namespace, pages,
     store::{Object, ObjectInfo, ReadStore, load},
 };
+use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -349,9 +350,10 @@ impl Repository {
         if let Some(id) = catalog.index {
             io_util::verify_file(&self.root.join("indexes").join(format!("{id}.idx")), id)?;
         }
-        for pack in &catalog.packs {
+        catalog.packs.par_iter().try_for_each(|pack| {
             io_util::verify_file(&self.root.join("packs").join(format!("{pack}.pack")), *pack)?;
-        }
+            Ok::<_, Error>(())
+        })?;
         raw.index.validate()?;
         let roots: Vec<_> = catalog.refs.values().copied().collect();
         Ok(gc::verify_graph(&raw, &roots, &self.root.join("tmp"))?.count)

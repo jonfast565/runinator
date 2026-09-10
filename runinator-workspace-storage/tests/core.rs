@@ -95,6 +95,25 @@ fn radix_order_independence_and_pruning() -> Result<()> {
     assert_eq!(a, None);
     Ok(())
 }
+
+#[test]
+fn radix_bulk_build_matches_incremental_canonical_root() -> Result<()> {
+    let store = MemoryStore::default();
+    let value = store.put(Kind::Chunk, b"value")?;
+    let entries = ["", "alpha", "alphabet", "alpine", "beta"]
+        .into_iter()
+        .map(|key| (key.as_bytes().to_vec(), value))
+        .collect::<Vec<_>>();
+    let mut incremental = None;
+    for (key, value) in &entries {
+        incremental = radix::set(&store, incremental, key, Some(*value))?;
+    }
+    assert_eq!(radix::build_sorted(&store, &entries)?, incremental);
+    assert!(
+        radix::build_sorted(&store, &entries.iter().rev().cloned().collect::<Vec<_>>()).is_err()
+    );
+    Ok(())
+}
 #[test]
 fn radix_noop_has_no_new_objects() -> Result<()> {
     let s = MemoryStore::default();

@@ -200,17 +200,26 @@ impl<S: ReadStore> ReadStore for CachedStore<S> {
     fn get_many(&self, ids: &[Id]) -> Result<Vec<Object>> {
         let mut found = HashMap::new();
         let mut missing = Vec::new();
+        let mut seen = HashSet::with_capacity(ids.len());
         for id in ids {
-            if found.contains_key(id) || missing.contains(id) {
+            if !seen.insert(*id) {
                 continue;
             }
-            let info = self.inner.info(*id)?;
-            let cache = if info.kind == Kind::Chunk {
-                &self.caches.chunks
-            } else {
-                &self.caches.metadata
-            };
-            if let Some(bytes) = cache.get_cached(*id)? {
+            if let Some(bytes) = self.caches.chunks.get_cached(*id)? {
+                found.insert(
+                    *id,
+                    Object {
+                        kind: Kind::Chunk,
+                        bytes,
+                    },
+                );
+                continue;
+            }
+            if let Some(bytes) = self.caches.metadata.get_cached(*id)? {
+                let info = self.inner.info(*id)?;
+                if info.kind == Kind::Chunk {
+                    return Err(corrupt("object is resident in incorrect cache"));
+                }
                 if bytes.len() != info.raw_len {
                     return Err(corrupt("cache length mismatch"));
                 }
@@ -221,9 +230,9 @@ impl<S: ReadStore> ReadStore for CachedStore<S> {
                         bytes,
                     },
                 );
-            } else {
-                missing.push(*id);
+                continue;
             }
+            missing.push(*id);
         }
         let loaded = self.inner.get_many(&missing)?;
         if loaded.len() != missing.len() {

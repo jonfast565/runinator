@@ -40,6 +40,36 @@ const ARTIFACT: &str = "application/vnd.runinator.workspace.v1";
 const CONFIG: &str = "application/vnd.runinator.workspace.config.v1+json";
 const PACK: &str = "application/vnd.runinator.workspace.pack.v1";
 
+struct Sha256Writer<W> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W> Sha256Writer<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn digest(self) -> Id {
+        Id(self.hasher.finalize().into())
+    }
+}
+
+impl<W: Write> Write for Sha256Writer<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.hasher.update(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Descriptor {
@@ -756,11 +786,12 @@ fn append_state_tree<W: Write>(
 fn install_tar_layer(
     work: &Path,
     blobs: &Path,
-    build: impl FnOnce(&mut tar::Builder<&mut NamedTempFile>) -> Result<bool>,
+    build: impl FnOnce(&mut tar::Builder<&mut Sha256Writer<&mut NamedTempFile>>) -> Result<bool>,
 ) -> Result<Option<(Descriptor, String)>> {
     let mut tar_tmp = NamedTempFile::new_in(work)?;
+    let mut tar_writer = Sha256Writer::new(&mut tar_tmp);
     let nonempty = {
-        let mut builder = tar::Builder::new(&mut tar_tmp);
+        let mut builder = tar::Builder::new(&mut tar_writer);
         let nonempty = build(&mut builder)?;
         builder.finish()?;
         nonempty
@@ -768,18 +799,20 @@ fn install_tar_layer(
     if !nonempty {
         return Ok(None);
     }
+    let diff_id = tar_writer.digest();
     tar_tmp.as_file().sync_all()?;
-    let diff_id = io_util::hash_file(tar_tmp.path())?;
 
     let mut compressed = NamedTempFile::new_in(blobs)?;
+    let mut compressed_writer = Sha256Writer::new(&mut compressed);
     {
         let input = File::open(tar_tmp.path())?;
-        let mut encoder = zstd::stream::write::Encoder::new(&mut compressed, 3)?;
+        let mut encoder = zstd::stream::write::Encoder::new(&mut compressed_writer, 3)?;
         std::io::copy(&mut std::io::BufReader::new(input), &mut encoder)?;
         encoder.finish()?;
     }
+    let layer_id = compressed_writer.digest();
     let layer_size = compressed.as_file().metadata()?.len();
-    let layer_id = io_util::install(compressed, blobs, "")?;
+    io_util::install_known(compressed, blobs, "", layer_id)?;
     Ok(Some((
         descriptor(LAYER_ZSTD, layer_id, layer_size),
         format!("sha256:{diff_id}"),
@@ -920,25 +953,28 @@ pub fn export_image(
 
     // First produce the canonical uncompressed tar stream so its SHA-256 is the DiffID.
     let mut tar_tmp = NamedTempFile::new_in(work.path())?;
+    let mut tar_writer = Sha256Writer::new(&mut tar_tmp);
     {
-        let mut builder = tar::Builder::new(&mut tar_tmp);
+        let mut builder = tar::Builder::new(&mut tar_writer);
         let mut hardlinks = HashMap::new();
         append_snapshot_tree(snapshot, &mut builder, "", &mut hardlinks)?;
         builder.finish()?;
     }
+    let diff_id = tar_writer.digest();
     tar_tmp.as_file().sync_all()?;
-    let diff_id = io_util::hash_file(tar_tmp.path())?;
 
     // Compress to the stored OCI layer blob. Descriptor digest hashes compressed bytes.
     let mut compressed = NamedTempFile::new_in(&blobs)?;
+    let mut compressed_writer = Sha256Writer::new(&mut compressed);
     {
         let input = File::open(tar_tmp.path())?;
-        let mut encoder = zstd::stream::write::Encoder::new(&mut compressed, 3)?;
+        let mut encoder = zstd::stream::write::Encoder::new(&mut compressed_writer, 3)?;
         std::io::copy(&mut std::io::BufReader::new(input), &mut encoder)?;
         encoder.finish()?;
     }
+    let layer_id = compressed_writer.digest();
     let layer_size = compressed.as_file().metadata()?.len();
-    let layer_id = io_util::install(compressed, &blobs, "")?;
+    io_util::install_known(compressed, &blobs, "", layer_id)?;
 
     let config = OciImageConfig {
         architecture: options.architecture.clone(),

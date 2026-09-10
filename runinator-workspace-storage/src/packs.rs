@@ -4,6 +4,7 @@ use crate::{Id, Result, disk::PackBuilder, gc, index::DiskIndex, store::ReadStor
 use std::path::{Path, PathBuf};
 
 pub const TARGET_PACK_BYTES: u64 = 64 * 1024 * 1024;
+const FETCH_BATCH: usize = 16;
 
 pub struct Pack {
     pub id: Id,
@@ -56,23 +57,40 @@ pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
         }
         Ok(())
     }
-    marks.visit(|id| {
-        if base.contains(id)? {
-            return Ok(());
+    fn add_batch<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
+        store: &S,
+        base: &B,
+        ids: &mut Vec<Id>,
+        builder: &mut Option<PackBuilder>,
+        root: &Path,
+        emit: &mut F,
+    ) -> Result<()> {
+        let mut missing = Vec::with_capacity(ids.len());
+        for id in ids.drain(..) {
+            if !base.contains(id)? {
+                missing.push(id);
+            }
         }
-        let object = store.get(id)?;
-        let current = builder.as_mut().ok_or(crate::Error::Poisoned)?;
-        current.add(object.kind, &object.bytes)?;
-        if current.encoded_bytes()? >= TARGET_PACK_BYTES - 5 * 1024 * 1024 {
-            flush(
-                builder.take().ok_or(crate::Error::Poisoned)?,
-                root,
-                &mut emit,
-            )?;
-            builder = Some(PackBuilder::new(root)?);
+        let objects = store.get_many(&missing)?;
+        for objects in objects.chunks(FETCH_BATCH) {
+            let current = builder.as_mut().ok_or(crate::Error::Poisoned)?;
+            current.add_many(objects)?;
+            if current.encoded_bytes()? >= TARGET_PACK_BYTES - 5 * 1024 * 1024 {
+                flush(builder.take().ok_or(crate::Error::Poisoned)?, root, emit)?;
+                *builder = Some(PackBuilder::new(root)?);
+            }
+        }
+        Ok(())
+    }
+    let mut ids = Vec::with_capacity(FETCH_BATCH);
+    marks.visit(|id| {
+        ids.push(id);
+        if ids.len() == FETCH_BATCH {
+            add_batch(store, base, &mut ids, &mut builder, root, &mut emit)?;
         }
         Ok(())
     })?;
+    add_batch(store, base, &mut ids, &mut builder, root, &mut emit)?;
     flush(
         builder.take().ok_or(crate::Error::Poisoned)?,
         root,
