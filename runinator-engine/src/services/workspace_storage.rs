@@ -121,6 +121,12 @@ where
 pub(crate) struct ObjectGraphStorageProvider<T> {
     context: WorkspaceStorageContext<T>,
     pub(super) metadata_reads: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) object_caches: std::sync::Mutex<
+        std::collections::HashMap<
+            uuid::Uuid,
+            std::sync::Arc<runinator_workspace::storage::cache::BufferedCache>,
+        >,
+    >,
 }
 
 impl<T> ObjectGraphStorageProvider<T> {
@@ -128,6 +134,7 @@ impl<T> ObjectGraphStorageProvider<T> {
         Self {
             context,
             metadata_reads: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
+            object_caches: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 }

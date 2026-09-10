@@ -93,6 +93,35 @@ fn batch_preserves_duplicates_and_missing_object_errors() -> Result<()> {
 }
 
 #[test]
+fn buffered_stores_can_share_immutable_objects_across_requests() -> Result<()> {
+    use runinator_workspace_storage::{
+        cache::BufferedCache,
+        store::{MemoryStore, WriteStore},
+    };
+    use std::sync::Arc;
+
+    let memory = Arc::new(MemoryStore::default());
+    let id = memory.put(Kind::Chunk, b"shared")?;
+    let cache = Arc::new(BufferedCache::new(4096));
+    let first = BufferedStore::with_cache(&*memory, cache.clone());
+    assert_eq!(&*first.get(id)?.bytes, b"shared");
+
+    struct Missing;
+    impl ReadStore for Missing {
+        fn info(&self, id: Id) -> Result<ObjectInfo> {
+            Err(runinator_workspace_storage::Error::NotFound(id.to_string()))
+        }
+        fn get(&self, id: Id) -> Result<Object> {
+            Err(runinator_workspace_storage::Error::NotFound(id.to_string()))
+        }
+    }
+
+    let next_request = BufferedStore::with_cache(Missing, cache);
+    assert_eq!(&*next_request.get(id)?.bytes, b"shared");
+    Ok(())
+}
+
+#[test]
 fn shared_cache_bulk_reads_retain_objects_and_validate_types() -> Result<()> {
     use runinator_workspace_storage::{
         cache::{CachedStore, ObjectCaches},

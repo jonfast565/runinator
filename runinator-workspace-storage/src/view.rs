@@ -3,9 +3,10 @@
 use crate::{
     Id, Result,
     cache::ByteCache,
+    codec::Binary,
     error::invalid,
     model::{FileObject, Inode, InodeData, Kind, Revision, Workspace},
-    namespace, pages,
+    pages,
     projection::{PathNode, PathProjection},
     radix,
     store::{ReadStore, load, load_many},
@@ -32,9 +33,24 @@ pub struct Entry {
 impl<S: ReadStore> View<S> {
     pub fn new(store: S, revision: Id) -> Result<Self> {
         let r: Revision = load(&store, revision, Kind::Revision)?;
+        let mut roots = store.get_many(&[r.workspace, r.projection])?;
+        if roots.len() != 2 {
+            return Err(crate::error::corrupt(
+                "view roots batch returned incorrect object count",
+            ));
+        }
+        let Some(projection) = roots.pop() else {
+            return Err(crate::error::corrupt("view projection root missing"));
+        };
+        let Some(workspace) = roots.pop() else {
+            return Err(crate::error::corrupt("view workspace root missing"));
+        };
+        if workspace.kind != Kind::Workspace || projection.kind != Kind::PathProjection {
+            return Err(crate::error::corrupt("view root has incorrect type"));
+        }
         Ok(Self {
-            workspace: load(&store, r.workspace, Kind::Workspace)?,
-            projection: load(&store, r.projection, Kind::PathProjection)?,
+            workspace: Workspace::decode(&workspace.bytes)?,
+            projection: PathProjection::decode(&projection.bytes)?,
             attachments: r.attachments,
             store,
             revision,
@@ -43,20 +59,15 @@ impl<S: ReadStore> View<S> {
     }
 
     pub fn stat(&self, path: &str) -> Result<(u64, Inode)> {
-        namespace::stat(&self.store, &self.workspace, path)
+        let (node, inode) = self.projected(path)?;
+        Ok((node.inode_number, inode))
     }
 
     pub fn directory(&self, path: &str, after: Option<&str>, limit: usize) -> Result<Vec<Entry>> {
-        let (_, inode) = self.stat(path)?;
+        let (node, inode) = self.projected(path)?;
         if !matches!(inode.data, InodeData::Directory(_)) {
             return Err(invalid("path is not a directory"));
         }
-        let node = if path.is_empty() {
-            self.projection.root
-        } else {
-            crate::projection::subtree(&self.store, &self.projection, path)?
-        };
-        let node: PathNode = load(&self.store, node, Kind::PathNode)?;
         let children = radix::page(&self.store, node.children, after.map(str::as_bytes), limit)?;
         let nodes: Vec<PathNode> = load_many(
             &self.store,
@@ -107,25 +118,20 @@ impl<S: ReadStore> View<S> {
         pages::read_range(
             &self.store,
             &self.pages,
-            namespace::file(&self.store, &self.workspace, path)?,
+            self.file_id(path)?,
             offset,
             length,
         )
     }
 
     pub fn copy_to<W: std::io::Write>(&self, path: &str, output: W) -> Result<u64> {
-        pages::copy_to(
-            &self.store,
-            &self.pages,
-            namespace::file(&self.store, &self.workspace, path)?,
-            output,
-        )
+        pages::copy_to(&self.store, &self.pages, self.file_id(path)?, output)
     }
 
     /// Materialize holes by seeking, while preserving the file's full logical length.
     pub fn materialize_file(&self, path: &str, output: &mut std::fs::File) -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
-        let id = namespace::file(&self.store, &self.workspace, path)?;
+        let id = self.file_id(path)?;
         let file: FileObject = load(&self.store, id, Kind::File)?;
         output.set_len(file.size)?;
         if file.small.is_some() {
@@ -152,5 +158,24 @@ impl<S: ReadStore> View<S> {
             }
             Ok(())
         })
+    }
+
+    fn projected(&self, path: &str) -> Result<(PathNode, Inode)> {
+        let id = if path.is_empty() {
+            self.projection.root
+        } else {
+            crate::projection::subtree(&self.store, &self.projection, path)?
+        };
+        let node: PathNode = load(&self.store, id, Kind::PathNode)?;
+        let inode = load(&self.store, node.inode_id, Kind::Inode)?;
+        Ok((node, inode))
+    }
+
+    fn file_id(&self, path: &str) -> Result<Id> {
+        let (_, inode) = self.projected(path)?;
+        match inode.data {
+            InodeData::File(id) => Ok(id),
+            _ => Err(invalid("path is not a file")),
+        }
     }
 }

@@ -46,7 +46,7 @@ pub struct SharedObjects<T: DurableWorkspaceStore> {
     pub blobs: Arc<dyn runinator_blob_core::BlobStore>,
     pub workspace: uuid::Uuid,
     pub runtime: tokio::runtime::Handle,
-    pub reader: Option<ReaderGuard<T>>,
+    pub reader: Option<LazyReaderGuard<T>>,
     pub records: storage::cache::ByteCache,
     pub database_reads: std::sync::atomic::AtomicU64,
     pub blob_reads: std::sync::atomic::AtomicU64,
@@ -138,9 +138,6 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
             .collect()
     }
     fn read_location(&self, id: Id, location: WorkspaceObjectLocation) -> storage::Result<Object> {
-        if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
-            return Err(storage::Error::Conflict);
-        }
         let _permit = self
             .runtime
             .block_on(self.metadata_reads.acquire())
@@ -170,6 +167,9 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         storage::record::decode_range(&bytes, id, location.member)
     }
     fn read(&self, id: Id) -> storage::Result<Object> {
+        if let Some(reader) = &self.reader {
+            reader.ensure(&self.runtime)?;
+        }
         let location = self
             .runtime
             .block_on(self.location(id))
@@ -319,6 +319,47 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
     }
 }
 
+pub struct LazyReaderGuard<T: DurableWorkspaceStore> {
+    db: Arc<T>,
+    workspace: uuid::Uuid,
+    version: i64,
+    guard: std::sync::Mutex<Option<ReaderGuard<T>>>,
+}
+
+impl<T: DurableWorkspaceStore> LazyReaderGuard<T> {
+    pub fn new(db: Arc<T>, workspace: uuid::Uuid, version: i64) -> Self {
+        Self {
+            db,
+            workspace,
+            version,
+            guard: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn ensure(&self, runtime: &tokio::runtime::Handle) -> storage::Result<()> {
+        let mut guard = self.guard.lock().map_err(|_| storage::Error::Poisoned)?;
+        if guard.as_ref().is_some_and(ReaderGuard::alive) {
+            return Ok(());
+        }
+        *guard = Some(
+            runtime
+                .block_on(ReaderGuard::new(
+                    self.db.clone(),
+                    self.workspace,
+                    self.version,
+                ))
+                .map_err(storage_error)?,
+        );
+        Ok(())
+    }
+
+    fn alive(&self) -> bool {
+        self.guard
+            .lock()
+            .is_ok_and(|guard| guard.as_ref().is_some_and(ReaderGuard::alive))
+    }
+}
+
 pub(super) fn storage_error(error: SendableError) -> storage::Error {
     match error.downcast::<storage::Error>() {
         Ok(error) => *error,
@@ -328,6 +369,9 @@ pub(super) fn storage_error(error: SendableError) -> storage::Error {
 
 impl<T: DurableWorkspaceStore> ReadStore for SharedObjects<T> {
     fn get_many(&self, ids: &[Id]) -> storage::Result<Vec<Object>> {
+        if let Some(reader) = &self.reader {
+            reader.ensure(&self.runtime)?;
+        }
         let locations = self
             .runtime
             .block_on(self.locations(ids))

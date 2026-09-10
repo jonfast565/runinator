@@ -42,7 +42,7 @@ async fn sequential_and_bulk_directory_measurements() {
         .create_bucket(runinator_blob_core::WORKSPACE_BUCKET)
         .await
         .unwrap();
-    let service = WorkspaceService::new(db.clone(), blobs);
+    let service = WorkspaceService::new(db.clone(), blobs.clone());
     let now = chrono::Utc::now();
     let id = uuid::Uuid::now_v7();
     service
@@ -130,7 +130,9 @@ async fn sequential_and_bulk_directory_measurements() {
         service.upload_pack(checkout.id, pack).await.unwrap();
     }
     for sequential in [true, false] {
-        let store = Sequential(service.objects(id));
+        let reader = WorkspaceService::new(db.clone(), blobs.clone());
+        let store = Sequential(reader.objects(id));
+        let warm_store = Sequential(reader.objects(id));
         let revision: Id = revision_id.parse().unwrap();
         tokio::task::spawn_blocking(move || {
             let started = std::time::Instant::now();
@@ -154,6 +156,15 @@ async fn sequential_and_bulk_directory_measurements() {
                 assert!(blob_reads < 100, "bulk directory used {blob_reads} blob reads");
             }
             println!("sequential={sequential} entries={count} first_ms={first_ms} total_ms={} database_reads={database_reads} blob_reads={blob_reads}", started.elapsed().as_millis());
+            if !sequential {
+                let warm_started = std::time::Instant::now();
+                let warm_view = View::new(&warm_store.0, revision).unwrap();
+                assert_eq!(warm_view.directory("", None, 200).unwrap().len(), 200);
+                println!("warm_first_ms={} database_reads={} blob_reads={}",
+                    warm_started.elapsed().as_millis(),
+                    warm_store.0.inner.database_reads.load(Ordering::Relaxed),
+                    warm_store.0.inner.blob_reads.load(Ordering::Relaxed));
+            }
         }).await.unwrap();
     }
 }

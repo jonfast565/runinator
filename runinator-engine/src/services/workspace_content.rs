@@ -60,7 +60,24 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
     ) -> runinator_workspace::storage::cache::BufferedStore<
         super::workspace_objects::SharedObjects<T>,
     > {
-        runinator_workspace::storage::cache::BufferedStore::new(
+        let object_cache = {
+            let mut caches = self
+                .object_caches
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if caches.len() >= 8 && !caches.contains_key(&workspace) {
+                caches.clear();
+            }
+            caches
+                .entry(workspace)
+                .or_insert_with(|| {
+                    std::sync::Arc::new(runinator_workspace::storage::cache::BufferedCache::new(
+                        32 * 1024 * 1024,
+                    ))
+                })
+                .clone()
+        };
+        runinator_workspace::storage::cache::BufferedStore::with_cache(
             super::workspace_objects::SharedObjects {
                 db: self.store.clone(),
                 blobs: self.blobs.clone(),
@@ -73,7 +90,7 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                 metadata_reads: self.metadata_reads.clone(),
                 records: runinator_workspace::storage::cache::ByteCache::new(64 * 1024 * 1024),
             },
-            48 * 1024 * 1024,
+            object_cache,
         )
     }
     pub(super) async fn version_objects(
@@ -86,11 +103,12 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
         >,
         SendableError,
     > {
-        let guard =
-            super::workspace_objects::ReaderGuard::new(self.store.clone(), workspace, version)
-                .await?;
         let mut objects = self.objects(workspace);
-        objects.inner.reader = Some(guard);
+        objects.inner.reader = Some(super::workspace_objects::LazyReaderGuard::new(
+            self.store.clone(),
+            workspace,
+            version,
+        ));
         Ok(objects)
     }
     pub async fn object(
@@ -106,7 +124,11 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
             self.objects(workspace)
         };
         tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
-            let object = store.get(id.parse()?)?;
+            let id = id.parse()?;
+            if !store.inner.contains(id)? {
+                return Err(runinator_workspace::storage::Error::NotFound(id.to_string()).into());
+            }
+            let object = store.get(id)?;
             let mut bytes = Vec::new();
             record::write(&mut bytes, object.kind, &object.bytes)?;
             Ok(bytes)
@@ -289,6 +311,7 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
         limit: usize,
     ) -> Result<WorkspaceDirectory, SendableError> {
         use runinator_workspace::storage::{model::InodeData, view::View};
+        let started = std::time::Instant::now();
         if limit == 0 || limit > 1000 {
             return Err(WORKSPACE_INVALID.error("directory page size must be 1 to 1000"));
         }
@@ -296,7 +319,6 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
         let after = decode_cursor(after, &snapshot.revision_id, &path, false)?;
         let store = self.version_objects(id, version).await?;
         tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
-            let started = std::time::Instant::now();
             let view = View::new(store, snapshot.revision_id.parse()?)?;
             let mut entries = view.directory(&path, after.as_deref(), limit + 1)?;
             tracing::debug!(workspace = %id, version, path, entries = entries.len(),
@@ -400,7 +422,7 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
         use runinator_workspace::storage::{
             model::{FileObject, Kind},
             radix,
-            store::load,
+            store::load_many,
             view::View,
         };
         if limit == 0 || limit > 1000 {
@@ -425,19 +447,26 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
             } else {
                 None
             };
-            let mut entries = Vec::new();
-            for (name, id) in page {
-                let file: FileObject = load(&view.store, id, Kind::File)?;
-                entries.push(WorkspaceEntry {
-                    name: String::from_utf8(name)?,
-                    kind: "result".into(),
-                    inode_number: 0,
-                    content_id: id.to_string(),
-                    size_bytes: file.size,
-                    executable: false,
-                    link_target: None,
-                });
-            }
+            let files: Vec<FileObject> = load_many(
+                &view.store,
+                &page.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+                Kind::File,
+            )?;
+            let entries = page
+                .into_iter()
+                .zip(files)
+                .map(|((name, id), file)| {
+                    Ok(WorkspaceEntry {
+                        name: String::from_utf8(name)?,
+                        kind: "result".into(),
+                        inode_number: 0,
+                        content_id: id.to_string(),
+                        size_bytes: file.size,
+                        executable: false,
+                        link_target: None,
+                    })
+                })
+                .collect::<Result<Vec<_>, SendableError>>()?;
             let next_cursor = encode_cursor(next_cursor, &snapshot.revision_id, "", true)?;
             Ok(WorkspaceDirectory {
                 revision_id: snapshot.revision_id,

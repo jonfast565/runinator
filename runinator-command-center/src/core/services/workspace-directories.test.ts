@@ -15,6 +15,10 @@ function entry(index: number): WorkspaceEntry {
   };
 }
 
+function directory(name: string): WorkspaceEntry {
+  return { ...entry(0), name, kind: "directory" };
+}
+
 function setup(fetch: WorkspacesApi["fetchWorkspaceDirectory"]) {
   let state: Partial<Record<string, DirectoryState>> = {};
   const loader = createDirectoryLoader(
@@ -96,6 +100,47 @@ describe("directory loading", () => {
     await Promise.all([a, b]);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("prefetches one child page and promotes it when selected", async () => {
+    let childCalls = 0;
+    const fetch = vi.fn(
+      (
+        _w: string,
+        _v: number,
+        path = "",
+        cursor: string | null = null,
+      ): Promise<WorkspaceDirectory> => {
+        if (!path) {
+          return Promise.resolve({
+            revision_id: "r",
+            path,
+            entries: [directory("child")],
+            next_cursor: null,
+          });
+        }
+
+        childCalls++;
+
+        return Promise.resolve({
+          revision_id: "r",
+          path,
+          entries: [entry(childCalls)],
+          next_cursor: cursor === null ? "next" : null,
+        });
+      },
+    );
+    const { loader, state } = setup(fetch);
+
+    await loader.load("w", 1, "");
+
+    await vi.waitFor(() => expect(state().child?.loading).toBe(false));
+    expect(childCalls).toBe(1);
+    expect(state().child?.complete).toBe(false);
+
+    await loader.load("w", 1, "child");
+    expect(childCalls).toBe(2);
+    expect(state().child?.complete).toBe(true);
+    expect(state().child?.entries).toHaveLength(2);
+  });
   it("limits concurrency across resets and discards obsolete pages", async () => {
     const callbacks: (() => void)[] = [];
     let active = 0,
@@ -112,17 +157,22 @@ describe("directory loading", () => {
         }),
     );
     const { loader, state } = setup(fetch);
-    const a = loader.load("w", 1, "a", true),
-      b = loader.load("w", 1, "b", true);
+    const requests = Array.from({ length: 8 }, (_, index) =>
+      loader.load("w", 1, String(index), true),
+    );
     loader.reset();
     const c = loader.load("w", 2, "c");
-    expect(fetch).toHaveBeenCalledTimes(2);
-    callbacks.shift()?.();
-    callbacks.shift()?.();
-    await Promise.all([a, b]);
+
+    expect(fetch).toHaveBeenCalledTimes(8);
+
+    for (let index = 0; index < 8; index++) {
+      callbacks.shift()?.();
+    }
+
+    await Promise.all(requests);
     callbacks.shift()?.();
     await c;
-    expect(maximum).toBe(2);
+    expect(maximum).toBe(8);
     expect(Object.keys(state())).toEqual(["c"]);
   });
 });

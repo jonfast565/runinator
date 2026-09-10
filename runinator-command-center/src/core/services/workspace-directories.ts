@@ -21,9 +21,11 @@ export function createDirectoryLoader(
   let selected = "";
   let revision = "";
   let active = 0;
+  let activeSpeculative = 0;
+  let speculativeRemaining = 24;
   const expanded = new Set<string>();
   const pending = new Map<string, Promise<void>>();
-  const queue: { path: string; generation: number; run: () => void }[] = [];
+  const queue: { path: string; generation: number; speculative: boolean; run: () => void }[] = [];
 
   const emit = () => {
     publish(Object.assign(emptyDirectories(), directories), selected);
@@ -34,8 +36,14 @@ export function createDirectoryLoader(
   function pump() {
     queue.sort((a, b) => Number(b.path === selected) - Number(a.path === selected));
 
-    while (active < 2 && queue.length) {
-      queue.shift()?.run();
+    while (active < 8 && queue.length) {
+      const index = queue.findIndex((item) => !item.speculative || activeSpeculative < 6);
+
+      if (index < 0) {
+        return;
+      }
+
+      queue.splice(index, 1)[0]?.run();
     }
   }
 
@@ -44,16 +52,23 @@ export function createDirectoryLoader(
     directories = emptyDirectories();
     selected = "";
     revision = nextRevision;
+    speculativeRemaining = 24;
     expanded.clear();
     pending.clear();
     emit();
     pump();
   }
 
-  async function load(workspace: string, version: number, path: string, tree = false) {
+  async function load(
+    workspace: string,
+    version: number,
+    path: string,
+    tree = false,
+    speculative = false,
+  ) {
     if (tree) {
       expanded.add(path);
-    } else {
+    } else if (!speculative) {
       selected = path;
     }
 
@@ -98,8 +113,9 @@ export function createDirectoryLoader(
         queue.push({
           path,
           generation: token,
+          speculative,
           run: () => {
-            if (token !== generation || !wanted(path)) {
+            if (token !== generation || (!speculative && !wanted(path))) {
               finish();
               return;
             }
@@ -112,6 +128,7 @@ export function createDirectoryLoader(
             }
 
             active++;
+            activeSpeculative += Number(speculative);
             void api
               .fetchWorkspaceDirectory(workspace, version, path, current.next_cursor, false)
               .then((page) => {
@@ -143,6 +160,19 @@ export function createDirectoryLoader(
                   error: "",
                 };
                 emit();
+
+                if (!speculative && speculativeRemaining > 0) {
+                  for (const entry of page.entries) {
+                    if (entry.kind !== "directory" || speculativeRemaining === 0) {
+                      continue;
+                    }
+
+                    speculativeRemaining--;
+
+                    const child = path ? `${path}/${entry.name}` : entry.name;
+                    void load(workspace, version, child, false, true);
+                  }
+                }
               })
               .catch((reason: unknown) => {
                 if (token !== generation) {
@@ -156,6 +186,7 @@ export function createDirectoryLoader(
               })
               .finally(() => {
                 active--;
+                activeSpeculative -= Number(speculative);
 
                 if (
                   token === generation &&
