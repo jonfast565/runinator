@@ -92,8 +92,15 @@ async fn request_timeout(
             .strip_prefix("/workspaces/checkouts/")
             .and_then(|path| path.strip_suffix("/seal"))
             .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
-    // authenticated sealing is bounded by the engine's checkout lease and worker action deadline.
-    if workspace_seal {
+    let workspace_restore = request.method() == axum::http::Method::GET
+        && request
+            .uri()
+            .path()
+            .strip_prefix("/workspaces/checkouts/")
+            .and_then(|path| path.strip_suffix("/content"))
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
+    // authenticated restore and sealing are bounded by the checkout lease and worker action deadline.
+    if workspace_seal || workspace_restore {
         return next.run(request).await;
     }
     let archive_upload = request.method() == axum::http::Method::PUT

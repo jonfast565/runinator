@@ -124,6 +124,40 @@ async fn workspace_seal_uses_its_checkout_deadline_only_for_the_exact_post_route
 }
 
 #[tokio::test]
+async fn workspace_restore_uses_its_checkout_deadline_only_for_the_exact_get_route() {
+    let router = Router::new().route(
+        "/workspaces/checkouts/{id}/content",
+        axum::routing::any(|| async {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            "restored"
+        }),
+    );
+    let router = apply_overload_protection(router, enabled_config(Duration::from_millis(5), 8));
+    for (method, id, expected) in [
+        ("GET", uuid::Uuid::new_v4().to_string(), StatusCode::OK),
+        (
+            "POST",
+            uuid::Uuid::new_v4().to_string(),
+            StatusCode::REQUEST_TIMEOUT,
+        ),
+        ("GET", "invalid".into(), StatusCode::REQUEST_TIMEOUT),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/workspaces/checkouts/{id}/content"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+}
+
+#[tokio::test]
 async fn workspace_seal_retains_the_concurrency_cap() {
     let entered = std::sync::Arc::new(tokio::sync::Notify::new());
     let release = std::sync::Arc::new(tokio::sync::Notify::new());

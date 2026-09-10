@@ -1548,6 +1548,23 @@ where
         let response = Self::handle_response(url, response).await?;
         Ok(Some(response.bytes().await?.to_vec()))
     }
+    pub async fn download_workspace_checkout(
+        &self,
+        checkout: Uuid,
+        replica: Uuid,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!(
+                "/workspaces/checkouts/{checkout}/content?replica_id={replica}"
+            ))
+            .await?;
+        let response = self
+            .send(self.http_get(url.clone()).timeout(timeout))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
     pub async fn upload_workspace_pack(
         &self,
         checkout: Uuid,

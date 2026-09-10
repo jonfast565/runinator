@@ -16,6 +16,10 @@ Workers deduplicate outgoing packs against their verified local cache of remote 
 absent from that cache are included, avoiding one API request per new object; the engine still
 validates uploaded packs and the complete revision before publication.
 
+Worker restore transfers one native archive per checkout. The engine batches registered locations
+by physical pack and downloads each required pack into a bounded local cache; logical `ReadStore`
+lookups must never become one worker-to-server request per object.
+
 `record::read_indexed` uses a bounded decoded-record cache for local immutable packs. Shared
 compression containers are verified once while resident; each requested member still has its
 logical identity checked. This avoids rereading and hashing the full container for every chunk.

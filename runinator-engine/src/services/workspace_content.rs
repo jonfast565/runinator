@@ -106,6 +106,41 @@ impl<T: DurableWorkspaceStore> WorkspaceService<T> {
         })
         .await?
     }
+    pub async fn checkout_content(
+        &self,
+        checkout: WorkspaceCheckout,
+    ) -> Result<WorkspaceContent, SendableError> {
+        use std::io::{Seek, SeekFrom};
+
+        let snapshot = self
+            .snapshot(checkout.workspace_id, checkout.base_version)
+            .await?;
+        let objects = self
+            .version_objects(checkout.workspace_id, checkout.base_version)
+            .await?;
+        let objects = super::workspace_seal_objects::SealObjects::new(objects.inner);
+        let revision_id = snapshot.revision_id.parse()?;
+        let (file, size_bytes) =
+            tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
+                let scratch = tempfile::tempdir()?;
+                let mut file = tempfile::tempfile()?;
+                runinator_workspace::native::export(
+                    &objects,
+                    revision_id,
+                    scratch.path(),
+                    &mut file,
+                )?;
+                let size_bytes = file.seek(SeekFrom::End(0))?;
+                file.seek(SeekFrom::Start(0))?;
+                Ok((file, size_bytes))
+            })
+            .await??;
+        Ok(crate::artifact_storage::ArtifactContent {
+            size_bytes,
+            sha256: None,
+            body: Box::new(tokio::fs::File::from_std(file)),
+        })
+    }
     pub async fn upload_pack(&self, id: uuid::Uuid, bytes: Vec<u8>) -> Result<(), SendableError> {
         use runinator_workspace::storage::{self, Id};
         let checkout = self.checkout(id).await?;

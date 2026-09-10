@@ -25,26 +25,59 @@ impl ActiveWorkspace {
         let execution: WorkspaceExecution = value.decode()?;
         let expires = execution.checkout.leased_until.timestamp();
         let root = cache_root()?;
-        let objects = std::sync::Arc::new(super::workspace_objects::WorkerObjects::new(
-            api.clone(),
-            execution.checkout.id,
-            replica_id,
-            deadline,
-        )?);
         let revision_id = execution
             .snapshot
             .as_ref()
             .map(|snapshot| snapshot.revision_id.clone());
-        let reader = objects.clone();
-        let (directory, results) =
+        let archive = if revision_id.is_some() {
+            let remaining = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .ok_or_else(|| {
+                    runinator_workspace::storage::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "workspace attempt deadline exceeded",
+                    ))
+                })?;
+            Some(
+                tokio::time::timeout(
+                    remaining,
+                    api.download_workspace_checkout(execution.checkout.id, replica_id, remaining),
+                )
+                .await??,
+            )
+        } else {
+            None
+        };
+        let api = api.clone();
+        let checkout = execution.checkout.id;
+        let limits = execution.checkout.limits;
+        let (directory, results, objects) =
             tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
                 std::fs::create_dir_all(&root)?;
                 let directory = tempfile::Builder::new()
                     .prefix(&format!("lease-{expires}-"))
                     .tempdir_in(root)?;
+                let local = if let Some(bytes) = archive {
+                    let scratch = tempfile::tempdir()?;
+                    let (local, revision, _) = runinator_workspace::native::import(
+                        bytes.as_slice(),
+                        scratch.path(),
+                        limits,
+                    )?;
+                    if Some(revision.to_string()) != revision_id {
+                        return Err(WORKSPACE_INVALID
+                            .error("checkout archive contains a different revision"));
+                    }
+                    Some(local)
+                } else {
+                    None
+                };
+                let objects = std::sync::Arc::new(super::workspace_objects::WorkerObjects::new(
+                    api, checkout, replica_id, deadline, local,
+                )?);
                 let results = if let Some(revision) = revision_id {
                     let view = runinator_workspace::storage::view::View::new(
-                        reader.as_ref(),
+                        objects.as_ref(),
                         revision.parse()?,
                     )?;
                     runinator_workspace::revision::materialize(&view, directory.path())?;
@@ -52,7 +85,7 @@ impl ActiveWorkspace {
                 } else {
                     Default::default()
                 };
-                Ok((directory, results))
+                Ok((directory, results, objects))
             })
             .await??;
         Ok(Self {

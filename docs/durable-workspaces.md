@@ -177,6 +177,11 @@ and are removed after execution. Expired crash leftovers are swept. The action d
 restore, execution, content scanning, upload and sealing. Unsafe paths, special files, and escaping
 or cyclic relative symlinks are rejected. Symlink restoration currently requires Unix.
 
+Restore is one native archive request per checkout. The engine resolves the revision through
+pack-batched location pages and bounded local pack copies, and the worker imports that archive into
+a local logical store before materialization. A logical object lookup must not cross the HTTP
+boundary; the object endpoint is a compatibility fallback, not the normal restore path.
+
 Authenticated checkout seal requests retain the HTTP concurrency cap but use the checkout lease
 deadline instead of the generic 30-second request timeout. Dropping or expiring validation stops
 further storage reads and prevents receipt issuance. The client's seal request uses the worker's
@@ -254,9 +259,10 @@ reserved so stale key/version references cannot accidentally point at a replacem
 HTTP management routes are `/workspaces`, `/workspaces/{id}`, and
 `/workspaces/{id}/versions`. Downloads use `/workspaces/{id}/versions/{version}/content`, optionally
 with `?path=relative/file`. Worker transfer uses `/workspaces/checkouts/{checkout}/content` and the
-assigned `replica_id`. Shared payloads live in `runinator-models`; the store contract and SQL live
-in `runinator-store` and `runinator-database`. Engine repository services own orchestration and
-blob operations. `runinator-workspace` owns archive and result-reference handling.
+assigned `replica_id`; one response contains the complete native revision archive. Shared payloads
+live in `runinator-models`; the store contract and SQL live in `runinator-store` and
+`runinator-database`. Engine repository services own orchestration and blob operations.
+`runinator-workspace` owns archive and result-reference handling.
 
 ## New-format cutover
 

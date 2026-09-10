@@ -29,7 +29,7 @@ workflow "Clone GitHub Repository" v1 {
         )
 
         @id("capture_revision")
-        @timeout(180s)
+        @timeout(30s)
         @runner("kubernetes")
         git.capture_revision()
     }

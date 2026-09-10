@@ -6,18 +6,24 @@ use runinator_workspace::storage::{
 };
 use std::{fs, io::Write, time::Instant};
 
+type LocalObjects = storage::staging::Staging<storage::staging::EmptyStore>;
+
 pub struct WorkerObjects {
     api: AsyncApiClient<StaticLocator>,
     checkout: uuid::Uuid,
     replica: uuid::Uuid,
     runtime: tokio::runtime::Handle,
     cache: tempfile::TempDir,
+    local: Option<LocalObjects>,
     deadline: Instant,
 }
 
 impl WorkerObjects {
     pub(super) fn cached(&self) -> CachedObjects<'_> {
-        CachedObjects(self.cache.path())
+        CachedObjects {
+            path: self.cache.path(),
+            local: self.local.as_ref(),
+        }
     }
 
     pub fn new(
@@ -25,6 +31,7 @@ impl WorkerObjects {
         checkout: uuid::Uuid,
         replica: uuid::Uuid,
         deadline: Instant,
+        local: Option<LocalObjects>,
     ) -> Result<Self, runinator_models::errors::SendableError> {
         Ok(Self {
             api,
@@ -32,6 +39,7 @@ impl WorkerObjects {
             replica,
             runtime: tokio::runtime::Handle::current(),
             cache: tempfile::tempdir()?,
+            local,
             deadline,
         })
     }
@@ -59,7 +67,10 @@ impl WorkerObjects {
 }
 
 /// The verified local subset of the remote store, used for pack deduplication.
-pub(super) struct CachedObjects<'a>(&'a std::path::Path);
+pub(super) struct CachedObjects<'a> {
+    path: &'a std::path::Path,
+    local: Option<&'a LocalObjects>,
+}
 
 impl ReadStore for CachedObjects<'_> {
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
@@ -71,7 +82,14 @@ impl ReadStore for CachedObjects<'_> {
     }
 
     fn get(&self, id: Id) -> storage::Result<Object> {
-        match fs::File::open(self.0.join(id.to_string())) {
+        if let Some(local) = self.local {
+            match local.get(id) {
+                Ok(object) => return Ok(object),
+                Err(storage::Error::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        match fs::File::open(self.path.join(id.to_string())) {
             Ok(file) => storage::record::read(&file, 0, Some(id)).map(|(_, object)| object),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Err(storage::Error::NotFound(id.to_string()))
@@ -91,6 +109,13 @@ fn io_error(error: impl std::error::Error + Send + Sync + 'static) -> storage::E
 
 impl ReadStore for WorkerObjects {
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
+        if let Some(local) = &self.local {
+            match local.info(id) {
+                Ok(info) => return Ok(info),
+                Err(storage::Error::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let object = self.get(id)?;
         Ok(ObjectInfo {
             kind: object.kind,
@@ -99,6 +124,13 @@ impl ReadStore for WorkerObjects {
     }
     fn get(&self, id: Id) -> storage::Result<Object> {
         self.remaining()?;
+        if let Some(local) = &self.local {
+            match local.get(id) {
+                Ok(object) => return Ok(object),
+                Err(storage::Error::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let path = self.cache.path().join(id.to_string());
         match fs::File::open(&path) {
             Ok(file) => return storage::record::read(&file, 0, Some(id)).map(|(_, object)| object),

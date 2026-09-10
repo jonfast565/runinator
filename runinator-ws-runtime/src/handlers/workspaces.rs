@@ -398,6 +398,41 @@ pub async fn object<T: DatabaseImpl>(
     }
 }
 
+pub async fn restore<T: DatabaseImpl>(
+    Extension(service): Extension<Arc<WorkspaceService<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<WorkerQuery>,
+) -> Response {
+    if let Err(reply) = ctx.require_system_role(&[SystemRole::Worker, SystemRole::Agent]) {
+        return reply.into_reply().into_response();
+    }
+    let checkout = match service
+        .require_assigned_checkout(id, query.replica_id, &ctx)
+        .await
+    {
+        Ok(checkout) => checkout,
+        Err(error) => return failed(error),
+    };
+    if checkout.base_version == 0 {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    match service.checkout_content(checkout).await {
+        Ok(content) => Response::builder()
+            .header(
+                header::CONTENT_TYPE,
+                "application/vnd.runinator.workspace.native.v1+tar",
+            )
+            .header(header::CONTENT_LENGTH, content.size_bytes)
+            .header(header::CONTENT_DISPOSITION, "attachment")
+            .body(Body::from_stream(tokio_util::io::ReaderStream::new(
+                content.body,
+            )))
+            .unwrap_or_else(failed),
+        Err(error) => failed(error),
+    }
+}
+
 pub async fn seal<T: DatabaseImpl>(
     Extension(service): Extension<Arc<WorkspaceService<T>>>,
     Extension(ctx): Extension<AuthContext>,
@@ -564,6 +599,7 @@ pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
             "/workspaces/checkouts/{id}/objects/{object}",
             get(object::<T>),
         )
+        .route("/workspaces/checkouts/{id}/content", get(restore::<T>))
         .route(
             "/workspaces/checkouts/{id}/packs",
             axum::routing::post(upload_pack::<T>),
@@ -727,6 +763,19 @@ pub const DOCS: &[EndpointDoc] = &[
         "Workspaces",
         "Validate workspace revision",
         "Validate workspace revision using durable workspace authorization.",
+        false,
+        None,
+        &[],
+        200,
+        "workspace response",
+        Example::TaskResponse
+    ),
+    endpoint!(
+        "get",
+        "/workspaces/checkouts/{id}/content",
+        "Workspaces",
+        "Restore assigned checkout",
+        "Restore one assigned checkout as a single native workspace archive.",
         false,
         None,
         &[],
