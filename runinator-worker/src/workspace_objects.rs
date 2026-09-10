@@ -6,7 +6,32 @@ use runinator_workspace::storage::{
 };
 use std::{fs, io::Write, time::Instant};
 
-type LocalObjects = storage::staging::Staging<storage::staging::EmptyStore>;
+pub(super) struct LocalObjects {
+    store: storage::staging::Staging<storage::staging::EmptyStore>,
+    _scratch: tempfile::TempDir,
+}
+
+impl LocalObjects {
+    pub(super) fn new(
+        store: storage::staging::Staging<storage::staging::EmptyStore>,
+        scratch: tempfile::TempDir,
+    ) -> Self {
+        Self {
+            store,
+            _scratch: scratch,
+        }
+    }
+}
+
+impl ReadStore for LocalObjects {
+    fn info(&self, id: Id) -> storage::Result<ObjectInfo> {
+        self.store.info(id)
+    }
+
+    fn get(&self, id: Id) -> storage::Result<Object> {
+        self.store.get(id)
+    }
+}
 
 pub struct WorkerObjects {
     api: AsyncApiClient<StaticLocator>,

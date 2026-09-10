@@ -42,8 +42,9 @@ fn downloaded_base_is_used_without_a_remote_object_cache_entry() -> storage::Res
 
     let cache = tempfile::tempdir()?;
     let scratch = tempfile::tempdir()?;
-    let local = Staging::new(storage::staging::EmptyStore, scratch.path())?;
-    let id = local.put(Kind::Chunk, b"downloaded base object")?;
+    let store = Staging::new(storage::staging::EmptyStore, scratch.path())?;
+    let id = store.put(Kind::Chunk, b"downloaded base object")?;
+    let local = LocalObjects::new(store, scratch);
     let base = CachedObjects {
         path: cache.path(),
         local: Some(&local),

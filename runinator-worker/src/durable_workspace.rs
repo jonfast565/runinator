@@ -59,7 +59,7 @@ impl ActiveWorkspace {
                     .tempdir_in(root)?;
                 let local = if let Some(bytes) = archive {
                     let scratch = tempfile::tempdir()?;
-                    let (local, revision, _) = runinator_workspace::native::import(
+                    let (store, revision, _) = runinator_workspace::native::import(
                         bytes.as_slice(),
                         scratch.path(),
                         limits,
@@ -68,7 +68,7 @@ impl ActiveWorkspace {
                         return Err(WORKSPACE_INVALID
                             .error("checkout archive contains a different revision"));
                     }
-                    Some(local)
+                    Some(super::workspace_objects::LocalObjects::new(store, scratch))
                 } else {
                     None
                 };
