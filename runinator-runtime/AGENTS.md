@@ -48,12 +48,15 @@ concrete broker transports, service hosting, and repository orchestration out.
 
 ## Where to Start
 
-- Host-free instruction interpreter: `src/workflow_vm.rs`.
+- Host-free driver and public API: `src/workflow_vm.rs`; instruction handlers and focused
+  transition, failure, effect, debug, and interrupt logic: `src/workflow_vm/`.
+- Instruction handlers return inline progress or a durable boundary. Keep status transitions in
+  the purpose-owned helpers; durable settlement remains in the host/store transaction.
 - Durable host and boundary application: `src/workflow_vm_host.rs`.
 - Continuation/module wire types: `../runinator-models/src/workflow_vm.rs`.
 - Persistence transactions: `../runinator-store/src/roles/workflow_vm.rs`.
-- Node and cross-boundary coverage: `src/workflow_vm_node_tests.rs` and existing interpreter
-  regressions; add new tests according to the root test-file separation rule.
+- Node and cross-boundary coverage: `src/workflow_vm_node_tests.rs` and
+  `src/workflow_vm/interpreter_tests/`; add new tests according to the root test-file separation rule.
 
 ## Verification
 

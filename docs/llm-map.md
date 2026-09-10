@@ -16,9 +16,9 @@ does not load it automatically. This file is a routing index, not a second rule 
 
 ## Task Routing
 
-- Change VM instruction or continuation behavior: start in `runinator-runtime/src/workflow_vm.rs`; durable boundary application is in `runinator-runtime/src/workflow_vm_host.rs`.
+- Change VM instruction or continuation behavior: start in `runinator-runtime/src/workflow_vm.rs` and the instruction modules under `runinator-runtime/src/workflow_vm/`; durable boundary application is in `runinator-runtime/src/workflow_vm_host.rs`.
 - Change effect retry or deadline behavior: `runinator-engine/src/effect_retry.rs`, `runinator-engine/src/effect_deadline.rs`, and the ordinary effect-result path.
-- Change runtime locals or `$ref` inputs exposed by the interpreter: `local_context` and the relevant instruction handling in `runinator-runtime/src/workflow_vm.rs`.
+- Change runtime locals or `$ref` inputs exposed by the interpreter: `local_context` in `runinator-runtime/src/workflow_vm/context.rs` and the relevant instruction module beside it.
 - Change workflow validation or graph invariants shared by JSON and REXRAP: `runinator-workflows/src/validation.rs` and nearby modules.
 - Add or change a node kind's authoring behavior (palette entry, graph role, parameter targets, output type): its file in `runinator-workflows/src/node_kinds/<category>/`, plus an arm in `spec_for`.
 - Change REXRAP syntax or compile/decompile behavior: start in `runinator-rexrap-syntax` (`rexrap.pest`, parser, formatter), then the relevant `runinator-rexrap-sema` or `runinator-rexrap-codegen` module; use the facade crate's cross-stage tests.
