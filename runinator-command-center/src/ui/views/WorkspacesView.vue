@@ -11,23 +11,12 @@
           <Icon name="refresh" />
           <span>{{ busy ? "Refreshing…" : "Refresh" }}</span>
         </button>
+        <button class="btn btn-primary" :disabled="busy" @click="openImportDialog">
+          <Icon name="upload" />
+          <span>Import OCI archive</span>
+        </button>
       </PanelHeader>
 
-      <form class="workspace-run-context" @submit.prevent="importArchive">
-        <label
-          >Import into unused key <input v-model="importKey" placeholder="workspace-key" required
-        /></label>
-        <input
-          v-if="!desktopRuntime"
-          type="file"
-          accept=".tar"
-          aria-label="OCI layout archive"
-          @change="chooseArchive"
-        />
-        <button class="btn btn-sm" type="submit" :disabled="busy || !importKey.trim()">
-          Import OCI archive
-        </button>
-      </form>
       <div v-if="error" class="workspace-error" role="alert">
         <Icon name="alert" />
         <span>{{ error }}</span>
@@ -35,6 +24,47 @@
           Dismiss
         </button>
       </div>
+      <Modal
+        v-if="importDialogOpen"
+        title="Import OCI workspace archive"
+        description="Import an OCI workspace archive into an unused workspace key."
+        width="min(520px, calc(100vw - 32px))"
+        :close-on-backdrop="!busy"
+        :close-on-esc="!busy"
+        @close="closeImportDialog"
+      >
+        <form
+          id="workspace-oci-import"
+          class="workspace-import-form"
+          @submit.prevent="importArchive"
+        >
+          <label>
+            <span>Workspace key</span>
+            <input v-model="importKey" placeholder="workspace-key" required autofocus />
+          </label>
+          <label v-if="!desktopRuntime">
+            <span>OCI layout archive</span>
+            <input type="file" accept=".tar" @change="chooseArchive" />
+          </label>
+          <p v-else class="workspace-import-hint">
+            Choose the archive from the native file picker after starting the import.
+          </p>
+          <p v-if="error" class="workspace-import-error" role="alert">{{ error }}</p>
+        </form>
+        <template #actions>
+          <button class="btn" type="button" :disabled="busy" @click="closeImportDialog">
+            Cancel
+          </button>
+          <button
+            class="btn btn-primary"
+            type="submit"
+            form="workspace-oci-import"
+            :disabled="busy || !importKey.trim()"
+          >
+            Import archive
+          </button>
+        </template>
+      </Modal>
 
       <div
         v-if="store.transfer && ['queued', 'running'].includes(store.transfer.state)"
@@ -133,7 +163,7 @@
 
         <template #second>
           <section v-if="store.selected" class="workspace-detail" aria-label="Workspace details">
-            <header class="workspace-hero">
+            <header v-if="!snapshot" class="workspace-hero">
               <div class="workspace-hero-mark" aria-hidden="true">
                 <Icon name="folder" :size="23" />
               </div>
@@ -180,11 +210,45 @@
               orientation="vertical"
               storage-key="command-center.workspaces.version-detail"
               :initial-first-pct="32"
-              :min-first="120"
+              :min-first="0"
               :min-second="160"
             >
               <template #first>
                 <div class="workspace-version-summary">
+                  <header class="workspace-hero">
+                    <div class="workspace-hero-mark" aria-hidden="true">
+                      <Icon name="folder" :size="23" />
+                    </div>
+                    <div class="workspace-hero-copy">
+                      <div class="workspace-title-row">
+                        <h2>{{ store.selected.key }}</h2>
+                        <span class="badge status-muted">{{ permissionLabel }}</span>
+                      </div>
+                      <p>
+                        Head v{{ store.selected.head_version }} · Updated
+                        {{ formatDate(store.selected.updated_at) }}
+                      </p>
+                    </div>
+                    <div class="workspace-hero-actions">
+                      <button class="btn btn-sm" type="button" @click="copyWorkspaceKey">
+                        <Icon :name="copyFeedback ? 'check' : 'copy'" :size="14" />
+                        {{ copyFeedback || "Copy key" }}
+                      </button>
+                      <button
+                        class="btn btn-sm btn-danger"
+                        type="button"
+                        :disabled="busy || !canDeleteWorkspace"
+                        :title="
+                          canDeleteWorkspace
+                            ? 'Delete this workspace and every saved version'
+                            : 'Only workspace owners can delete the workspace'
+                        "
+                        @click="remove(null)"
+                      >
+                        <Icon name="trash" :size="14" /> Delete
+                      </button>
+                    </div>
+                  </header>
                   <section class="workspace-version-bar" aria-label="Selected workspace version">
                     <label>
                       <span>Saved version</span>
@@ -474,6 +538,7 @@ import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
+import Modal from "../components/shared/Modal.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import WorkspaceFileBrowser from "../components/workspaces/WorkspaceFileBrowser.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
@@ -483,6 +548,7 @@ const store = useWorkspacesStore();
 const app = useAppStore();
 const importKey = ref("");
 const importFile = ref<File | null>(null);
+const importDialogOpen = ref(false);
 const desktopRuntime = isTauriRuntime();
 
 function chooseArchive(event: Event) {
@@ -491,7 +557,28 @@ function chooseArchive(event: Event) {
 
 async function importArchive() {
   await operation(() => store.importArchive(importKey.value.trim(), importFile.value));
+
+  if (error.value) {
+    return;
+  }
+
+  closeImportDialog();
   await refresh();
+}
+
+function openImportDialog() {
+  importKey.value = "";
+  importFile.value = null;
+  error.value = "";
+  importDialogOpen.value = true;
+}
+
+function closeImportDialog() {
+  if (busy.value) {
+    return;
+  }
+
+  importDialogOpen.value = false;
 }
 
 const busy = ref(false);
@@ -804,6 +891,41 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   background: var(--danger-bg);
   padding: 8px 10px;
+  color: var(--danger-fg);
+  font-size: 12px;
+}
+
+.workspace-import-form {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-import-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.workspace-import-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 8px 9px;
+  color: var(--text);
+}
+
+.workspace-import-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace-import-error {
+  margin: 0;
   color: var(--danger-fg);
   font-size: 12px;
 }
