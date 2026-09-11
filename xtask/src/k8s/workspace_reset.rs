@@ -220,7 +220,7 @@ SELECT count(*) FROM durable_workspaces;"#;
             "--",
             "sh",
             "-c",
-            "test \"$RUNINATOR_BLOB_DATA_DIR\" = /var/lib/runinator/blobs && rm -rf /var/lib/runinator/blobs/runinator-workspaces/data /var/lib/runinator/blobs/runinator-workspaces/meta /var/lib/runinator/blobs/runinator-workspaces/uploads /var/lib/runinator/blobs/runinator-workspaces/.tmp",
+            "test \"$RUNINATOR_BLOB_DATA_DIR\" = /var/lib/runinator/blobs && rm -rf /var/lib/runinator/blobs/runinator-workspaces/objects /var/lib/runinator/blobs/runinator-workspaces/data /var/lib/runinator/blobs/runinator-workspaces/meta /var/lib/runinator/blobs/runinator-workspaces/uploads /var/lib/runinator/blobs/runinator-workspaces/.tmp",
         ],
     )?;
     ledger(root, context, "empty", &replicas)?;

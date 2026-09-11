@@ -60,6 +60,29 @@ pub trait BlobStore: Send + Sync + 'static {
         options: PutOptions,
     ) -> Result<ObjectMeta>;
 
+    /// store bytes from a reader without requiring the caller or backend to retain the object.
+    ///
+    /// the default preserves compatibility for small or third-party backends. Filesystem and HTTP
+    /// implementations override it with bounded-memory paths.
+    async fn put_stream(
+        &self,
+        bucket: &str,
+        key: &ObjectKey,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
+    ) -> Result<ObjectMeta> {
+        let mut bytes = Vec::with_capacity(
+            content_length
+                .and_then(|length| usize::try_from(length).ok())
+                .unwrap_or_default(),
+        );
+        body.read_to_end(&mut bytes)
+            .await
+            .map_err(|err| BlobError::Io(format!("reading upload body: {err}")))?;
+        self.put(bucket, key, bytes, options).await
+    }
+
     async fn head(&self, bucket: &str, key: &ObjectKey) -> Result<ObjectMeta>;
 
     /// open a (possibly ranged) reader over an object.
@@ -89,6 +112,36 @@ pub trait BlobStore: Send + Sync + 'static {
         part_number: u32,
         body: Vec<u8>,
     ) -> Result<String>;
+
+    /// upload one multipart part from a bounded reader.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_part_stream(
+        &self,
+        bucket: &str,
+        key: &ObjectKey,
+        upload_id: &str,
+        part_number: u32,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
+    ) -> Result<String> {
+        let mut bytes = Vec::with_capacity(
+            content_length
+                .and_then(|length| usize::try_from(length).ok())
+                .unwrap_or_default(),
+        );
+        body.read_to_end(&mut bytes)
+            .await
+            .map_err(|err| BlobError::Io(format!("reading multipart body: {err}")))?;
+        if let Some(expected) = options.expected_sha256 {
+            let actual = crate::meta::sha256_hex(&bytes);
+            if !expected.eq_ignore_ascii_case(&actual) {
+                return Err(BlobError::DigestMismatch { expected, actual });
+            }
+        }
+        self.upload_part(bucket, key, upload_id, part_number, bytes)
+            .await
+    }
 
     async fn complete_multipart(
         &self,

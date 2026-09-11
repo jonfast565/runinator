@@ -46,6 +46,16 @@ filesystem, backed by a PVC.
 | `RUNINATOR_BLOB_REGION` | Signing region (default `us-east-1`). A mismatch is a signature failure. |
 | `RUNINATOR_BLOB_ALLOW_ANONYMOUS` | Accept unsigned requests. The local supervisor stack sets this; never set it on a reachable deployment. |
 | `RUNINATOR_BLOB_MAX_OBJECT_BYTES` | Largest single-part upload (default 256 MiB). Larger objects go through multipart. |
+| `RUNINATOR_BLOB_METADATA_CACHE_BYTES` | Maximum weight of the sharded hot-metadata cache (default 32 MiB). |
+| `RUNINATOR_BLOB_MAX_CONCURRENT_WRITES` | Concurrent filesystem mutations before backpressure is applied (default 8). |
+
+Filesystem-backed buckets use a v2 layout under `objects/`. Each object is one atomic file holding
+the payload and a small metadata footer, so whole and ranged reads never expose storage metadata.
+On first startup after upgrading from the legacy `data/` + `meta/` layout, the blob service blocks
+readiness while it verifies and migrates one object at a time. A committed v2 copy is created before
+its legacy pair is removed, bounding temporary space to the largest object. The migration resumes
+after interruption, but the old binary cannot read objects written in v2; take a PVC snapshot or
+equivalent backup before deploying this format change.
 
 To poke at it with the AWS CLI:
 

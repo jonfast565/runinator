@@ -48,6 +48,8 @@ async fn harness(anonymous: bool) -> Harness {
         region: runinator_blob_core::sigv4::DEFAULT_REGION.into(),
         credentials,
         max_object_bytes: 8 * 1024 * 1024,
+        metadata_cache_bytes: runinator_blob_core::DEFAULT_METADATA_CACHE_BYTES,
+        max_concurrent_writes: runinator_blob_core::DEFAULT_MAX_CONCURRENT_WRITES,
     };
 
     let store = FsBlobStore::open(&root).await.unwrap();
@@ -101,6 +103,64 @@ async fn round_trips_a_signed_object() {
     let meta = harness.client.head(BUCKET, &key("a/b.bin")).await.unwrap();
     assert_eq!(meta.size, body.len() as u64);
     assert_eq!(meta.sha256, runinator_blob_core::sha256_hex(&body));
+}
+
+#[tokio::test]
+async fn round_trips_a_spooled_streaming_client_upload() {
+    use tokio::io::AsyncReadExt;
+
+    let harness = harness(false).await;
+    let size = 2 * 1024 * 1024u64;
+    let mut body = tokio::io::repeat(0x6b).take(size);
+    let meta = harness
+        .client
+        .put_stream(
+            BUCKET,
+            &key("streamed.bin"),
+            &mut body,
+            Some(size),
+            PutOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(meta.size, size);
+    let fetched = harness
+        .client
+        .get(BUCKET, &key("streamed.bin"), None)
+        .await
+        .unwrap();
+    assert_eq!(fetched.data.len() as u64, size);
+    assert!(fetched.data.iter().all(|byte| *byte == 0x6b));
+}
+
+#[tokio::test]
+async fn rejects_a_stream_larger_than_the_decoded_object_limit() {
+    use tokio::io::AsyncReadExt;
+
+    let harness = harness(false).await;
+    let size = 8 * 1024 * 1024u64 + 1;
+    let mut body = tokio::io::repeat(0x4d).take(size);
+    let error = harness
+        .client
+        .put_stream(
+            BUCKET,
+            &key("too-large.bin"),
+            &mut body,
+            Some(size),
+            PutOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        runinator_blob_core::BlobError::BadRequest(_)
+            | runinator_blob_core::BlobError::Transport(_)
+    ));
+    assert!(!harness
+        .client
+        .exists(BUCKET, &key("too-large.bin"))
+        .await
+        .unwrap());
 }
 
 #[tokio::test]

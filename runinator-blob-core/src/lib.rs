@@ -19,7 +19,10 @@ pub mod sigv4;
 pub mod store;
 
 pub use errors::BlobError;
-pub use fs::FsBlobStore;
+pub use fs::{
+    FsBlobStore, FsBlobStoreOptions, DEFAULT_IO_BUFFER_BYTES, DEFAULT_MAX_CONCURRENT_WRITES,
+    DEFAULT_METADATA_CACHE_BYTES,
+};
 pub use key::{validate_bucket, ObjectKey, MAX_KEY_BYTES};
 pub use listing::{BucketSummary, ListRequest, ListResponse, ObjectSummary, DEFAULT_MAX_KEYS};
 pub use meta::{

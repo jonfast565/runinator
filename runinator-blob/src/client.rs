@@ -11,6 +11,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::TryStreamExt;
 use reqwest::{Client, Method, Response, StatusCode, Url};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use runinator_blob_core::listing::{BucketSummary, ListRequest, ListResponse, ObjectSummary};
 use runinator_blob_core::multipart::CompletedPart;
@@ -66,6 +68,18 @@ impl S3BlobClient {
         headers: Vec<(String, String)>,
         body: Option<Vec<u8>>,
     ) -> Result<Response> {
+        self.send_body(method, path, query, headers, body.map(RequestBody::Bytes))
+            .await
+    }
+
+    async fn send_body(
+        &self,
+        method: Method,
+        path: &str,
+        query: Vec<(String, String)>,
+        headers: Vec<(String, String)>,
+        body: Option<RequestBody>,
+    ) -> Result<Response> {
         let encoded_path = encode_path_segments(path);
         let mut url = self
             .endpoint
@@ -87,7 +101,7 @@ impl S3BlobClient {
             .unwrap_or_default();
         let hash = body
             .as_ref()
-            .map(|bytes| payload_hash(bytes))
+            .map(RequestBody::sha256)
             .unwrap_or_else(|| payload_hash(&[]));
 
         let mut signed_headers = vec![
@@ -126,14 +140,72 @@ impl S3BlobClient {
             );
         }
 
+        let mut temporary_path = None;
         if let Some(body) = body {
-            request = request.body(body);
+            match body {
+                RequestBody::Bytes(bytes) => request = request.body(bytes),
+                RequestBody::Spool(spool) => {
+                    request = request.header("content-length", spool.size).body(
+                        reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::with_capacity(
+                            spool.file,
+                            runinator_blob_core::DEFAULT_IO_BUFFER_BYTES,
+                        )),
+                    );
+                    temporary_path = Some(spool.path);
+                }
+            }
         }
         let response = request
             .send()
             .await
             .map_err(|err| BlobError::Transport(format!("{method} {url}: {err}")))?;
+        drop(temporary_path);
         Ok(response)
+    }
+
+    async fn spool(
+        &self,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+    ) -> Result<Spool> {
+        let temporary = tempfile::NamedTempFile::new()
+            .map_err(|err| BlobError::Io(format!("creating upload spool: {err}")))?;
+        let (file, path) = temporary.into_parts();
+        let mut file = tokio::fs::File::from_std(file);
+        let mut buffer = vec![0u8; runinator_blob_core::DEFAULT_IO_BUFFER_BYTES];
+        let mut hasher = Sha256::new();
+        let mut size = 0u64;
+        loop {
+            let read = body
+                .read(&mut buffer)
+                .await
+                .map_err(|err| BlobError::Io(format!("reading upload stream: {err}")))?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..read])
+                .await
+                .map_err(|err| BlobError::Io(format!("writing upload spool: {err}")))?;
+            hasher.update(&buffer[..read]);
+            size = size
+                .checked_add(read as u64)
+                .ok_or_else(|| BlobError::BadRequest("upload size overflow".into()))?;
+        }
+        if content_length.is_some_and(|expected| expected != size) {
+            return Err(BlobError::BadRequest(format!(
+                "content length declared {} bytes but received {size}",
+                content_length.unwrap_or_default()
+            )));
+        }
+        file.seek(std::io::SeekFrom::Start(0))
+            .await
+            .map_err(|err| BlobError::Io(format!("rewinding upload spool: {err}")))?;
+        Ok(Spool {
+            file,
+            path,
+            size,
+            sha256: hex::encode(hasher.finalize()),
+        })
     }
 
     /// turn a non-success response into the domain error it represents.
@@ -319,6 +391,63 @@ impl BlobStore for S3BlobClient {
         })
     }
 
+    async fn put_stream(
+        &self,
+        bucket: &str,
+        key: &ObjectKey,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
+    ) -> Result<ObjectMeta> {
+        let spool = self.spool(body, content_length).await?;
+        if let Some(expected) = &options.expected_sha256 {
+            if !expected.eq_ignore_ascii_case(&spool.sha256) {
+                return Err(BlobError::DigestMismatch {
+                    expected: expected.clone(),
+                    actual: spool.sha256,
+                });
+            }
+        }
+        let mut headers = vec![(
+            "content-type".to_string(),
+            options
+                .content_type
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string()),
+        )];
+        if options.if_none_match {
+            headers.push(("if-none-match".to_string(), "*".to_string()));
+        }
+        let checksum = runinator_blob_core::sha256_hex_to_base64(&spool.sha256)
+            .unwrap_or_else(|| spool.sha256.clone());
+        headers.push(("x-amz-checksum-sha256".to_string(), checksum));
+        for (name, value) in &options.metadata {
+            headers.push((format!("x-amz-meta-{name}"), value.clone()));
+        }
+        let size = spool.size;
+        let sha256 = spool.sha256.clone();
+        let response = self
+            .send_body(
+                Method::PUT,
+                &format!("/{bucket}/{key}"),
+                vec![],
+                headers,
+                Some(RequestBody::Spool(spool)),
+            )
+            .await?;
+        Self::check(response, "put object").await?;
+        Ok(ObjectMeta {
+            key: key.as_str().to_string(),
+            size,
+            sha256,
+            content_type: options
+                .content_type
+                .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string()),
+            last_modified: Utc::now(),
+            metadata: options.metadata,
+        })
+    }
+
     async fn head(&self, bucket: &str, key: &ObjectKey) -> Result<ObjectMeta> {
         let response = self
             .send(
@@ -458,6 +587,49 @@ impl BlobStore for S3BlobClient {
             .to_string())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_part_stream(
+        &self,
+        bucket: &str,
+        key: &ObjectKey,
+        upload_id: &str,
+        part_number: u32,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
+    ) -> Result<String> {
+        let spool = self.spool(body, content_length).await?;
+        if let Some(expected) = &options.expected_sha256 {
+            if !expected.eq_ignore_ascii_case(&spool.sha256) {
+                return Err(BlobError::DigestMismatch {
+                    expected: expected.clone(),
+                    actual: spool.sha256,
+                });
+            }
+        }
+        let checksum = runinator_blob_core::sha256_hex_to_base64(&spool.sha256)
+            .unwrap_or_else(|| spool.sha256.clone());
+        let response = self
+            .send_body(
+                Method::PUT,
+                &format!("/{bucket}/{key}"),
+                vec![
+                    ("partNumber".to_string(), part_number.to_string()),
+                    ("uploadId".to_string(), upload_id.to_string()),
+                ],
+                vec![("x-amz-checksum-sha256".to_string(), checksum)],
+                Some(RequestBody::Spool(spool)),
+            )
+            .await?;
+        let response = Self::check(response, "upload part").await?;
+        Ok(response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string())
+    }
+
     async fn complete_multipart(
         &self,
         bucket: &str,
@@ -499,6 +671,27 @@ impl BlobStore for S3BlobClient {
             .await?;
         Self::check(response, "abort multipart").await.map(|_| ())
     }
+}
+
+enum RequestBody {
+    Bytes(Vec<u8>),
+    Spool(Spool),
+}
+
+impl RequestBody {
+    fn sha256(&self) -> String {
+        match self {
+            RequestBody::Bytes(bytes) => payload_hash(bytes),
+            RequestBody::Spool(spool) => spool.sha256.clone(),
+        }
+    }
+}
+
+struct Spool {
+    file: tokio::fs::File,
+    path: tempfile::TempPath,
+    size: u64,
+    sha256: String,
 }
 
 /// the total object size a `Content-Range` reports, when one is present.

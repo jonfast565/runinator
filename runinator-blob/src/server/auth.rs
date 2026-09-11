@@ -44,6 +44,13 @@ impl PayloadDescriptor {
     pub fn is_chunked(&self) -> bool {
         matches!(self, PayloadDescriptor::UnsignedChunked)
     }
+
+    pub fn signed_sha256(&self) -> Option<&str> {
+        match self {
+            PayloadDescriptor::Signed(value) => Some(value),
+            PayloadDescriptor::Unsigned | PayloadDescriptor::UnsignedChunked => None,
+        }
+    }
 }
 
 /// read the payload descriptor a request declared.

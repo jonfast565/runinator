@@ -1,112 +1,221 @@
 //! the local filesystem backend.
-//!
-//! The blob service can use this backend on its container filesystem.
-//! Single-node and desktop deployments can use it directly. See [`paths`] for the disk layout and
-//! the two ways a filesystem backend differs from S3.
 
+mod cache;
+mod format;
+mod migrate;
 mod paths;
 mod walk;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::errors::BlobError;
 use crate::key::{validate_bucket, ObjectKey};
 use crate::listing::{BucketSummary, ListRequest, ListResponse};
-use crate::meta::{sha256_hex, ObjectMeta, PutOptions, DEFAULT_CONTENT_TYPE};
+use crate::meta::{ObjectMeta, PutOptions, DEFAULT_CONTENT_TYPE};
 use crate::multipart::{CompletedPart, MAX_PART_NUMBER, MIN_PART_NUMBER};
 use crate::range::ByteRange;
 use crate::store::{BlobStore, ObjectReader, Result};
 
+use cache::MetadataCache;
+use format::{PartMeta, OBJECT_MAGIC, PART_MAGIC};
 use paths::BucketPaths;
 
-/// an object store backed by a directory tree.
+pub const DEFAULT_METADATA_CACHE_BYTES: usize = 32 * 1024 * 1024;
+pub const DEFAULT_IO_BUFFER_BYTES: usize = 256 * 1024;
+pub const DEFAULT_MAX_CONCURRENT_WRITES: usize = 8;
+const KEY_LOCK_SHARDS: usize = 256;
+
+/// resource bounds for a filesystem-backed store.
+#[derive(Clone, Debug)]
+pub struct FsBlobStoreOptions {
+    pub metadata_cache_bytes: usize,
+    pub io_buffer_bytes: usize,
+    pub max_concurrent_writes: usize,
+}
+
+impl Default for FsBlobStoreOptions {
+    fn default() -> Self {
+        Self {
+            metadata_cache_bytes: DEFAULT_METADATA_CACHE_BYTES,
+            io_buffer_bytes: DEFAULT_IO_BUFFER_BYTES,
+            max_concurrent_writes: DEFAULT_MAX_CONCURRENT_WRITES,
+        }
+    }
+}
+
+/// an object store backed by a directory tree owned exclusively by this process.
 pub struct FsBlobStore {
     root: PathBuf,
+    options: FsBlobStoreOptions,
+    cache: Arc<MetadataCache>,
+    buckets: RwLock<HashMap<String, DateTime<Utc>>>,
+    key_locks: Vec<Mutex<()>>,
+    mutations: Semaphore,
 }
 
 impl FsBlobStore {
-    /// open (creating if needed) a store rooted at `root`.
     pub async fn open(root: impl Into<PathBuf>) -> Result<Self> {
+        Self::open_with_options(root, FsBlobStoreOptions::default()).await
+    }
+
+    pub async fn open_with_options(
+        root: impl Into<PathBuf>,
+        options: FsBlobStoreOptions,
+    ) -> Result<Self> {
+        if options.io_buffer_bytes == 0 || options.max_concurrent_writes == 0 {
+            return Err(BlobError::BadRequest(
+                "blob io buffer and write concurrency must be positive".into(),
+            ));
+        }
         let root = root.into();
         fs::create_dir_all(&root)
             .await
             .map_err(|err| BlobError::Io(format!("creating {}: {err}", root.display())))?;
-        Ok(Self { root })
+        migrate::migrate_root(&root, options.io_buffer_bytes).await?;
+        let buckets = load_buckets(&root).await?;
+        Ok(Self {
+            root,
+            cache: Arc::new(MetadataCache::new(options.metadata_cache_bytes)),
+            buckets: RwLock::new(buckets),
+            key_locks: (0..KEY_LOCK_SHARDS).map(|_| Mutex::new(())).collect(),
+            mutations: Semaphore::new(options.max_concurrent_writes),
+            options,
+        })
     }
 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// resolve a bucket, refusing one that was never created. every operation goes through here, so
-    /// an unknown bucket fails the same way regardless of which call found it.
     async fn bucket(&self, bucket: &str) -> Result<BucketPaths> {
         validate_bucket(bucket)?;
-        let paths = BucketPaths::new(&self.root, bucket);
-        if !fs::try_exists(paths.marker()).await.unwrap_or(false) {
+        if !self
+            .buckets
+            .read()
+            .map_err(|_| BlobError::Io("bucket cache lock poisoned".into()))?
+            .contains_key(bucket)
+        {
             return Err(BlobError::NoSuchBucket(bucket.to_string()));
         }
-        Ok(paths)
+        Ok(BucketPaths::new(&self.root, bucket))
     }
 
-    async fn write_meta(&self, paths: &BucketPaths, meta: &ObjectMeta) -> Result<()> {
-        let key = ObjectKey::parse(&meta.key)?;
-        let encoded = serde_json::to_vec(meta)
-            .map_err(|err| BlobError::Io(format!("encoding metadata for {}: {err}", meta.key)))?;
-        let staged = paths::stage(paths, &staging_name("meta"), &encoded).await?;
-        paths::commit_replace(&staged, &paths.meta(&key)).await
+    fn key_lock(&self, bucket: &str, key: &ObjectKey) -> &Mutex<()> {
+        let mut hasher = DefaultHasher::new();
+        bucket.hash(&mut hasher);
+        key.as_str().hash(&mut hasher);
+        &self.key_locks[hasher.finish() as usize % self.key_locks.len()]
     }
 
-    async fn read_meta(&self, paths: &BucketPaths, key: &ObjectKey) -> Result<ObjectMeta> {
-        let path = paths.meta(key);
-        let bytes = fs::read(&path)
-            .await
-            .map_err(|err| paths::read_error(&path, key.as_str(), err))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|err| BlobError::Io(format!("parsing {}: {err}", path.display())))
-    }
-
-    /// commit already-verified bytes plus their descriptor. shared by `put` and multipart
-    /// completion, which differ only in how they assembled the bytes.
-    async fn commit_object(
+    async fn read_meta(
         &self,
+        bucket: &str,
         paths: &BucketPaths,
         key: &ObjectKey,
-        body: &[u8],
-        options: &PutOptions,
-        sha256: String,
-    ) -> Result<ObjectMeta> {
-        let staged = paths::stage(paths, &staging_name("data"), body).await?;
-        let data_path = paths.data(key);
-        if options.if_none_match {
-            paths::commit_exclusive(&staged, &data_path)
-                .await
-                .map_err(|err| match err {
-                    BlobError::AlreadyExists(_) => BlobError::AlreadyExists(key.to_string()),
-                    other => other,
-                })?;
-        } else {
-            paths::commit_replace(&staged, &data_path).await?;
+    ) -> Result<(ObjectMeta, bool)> {
+        if let Some(meta) = self.cache.get(bucket, key.as_str()) {
+            return Ok(((*meta).clone(), true));
         }
-        let meta = ObjectMeta {
-            key: key.as_str().to_string(),
-            size: body.len() as u64,
-            sha256,
-            content_type: options
-                .content_type
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string()),
-            last_modified: Utc::now(),
-            metadata: options.metadata.clone(),
-        };
-        self.write_meta(paths, &meta).await?;
-        Ok(meta)
+        let path = paths.object(key);
+        let mut file = fs::File::open(&path)
+            .await
+            .map_err(|err| paths::read_error(&path, key.as_str(), err))?;
+        let (meta, encoded_len) = format::read_object(&mut file, &path).await?;
+        if meta.key != key.as_str() {
+            return Err(BlobError::Io(format!(
+                "blob metadata key '{}' disagrees with path '{key}'",
+                meta.key
+            )));
+        }
+        self.cache.insert(bucket, meta.clone(), encoded_len);
+        Ok((meta, false))
+    }
+
+    async fn write_object_stream(
+        &self,
+        bucket: &str,
+        paths: &BucketPaths,
+        key: &ObjectKey,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
+    ) -> Result<ObjectMeta> {
+        let started = std::time::Instant::now();
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
+        let _key_guard = self.key_lock(bucket, key).lock().await;
+        let (staged, mut file) =
+            paths::create_staged(paths, &format!("object-{}", uuid::Uuid::now_v7())).await?;
+        let result = async {
+            let (size, sha256) =
+                migrate::copy_hashed(body, &mut file, self.options.io_buffer_bytes).await?;
+            if content_length.is_some_and(|expected| expected != size) {
+                return Err(BlobError::BadRequest(format!(
+                    "content length declared {} bytes but received {size}",
+                    content_length.unwrap_or_default()
+                )));
+            }
+            if let Some(expected) = &options.expected_sha256 {
+                if !expected.eq_ignore_ascii_case(&sha256) {
+                    return Err(BlobError::DigestMismatch {
+                        expected: expected.clone(),
+                        actual: sha256,
+                    });
+                }
+            }
+            let meta = ObjectMeta {
+                key: key.as_str().to_string(),
+                size,
+                sha256,
+                content_type: options
+                    .content_type
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string()),
+                last_modified: Utc::now(),
+                metadata: options.metadata.clone(),
+            };
+            let encoded_len = format::append_footer(&mut file, size, &meta, OBJECT_MAGIC).await?;
+            drop(file);
+            let final_path = paths.object(key);
+            if options.if_none_match {
+                paths::commit_exclusive(&staged, &final_path)
+                    .await
+                    .map_err(|err| match err {
+                        BlobError::AlreadyExists(_) => BlobError::AlreadyExists(key.to_string()),
+                        other => other,
+                    })?;
+            } else {
+                paths::commit_replace(&staged, &final_path).await?;
+            }
+            self.cache.insert(bucket, meta.clone(), encoded_len);
+            Ok(meta)
+        }
+        .await;
+        if result.is_err() {
+            let _ = fs::remove_file(&staged).await;
+        }
+        if let Ok(meta) = &result {
+            tracing::debug!(
+                operation = "put",
+                bytes = meta.size,
+                elapsed_ms = started.elapsed().as_millis(),
+                "blob operation completed"
+            );
+        }
+        result
     }
 }
 
@@ -118,63 +227,78 @@ impl BlobStore for FsBlobStore {
 
     async fn create_bucket(&self, bucket: &str) -> Result<()> {
         validate_bucket(bucket)?;
+        if self.bucket_exists(bucket).await? {
+            return Ok(());
+        }
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
         let paths = BucketPaths::new(&self.root, bucket);
-        for dir in [paths.data_root(), paths.meta_root(), paths.tmp_root()] {
+        for dir in [paths.objects_root(), paths.uploads_root(), paths.tmp_root()] {
             fs::create_dir_all(&dir)
                 .await
                 .map_err(|err| BlobError::Io(format!("creating {}: {err}", dir.display())))?;
         }
-        fs::write(paths.marker(), b"")
+        fs::write(paths.marker(), paths::V2_MARKER)
             .await
-            .map_err(|err| BlobError::Io(format!("creating bucket {bucket}: {err}")))
+            .map_err(|err| BlobError::Io(format!("creating bucket {bucket}: {err}")))?;
+        let created_at = marker_created_at(&paths.marker()).await;
+        self.buckets
+            .write()
+            .map_err(|_| BlobError::Io("bucket cache lock poisoned".into()))?
+            .insert(bucket.to_string(), created_at);
+        Ok(())
     }
 
     async fn delete_bucket(&self, bucket: &str) -> Result<()> {
         let paths = self.bucket(bucket).await?;
-        if !walk::collect_keys(&paths)?.is_empty() {
+        let blocking_paths = paths.clone();
+        let has_objects = tokio::task::spawn_blocking(move || walk::has_objects(&blocking_paths))
+            .await
+            .map_err(|err| BlobError::Io(format!("checking bucket contents: {err}")))??;
+        if has_objects {
             return Err(BlobError::BucketNotEmpty(bucket.to_string()));
         }
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
         fs::remove_dir_all(&paths.root)
             .await
-            .map_err(|err| BlobError::Io(format!("removing bucket {bucket}: {err}")))
+            .map_err(|err| BlobError::Io(format!("removing bucket {bucket}: {err}")))?;
+        self.buckets
+            .write()
+            .map_err(|_| BlobError::Io("bucket cache lock poisoned".into()))?
+            .remove(bucket);
+        self.cache.remove_bucket(bucket);
+        Ok(())
     }
 
     async fn bucket_exists(&self, bucket: &str) -> Result<bool> {
         validate_bucket(bucket)?;
-        let paths = BucketPaths::new(&self.root, bucket);
-        Ok(fs::try_exists(paths.marker()).await.unwrap_or(false))
+        Ok(self
+            .buckets
+            .read()
+            .map_err(|_| BlobError::Io("bucket cache lock poisoned".into()))?
+            .contains_key(bucket))
     }
 
     async fn list_buckets(&self) -> Result<Vec<BucketSummary>> {
-        let root = self.root.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut buckets = Vec::new();
-            let Ok(entries) = std::fs::read_dir(&root) else {
-                return Ok(buckets);
-            };
-            for entry in entries.flatten() {
-                // the marker is what distinguishes a bucket from any other directory that happens
-                // to sit in the data root.
-                let marker = entry.path().join(paths::BUCKET_MARKER);
-                if !marker.exists() {
-                    continue;
-                }
-                let created = std::fs::metadata(&marker)
-                    .and_then(|meta| meta.created())
-                    .map(chrono::DateTime::<Utc>::from)
-                    .unwrap_or_else(|_| Utc::now());
-                if let Some(name) = entry.file_name().to_str() {
-                    buckets.push(BucketSummary {
-                        name: name.to_string(),
-                        created_at: created,
-                    });
-                }
-            }
-            buckets.sort_by(|left, right| left.name.cmp(&right.name));
-            Ok(buckets)
-        })
-        .await
-        .map_err(|err| BlobError::Io(format!("listing buckets failed: {err}")))?
+        let mut buckets: Vec<_> = self
+            .buckets
+            .read()
+            .map_err(|_| BlobError::Io("bucket cache lock poisoned".into()))?
+            .iter()
+            .map(|(name, created_at)| BucketSummary {
+                name: name.clone(),
+                created_at: *created_at,
+            })
+            .collect();
+        buckets.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(buckets)
     }
 
     async fn put(
@@ -184,24 +308,38 @@ impl BlobStore for FsBlobStore {
         body: Vec<u8>,
         options: PutOptions,
     ) -> Result<ObjectMeta> {
+        let length = body.len() as u64;
+        let mut reader = std::io::Cursor::new(body);
+        self.put_stream(bucket, key, &mut reader, Some(length), options)
+            .await
+    }
+
+    async fn put_stream(
+        &self,
+        bucket: &str,
+        key: &ObjectKey,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
+    ) -> Result<ObjectMeta> {
         let paths = self.bucket(bucket).await?;
-        let sha256 = sha256_hex(&body);
-        // verify before anything is written, so a mismatched upload leaves no trace at all.
-        if let Some(expected) = &options.expected_sha256 {
-            if !expected.eq_ignore_ascii_case(&sha256) {
-                return Err(BlobError::DigestMismatch {
-                    expected: expected.clone(),
-                    actual: sha256,
-                });
-            }
-        }
-        self.commit_object(&paths, key, &body, &options, sha256)
+        self.write_object_stream(bucket, &paths, key, body, content_length, options)
             .await
     }
 
     async fn head(&self, bucket: &str, key: &ObjectKey) -> Result<ObjectMeta> {
+        let started = std::time::Instant::now();
         let paths = self.bucket(bucket).await?;
-        self.read_meta(&paths, key).await
+        let _guard = self.key_lock(bucket, key).lock().await;
+        let (meta, cache_hit) = self.read_meta(bucket, &paths, key).await?;
+        tracing::debug!(
+            operation = "head",
+            bytes = meta.size,
+            cache_hit,
+            elapsed_ms = started.elapsed().as_millis(),
+            "blob operation completed"
+        );
+        Ok(meta)
     }
 
     async fn open(
@@ -210,48 +348,73 @@ impl BlobStore for FsBlobStore {
         key: &ObjectKey,
         range: Option<ByteRange>,
     ) -> Result<ObjectReader> {
+        let started = std::time::Instant::now();
         let paths = self.bucket(bucket).await?;
-        let meta = self.read_meta(&paths, key).await?;
-        let path = paths.data(key);
+        let _guard = self.key_lock(bucket, key).lock().await;
+        let (meta, cache_hit) = self.read_meta(bucket, &paths, key).await?;
+        let path = paths.object(key);
         let mut file = fs::File::open(&path)
             .await
             .map_err(|err| paths::read_error(&path, key.as_str(), err))?;
-        let Some(range) = range else {
-            return Ok(ObjectReader {
-                meta,
-                range: None,
-                body: Box::new(file),
-            });
-        };
-        let resolved = range.resolve(meta.size)?;
-        file.seek(std::io::SeekFrom::Start(resolved.start))
-            .await
-            .map_err(|err| BlobError::Io(format!("seeking {}: {err}", path.display())))?;
+        let resolved = range.map(|range| range.resolve(meta.size)).transpose()?;
+        let (start, length) = resolved
+            .map(|range| (range.start, range.length))
+            .unwrap_or((0, meta.size));
+        if start != 0 {
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|err| BlobError::Io(format!("seeking {}: {err}", path.display())))?;
+        }
+        tracing::debug!(
+            operation = "open",
+            bytes = length,
+            cache_hit,
+            elapsed_ms = started.elapsed().as_millis(),
+            "blob operation completed"
+        );
         Ok(ObjectReader {
             meta,
-            range: Some(resolved),
-            body: Box::new(file.take(resolved.length)),
+            range: resolved,
+            body: Box::new(file.take(length)),
         })
     }
 
     async fn delete(&self, bucket: &str, key: &ObjectKey) -> Result<()> {
         let paths = self.bucket(bucket).await?;
-        // S3 deletes are idempotent, so a missing object is a success rather than a 404.
-        let _ = fs::remove_file(paths.data(key)).await;
-        let _ = fs::remove_file(paths.meta(key)).await;
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
+        let _guard = self.key_lock(bucket, key).lock().await;
+        match fs::remove_file(paths.object(key)).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(BlobError::Io(format!("deleting {bucket}/{key}: {err}"))),
+        }
+        self.cache.remove(bucket, key.as_str());
         Ok(())
     }
 
     async fn list(&self, bucket: &str, request: &ListRequest) -> Result<ListResponse> {
+        let started = std::time::Instant::now();
         let paths = self.bucket(bucket).await?;
         let request = request.clone();
-        // the walk is blocking directory io over a potentially large tree; keep it off the reactor.
-        tokio::task::spawn_blocking(move || {
-            let keys = walk::collect_keys(&paths)?;
-            walk::page(&paths, &keys, &request)
-        })
-        .await
-        .map_err(|err| BlobError::Io(format!("listing task failed: {err}")))?
+        let cache = self.cache.clone();
+        let bucket = bucket.to_string();
+        let (response, stats) =
+            tokio::task::spawn_blocking(move || walk::page(&bucket, &paths, &request, &cache))
+                .await
+                .map_err(|err| BlobError::Io(format!("listing task failed: {err}")))??;
+        tracing::debug!(
+            operation = "list",
+            returned = response.objects.len() + response.common_prefixes.len(),
+            visited_entries = stats.visited_entries,
+            metadata_reads = stats.metadata_reads,
+            elapsed_ms = started.elapsed().as_millis(),
+            "blob operation completed"
+        );
+        Ok(response)
     }
 
     async fn create_multipart(
@@ -261,6 +424,11 @@ impl BlobStore for FsBlobStore {
         options: PutOptions,
     ) -> Result<String> {
         let paths = self.bucket(bucket).await?;
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
         let upload_id = staging_name("upload");
         let dir = paths.upload(&upload_id);
         fs::create_dir_all(&dir)
@@ -284,10 +452,35 @@ impl BlobStore for FsBlobStore {
     async fn upload_part(
         &self,
         bucket: &str,
-        _key: &ObjectKey,
+        key: &ObjectKey,
         upload_id: &str,
         part_number: u32,
         body: Vec<u8>,
+    ) -> Result<String> {
+        let length = body.len() as u64;
+        let mut reader = std::io::Cursor::new(body);
+        self.upload_part_stream(
+            bucket,
+            key,
+            upload_id,
+            part_number,
+            &mut reader,
+            Some(length),
+            PutOptions::default(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_part_stream(
+        &self,
+        bucket: &str,
+        _key: &ObjectKey,
+        upload_id: &str,
+        part_number: u32,
+        body: &mut (dyn AsyncRead + Send + Unpin),
+        content_length: Option<u64>,
+        options: PutOptions,
     ) -> Result<String> {
         if !(MIN_PART_NUMBER..=MAX_PART_NUMBER).contains(&part_number) {
             return Err(BlobError::BadRequest(format!(
@@ -302,11 +495,49 @@ impl BlobStore for FsBlobStore {
         {
             return Err(BlobError::NoSuchUpload(upload_id.to_string()));
         }
-        let etag = format!("\"{}\"", sha256_hex(&body));
-        fs::write(dir.join(part_filename(part_number)), &body)
+        let _permit = self
+            .mutations
+            .acquire()
             .await
-            .map_err(|err| BlobError::Io(format!("writing part {part_number}: {err}")))?;
-        Ok(etag)
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
+        let (staged, mut file) =
+            paths::create_staged(&paths, &format!("part-{}", uuid::Uuid::now_v7())).await?;
+        let result = async {
+            let (size, sha256) =
+                migrate::copy_hashed(body, &mut file, self.options.io_buffer_bytes).await?;
+            if content_length.is_some_and(|expected| expected != size) {
+                return Err(BlobError::BadRequest(format!(
+                    "part length declared {} bytes but received {size}",
+                    content_length.unwrap_or_default()
+                )));
+            }
+            if let Some(expected) = options.expected_sha256 {
+                if !expected.eq_ignore_ascii_case(&sha256) {
+                    return Err(BlobError::DigestMismatch {
+                        expected,
+                        actual: sha256,
+                    });
+                }
+            }
+            format::append_footer(
+                &mut file,
+                size,
+                &PartMeta {
+                    size,
+                    sha256: sha256.clone(),
+                },
+                PART_MAGIC,
+            )
+            .await?;
+            drop(file);
+            paths::commit_replace(&staged, &dir.join(part_filename(part_number))).await?;
+            Ok(format!("\"{sha256}\""))
+        }
+        .await;
+        if result.is_err() {
+            let _ = fs::remove_file(&staged).await;
+        }
+        result
     }
 
     async fn complete_multipart(
@@ -316,6 +547,7 @@ impl BlobStore for FsBlobStore {
         upload_id: &str,
         parts: &[CompletedPart],
     ) -> Result<ObjectMeta> {
+        let started = std::time::Instant::now();
         let paths = self.bucket(bucket).await?;
         let dir = paths.upload(upload_id);
         let manifest = fs::read(dir.join("upload.json"))
@@ -329,62 +561,131 @@ impl BlobStore for FsBlobStore {
                 manifest.key
             )));
         }
-
-        // Parts must be listed in ascending order. Reject any other order instead of assembling an
-        // Reject an object the client did not describe.
-        let mut body = Vec::new();
-        let mut previous = 0;
-        for part in parts {
-            if part.part_number <= previous {
-                return Err(BlobError::BadRequest(
-                    "completion parts must be in ascending part-number order".into(),
-                ));
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
+        let _guard = self.key_lock(bucket, key).lock().await;
+        let (staged, mut target) =
+            paths::create_staged(&paths, &format!("complete-{}", uuid::Uuid::now_v7())).await?;
+        let result = async {
+            let mut hasher = Sha256::new();
+            let mut size = 0u64;
+            let mut previous = 0;
+            let mut buffer = vec![0u8; self.options.io_buffer_bytes];
+            for part in parts {
+                if part.part_number <= previous {
+                    return Err(BlobError::BadRequest(
+                        "completion parts must be in ascending part-number order".into(),
+                    ));
+                }
+                previous = part.part_number;
+                let path = dir.join(part_filename(part.part_number));
+                let mut source = fs::File::open(&path).await.map_err(|_| {
+                    BlobError::BadRequest(format!("part {} was never uploaded", part.part_number))
+                })?;
+                let (part_meta, _) = format::read_part(&mut source, &path).await?;
+                let actual = format!("\"{}\"", part_meta.sha256);
+                if actual != part.etag {
+                    return Err(BlobError::DigestMismatch {
+                        expected: part.etag.clone(),
+                        actual,
+                    });
+                }
+                source
+                    .seek(std::io::SeekFrom::Start(0))
+                    .await
+                    .map_err(|err| BlobError::Io(format!("seeking {}: {err}", path.display())))?;
+                let mut remaining = part_meta.size;
+                while remaining != 0 {
+                    let wanted =
+                        usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
+                    let read = source
+                        .read(&mut buffer[..wanted])
+                        .await
+                        .map_err(|err| BlobError::Io(format!("reading multipart part: {err}")))?;
+                    if read == 0 {
+                        return Err(BlobError::Io(format!(
+                            "multipart part {} is truncated",
+                            part.part_number
+                        )));
+                    }
+                    target.write_all(&buffer[..read]).await.map_err(|err| {
+                        BlobError::Io(format!("assembling multipart object: {err}"))
+                    })?;
+                    hasher.update(&buffer[..read]);
+                    size = size
+                        .checked_add(read as u64)
+                        .ok_or_else(|| BlobError::BadRequest("multipart size overflow".into()))?;
+                    remaining -= read as u64;
+                }
             }
-            previous = part.part_number;
-            let path = dir.join(part_filename(part.part_number));
-            let bytes = fs::read(&path).await.map_err(|_| {
-                BlobError::BadRequest(format!("part {} was never uploaded", part.part_number))
-            })?;
-            let actual = format!("\"{}\"", sha256_hex(&bytes));
-            if actual != part.etag {
-                return Err(BlobError::DigestMismatch {
-                    expected: part.etag.clone(),
-                    actual,
-                });
+            let sha256 = hex::encode(hasher.finalize());
+            if let Some(expected) = &manifest.expected_sha256 {
+                if !expected.eq_ignore_ascii_case(&sha256) {
+                    return Err(BlobError::DigestMismatch {
+                        expected: expected.clone(),
+                        actual: sha256,
+                    });
+                }
             }
-            body.extend_from_slice(&bytes);
+            let meta = ObjectMeta {
+                key: key.as_str().to_string(),
+                size,
+                sha256,
+                content_type: manifest
+                    .content_type
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string()),
+                last_modified: Utc::now(),
+                metadata: manifest.metadata.clone(),
+            };
+            let encoded_len = format::append_footer(&mut target, size, &meta, OBJECT_MAGIC).await?;
+            drop(target);
+            if manifest.if_none_match {
+                paths::commit_exclusive(&staged, &paths.object(key))
+                    .await
+                    .map_err(|err| match err {
+                        BlobError::AlreadyExists(_) => BlobError::AlreadyExists(key.to_string()),
+                        other => other,
+                    })?;
+            } else {
+                paths::commit_replace(&staged, &paths.object(key)).await?;
+            }
+            self.cache.insert(bucket, meta.clone(), encoded_len);
+            Ok(meta)
         }
-
-        let sha256 = sha256_hex(&body);
-        if let Some(expected) = &manifest.expected_sha256 {
-            if !expected.eq_ignore_ascii_case(&sha256) {
-                return Err(BlobError::DigestMismatch {
-                    expected: expected.clone(),
-                    actual: sha256,
-                });
-            }
+        .await;
+        if result.is_err() {
+            let _ = fs::remove_file(&staged).await;
+        } else {
+            let _ = fs::remove_dir_all(&dir).await;
         }
-        let options = PutOptions {
-            content_type: manifest.content_type,
-            metadata: manifest.metadata,
-            if_none_match: manifest.if_none_match,
-            expected_sha256: manifest.expected_sha256,
-        };
-        let meta = self
-            .commit_object(&paths, key, &body, &options, sha256)
-            .await?;
-        let _ = fs::remove_dir_all(&dir).await;
-        Ok(meta)
+        if let Ok(meta) = &result {
+            tracing::debug!(
+                operation = "complete_multipart",
+                bytes = meta.size,
+                parts = parts.len(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "blob operation completed"
+            );
+        }
+        result
     }
 
     async fn abort_multipart(&self, bucket: &str, _key: &ObjectKey, upload_id: &str) -> Result<()> {
         let paths = self.bucket(bucket).await?;
+        let _permit = self
+            .mutations
+            .acquire()
+            .await
+            .map_err(|_| BlobError::Io("blob write limiter closed".into()))?;
         let _ = fs::remove_dir_all(paths.upload(upload_id)).await;
         Ok(())
     }
 }
 
-/// the staged state of an in-progress multipart upload.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UploadManifest {
     key: String,
@@ -397,16 +698,48 @@ struct UploadManifest {
     expected_sha256: Option<String>,
 }
 
-/// zero-padded so a part directory sorts the way the parts concatenate.
 fn part_filename(part_number: u32) -> String {
     format!("part-{part_number:05}")
 }
 
-/// a collision-free name for a staged file or an upload id.
 fn staging_name(kind: &str) -> String {
     format!("{kind}-{}", uuid::Uuid::now_v7())
+}
+
+async fn load_buckets(root: &Path) -> Result<HashMap<String, DateTime<Utc>>> {
+    let mut buckets = HashMap::new();
+    let mut entries = fs::read_dir(root)
+        .await
+        .map_err(|err| BlobError::Io(format!("listing {}: {err}", root.display())))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|err| BlobError::Io(format!("listing {}: {err}", root.display())))?
+    {
+        let marker = entry.path().join(paths::BUCKET_MARKER);
+        if !fs::try_exists(&marker).await.unwrap_or(false) {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        buckets.insert(name, marker_created_at(&marker).await);
+    }
+    Ok(buckets)
+}
+
+async fn marker_created_at(marker: &Path) -> DateTime<Utc> {
+    fs::metadata(marker)
+        .await
+        .and_then(|meta| meta.created())
+        .map(DateTime::<Utc>::from)
+        .unwrap_or_else(|_| Utc::now())
 }
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "benchmark_tests.rs"]
+mod benchmarks;

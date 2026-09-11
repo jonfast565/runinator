@@ -15,7 +15,6 @@ pub mod xml;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::routing::get;
 use axum::serve::ListenerExt;
@@ -23,7 +22,7 @@ use axum::Router;
 use tokio::net::TcpListener;
 
 use runinator_blob_core::listing::BucketSummary;
-use runinator_blob_core::{BlobError, BlobStore, FsBlobStore};
+use runinator_blob_core::{BlobError, BlobStore, FsBlobStore, FsBlobStoreOptions};
 
 use crate::config::BlobServerConfig;
 
@@ -86,7 +85,6 @@ impl BlobService {
 
 /// the service's routes.
 pub fn router(service: Arc<BlobService>) -> Router {
-    let max_body = service.config.max_object_bytes;
     Router::new()
         .route("/", get(buckets::list_buckets))
         .route(
@@ -105,7 +103,6 @@ pub fn router(service: Arc<BlobService>) -> Router {
                 .post(objects::post_object),
         )
         .fallback(fallback)
-        .layer(DefaultBodyLimit::max(max_body))
         .with_state(service)
 }
 
@@ -121,7 +118,15 @@ pub async fn run_server(
     config: BlobServerConfig,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), BlobError> {
-    let store = FsBlobStore::open(&config.data_dir).await?;
+    let store = FsBlobStore::open_with_options(
+        &config.data_dir,
+        FsBlobStoreOptions {
+            metadata_cache_bytes: config.metadata_cache_bytes,
+            max_concurrent_writes: config.max_concurrent_writes,
+            ..FsBlobStoreOptions::default()
+        },
+    )
+    .await?;
     // the buckets runinator itself relies on exist from the first boot, so no deployment step has to
     // remember to create them.
     for bucket in runinator_blob_core::REQUIRED_BUCKETS {
@@ -158,6 +163,6 @@ fn streaming_listener(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "client"))]
 #[path = "mod_tests.rs"]
 mod tests;

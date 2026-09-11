@@ -88,6 +88,7 @@ impl BlobError {
             "AccessDenied" => BlobError::Unauthorized(detail),
             "BucketNotEmpty" => BlobError::BucketNotEmpty(detail),
             "NoSuchUpload" => BlobError::NoSuchUpload(detail),
+            "InvalidRequest" => BlobError::BadRequest(detail),
             _ if status == 404 => BlobError::NotFound(detail),
             _ if status == 403 => BlobError::Unauthorized(detail),
             _ => BlobError::Transport(detail),

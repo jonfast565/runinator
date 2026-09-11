@@ -1,18 +1,11 @@
-//! filesystem layout and the atomic write primitives the backend is built from.
-//!
-//! a bucket is three sibling trees so a listing never has to distinguish data from sidecars:
+//! filesystem layout and atomic commit primitives for the v2 backend.
 //!
 //! ```text
-//! <root>/<bucket>/data/<key>            the bytes
-//! <root>/<bucket>/meta/<key>.json       the descriptor
+//! <root>/<bucket>/objects/<key>.blob    payload plus metadata footer
 //! <root>/<bucket>/uploads/<id>/         multipart staging
-//! <root>/<bucket>/.tmp/                 partial writes awaiting rename
+//! <root>/<bucket>/.tmp/                 incomplete atomic writes
+//! <root>/<bucket>/.bucket               layout-version marker
 //! ```
-//!
-//! Keys are mirrored rather than hashed, so `list` can walk the directory.
-//! This creates two differences from S3. A case-insensitive filesystem can merge keys that differ
-//! only by case, and a key cannot be both an object and another object's prefix (`a` and `a/b`).
-//! Report both cases as errors instead of resolving them silently.
 
 use std::path::{Path, PathBuf};
 
@@ -21,14 +14,14 @@ use tokio::fs;
 use crate::errors::BlobError;
 use crate::key::ObjectKey;
 
-pub(super) const DATA_DIR: &str = "data";
-pub(super) const META_DIR: &str = "meta";
+pub(super) const OBJECTS_DIR: &str = "objects";
+pub(super) const LEGACY_DATA_DIR: &str = "data";
+pub(super) const LEGACY_META_DIR: &str = "meta";
 pub(super) const UPLOADS_DIR: &str = "uploads";
 pub(super) const TMP_DIR: &str = ".tmp";
-/// written when a bucket is created so an empty bucket is distinguishable from an absent one.
 pub(super) const BUCKET_MARKER: &str = ".bucket";
+pub(super) const V2_MARKER: &[u8] = b"runinator-blob-v2\n";
 
-/// the on-disk locations for one bucket.
 #[derive(Clone)]
 pub(super) struct BucketPaths {
     pub(super) root: PathBuf,
@@ -41,26 +34,38 @@ impl BucketPaths {
         }
     }
 
-    pub(super) fn data(&self, key: &ObjectKey) -> PathBuf {
-        self.root.join(DATA_DIR).join(key.as_str())
+    pub(super) fn object(&self, key: &ObjectKey) -> PathBuf {
+        self.objects_root().join(format!("{key}.blob"))
     }
 
-    pub(super) fn meta(&self, key: &ObjectKey) -> PathBuf {
+    pub(super) fn objects_root(&self) -> PathBuf {
+        self.root.join(OBJECTS_DIR)
+    }
+
+    pub(super) fn legacy_data(&self, key: &ObjectKey) -> PathBuf {
+        self.root.join(LEGACY_DATA_DIR).join(key.as_str())
+    }
+
+    pub(super) fn legacy_meta(&self, key: &ObjectKey) -> PathBuf {
         self.root
-            .join(META_DIR)
+            .join(LEGACY_META_DIR)
             .join(format!("{}.json", key.as_str()))
     }
 
-    pub(super) fn data_root(&self) -> PathBuf {
-        self.root.join(DATA_DIR)
+    pub(super) fn legacy_data_root(&self) -> PathBuf {
+        self.root.join(LEGACY_DATA_DIR)
     }
 
-    pub(super) fn meta_root(&self) -> PathBuf {
-        self.root.join(META_DIR)
+    pub(super) fn legacy_meta_root(&self) -> PathBuf {
+        self.root.join(LEGACY_META_DIR)
     }
 
     pub(super) fn upload(&self, upload_id: &str) -> PathBuf {
         self.root.join(UPLOADS_DIR).join(upload_id)
+    }
+
+    pub(super) fn uploads_root(&self) -> PathBuf {
+        self.root.join(UPLOADS_DIR)
     }
 
     pub(super) fn tmp_root(&self) -> PathBuf {
@@ -72,47 +77,30 @@ impl BucketPaths {
     }
 }
 
-/// create a path's parent directory, translating the "a parent is itself an object" collision into
-/// a legible error instead of a bare io failure.
 pub(super) async fn ensure_parent(path: &Path) -> Result<(), BlobError> {
     let Some(parent) = path.parent() else {
         return Ok(());
     };
-    match fs::create_dir_all(parent).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => {
-            Err(BlobError::InvalidKey(format!(
-                "a prefix of this key already exists as an object: {}",
-                parent.display()
-            )))
-        }
-        Err(err) => Err(BlobError::Io(format!(
-            "creating {}: {err}",
-            parent.display()
-        ))),
-    }
+    fs::create_dir_all(parent)
+        .await
+        .map_err(|err| BlobError::Io(format!("creating {}: {err}", parent.display())))
 }
 
-/// write bytes to a temporary file inside the bucket, returning its path. the caller commits it with
-/// [`commit_replace`] or [`commit_exclusive`]; both are renames within one filesystem, so no partial
-/// object is ever visible under its final name.
-pub(super) async fn stage(
+pub(super) async fn create_staged(
     paths: &BucketPaths,
     name: &str,
-    bytes: &[u8],
-) -> Result<PathBuf, BlobError> {
+) -> Result<(PathBuf, fs::File), BlobError> {
     let tmp_root = paths.tmp_root();
     fs::create_dir_all(&tmp_root)
         .await
         .map_err(|err| BlobError::Io(format!("creating {}: {err}", tmp_root.display())))?;
-    let tmp = tmp_root.join(name);
-    fs::write(&tmp, bytes)
+    let path = tmp_root.join(name);
+    let file = fs::File::create(&path)
         .await
-        .map_err(|err| BlobError::Io(format!("writing {}: {err}", tmp.display())))?;
-    Ok(tmp)
+        .map_err(|err| BlobError::Io(format!("creating {}: {err}", path.display())))?;
+    Ok((path, file))
 }
 
-/// move a staged file into place, overwriting whatever was there.
 pub(super) async fn commit_replace(tmp: &Path, final_path: &Path) -> Result<(), BlobError> {
     ensure_parent(final_path).await?;
     fs::rename(tmp, final_path).await.map_err(|err| {
@@ -124,11 +112,6 @@ pub(super) async fn commit_replace(tmp: &Path, final_path: &Path) -> Result<(), 
     })
 }
 
-/// move a staged file into place only if nothing is there.
-///
-/// a hard link is what makes this exclusive: `rename` would happily clobber, while `link` fails with
-/// `AlreadyExists` and does so atomically, which is exactly the guarantee `If-None-Match: *` needs
-/// for a content-addressed write-once store.
 pub(super) async fn commit_exclusive(tmp: &Path, final_path: &Path) -> Result<(), BlobError> {
     ensure_parent(final_path).await?;
     let (source, destination) = (tmp.to_path_buf(), final_path.to_path_buf());
@@ -148,7 +131,6 @@ pub(super) async fn commit_exclusive(tmp: &Path, final_path: &Path) -> Result<()
     }
 }
 
-/// map an io error on a read path, turning a missing file into the domain's not-found.
 pub(super) fn read_error(path: &Path, key: &str, err: std::io::Error) -> BlobError {
     if err.kind() == std::io::ErrorKind::NotFound {
         return BlobError::NotFound(key.to_string());

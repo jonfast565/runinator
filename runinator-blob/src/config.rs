@@ -26,15 +26,21 @@ pub const ENV_REGION: &str = "RUNINATOR_BLOB_REGION";
 /// accept unsigned requests. development only.
 #[cfg(feature = "server")]
 pub const ENV_ALLOW_ANONYMOUS: &str = "RUNINATOR_BLOB_ALLOW_ANONYMOUS";
-/// the largest single-part upload the service will buffer, in bytes.
+/// the largest decoded single-part upload the service accepts, in bytes.
 #[cfg(feature = "server")]
 pub const ENV_MAX_OBJECT_BYTES: &str = "RUNINATOR_BLOB_MAX_OBJECT_BYTES";
+/// maximum resident metadata-cache weight for the filesystem backend.
+#[cfg(feature = "server")]
+pub const ENV_METADATA_CACHE_BYTES: &str = "RUNINATOR_BLOB_METADATA_CACHE_BYTES";
+/// maximum filesystem mutations allowed to progress concurrently.
+#[cfg(feature = "server")]
+pub const ENV_MAX_CONCURRENT_WRITES: &str = "RUNINATOR_BLOB_MAX_CONCURRENT_WRITES";
 
 #[cfg(feature = "server")]
 pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:9000";
 pub const DEFAULT_DATA_DIR: &str = "/var/lib/runinator/blobs";
-/// 256 MiB. a single-part upload is buffered in memory to verify its digest, so this is a memory
-/// bound as much as a size limit; larger objects go through multipart, which buffers one part.
+/// 256 MiB. the service streams this much decoded data into one atomic object or multipart part;
+/// larger objects go through multipart.
 #[cfg(feature = "server")]
 pub const DEFAULT_MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 
@@ -47,6 +53,8 @@ pub struct BlobServerConfig {
     pub region: String,
     pub credentials: CredentialStore,
     pub max_object_bytes: usize,
+    pub metadata_cache_bytes: usize,
+    pub max_concurrent_writes: usize,
 }
 
 #[cfg(feature = "server")]
@@ -69,6 +77,14 @@ impl BlobServerConfig {
                 .ok()
                 .and_then(|raw| raw.parse().ok())
                 .unwrap_or(DEFAULT_MAX_OBJECT_BYTES),
+            metadata_cache_bytes: env::var(ENV_METADATA_CACHE_BYTES)
+                .ok()
+                .and_then(|raw| raw.parse().ok())
+                .unwrap_or(runinator_blob_core::DEFAULT_METADATA_CACHE_BYTES),
+            max_concurrent_writes: env::var(ENV_MAX_CONCURRENT_WRITES)
+                .ok()
+                .and_then(|raw| raw.parse().ok())
+                .unwrap_or(runinator_blob_core::DEFAULT_MAX_CONCURRENT_WRITES),
         })
     }
 }
