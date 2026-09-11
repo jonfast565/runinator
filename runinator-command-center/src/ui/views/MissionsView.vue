@@ -1,6 +1,6 @@
 <template>
   <section class="pane h-full overflow-auto">
-    <div class="mx-auto flex w-full max-w-7xl flex-col gap-3">
+    <div class="flex w-full min-w-0 flex-col gap-3">
       <div class="panel">
         <PanelHeader
           title="Missions"
