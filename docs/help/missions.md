@@ -141,8 +141,9 @@ runinatorctl missions intent <mission-id> cancel \
 ```
 
 An intent name that the installed pipeline does not declare is rejected. The Command Center
-**Missions** page provides the same start form, current phase, epoch history, evidence, steering,
-and declared-intent controls without requiring CLI JSON.
+**Missions** page provides a guided recipe, objective, source, and revision editor, plus current
+phase, epoch history, evidence, steering, and declared-intent controls. Optional recipe-specific
+JSON is available only as an advanced input.
 
 ## Claude Code and Codex as external controllers
 

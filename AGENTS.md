@@ -221,6 +221,8 @@ Authorization is deny-by-default and hierarchical; `docs/permissions.md` is the 
 
 ## Coding and Change Hygiene
 
+- Build UI workflows with purpose-built, rich editors for their domain inputs. Do not make a raw JSON
+  form the primary experience; reserve JSON for clearly labeled advanced or escape-hatch inputs.
 - Require guard clauses for preconditions, missing/invalid values, and inapplicable work: use early
   `return`, `continue`, or Rust `let ... else` to keep the main path flat. Do not nest the main path
   inside success-only `if`/`else` branches when a guard preserves behavior. Extract a focused helper
