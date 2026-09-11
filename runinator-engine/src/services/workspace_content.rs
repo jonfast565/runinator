@@ -71,10 +71,8 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                 blob_reads: Default::default(),
                 locations: std::sync::Mutex::new(std::collections::HashMap::new()),
                 metadata_reads: self.metadata_reads.clone(),
-                records: runinator_workspace::storage::cache::ByteCache::new(16 * 1024 * 1024),
-                decoded_records: runinator_workspace::storage::cache::ByteCache::new(
-                    8 * 1024 * 1024,
-                ),
+                records: self.records.clone(),
+                decoded_records: self.decoded_records.clone(),
                 indexed_records: std::sync::Mutex::new(std::collections::HashSet::new()),
             },
             self.object_cache.clone(),

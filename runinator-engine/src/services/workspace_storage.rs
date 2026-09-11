@@ -122,12 +122,20 @@ pub(crate) struct ObjectGraphStorageProvider<T> {
     context: WorkspaceStorageContext<T>,
     pub(super) metadata_reads: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) object_cache: std::sync::Arc<runinator_workspace::storage::cache::BufferedCache>,
+    pub(super) records: std::sync::Arc<runinator_workspace::storage::cache::ByteCache>,
+    pub(super) decoded_records: std::sync::Arc<runinator_workspace::storage::cache::ByteCache>,
 }
 
 impl<T> ObjectGraphStorageProvider<T> {
     pub(crate) fn new(context: WorkspaceStorageContext<T>) -> Self {
         Self {
             context,
+            records: std::sync::Arc::new(runinator_workspace::storage::cache::ByteCache::new(
+                32 * 1024 * 1024,
+            )),
+            decoded_records: std::sync::Arc::new(
+                runinator_workspace::storage::cache::ByteCache::new(16 * 1024 * 1024),
+            ),
             metadata_reads: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
             object_cache: std::sync::Arc::new(
                 runinator_workspace::storage::cache::BufferedCache::new(32 * 1024 * 1024),

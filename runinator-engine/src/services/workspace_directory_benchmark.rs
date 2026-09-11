@@ -129,6 +129,31 @@ async fn sequential_and_bulk_directory_measurements() {
     for pack in packs {
         service.upload_pack(checkout.id, pack).await.unwrap();
     }
+    let shared_reader = WorkspaceService::new(db.clone(), blobs.clone());
+    let shared_revision: Id = revision_id.parse().unwrap();
+    tokio::task::spawn_blocking(move || {
+        let first = shared_reader.objects(id);
+        let first_view = View::new(&first, shared_revision).unwrap();
+        assert_eq!(first_view.directory("", None, 200).unwrap().len(), 200);
+        let second = shared_reader.objects(id);
+        let started = std::time::Instant::now();
+        let second_view = View::new(&second, shared_revision).unwrap();
+        assert_eq!(
+            second_view
+                .directory("", Some("file-00200"), 200)
+                .unwrap()
+                .len(),
+            200
+        );
+        println!(
+            "unvisited_page_ms={} blob_reads={}",
+            started.elapsed().as_millis(),
+            second.inner.blob_reads.load(Ordering::Relaxed)
+        );
+        assert_eq!(second.inner.blob_reads.load(Ordering::Relaxed), 0);
+    })
+    .await
+    .unwrap();
     for sequential in [true, false] {
         let reader = WorkspaceService::new(db.clone(), blobs.clone());
         let store = Sequential(reader.objects(id));

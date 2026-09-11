@@ -322,10 +322,12 @@ object stores require an equivalent scoped maintenance procedure; the command re
 Directory metadata is fetched in ordered batches. A bounded breadth-first look-ahead turns radix
 tree traversal into bulk reads, SQL resolves up to 500 requested object locations per query, and
 nearby records in one pack are coalesced into bounded ranges. At most eight blob ranges are in
-flight across concurrent requests. Request-local location and physical-record caches avoid repeated
-database lookups, downloads, and block decoding, including single-object path traversal. One
-32 MiB immutable-object cache survives directory requests and workspace switches; opening another
-workspace does not clear it. Cache-only batches do not acquire reader leases. Snapshot existence
+flight across concurrent requests. Request-local location indexes avoid repeated database lookups.
+Shared 32 MiB physical-record and 16 MiB decoded-record caches let sibling directories reuse
+metadata blocks without downloading or decompressing them again. Physical keys include the
+immutable pack identity, offset, and length, so compaction cannot alias old and new records.
+A shared 32 MiB immutable-object cache survives directory requests and workspace switches; opening
+another workspace does not clear these caches. Cache-only batches do not acquire reader leases. Snapshot existence
 and authorization are still checked for every directory request.
 
 Blocking batch I/O uses at most eight scoped threads, separate from Rayon's shared CPU pool.
