@@ -57,7 +57,7 @@ async fn harness(anonymous: bool) -> Harness {
     let addr = listener.local_addr().unwrap();
     let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
-        let _ = axum::serve(listener, router(service))
+        let _ = axum::serve(streaming_listener(listener), router(service))
             .with_graceful_shutdown(async {
                 let _ = signal.await;
             })

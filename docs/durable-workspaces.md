@@ -335,3 +335,7 @@ The engine's debug event `workspace directory metadata loaded`
 reports elapsed milliseconds, entry count, database reads, and blob reads for each page. File
 contents are not read for directory listings. Existing authorization, reader leases, and cursor
 validation still apply.
+
+The blob server disables Nagle's algorithm on accepted connections. Range response headers and
+streamed bodies can be written separately; buffering the body until a delayed TCP acknowledgement
+adds a network-timer delay to each dependent metadata read, even on a local cluster.

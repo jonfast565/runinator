@@ -18,6 +18,7 @@ use std::sync::Arc;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::routing::get;
+use axum::serve::ListenerExt;
 use axum::Router;
 use tokio::net::TcpListener;
 
@@ -140,10 +141,21 @@ pub async fn run_server(
         anonymous = config.credentials.allows_anonymous(),
         "runinator blob service listening"
     );
-    axum::serve(listener, router(service))
+    axum::serve(streaming_listener(listener), router(service))
         .with_graceful_shutdown(shutdown)
         .await
         .map_err(|err| BlobError::Io(format!("serving: {err}")))
+}
+
+// ranged bodies follow their headers asynchronously; do not wait for a delayed tcp acknowledgement.
+fn streaming_listener(
+    listener: TcpListener,
+) -> impl axum::serve::Listener<Io = tokio::net::TcpStream, Addr = SocketAddr> {
+    listener.tap_io(|stream| {
+        if let Err(error) = stream.set_nodelay(true) {
+            tracing::warn!(%error, "could not disable nagle for blob streaming");
+        }
+    })
 }
 
 #[cfg(test)]
