@@ -170,7 +170,7 @@
             </template>
 
             <template #second>
-              <div class="panel gap-3 overflow-y-auto p-4">
+              <div class="panel pipeline-details-panel gap-3 p-4">
                 <template v-if="selectedEdge">
                   <div class="flex items-center gap-1">
                     <h3 class="m-0 text-sm font-semibold text-fg">Chain</h3>

@@ -1040,6 +1040,11 @@ main[inert] {
   overflow: auto;
 }
 
+/* pipeline definitions can be taller than the split pane, especially when their source is long. */
+.pipeline-details-panel {
+  overflow: auto;
+}
+
 .output {
   flex: 1;
   min-height: 120px;
