@@ -174,246 +174,271 @@
               message="Loading workspace history…"
             />
 
-            <template v-else-if="snapshot">
-              <section class="workspace-version-bar" aria-label="Selected workspace version">
-                <label>
-                  <span>Saved version</span>
-                  <select v-model="selectedVersion">
-                    <option v-if="store.pinnedSnapshot" :value="store.pinnedSnapshot.version">
-                      v{{ store.pinnedSnapshot.version }} · Pinned
-                    </option>
-                    <option
-                      v-for="version in store.versions"
-                      :key="version.version"
-                      :value="version.version"
+            <SplitPane
+              v-else-if="snapshot"
+              class="workspace-version-split"
+              orientation="vertical"
+              storage-key="command-center.workspaces.version-detail"
+              :initial-first-pct="42"
+              :min-first="260"
+              :min-second="300"
+            >
+              <template #first>
+                <div class="workspace-version-summary">
+                  <section class="workspace-version-bar" aria-label="Selected workspace version">
+                    <label>
+                      <span>Saved version</span>
+                      <select v-model="selectedVersion">
+                        <option v-if="store.pinnedSnapshot" :value="store.pinnedSnapshot.version">
+                          v{{ store.pinnedSnapshot.version }} · Pinned
+                        </option>
+                        <option
+                          v-for="version in store.versions"
+                          :key="version.version"
+                          :value="version.version"
+                        >
+                          v{{ version.version }} · {{ formatDate(version.created_at) }}
+                        </option>
+                      </select>
+                    </label>
+                    <div class="workspace-version-nav">
+                      <button
+                        class="btn btn-sm"
+                        type="button"
+                        :disabled="versionPage === 0 || busy"
+                        @click="changeVersionPage(-1)"
+                      >
+                        <Icon name="chevron-left" :size="14" /> Newer
+                      </button>
+                      <span>History page {{ versionPage + 1 }}</span>
+                      <button
+                        class="btn btn-sm"
+                        type="button"
+                        :disabled="store.versions.length < pageSize || busy"
+                        @click="changeVersionPage(1)"
+                      >
+                        Older <Icon name="chevron-right" :size="14" />
+                      </button>
+                    </div>
+                  </section>
+
+                  <div class="workspace-metrics">
+                    <MetricCard label="Entries" :value="snapshot.usage.entries" />
+                    <MetricCard label="Logical size" :value="bytes(snapshot.usage.logical_bytes)" />
+                    <MetricCard
+                      label="Attempt"
+                      :value="
+                        snapshot.origin.kind === 'workflow' ? snapshot.origin.attempt : 'Imported'
+                      "
+                    />
+                    <MetricCard
+                      label="Parent version"
+                      :value="`v${String(snapshot.parent_version)}`"
+                    />
+                  </div>
+
+                  <section class="workspace-run-context">
+                    <div>
+                      <span>{{
+                        snapshot.origin.kind === "workflow" ? "Produced by run" : "Import transfer"
+                      }}</span>
+                      <strong
+                        :title="
+                          snapshot.origin.kind === 'workflow'
+                            ? snapshot.origin.workflow_run_id
+                            : snapshot.origin.transfer_id
+                        "
+                        >{{
+                          snapshot.origin.kind === "workflow"
+                            ? snapshot.origin.workflow_run_id
+                            : snapshot.origin.transfer_id
+                        }}</strong
+                      >
+                    </div>
+                    <div>
+                      <span>Committed</span>
+                      <strong>{{ formatDate(snapshot.created_at) }}</strong>
+                    </div>
+                    <div>
+                      <span>Revision</span>
+                      <strong :title="snapshot.revision_id">{{
+                        shortHash(snapshot.revision_id)
+                      }}</strong>
+                    </div>
+                    <div class="workspace-version-actions">
+                      <button
+                        class="btn btn-sm btn-primary"
+                        type="button"
+                        :disabled="busy"
+                        @click="download()"
+                      >
+                        <Icon name="download" :size="14" /> Download archive
+                      </button>
+                      <button
+                        class="btn btn-sm btn-ghost text-danger-fg"
+                        type="button"
+                        :disabled="busy || !canDeleteVersion"
+                        :title="versionDeleteHint"
+                        @click="remove(snapshot.version)"
+                      >
+                        <Icon name="trash" :size="14" /> Delete version
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="workspace-run-context">
+                    <label
+                      >Compare with
+                      <select v-model="compareVersion">
+                        <option :value="null">Choose version</option>
+                        <option
+                          v-for="version in store.versions"
+                          :key="version.version"
+                          :value="version.version"
+                        >
+                          v{{ version.version }}
+                        </option>
+                      </select>
+                    </label>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="compareVersion === null || busy"
+                      @click="compare()"
                     >
-                      v{{ version.version }} · {{ formatDate(version.created_at) }}
-                    </option>
-                  </select>
-                </label>
-                <div class="workspace-version-nav">
-                  <button
-                    class="btn btn-sm"
-                    type="button"
-                    :disabled="versionPage === 0 || busy"
-                    @click="changeVersionPage(-1)"
-                  >
-                    <Icon name="chevron-left" :size="14" /> Newer
-                  </button>
-                  <span>History page {{ versionPage + 1 }}</span>
-                  <button
-                    class="btn btn-sm"
-                    type="button"
-                    :disabled="store.versions.length < pageSize || busy"
-                    @click="changeVersionPage(1)"
-                  >
-                    Older <Icon name="chevron-right" :size="14" />
-                  </button>
-                </div>
-              </section>
-
-              <div class="workspace-metrics">
-                <MetricCard label="Entries" :value="snapshot.usage.entries" />
-                <MetricCard label="Logical size" :value="bytes(snapshot.usage.logical_bytes)" />
-                <MetricCard
-                  label="Attempt"
-                  :value="
-                    snapshot.origin.kind === 'workflow' ? snapshot.origin.attempt : 'Imported'
-                  "
-                />
-                <MetricCard label="Parent version" :value="`v${String(snapshot.parent_version)}`" />
-              </div>
-
-              <section class="workspace-run-context">
-                <div>
-                  <span>{{
-                    snapshot.origin.kind === "workflow" ? "Produced by run" : "Import transfer"
-                  }}</span>
-                  <strong
-                    :title="
-                      snapshot.origin.kind === 'workflow'
-                        ? snapshot.origin.workflow_run_id
-                        : snapshot.origin.transfer_id
-                    "
-                    >{{
-                      snapshot.origin.kind === "workflow"
-                        ? snapshot.origin.workflow_run_id
-                        : snapshot.origin.transfer_id
-                    }}</strong
-                  >
-                </div>
-                <div>
-                  <span>Committed</span>
-                  <strong>{{ formatDate(snapshot.created_at) }}</strong>
-                </div>
-                <div>
-                  <span>Revision</span>
-                  <strong :title="snapshot.revision_id">{{
-                    shortHash(snapshot.revision_id)
-                  }}</strong>
-                </div>
-                <div class="workspace-version-actions">
-                  <button
-                    class="btn btn-sm btn-primary"
-                    type="button"
-                    :disabled="busy"
-                    @click="download()"
-                  >
-                    <Icon name="download" :size="14" /> Download archive
-                  </button>
-                  <button
-                    class="btn btn-sm btn-ghost text-danger-fg"
-                    type="button"
-                    :disabled="busy || !canDeleteVersion"
-                    :title="versionDeleteHint"
-                    @click="remove(snapshot.version)"
-                  >
-                    <Icon name="trash" :size="14" /> Delete version
-                  </button>
-                </div>
-              </section>
-
-              <section class="workspace-run-context">
-                <label
-                  >Compare with
-                  <select v-model="compareVersion">
-                    <option :value="null">Choose version</option>
-                    <option
-                      v-for="version in store.versions"
-                      :key="version.version"
-                      :value="version.version"
-                    >
-                      v{{ version.version }}
-                    </option>
-                  </select>
-                </label>
-                <button
-                  class="btn btn-sm"
-                  :disabled="compareVersion === null || busy"
-                  @click="compare()"
-                >
-                  Compare
-                </button>
-                <button
-                  class="btn btn-sm"
-                  :disabled="!store.diff?.next_cursor || busy"
-                  @click="compare(store.diff?.next_cursor ?? null)"
-                >
-                  Next changes
-                </button>
-                <div v-if="store.diff">
-                  <p v-for="(change, index) in store.diff.changes" :key="index">
-                    {{
-                      change.before === null
-                        ? "Added"
-                        : change.after === null
-                          ? "Deleted"
-                          : "Modified"
-                    }}
-                    {{ change.result ? "result: " : "" }}{{ change.path || "/" }}
-                  </p>
-                  <p v-if="!store.diff.changes.length">
-                    {{
-                      store.diff.next_cursor
-                        ? "Continue to remaining changes."
-                        : "No further changes."
-                    }}
-                  </p>
-                </div>
-              </section>
-              <div class="workspace-content">
-                <div class="workspace-tabs" role="tablist" aria-label="Workspace version contents">
-                  <button
-                    id="workspace-files-tab"
-                    type="button"
-                    role="tab"
-                    :aria-selected="activeTab === 'files'"
-                    :class="{ 'is-active': activeTab === 'files' }"
-                    @click="
-                      activeTab = 'files';
-                      store.clearPreview();
-                    "
-                  >
-                    <Icon name="file" :size="15" /> Files
-                    <span>{{ snapshot.usage.entries }}</span>
-                  </button>
-                  <button
-                    id="workspace-results-tab"
-                    type="button"
-                    role="tab"
-                    :aria-selected="activeTab === 'results'"
-                    :class="{ 'is-active': activeTab === 'results' }"
-                    @click="
-                      activeTab = 'results';
-                      store.clearPreview();
-                    "
-                  >
-                    <Icon name="output" :size="15" /> Results
-                    <span>{{ resultCount }}</span>
-                  </button>
-                </div>
-
-                <div
-                  v-if="activeTab === 'files'"
-                  class="workspace-tab-panel"
-                  role="tabpanel"
-                  aria-labelledby="workspace-files-tab"
-                >
-                  <WorkspaceFileBrowser
-                    :key="snapshot.revision_id"
-                    :directories="store.directories"
-                    :path="directoryPath"
-                    :busy="busy"
-                    @open="openDirectory"
-                    @expand="expandDirectory"
-                    @collapse="store.collapseDirectory"
-                    @preview="preview"
-                    @download="download"
-                  />
-                  <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
-                </div>
-
-                <div
-                  v-else
-                  class="workspace-tab-panel"
-                  role="tabpanel"
-                  aria-labelledby="workspace-results-tab"
-                >
-                  <EmptyState
-                    v-if="resultCount === 0"
-                    compact
-                    icon="output"
-                    title="No saved results"
-                    description="This version only contains files."
-                  />
-                  <div
-                    v-for="result in store.results?.entries ?? []"
-                    :key="result.name"
-                    class="workspace-file-toolbar"
-                  >
-                    <span>{{ result.name }} · {{ bytes(result.size_bytes) }}</span>
-                    <button class="btn btn-sm" :disabled="busy" @click="preview(result.name, true)">
-                      Preview
+                      Compare
                     </button>
                     <button
                       class="btn btn-sm"
-                      :disabled="busy"
-                      @click="downloadResult(result.name)"
+                      :disabled="!store.diff?.next_cursor || busy"
+                      @click="compare(store.diff?.next_cursor ?? null)"
                     >
-                      Download
+                      Next changes
+                    </button>
+                    <div v-if="store.diff">
+                      <p v-for="(change, index) in store.diff.changes" :key="index">
+                        {{
+                          change.before === null
+                            ? "Added"
+                            : change.after === null
+                              ? "Deleted"
+                              : "Modified"
+                        }}
+                        {{ change.result ? "result: " : "" }}{{ change.path || "/" }}
+                      </p>
+                      <p v-if="!store.diff.changes.length">
+                        {{
+                          store.diff.next_cursor
+                            ? "Continue to remaining changes."
+                            : "No further changes."
+                        }}
+                      </p>
+                    </div>
+                  </section>
+                </div>
+              </template>
+              <template #second>
+                <div class="workspace-content">
+                  <div
+                    class="workspace-tabs"
+                    role="tablist"
+                    aria-label="Workspace version contents"
+                  >
+                    <button
+                      id="workspace-files-tab"
+                      type="button"
+                      role="tab"
+                      :aria-selected="activeTab === 'files'"
+                      :class="{ 'is-active': activeTab === 'files' }"
+                      @click="
+                        activeTab = 'files';
+                        store.clearPreview();
+                      "
+                    >
+                      <Icon name="file" :size="15" /> Files
+                      <span>{{ snapshot.usage.entries }}</span>
+                    </button>
+                    <button
+                      id="workspace-results-tab"
+                      type="button"
+                      role="tab"
+                      :aria-selected="activeTab === 'results'"
+                      :class="{ 'is-active': activeTab === 'results' }"
+                      @click="
+                        activeTab = 'results';
+                        store.clearPreview();
+                      "
+                    >
+                      <Icon name="output" :size="15" /> Results
+                      <span>{{ resultCount }}</span>
                     </button>
                   </div>
-                  <button
-                    class="btn btn-sm"
-                    :disabled="!store.results?.next_cursor || busy"
-                    @click="loadResults(store.results?.next_cursor ?? null)"
+
+                  <div
+                    v-if="activeTab === 'files'"
+                    class="workspace-tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="workspace-files-tab"
                   >
-                    Next results
-                  </button>
-                  <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
+                    <WorkspaceFileBrowser
+                      :key="snapshot.revision_id"
+                      :directories="store.directories"
+                      :path="directoryPath"
+                      :busy="busy"
+                      @open="openDirectory"
+                      @expand="expandDirectory"
+                      @collapse="store.collapseDirectory"
+                      @preview="preview"
+                      @download="download"
+                    />
+                    <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
+                  </div>
+
+                  <div
+                    v-else
+                    class="workspace-tab-panel"
+                    role="tabpanel"
+                    aria-labelledby="workspace-results-tab"
+                  >
+                    <EmptyState
+                      v-if="resultCount === 0"
+                      compact
+                      icon="output"
+                      title="No saved results"
+                      description="This version only contains files."
+                    />
+                    <div
+                      v-for="result in store.results?.entries ?? []"
+                      :key="result.name"
+                      class="workspace-file-toolbar"
+                    >
+                      <span>{{ result.name }} · {{ bytes(result.size_bytes) }}</span>
+                      <button
+                        class="btn btn-sm"
+                        :disabled="busy"
+                        @click="preview(result.name, true)"
+                      >
+                        Preview
+                      </button>
+                      <button
+                        class="btn btn-sm"
+                        :disabled="busy"
+                        @click="downloadResult(result.name)"
+                      >
+                        Download
+                      </button>
+                    </div>
+                    <button
+                      class="btn btn-sm"
+                      :disabled="!store.results?.next_cursor || busy"
+                      @click="loadResults(store.results?.next_cursor ?? null)"
+                    >
+                      Next results
+                    </button>
+                    <pre v-if="store.preview" class="workspace-results">{{ store.preview }}</pre>
+                  </div>
                 </div>
-              </div>
-            </template>
+              </template>
+            </SplitPane>
 
             <EmptyState
               v-else
@@ -946,7 +971,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .workspace-hero {
@@ -1027,6 +1052,20 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 
+.workspace-version-split {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-version-summary {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}
+
 .workspace-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1072,7 +1111,11 @@ onBeforeUnmount(() => {
 }
 
 .workspace-content {
+  display: flex;
+  height: 100%;
   min-height: 230px;
+  min-width: 0;
+  flex-direction: column;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -1121,7 +1164,14 @@ onBeforeUnmount(() => {
 }
 
 .workspace-tab-panel {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px;
+  overflow: hidden;
 }
 
 .workspace-file-toolbar {
@@ -1284,6 +1334,11 @@ onBeforeUnmount(() => {
   }
 
   .workspace-detail {
+    overflow: visible;
+  }
+
+  .workspace-version-summary,
+  .workspace-tab-panel {
     overflow: visible;
   }
 

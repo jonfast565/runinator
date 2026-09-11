@@ -246,11 +246,23 @@ onBeforeUnmount(() => observer?.disconnect());
 </script>
 <style scoped>
 .directory-pane {
+  display: flex;
+  min-height: 0;
   width: 100%;
   min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
 }
 .workspace-file-browser {
+  display: flex;
+  min-height: 0;
   min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+.workspace-file-browser > :deep(.split-pane) {
+  min-height: 0;
+  flex: 1 1 auto;
 }
 .browser-toolbar {
   display: flex;
@@ -280,7 +292,8 @@ onBeforeUnmount(() => observer?.disconnect());
   padding: 8px;
 }
 .directory-scroll {
-  height: 420px;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
 }
 table {
