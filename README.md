@@ -14,6 +14,7 @@ Then use the task-oriented guides below. The previous single-file README has bee
 
 - [Local development and runtime](docs/help/local-development.md) — prerequisites, local startup, authentication, runtime topology, transports, dashboards, and the cross-platform local runner.
 - [Workflow authoring and import](docs/help/workflow-authoring.md) — REXRAP packs, testing and simulation, control flow, pipelines, correlated orchestration, ingress adapters, notifications, schedules, and settings.
+- [AI missions](docs/help/missions.md) — set up Claude Code credentials and start, inspect, steer, and troubleshoot bounded coding and research/report loops.
 - [Console and MCP](docs/help/console-and-mcp.md) — terminal and browser consoles plus Model Context Protocol integration.
 - [Packaged functions](docs/help/packaged-functions.md) — package, publish, invoke, and operate immutable function code.
 - [Observability](docs/help/observability.md) — logs, metrics, traces, local telemetry, and incident records.

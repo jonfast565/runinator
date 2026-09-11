@@ -10,6 +10,8 @@ Use these task-oriented guides in place of the former monolithic repository READ
   and settings. The crate docs split out the [language reference](../../runinator-rexrap/docs/language-reference.md),
   [runtime model](../../runinator-rexrap/docs/runtime.md), and
   [CLI/pack workflow](../../runinator-rexrap/docs/tooling.md).
+- [AI missions](missions.md) — install the mission recipes and Claude execution profile, then
+  start, inspect, steer, and troubleshoot bounded coding and research/report loops.
 - [Console and MCP](console-and-mcp.md) — the terminal and browser consoles, command completion, session behavior, and MCP integration.
 - [Packaged functions](packaged-functions.md) — immutable function packages, workflow and HTTP invocation, pack integration, execution, and retention.
 - [Observability](observability.md) — logs, metrics, traces, the local telemetry stack, Kubernetes observability, dead letters, and audit logs.

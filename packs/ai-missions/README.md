@@ -1,5 +1,12 @@
 # Bounded Claude Code missions
 
+For a first-run setup checklist and an idempotent installation helper, see
+[`docs/help/missions.md`](../../docs/help/missions.md) or run:
+
+```bash
+bash scripts/setup-ai-missions.sh --help
+```
+
 This pack provides two durable, workspace-bound AI loops:
 
 - `runinator.missions.coding_mission`: implement → independent review → verification → handoff.
