@@ -6,7 +6,7 @@ use runinator_models::{
 use serde::{Deserialize, Serialize};
 
 use runinator_rexrap::{
-    analysis::{GRAMMAR_KEYWORDS, lower_type_with, resolve_named_types},
+    analysis::{lower_type_with, resolve_named_types},
     ast::{Document, FnBody, FunctionDef},
     parse_document,
 };
@@ -16,6 +16,7 @@ use crate::completion::{
     root_type, type_fields, workflow_context_type,
 };
 use crate::cursor::{Cursor, clamp_to_char_boundary};
+use crate::documentation::{keyword_documentation, type_documentation, type_syntax};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RexRapHoverRequest {
@@ -54,7 +55,7 @@ pub fn hover_source(request: RexRapHoverRequest) -> Option<RexRapHoverResponse> 
         .or_else(|| {
             document
                 .as_ref()
-                .and_then(|document| type_hover(document, word))
+                .and_then(|document| type_hover(&source, document, word))
         })
         .or_else(|| {
             document
@@ -300,7 +301,7 @@ fn typed_path_hover(
     Some(field_response(current, &field, path.ranges[index]))
 }
 
-fn type_hover(document: &Document, word: WordAt<'_>) -> Option<RexRapHoverResponse> {
+fn type_hover(source: &str, document: &Document, word: WordAt<'_>) -> Option<RexRapHoverResponse> {
     let type_decls = document
         .workflows
         .iter()
@@ -314,17 +315,56 @@ fn type_hover(document: &Document, word: WordAt<'_>) -> Option<RexRapHoverRespon
             title: word.text.into(),
             kind: "type".into(),
             detail: Some(render_type(ty)),
-            documentation: None,
+            documentation: Some("User-defined type declared in this workflow.".into()),
         });
     }
-    primitive_type(word.text).map(|ty| RexRapHoverResponse {
-        range_start_byte: word.start,
-        range_end_byte: word.end,
-        title: word.text.into(),
-        kind: "type".into(),
-        detail: Some(render_type(&ty)),
-        documentation: Some("Built-in REXRAP type.".into()),
-    })
+    if let Some(ty) = primitive_type(word.text) {
+        return Some(RexRapHoverResponse {
+            range_start_byte: word.start,
+            range_end_byte: word.end,
+            title: word.text.into(),
+            kind: "type".into(),
+            detail: Some(render_type(&ty)),
+            documentation: type_documentation(word.text).map(str::to_owned),
+        });
+    }
+    type_syntax(word.text)
+        .filter(|_| is_type_constructor(source, word))
+        .map(|syntax| RexRapHoverResponse {
+            range_start_byte: word.start,
+            range_end_byte: word.end,
+            title: word.text.into(),
+            kind: "type".into(),
+            detail: Some(syntax.into()),
+            documentation: type_documentation(word.text).map(str::to_owned),
+        })
+}
+
+fn is_type_constructor(source: &str, word: WordAt<'_>) -> bool {
+    let after = source[word.end..].trim_start();
+    match word.text {
+        "enum" => after.starts_with('['),
+        "function" | "map" => after.starts_with('<'),
+        "range" => {
+            after.starts_with("..")
+                || after
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character == '-' || character.is_ascii_digit())
+        }
+        "task" => after.starts_with('[') || is_type_position_before(source, word.start),
+        _ => false,
+    }
+}
+
+fn is_type_position_before(source: &str, start: usize) -> bool {
+    let before = source[..start].trim_end();
+    before.ends_with(':')
+        || before.ends_with('=')
+        || before.ends_with('<')
+        || before.ends_with('|')
+        || before.ends_with('[')
+        || before.ends_with("returns")
 }
 
 fn function_hover(document: &Document, word: WordAt<'_>) -> Option<RexRapHoverResponse> {
@@ -412,95 +452,7 @@ fn bare_symbol_hover(
 }
 
 fn keyword_hover(word: WordAt<'_>) -> Option<RexRapHoverResponse> {
-    let docs = match word.text {
-        "workflow" => "Declares a workflow and its body.",
-        "pipeline" => "Declares a static phase graph composed from member workflows.",
-        "ingress" => {
-            "Declares correlation scope and lifecycle-aware event routes. Matching dispatch routes select named orchestration intents."
-        }
-        "orchestration" => {
-            "Declares immutable correlated-execution policy: intents, failure budgets, result mappings, and workspace requirements."
-        }
-        "intent" => {
-            "Maps an author-defined name and unique priority to a generic control effect such as terminate, suspend, resume, supersede, observe, or signal."
-        }
-        "budget" => {
-            "Sets an attempt limit and exhaustion behavior for an arbitrary failure-class string."
-        }
-        "phase" => {
-            "Configures one pipeline member's result mappings and optional workspace policy."
-        }
-        "effect" => "Selects the generic control effect produced by an orchestration intent.",
-        "coalesce" => {
-            "Accumulates matching intent events until the configured durable wake deadline."
-        }
-        "dispatch" => "Routes a matching ingress event to a named orchestration intent.",
-        "subject_revision" | "revision" => {
-            "Maps or selects the provider-neutral subject revision used to reject stale events and results."
-        }
-        "resources" | "evidence" | "failure_class" => {
-            "Maps a member result field into durable orchestration state."
-        }
-        "workspace" => {
-            "Requests a durable opaque workspace lease for this phase; only workspace-affined effects receive its resolved local path."
-        }
-        "params" => "Declares workflow input parameters.",
-        "type" => "Declares a reusable named type.",
-        "let" => {
-            "Binds a step's result. A plain call joins inline; an `async` call yields a \
-                  `task[T]` to `await`."
-        }
-        "async" => {
-            "Schedules this call as a task instead of joining it inline. Asyncness is a \
-                    property of the call site, never of the callee."
-        }
-        "await" => "Joins a `task[T]` handle and yields its result.",
-        "detach" => "Drops a task handle without joining it.",
-        "do" => "The runtime block: the statements a run executes.",
-        "routes" => "The statement's outgoing edges, each arm handing control on with `continue`.",
-        "join" => "A named continuation, entered only by an explicit `continue <name>`.",
-        "compute" => "A pure computation block, folded by the compute VM.",
-        "if" => "Runs a branch when its condition is true.",
-        "for" | "map" => "Iterates over a collection.",
-        "while" | "until" => "Repeats a body while the condition holds.",
-        "match" => "Selects a branch by equality or predicate.",
-        "parallel" => "Runs branches concurrently and joins them.",
-        "race" => "Runs branches concurrently and continues with a winner policy.",
-        "try" => "Runs a body with optional catch and finally branches.",
-        "subflow" => "Runs a workflow as a subflow.",
-        "wait" => "Parks the workflow until a duration or state is ready.",
-        "approve" => "Parks the workflow for human approval.",
-        "gate" => "Parks the workflow behind an external or condition gate.",
-        "on_timeout" => "Selects whether an expired gate fails or continues.",
-        "signal" => "Waits for an external signal.",
-        "interrupt" => {
-            "Declares a handler region that runs when the named source fires, suspending the run's \
-             thread of control until a `resume` inside it hands control back. Sources: `wake` (a \
-             wait deadline elapsed), `timeout` (the node's deadline is about to blow), `retry` \
-             (before a re-dispatch), `failure` (a node run settled failed), `resolved` (a signal, \
-             approval or input landed), `child` (a subflow child reached a terminal), `external` \
-             (POST /workflow_runs/{id}/interrupts), `orphan_signal` (a signal nothing was waiting \
-             for)."
-        }
-        "resume" => {
-            "Ends an interrupt handler and returns control to the interrupted thread: bare resumes \
-             at that node, `next` takes its success edge, `restart` re-enters it, `fail` takes its \
-             on_failure edge."
-        }
-        "emit" => "Emits workflow output data (shorthand for an output node with no artifacts).",
-        "output" => "Declares run-level artifacts and/or emits an event from an output block.",
-        "yield" => "Returns a value from a control region.",
-        "trigger" => "Declares an import-managed workflow trigger.",
-        "on_success" | "on_failure" | "on_complete" => {
-            "Chains another workflow to start when this run reaches that terminal state."
-        }
-        "watch" => "Declares a workflow-level cancellation guard.",
-        "fn" => "Declares a reusable compute function.",
-        "import" => "Imports a namespace or standard-library module.",
-        "alias" => "Declares a reusable argument object.",
-        _ if GRAMMAR_KEYWORDS.binary_search(&word.text).is_ok() => "REXRAP keyword.",
-        _ => return None,
-    };
+    let docs = keyword_documentation(word.text)?;
     Some(RexRapHoverResponse {
         range_start_byte: word.start,
         range_end_byte: word.end,

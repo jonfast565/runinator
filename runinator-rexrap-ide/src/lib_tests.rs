@@ -12,6 +12,11 @@ use crate::{
     RexRapCompletionRequest, RexRapCompletionResponse, RexRapHoverRequest, RexRapHoverResponse,
     complete_source, hover_source,
 };
+use runinator_rexrap::analysis::GRAMMAR_KEYWORDS;
+
+use crate::documentation::{
+    TYPE_COMPLETION_WORDS, keyword_documentation, type_documentation, type_syntax,
+};
 
 fn completion_labels(src: &str, marker: &str) -> Vec<String> {
     completion_labels_with_providers(src, marker, completion_providers())
@@ -89,6 +94,104 @@ fn completion_providers() -> Vec<ProviderMetadata> {
             metadata: ProviderRuntimeMetadata::default(),
         },
     ]
+}
+
+#[test]
+fn documents_every_grammar_keyword() {
+    let undocumented = GRAMMAR_KEYWORDS
+        .iter()
+        .copied()
+        .filter(|keyword| keyword_documentation(keyword).is_none())
+        .collect::<Vec<_>>();
+    assert!(
+        undocumented.is_empty(),
+        "undocumented keywords: {undocumented:?}"
+    );
+}
+
+#[test]
+fn documents_every_type_completion() {
+    let undocumented = TYPE_COMPLETION_WORDS
+        .iter()
+        .copied()
+        .filter(|type_name| type_documentation(type_name).is_none())
+        .collect::<Vec<_>>();
+    assert!(
+        undocumented.is_empty(),
+        "undocumented types: {undocumented:?}"
+    );
+}
+
+#[test]
+fn keyword_and_type_completions_include_documentation() {
+    let response = complete_source(RexRapCompletionRequest {
+        source: "workflow \"Docs\" { do {  } }".into(),
+        cursor_byte: 24,
+        providers: Vec::new(),
+        settings: Vec::new(),
+    });
+    for label in ["workflow", "orchestration", "string", "map", "task"] {
+        let item = response
+            .items
+            .iter()
+            .find(|item| item.label == label)
+            .unwrap_or_else(|| panic!("missing completion for {label}"));
+        assert!(
+            item.documentation.is_some(),
+            "missing completion documentation for {label}"
+        );
+    }
+}
+
+#[test]
+fn hovers_type_constructor_documentation_in_type_positions() {
+    let source = r#"
+        workflow "Types" {
+            params {
+                values: map<string>,
+                pending: task[string],
+                mode: enum["fast", "safe"],
+                callback: function<(string) -> string>,
+                count: integer range 0..10,
+            }
+            do {}
+        }
+    "#;
+    for type_name in ["map", "task", "enum", "function", "range"] {
+        let cursor_byte = source.find(type_name).expect("type constructor");
+        let hover = hover_source(RexRapHoverRequest {
+            source: source.into(),
+            cursor_byte,
+            providers: Vec::new(),
+            settings: Vec::new(),
+        })
+        .unwrap_or_else(|| panic!("missing hover for {type_name}"));
+        assert_eq!(hover.kind, "type");
+        assert_eq!(
+            hover.documentation.as_deref(),
+            type_documentation(type_name)
+        );
+        assert_eq!(hover.detail.as_deref(), type_syntax(type_name));
+    }
+}
+
+#[test]
+fn hovers_user_defined_type_documentation() {
+    let hover = hover_at(
+        r#"
+        workflow "Types" {
+            params { ticket: <>Ticket }
+            type Ticket { key: string }
+            do {}
+        }
+    "#,
+        "<>",
+    );
+    assert_eq!(hover.kind, "type");
+    assert_eq!(
+        hover.documentation.as_deref(),
+        Some("User-defined type declared in this workflow.")
+    );
 }
 
 #[test]

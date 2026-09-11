@@ -25,6 +25,10 @@ syntactic: registered provider actions with their parameter and result types, an
 `config.`/`secret.` slots the settings store knows about. With both empty, completion still
 offers language constructs, `std.*` intrinsics, node labels, and run-context fields.
 
+Every grammar keyword and built-in type has a concise explanation in both completion detail and
+hover. The editor test suite compares that catalog with the grammar-derived vocabulary, so adding a
+fixed language word also requires its author-facing documentation.
+
 ## Consumers
 
 | Consumer | Surface |

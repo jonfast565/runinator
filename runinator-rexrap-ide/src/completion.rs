@@ -15,6 +15,7 @@ use runinator_rexrap::{
 };
 
 use crate::cursor::{Cursor, clamp_to_char_boundary};
+use crate::documentation::{TYPE_COMPLETION_WORDS, keyword_documentation, type_documentation};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RexRapCompletionRequest {
@@ -837,7 +838,7 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
                 label: (*label).into(),
                 kind: (*kind).into(),
                 detail: Some((*detail).into()),
-                documentation: None,
+                documentation: completion_documentation(label),
                 insert_text: (*insert_text).into(),
                 is_snippet: *is_snippet,
             },
@@ -850,7 +851,7 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
                 label: (*keyword).into(),
                 kind: "keyword".into(),
                 detail: Some("REXRAP statement".into()),
-                documentation: None,
+                documentation: keyword_documentation(keyword).map(str::to_owned),
                 insert_text: (*keyword).into(),
                 is_snippet: false,
             }),
@@ -862,12 +863,45 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
                 label: (*keyword).into(),
                 kind: "keyword".into(),
                 detail: Some("pipeline or orchestration keyword".into()),
-                documentation: None,
+                documentation: keyword_documentation(keyword).map(str::to_owned),
                 insert_text: (*keyword).into(),
                 is_snippet: false,
             }),
     );
+    items.extend(
+        TYPE_COMPLETION_WORDS
+            .iter()
+            .map(|type_name| RexRapCompletionItem {
+                label: (*type_name).into(),
+                kind: "type".into(),
+                detail: Some("REXRAP type".into()),
+                documentation: type_documentation(type_name).map(str::to_owned),
+                insert_text: (*type_name).into(),
+                is_snippet: false,
+            }),
+    );
     items
+}
+
+fn completion_documentation(label: &str) -> Option<String> {
+    keyword_documentation(label)
+        .or(match label {
+            "gate condition" => Some("Parks the workflow until a condition becomes true or its timeout policy applies."),
+            "import std" => Some("Imports a standard-library module, optionally under a local alias."),
+            "ingress dispatch" => Some("Routes a matching active ingress event to a named orchestration intent."),
+            "ingress start" => Some("Starts a pipeline when an unbound ingress event matches."),
+            "phase workspace" => Some("Requests a durable workspace for a pipeline member phase."),
+            "pipeline join" => Some("Waits for selected upstream pipeline members before continuing."),
+            "pipeline link" => Some("Connects two pipeline members when the selected source outcome occurs."),
+            "pipeline trigger schedule" => Some("Starts a pipeline from a structured schedule declaration."),
+            "pipeline workflow" => Some("Adds a workflow member to a pipeline declaration."),
+            "subflow-detached" => Some("Starts a child workflow without waiting for its result."),
+            "task fn" => Some("Declares runtime work that is inlined at each call site and can be called with `async`."),
+            "trigger cron" => Some("Starts a workflow from a cron expression."),
+            "trigger on_success" => Some("Starts another workflow after a successful terminal result."),
+            _ => None,
+        })
+        .map(str::to_owned)
 }
 
 fn complete_actions(

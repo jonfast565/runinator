@@ -9,6 +9,7 @@
 
 mod completion;
 mod cursor;
+mod documentation;
 mod hover;
 
 #[cfg(test)]
