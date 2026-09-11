@@ -7,8 +7,6 @@
         "--mcp",
         "--port",
         "8081",
-        "--namespace",
-        "runinator",
         "--"
       ],
       "env": {}
