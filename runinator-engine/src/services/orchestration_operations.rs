@@ -17,10 +17,13 @@ use runinator_models::{
     pipelines::Pipeline,
     value::Value,
 };
-use runinator_store::roles::{
-    DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCommand,
-    NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingUpdate,
-    OrchestrationStore, WorkflowVmStore, WorkspaceStore,
+use runinator_store::{
+    RuntimeStore,
+    roles::{
+        DefinitionStore, ExternalOperationUpdate, IngressStore, NewOrchestrationCommand,
+        NewOrchestrationCorrelationAlias, NewOrchestrationEpoch, OrchestrationBindingFilter,
+        OrchestrationBindingUpdate, OrchestrationStore, WorkflowVmStore, WorkspaceStore,
+    },
 };
 use uuid::Uuid;
 
@@ -105,11 +108,10 @@ impl<T: OrchestrationStore> OrchestrationOperations<T> {
     pub async fn list_bindings(
         &self,
         org_id: Option<Uuid>,
-        status: Option<OrchestrationStatus>,
-        limit: i64,
+        filter: OrchestrationBindingFilter,
     ) -> Result<Vec<OrchestrationBinding>, SendableError> {
         self.store
-            .fetch_orchestration_bindings(org_id, status, limit)
+            .fetch_orchestration_bindings(org_id, filter)
             .await
     }
 
@@ -217,6 +219,75 @@ impl<T: OrchestrationStore> OrchestrationOperations<T> {
     pub async fn adapter(&self, id: Uuid) -> Result<Option<AdapterDefinition>, SendableError> {
         self.store.fetch_orchestration_adapter(id).await
     }
+}
+
+impl<T: OrchestrationStore + RuntimeStore + WorkflowVmStore> OrchestrationOperations<T> {
+    /// Resolve the one active harnessed Claude effect owned by the binding's current epoch.
+    pub async fn active_mission_harness_effect(
+        &self,
+        binding: &runinator_models::orchestration::OrchestrationBinding,
+    ) -> Result<Option<runinator_models::workflow_vm::WorkflowEffect>, SendableError> {
+        if !binding.scope.starts_with("mission.") || binding.status.is_terminal() {
+            return Ok(None);
+        }
+        let Some(pipeline_run_id) = self
+            .store
+            .fetch_orchestration_epochs(binding.id)
+            .await?
+            .into_iter()
+            .find(|epoch| epoch.epoch == binding.current_epoch)
+            .and_then(|epoch| epoch.pipeline_run_id)
+        else {
+            return Ok(None);
+        };
+        let mut attempts = self
+            .store
+            .fetch_pipeline_member_attempts(pipeline_run_id)
+            .await?;
+        attempts.sort_by_key(|attempt| std::cmp::Reverse(attempt.attempt));
+        for workflow_run_id in attempts
+            .into_iter()
+            .filter(|attempt| {
+                !attempt.status.is_terminal()
+                    && binding.current_phase.as_deref() == Some(attempt.member_key.as_str())
+            })
+            .filter_map(|attempt| attempt.workflow_run_id)
+        {
+            let effect = self
+                .store
+                .fetch_workflow_effects(workflow_run_id)
+                .await?
+                .into_iter()
+                .find(is_active_harnessed_claude_effect);
+            if effect.is_some() {
+                return Ok(effect);
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn is_active_harnessed_claude_effect(
+    effect: &runinator_models::workflow_vm::WorkflowEffect,
+) -> bool {
+    if !matches!(
+        effect.status,
+        runinator_models::workflow_vm::WorkflowEffectStatus::Running
+            | runinator_models::workflow_vm::WorkflowEffectStatus::InputRequired
+    ) {
+        return false;
+    }
+    matches!(
+        &effect.request,
+        runinator_models::workflow_vm::WorkflowEffectRequest::Action {
+            provider,
+            function,
+            input,
+            ..
+        } if provider == "ai-command"
+            && function == "claude_code"
+            && input.get("harnessed").and_then(Value::as_bool) == Some(true)
+    )
 }
 
 impl<T: WorkspaceStore> OrchestrationOperations<T> {
@@ -1119,6 +1190,57 @@ mod tests {
         assert!(!signal_revision_matches(None, &Value::Null, "/revision"));
         assert!(!signal_revision_matches(Some("r1"), &payload, "/revision"));
         assert!(!signal_revision_matches(Some("r2"), &payload, "/missing"));
+    }
+
+    #[test]
+    fn mission_steering_targets_only_an_active_harnessed_claude_effect() {
+        use runinator_models::workflow_vm::{
+            WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffect, WorkflowEffectRequest,
+            WorkflowEffectStatus,
+        };
+
+        let now = Utc::now().timestamp();
+        let mut effect = WorkflowEffect {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            id: Uuid::now_v7(),
+            workflow_run_id: Uuid::now_v7(),
+            continuation_id: Uuid::now_v7(),
+            sequence: 1,
+            attempt: 0,
+            node_id: Some("claude_implementation".into()),
+            timeline_category: Default::default(),
+            request: WorkflowEffectRequest::Action {
+                provider: "ai-command".into(),
+                function: "claude_code".into(),
+                input: runinator_models::json!({ "harnessed": true }),
+                timeout_seconds: Some(60),
+                retry: Default::default(),
+                tags: Vec::new(),
+                required_labels: Default::default(),
+                workspace_affinity: None,
+                execution_profile: None,
+                idempotency_key: None,
+                function_binding: None,
+            },
+            status: WorkflowEffectStatus::Running,
+            current_executor_replica_id: Some(Uuid::now_v7()),
+            last_executor_replica_id: None,
+            result: None,
+            message: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: None,
+        };
+        assert!(is_active_harnessed_claude_effect(&effect));
+
+        effect.status = WorkflowEffectStatus::Succeeded;
+        assert!(!is_active_harnessed_claude_effect(&effect));
+        effect.status = WorkflowEffectStatus::Running;
+        let WorkflowEffectRequest::Action { input, .. } = &mut effect.request else {
+            unreachable!();
+        };
+        *input = runinator_models::json!({ "harnessed": false });
+        assert!(!is_active_harnessed_claude_effect(&effect));
     }
 
     #[tokio::test]

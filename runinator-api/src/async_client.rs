@@ -80,6 +80,17 @@ use tower::{service_fn, ServiceExt};
 use tower_resilience_circuitbreaker::{CircuitBreakerError, CircuitBreakerLayer, FnClassifier};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OrchestrationListQuery<'a> {
+    pub status: Option<&'a str>,
+    pub pipeline_id: Option<Uuid>,
+    pub adapter_id: Option<Uuid>,
+    pub scope: Option<&'a str>,
+    pub correlation_key: Option<&'a str>,
+    pub limit: Option<i64>,
+    pub scope_prefix: Option<&'a str>,
+}
+
 use crate::{
     error::{ApiError, Result},
     locator::ServiceLocator,
@@ -403,39 +414,44 @@ where
         scope: Option<&str>,
         correlation_key: Option<&str>,
     ) -> Result<Vec<OrchestrationBinding>> {
-        self.fetch_orchestrations_filtered(status, pipeline_id, None, scope, correlation_key, None)
-            .await
+        self.fetch_orchestrations_filtered(OrchestrationListQuery {
+            status,
+            pipeline_id,
+            adapter_id: None,
+            scope,
+            correlation_key,
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn fetch_orchestrations_filtered(
         &self,
-        status: Option<&str>,
-        pipeline_id: Option<Uuid>,
-        adapter_id: Option<Uuid>,
-        scope: Option<&str>,
-        correlation_key: Option<&str>,
-        limit: Option<i64>,
+        filter: OrchestrationListQuery<'_>,
     ) -> Result<Vec<OrchestrationBinding>> {
         let mut url = self.build_url("/orchestrations").await?;
         {
             let mut query = url.query_pairs_mut();
-            if let Some(status) = status {
+            if let Some(status) = filter.status {
                 query.append_pair("status", status);
             }
-            if let Some(pipeline_id) = pipeline_id {
+            if let Some(pipeline_id) = filter.pipeline_id {
                 query.append_pair("pipeline_id", &pipeline_id.to_string());
             }
-            if let Some(adapter_id) = adapter_id {
+            if let Some(adapter_id) = filter.adapter_id {
                 query.append_pair("adapter_id", &adapter_id.to_string());
             }
-            if let Some(scope) = scope {
+            if let Some(scope) = filter.scope {
                 query.append_pair("scope", scope);
             }
-            if let Some(key) = correlation_key {
+            if let Some(key) = filter.correlation_key {
                 query.append_pair("correlation_key", key);
             }
-            if let Some(limit) = limit {
+            if let Some(limit) = filter.limit {
                 query.append_pair("limit", &limit.to_string());
+            }
+            if let Some(scope_prefix) = filter.scope_prefix {
+                query.append_pair("scope_prefix", scope_prefix);
             }
         }
         let response = self.send(self.http_get(url.clone())).await?;
@@ -540,6 +556,20 @@ where
                 "payload": payload,
                 "reason": reason,
                 "idempotency_key": idempotency_key,
+            })))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn steer_mission(&self, id: Uuid, message: &str) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/orchestrations/{id}/steer"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&json!({
+                "type": "input",
+                "data": message,
             })))
             .await?;
         let response = Self::handle_response(url, response).await?;

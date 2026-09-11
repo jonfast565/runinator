@@ -467,6 +467,7 @@ async fn storage_cleanup_loop_delegates_collection_and_orphan_cleanup() {
             "cleanup_effect_orphans:None",
             "cleanup_native_orphans:None",
             "collect_workspaces",
+            "cleanup_deleted_snapshots",
         ]
     );
 }

@@ -401,6 +401,33 @@ fn pipeline_entry_members(pipeline: &Pipeline) -> Vec<&PipelineMember> {
         .collect()
 }
 
+/// resolve the members that belong to this run. targeted orchestration epochs start from one
+/// member, so unrelated pipeline members must not keep that epoch open forever.
+fn reachable_member_keys(pipeline: &Pipeline, start_member: Option<&str>) -> HashSet<String> {
+    let mut pending = match start_member {
+        Some(member) => vec![member.to_string()],
+        None => pipeline_entry_members(pipeline)
+            .into_iter()
+            .map(|member| member.key.clone())
+            .collect(),
+    };
+    let mut reachable = HashSet::new();
+    while let Some(member) = pending.pop() {
+        if !reachable.insert(member.clone()) {
+            continue;
+        }
+        pending.extend(
+            pipeline
+                .graph
+                .links
+                .iter()
+                .filter(|link| link.enabled && link.from == member)
+                .map(|link| link.to.clone()),
+        );
+    }
+    reachable
+}
+
 /// Start a single member as an atomically bootstrapped VM workflow run.
 async fn start_member_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
@@ -708,12 +735,19 @@ async fn settle_pipeline_run_if_complete<T: RuntimeStore + WorkflowVmStore>(
             }
             map
         });
-    if latest.len() < pipeline.graph.members.len()
-        || latest.values().any(|attempt| !attempt.status.is_terminal())
-    {
+    let required = reachable_member_keys(pipeline, pipeline_run.start_member.as_deref());
+    if required.iter().any(|member| {
+        latest
+            .get(member.as_str())
+            .is_none_or(|attempt| !attempt.status.is_terminal())
+    }) {
         return Ok(());
     }
-    let any_failed = latest.values().any(|attempt| {
+    let required_attempts = required
+        .iter()
+        .filter_map(|member| latest.get(member.as_str()).copied())
+        .collect::<Vec<_>>();
+    let any_failed = required_attempts.iter().any(|attempt| {
         matches!(
             attempt.status,
             PipelineMemberAttemptStatus::Failed | PipelineMemberAttemptStatus::TimedOut
@@ -724,8 +758,8 @@ async fn settle_pipeline_run_if_complete<T: RuntimeStore + WorkflowVmStore>(
             .find(|member| member.key == attempt.member_key)
             .is_none_or(|member| member.failure_mode != PipelineMemberFailureMode::SilentlyContinue)
     });
-    let any_canceled = latest
-        .values()
+    let any_canceled = required_attempts
+        .iter()
         .any(|attempt| attempt.status == PipelineMemberAttemptStatus::Canceled);
     let (status, message) = if any_failed {
         (
@@ -1200,108 +1234,5 @@ fn trigger_source_id(trigger: &PipelineTrigger, field: &str) -> Option<Uuid> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn attempt(key: &str, result: Value) -> PipelineMemberAttempt {
-        PipelineMemberAttempt {
-            id: Uuid::now_v7(),
-            pipeline_run_id: Uuid::now_v7(),
-            member_key: key.into(),
-            workflow_id: Uuid::now_v7(),
-            attempt: 1,
-            workflow_run_id: Some(Uuid::now_v7()),
-            status: PipelineMemberAttemptStatus::Succeeded,
-            parameters: Value::Null,
-            result,
-            message: None,
-            created_at: Utc::now(),
-            started_at: Some(Utc::now()),
-            finished_at: Some(Utc::now()),
-        }
-    }
-
-    #[test]
-    fn pipeline_mapping_overlays_params_and_resolves_source_and_members() {
-        let source = attempt(
-            "Build",
-            runinator_models::json!({ "result": { "artifact": "app.tgz" } }),
-        );
-        let linux = attempt(
-            "Linux Build",
-            runinator_models::json!({ "result": { "sha": "abc" } }),
-        );
-        let latest = HashMap::from([("Build", &source), ("Linux Build", &linux)]);
-        let mapping = runinator_models::json!({
-            "artifact": { "$ref": { "node": "source", "output": ["result", "artifact"] } },
-            "linux": { "$ref": { "node": "members", "output": ["Linux Build", "result", "sha"] } },
-            "environment": { "$ref": { "params": ["environment"] } }
-        });
-        let resolved = resolve_member_parameters(
-            &runinator_models::json!({ "environment": "prod", "keep": true }),
-            &mapping,
-            Some(&source),
-            &latest,
-        )
-        .expect("mapping");
-        assert_eq!(
-            resolved,
-            runinator_models::json!({
-                "environment": "prod", "keep": true, "artifact": "app.tgz", "linux": "abc"
-            })
-        );
-    }
-
-    #[test]
-    fn stop_failure_mode_suppresses_every_outbound_selector() {
-        let link = PipelineLink {
-            id: Uuid::now_v7(),
-            from: "A".into(),
-            to: "B".into(),
-            on: PipelineLinkSelector::Complete,
-            enabled: true,
-            parameters: Value::Null,
-        };
-        assert!(!selector_matches(
-            &link,
-            PipelineMemberAttemptStatus::Failed,
-            PipelineMemberFailureMode::Stop
-        ));
-        assert!(selector_matches(
-            &link,
-            PipelineMemberAttemptStatus::Failed,
-            PipelineMemberFailureMode::Continue
-        ));
-    }
-
-    #[test]
-    fn chained_pipeline_sources_match_the_resolved_uuid_not_the_diagnostic_path() {
-        let source_id = Uuid::now_v7();
-        let trigger = PipelineTrigger {
-            id: Some(Uuid::now_v7()),
-            pipeline_id: Uuid::now_v7(),
-            kind: runinator_models::workflows::WorkflowTriggerKind::Chained,
-            enabled: true,
-            configuration: runinator_models::json!({
-                // This path is intentionally stale after a source namespace move.
-                "source_pipeline": "old.namespace.source",
-                "source_pipeline_id": source_id.to_string(),
-            }),
-            next_execution: None,
-            blackout_start: None,
-            blackout_end: None,
-            metadata: Value::Null,
-            created_at: None,
-            updated_at: None,
-        };
-
-        assert_eq!(
-            trigger_source_id(&trigger, "source_pipeline_id"),
-            Some(source_id)
-        );
-        assert_ne!(
-            trigger_source_id(&trigger, "source_pipeline_id"),
-            Some(Uuid::now_v7())
-        );
-    }
-}
+#[path = "pipeline_orchestration_tests.rs"]
+mod tests;

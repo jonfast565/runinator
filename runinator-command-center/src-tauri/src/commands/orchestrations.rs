@@ -306,6 +306,20 @@ pub async fn send_orchestration_intent(
 }
 
 #[tauri::command]
+pub async fn steer_mission(
+    state: State<'_, CommandCenterState>,
+    orchestration_id: Uuid,
+    message: String,
+) -> CommandResult<runinator_models::web::TaskResponse> {
+    post_json(
+        &state,
+        &format!("orchestrations/{orchestration_id}/steer"),
+        &json!({ "type": "input", "data": message }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn requeue_orchestration(
     state: State<'_, CommandCenterState>,
     orchestration_id: Uuid,

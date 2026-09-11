@@ -12,9 +12,15 @@ epoch budget. The coding mission allows at most ten epochs and research/report a
 
 ## Prerequisites
 
-Install Claude Code on a worker that has the `capability=git` workspace label and authenticate it
-through the worker's execution profile. The pack does not add an authentication profile because
-credential collection and mounting are deployment-specific. Apply it explicitly:
+Install Claude Code, Git, `rg`, and `runinatorctl` on a worker that advertises the
+`capability=git` workspace label. The Kubernetes worker image already includes these tools. Create
+and publish an enabled execution profile named `claude`; every Claude phase is explicitly bound to
+that profile with `@profile("claude")`. The profile must provide a valid Claude Code login, and the
+worker must be able to clone the requested repository without an interactive credential prompt.
+The checked-in `packs/claude-availability` pack shows the supported profile collection and approval
+flow.
+
+Apply this pack explicitly after the profile exists:
 
 ```bash
 runinatorctl workflows apply packs/ai-missions
@@ -27,8 +33,10 @@ sessions; implementers and investigators resume their own recorded session when 
 
 ## Starting missions
 
-Supply an object with the requested work. `mcp_config` is optional and should name an MCP config
-file already mounted where Claude Code runs.
+Supply the requested work and an immutable source repository plus revision. A revision may be a
+commit SHA, tag, or branch as understood by Git; the first phase resolves it to a commit and records
+that SHA in mission resources. The workspace is cloned once and reused across all phases, including
+repair loops. The repository must be reachable from the selected worker.
 
 ```json
 {
@@ -36,7 +44,10 @@ file already mounted where Claude Code runs.
     "goal": "Add a durable progress view to the Command Center"
   },
   "mission": {
-    "mcp_config": "/workspace/config/runinator-mission-mcp.json"
+    "source": {
+      "repository": "https://github.com/example/project.git",
+      "revision": "0123456789abcdef0123456789abcdef01234567"
+    }
   }
 }
 ```
@@ -55,31 +66,47 @@ epochs, evidence, and declared intent controls.
 ## Claude Code and Codex interaction
 
 An external controller, including Claude Code or Codex, uses the normal MCP server or
-`runinatorctl missions steer <effect-id> <message>` to send a new instruction to an active
-harnessed phase. The worker encodes that instruction as a Claude `stream-json` user message and
-records it as an ordered provider event; it is never written as shell input.
+`runinatorctl missions steer <mission-id> <message>` to send a new instruction to the current
+harnessed phase. The server resolves the current effect from the mission binding and fences the
+message to the worker replica that owns it, so callers do not discover or race raw effect IDs. The
+worker encodes accepted input as a Claude `stream-json` user message and retains the complete
+message as an ordered progress event; it is never written as arbitrary shell input.
 
-For an MCP server injected *inside* a mission phase, configure Claude Code with a process like:
+Each mission phase injects a fixed MCP process equivalent to:
 
 ```json
 {
   "mcpServers": {
     "runinator-mission": {
       "command": "runinatorctl",
-      "args": ["mcp", "--mission-only"]
+      "args": ["mcp", "--mission-only", "--mission-id", "<current-mission-id>"]
     }
   }
 }
 ```
 
-That reduced profile exposes only `missions show`, `missions evidence`, and `missions intent`.
-It omits raw execution, server resources, mission creation, listing, and arbitrary effect steering.
-Authorization still comes from the Runinator credential used by this process; use a least-privilege
-service principal for the mission worker.
+That reduced surface exposes only `missions show`, `missions evidence`, and `missions intent` and
+rewrites every tool call to the current mission ID. It omits raw execution, server resources,
+mission creation, listing, and steering. Mission input cannot replace this configuration with an
+arbitrary MCP command, and strict MCP mode prevents a checked-out repository from adding another
+server. Restricted mode ignores repository-supplied settings and confines file tools to the assigned
+workspace. The `dontAsk` mode plus `--permission-prompts none` auto-denies anything outside each
+phase's explicit tool allowlist, so a non-interactive harness cannot hang on an approval prompt.
+Authorization comes from the worker service credential inherited by the subprocess.
 
 ## Operational notes
 
-The harness streams each Claude protocol event as durable workflow progress, while final outputs,
-session IDs, and phase evidence are recorded in the orchestration binding. Use Mission evidence
-and epoch history for audit and recovery. A malformed reviewer route or an exhausted epoch budget
-fails the mission explicitly rather than silently looping.
+The harness stores parsed Claude protocol lines once as durable workflow progress and bounds line
+size, retained stderr, total output bytes, and event count. Final outputs, session IDs, pinned source
+metadata, accepted steering, and phase evidence are recorded durably. Use Mission evidence and
+epoch history for audit and recovery. A malformed reviewer route or an exhausted epoch budget fails
+the mission explicitly rather than silently looping.
+
+Run the pack's offline source and transition tests without contacting Claude or a Runinator server:
+
+```bash
+runinatorctl workflows test packs/ai-missions
+```
+
+The opt-in local-stack test `mission_orchestration_transitions_smoke` covers ingress admission,
+multi-epoch routing, resource/evidence reduction, completion, and server-side mission filtering.

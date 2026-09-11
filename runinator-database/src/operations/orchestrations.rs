@@ -6,12 +6,11 @@ use runinator_models::orchestration::{
     ExternalOperation, ExternalOperationStatus, NewOrchestrationBinding, OrchestrationBinding,
     OrchestrationCommand, OrchestrationCorrelationAlias, OrchestrationEpoch,
     OrchestrationEventReduction, OrchestrationEvidence, OrchestrationPendingIntent,
-    OrchestrationStatus,
 };
 use runinator_store::roles::{
     AdapterPollDispatch, ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision,
     NewOrchestrationCommand, NewOrchestrationCorrelationAlias, NewOrchestrationEpoch,
-    OrchestrationBindingUpdate,
+    OrchestrationBindingFilter, OrchestrationBindingUpdate,
 };
 
 const BINDING_COLUMNS: &str = "b.id, b.admission_id, a.org_scope AS org_scope, a.scope AS scope, a.correlation_key AS correlation_key, b.generation, a.pipeline_id AS pipeline_id, b.pipeline_revision, b.pipeline_digest, b.adapter_id, b.adapter_revision, b.policy, b.status, b.current_phase, b.current_attempt, b.current_epoch, b.restart_member, b.resume_existing_epoch, b.subject_revision, b.resources, b.budgets, b.last_reduced_sequence, b.version, b.reducer_lease_owner, b.reducer_leased_until, b.created_at, b.updated_at, b.finished_at";
@@ -245,8 +244,7 @@ where
     async fn fetch_orchestration_bindings(
         &self,
         org_id: Option<Uuid>,
-        status: Option<OrchestrationStatus>,
-        limit: i64,
+        filter: OrchestrationBindingFilter,
     ) -> Result<Vec<OrchestrationBinding>, SendableError> {
         let mut sql = format!(
             "SELECT {BINDING_COLUMNS} FROM orchestration_bindings b JOIN ingress_admissions a ON a.id = b.admission_id WHERE 1 = 1"
@@ -254,8 +252,23 @@ where
         if org_id.is_some() {
             sql.push_str(" AND a.org_scope = ?");
         }
-        if status.is_some() {
+        if filter.status.is_some() {
             sql.push_str(" AND b.status = ?");
+        }
+        if filter.pipeline_id.is_some() {
+            sql.push_str(" AND a.pipeline_id = ?");
+        }
+        if filter.adapter_id.is_some() {
+            sql.push_str(" AND b.adapter_id = ?");
+        }
+        if filter.scope.is_some() {
+            sql.push_str(" AND a.scope = ?");
+        }
+        if filter.scope_prefix.is_some() {
+            sql.push_str(" AND SUBSTR(a.scope, 1, LENGTH(?)) = ?");
+        }
+        if filter.correlation_key.is_some() {
+            sql.push_str(" AND a.correlation_key = ?");
         }
         sql.push_str(" ORDER BY b.updated_at DESC, b.id DESC LIMIT ?");
         let rendered = self.render(&sql);
@@ -263,11 +276,26 @@ where
         if let Some(org_id) = org_id {
             query = query.bind(org_id.to_string());
         }
-        if let Some(status) = status {
+        if let Some(status) = filter.status {
             query = query.bind(status.as_str());
         }
+        if let Some(pipeline_id) = filter.pipeline_id {
+            query = query.bind(pipeline_id);
+        }
+        if let Some(adapter_id) = filter.adapter_id {
+            query = query.bind(adapter_id);
+        }
+        if let Some(scope) = filter.scope {
+            query = query.bind(scope);
+        }
+        if let Some(scope_prefix) = filter.scope_prefix {
+            query = query.bind(scope_prefix.clone()).bind(scope_prefix);
+        }
+        if let Some(correlation_key) = filter.correlation_key {
+            query = query.bind(correlation_key);
+        }
         let rows = query
-            .bind(limit.clamp(1, 1000))
+            .bind(filter.limit.clamp(1, 1000))
             .fetch_all(self.pool())
             .await?;
         rows.iter()

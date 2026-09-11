@@ -119,6 +119,7 @@ pub fn run() {
             crate::commands::fetch_external_operations,
             crate::commands::resolve_external_operation,
             crate::commands::send_orchestration_intent,
+            crate::commands::steer_mission,
             crate::commands::requeue_orchestration,
             crate::commands::fetch_adapter_kinds,
             crate::commands::fetch_adapters,

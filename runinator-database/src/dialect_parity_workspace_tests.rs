@@ -79,6 +79,7 @@ pub(super) async fn lifecycle<T: DatabaseImpl + WorkflowVmStore>(
             checkout: checkout.clone()
         }
     );
+    db.prune_workspace_leases().await.unwrap();
     let objects: Vec<_> = (0..1001)
         .map(|n| WorkspaceObjectLocation {
             id: format!("{n:064x}"),

@@ -154,6 +154,18 @@ fn bounded_mission_pack_pipelines_compile() {
         runinator_rexrap::parse_pipeline_str(&blocks.pipelines).unwrap_or_else(|error| {
             panic!("failed to compile {} pipelines: {error}", source.display())
         });
+    let workflows = load_workflow_bundle(
+        source
+            .parent()
+            .expect("mission pack source should have a parent directory"),
+    )
+    .expect("mission workflows should compile");
+    let workflow_paths = workflows
+        .workflows
+        .iter()
+        .map(|workflow| workflow.artifact_path().qualified())
+        .collect::<std::collections::HashSet<_>>();
+
     assert_eq!(pipelines.pipelines.len(), 2);
     assert!(pipelines.pipelines.iter().all(|pipeline| {
         pipeline
@@ -162,6 +174,16 @@ fn bounded_mission_pack_pipelines_compile() {
             .and_then(|policy| policy.get("entry_member"))
             .is_some()
     }));
+    for pipeline in &pipelines.pipelines {
+        for member in &pipeline.members {
+            assert!(
+                workflow_paths.contains(&member.name),
+                "pipeline '{}' names unknown workflow path '{}'",
+                pipeline.name,
+                member.name
+            );
+        }
+    }
 }
 
 #[test]

@@ -91,6 +91,7 @@ fn metadata_advertises_safe_orchestration_actions() {
     let metadata = GitProvider.metadata();
     for (name, semantics) in [
         ("attempt_worktree", DeliverySemantics::Reconcilable),
+        ("prepare_checkout", DeliverySemantics::Reconcilable),
         ("capture_revision", DeliverySemantics::Idempotent),
         ("archive_patch", DeliverySemantics::Idempotent),
         ("promote_revision", DeliverySemantics::Reconcilable),
@@ -103,6 +104,64 @@ fn metadata_advertises_safe_orchestration_actions() {
             .unwrap_or_else(|| panic!("{name} action is advertised"));
         assert_eq!(action.delivery_semantics, semantics);
     }
+}
+
+#[test]
+fn prepare_checkout_clones_a_pinned_revision_and_reconciles_dirty_work() {
+    let root =
+        std::env::temp_dir().join(format!("runinator-git-checkout-{}", uuid::Uuid::now_v7()));
+    let source = root.join("source");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&source).expect("source repo directory");
+    std::fs::create_dir_all(&workspace).expect("empty assigned workspace");
+    git(&source, &["init", "-b", "main"]);
+    git(
+        &source,
+        &["config", "user.email", "runinator@example.invalid"],
+    );
+    git(&source, &["config", "user.name", "Runinator Test"]);
+    std::fs::write(source.join("file.txt"), "initial\n").expect("initial file");
+    git(&source, &["add", "file.txt"]);
+    git(&source, &["commit", "-m", "initial"]);
+    let revision = git(&source, &["rev-parse", "HEAD"]);
+
+    let request = ProviderExecutionRequest {
+        run_id: Some(uuid::Uuid::now_v7()),
+        action_name: "git".into(),
+        action_function: "prepare_checkout".into(),
+        parameters: json!({
+            "repository": source.to_string_lossy(),
+            "revision": revision,
+        }),
+        timeout_secs: 30,
+        artifact_dir: "".into(),
+        events_jsonl_path: "".into(),
+        idempotency_key: Some("prepare-source".into()),
+        workspace_path: Some(workspace.to_string_lossy().into_owned()),
+        execution_profile: None,
+    };
+    let provider = GitProvider;
+    provider
+        .execute_service(
+            request.clone(),
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .expect("initial checkout");
+    assert_eq!(git(&workspace, &["rev-parse", "HEAD"]), revision);
+    std::fs::write(workspace.join("file.txt"), "edited\n").expect("dirty work");
+    provider
+        .execute_service(
+            request,
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .expect("replayed checkout");
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("file.txt")).expect("dirty file"),
+        "edited\n"
+    );
+    std::fs::remove_dir_all(root).expect("remove temp checkout");
 }
 
 #[test]

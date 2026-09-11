@@ -15,10 +15,12 @@ use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::Serialize;
 
 use crate::command::{run_command, run_command_output};
-use crate::errors::{IO_ERROR, REVISION_MISMATCH, UNSUPPORTED_ACTION, WORKSPACE_SAFETY};
+use crate::errors::{
+    INVALID_PARAMS, IO_ERROR, REVISION_MISMATCH, UNSUPPORTED_ACTION, WORKSPACE_SAFETY,
+};
 use crate::params::{
-    ArchivePatchParams, AttemptWorktreeParams, CleanupParams, CommitParams, PromoteRevisionParams,
-    PushParams, WorkspaceParams, WorktreeParams, parse_params,
+    ArchivePatchParams, AttemptWorktreeParams, CleanupParams, CommitParams, PrepareCheckoutParams,
+    PromoteRevisionParams, PushParams, WorkspaceParams, WorktreeParams, parse_params,
 };
 
 #[derive(Serialize)]
@@ -27,6 +29,14 @@ struct GitResult {
     action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     workspace: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PreparedCheckoutResult {
+    repository: String,
+    revision: String,
+    sha: String,
+    workspace: String,
 }
 
 #[derive(Clone)]
@@ -72,6 +82,21 @@ impl<R: ProcessRunner + Clone + 'static> Provider for GitProvider<R> {
                     ParameterMetadata::optional("base_ref", RuninatorType::String),
                 ])
                 .with_results(worktree_results())
+                .with_delivery_semantics(DeliverySemantics::Reconcilable),
+                ActionMetadata::new(
+                    "prepare_checkout",
+                    "Clone and pin a repository inside the assigned orchestration workspace",
+                )
+                .with_parameters(vec![
+                    ParameterMetadata::required("repository", RuninatorType::String),
+                    ParameterMetadata::required("revision", RuninatorType::String),
+                ])
+                .with_results(vec![
+                    ResultMetadata::new("repository", RuninatorType::String),
+                    ResultMetadata::new("revision", RuninatorType::String),
+                    ResultMetadata::new("sha", RuninatorType::String),
+                    ResultMetadata::new("workspace", RuninatorType::String),
+                ])
                 .with_delivery_semantics(DeliverySemantics::Reconcilable),
                 ActionMetadata::new("branch", "Get current branch name")
                     .with_parameters(vec![
@@ -246,6 +271,99 @@ impl<R: ProcessRunner + Clone + 'static> Provider for GitProvider<R> {
                 let stdout =
                     run_command(&self.runner, "git", &args, timeout, &token, sink.as_ref())?;
                 return git_result(function, stdout, Some(path.to_string()));
+            }
+            "prepare_checkout" => {
+                let params: PrepareCheckoutParams = parse_params(&request)?;
+                let workspace_path = request.workspace_path.as_deref().ok_or_else(|| {
+                    WORKSPACE_SAFETY.error(
+                        "prepare_checkout requires a current orchestration workspace affinity",
+                    )
+                })?;
+                let repository = params.repository.trim();
+                let revision = params.revision.trim();
+                if repository.is_empty() || revision.is_empty() {
+                    return Err(INVALID_PARAMS
+                        .error("prepare_checkout requires non-empty repository and revision"));
+                }
+                let workspace = Path::new(workspace_path);
+                if workspace.join(".git").is_dir() {
+                    let actual_repository = run_command(
+                        &self.runner,
+                        "git",
+                        &["-C", workspace_path, "remote", "get-url", "origin"],
+                        timeout,
+                        &token,
+                        sink.as_ref(),
+                    )?;
+                    if actual_repository.trim() != repository {
+                        return Err(WORKSPACE_SAFETY.error(format!(
+                            "workspace origin '{}' does not match requested repository '{repository}'",
+                            actual_repository.trim()
+                        )));
+                    }
+                } else {
+                    let mut entries = fs::read_dir(workspace).map_err(|error| {
+                        IO_ERROR.error(format!("could not inspect {workspace_path}: {error}"))
+                    })?;
+                    if entries.next().is_some() {
+                        return Err(WORKSPACE_SAFETY.error(format!(
+                            "workspace {workspace_path} is not empty and is not a git checkout"
+                        )));
+                    }
+                    run_command(
+                        &self.runner,
+                        "git",
+                        &["clone", "--", repository, workspace_path],
+                        timeout,
+                        &token,
+                        sink.as_ref(),
+                    )?;
+                }
+                let resolved = run_command(
+                    &self.runner,
+                    "git",
+                    &[
+                        "-C",
+                        workspace_path,
+                        "rev-parse",
+                        &format!("{revision}^{{commit}}"),
+                    ],
+                    timeout,
+                    &token,
+                    sink.as_ref(),
+                )?;
+                let resolved = resolved.trim().to_string();
+                let head = run_command_output(
+                    &self.runner,
+                    "git",
+                    &["-C", workspace_path, "rev-parse", "HEAD"],
+                    timeout,
+                    &token,
+                    sink.as_ref(),
+                )?;
+                if !head.success || head.stdout.trim() != resolved {
+                    run_command(
+                        &self.runner,
+                        "git",
+                        &["-C", workspace_path, "checkout", "--detach", &resolved],
+                        timeout,
+                        &token,
+                        sink.as_ref(),
+                    )?;
+                }
+                return Ok(TaskExecutionResult {
+                    message: Some("Git checkout is ready".into()),
+                    output_json: serde_json::to_value(PreparedCheckoutResult {
+                        repository: repository.to_string(),
+                        revision: revision.to_string(),
+                        sha: resolved,
+                        workspace: workspace_path.to_string(),
+                    })
+                    .ok()
+                    .map(Into::into),
+                    chunks: Vec::new(),
+                    artifacts: Vec::new(),
+                });
             }
             "branch" => {
                 let params: WorkspaceParams = parse_params(&request)?;

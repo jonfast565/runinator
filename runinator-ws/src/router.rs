@@ -199,7 +199,11 @@ pub fn build_router<T: DatabaseImpl>(dependencies: RouterDependencies<T>) -> Rou
         .merge(triggers::routes(pool.clone()))
         .merge(runs::routes(pool.clone()))
         .merge(pipelines::routes(pool.clone()))
-        .merge(orchestrations::routes(pool.clone(), events.publisher()))
+        .merge(orchestrations::routes(
+            pool.clone(),
+            broker.clone(),
+            events.publisher(),
+        ))
         .merge(adapters::routes(pool.clone(), events.publisher()))
         .merge(replicas::routes(pool.clone()))
         .merge(agents::routes(pool.clone()))

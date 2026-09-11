@@ -11,8 +11,9 @@ use uuid::Uuid;
 
 use super::{
     FailureBudgetDecision, OrchestrationCommandFence, bucket_to_interval, consume_failure_budget,
-    merge_orchestration_resources, orchestration_command_fence, select_active_member_workflow_run,
-    select_epoch_phase_attempt, should_abandon_canceled_workspace, workspace_affinity_matches,
+    merge_orchestration_resources, orchestration_command_fence, phase_result_pointer,
+    select_active_member_workflow_run, select_epoch_phase_attempt,
+    should_abandon_canceled_workspace, workspace_affinity_matches,
 };
 
 #[test]
@@ -60,6 +61,28 @@ fn pipeline_attempt(
         started_at: Some(created_at),
         finished_at: status.is_terminal().then_some(created_at),
     }
+}
+
+#[test]
+fn phase_pointers_resolve_workflow_results_and_legacy_envelope_paths() {
+    let mut attempt = pipeline_attempt("implementation", PipelineMemberAttemptStatus::Succeeded, 0);
+    attempt.result = runinator_models::json!({
+        "result": { "next_member": "review", "evidence": { "passed": true } },
+        "artifacts": [{ "name": "report.md" }]
+    });
+
+    assert_eq!(
+        phase_result_pointer(&attempt, "/next_member").and_then(Value::as_str),
+        Some("review")
+    );
+    assert_eq!(
+        phase_result_pointer(&attempt, "/result/evidence/passed").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        phase_result_pointer(&attempt, "/artifacts/0/name").and_then(Value::as_str),
+        Some("report.md")
+    );
 }
 
 #[test]

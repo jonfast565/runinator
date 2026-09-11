@@ -161,6 +161,7 @@ services:
       - broker
     environment:
       RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
+      RUNINATOR_API_BASE_URL: "http://ws:8080/"
     command:
       - "--worker-id"
       - "runinator-worker-compose"

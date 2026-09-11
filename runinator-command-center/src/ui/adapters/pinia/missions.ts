@@ -97,8 +97,8 @@ export const useMissionsStore = defineStore("missions", () => {
     return startMission(input);
   }
 
-  async function steer(effectId: string, message: string): Promise<void> {
-    await sendMissionSteering(effectId, message);
+  async function steer(missionId: string, message: string): Promise<void> {
+    await sendMissionSteering(missionId, message);
   }
 
   async function intent(missionId: string, name: string, reason: string): Promise<void> {

@@ -54,6 +54,8 @@ spec:
                 secretKeyRef:
                   name: runinator-app-secret
                   key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
+            - name: RUNINATOR_API_BASE_URL
+              value: "http://runinator-ws.runinator.svc.cluster.local:8080/"
             - name: POD_NAME
               valueFrom:
                 fieldRef:

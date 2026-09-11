@@ -419,9 +419,9 @@ pub async fn list_effect_output<T: AuthorizationStore + RuntimeStore + WorkflowV
     }
 }
 
-/// Route operator input to the desktop worker currently holding an interactive provider effect.
-/// The payload is intentionally ephemeral; terminal output remains durable, but replaying input
-/// after a worker reconnect would be unsafe.
+/// Route operator input to the worker currently holding an interactive provider effect.
+/// Delivery is intentionally not replayed after reconnect. Interactive keystrokes remain
+/// ephemeral; a structured harness provider may retain an accepted message as durable progress.
 pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,

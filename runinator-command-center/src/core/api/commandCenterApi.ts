@@ -1785,6 +1785,10 @@ export async function controlWorkflowEffectTerminal(
   return command<TaskResponse>("control_workflow_effect_terminal", { effectId, control });
 }
 
+export async function steerMission(orchestrationId: string, message: string) {
+  return command<TaskResponse>("steer_mission", { orchestrationId, message });
+}
+
 export async function pauseWorkflowRun(
   workflowRunId: string,
   override?: ManagedRunOverrideOptions,

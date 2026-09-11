@@ -687,27 +687,29 @@ async fn settle_current_orchestration_epoch<
         current_attempt = attempt.attempt;
         if let Some(phase) = binding.policy.phases.get(&attempt.member_key) {
             if let Some(pointer) = phase.result.subject_revision.as_deref()
-                && let Some(revision) = attempt.result.pointer(pointer).and_then(Value::as_str)
+                && let Some(revision) =
+                    phase_result_pointer(attempt, pointer).and_then(Value::as_str)
             {
                 subject_revision = Some(revision.to_string());
             }
             if let Some(pointer) = phase.result.resources.as_deref()
-                && let Some(mapped) = attempt.result.pointer(pointer)
+                && let Some(mapped) = phase_result_pointer(attempt, pointer)
             {
                 resources = mapped.clone();
             }
             if let Some(pointer) = phase.result.resources_patch.as_deref()
-                && let Some(patch) = attempt.result.pointer(pointer)
+                && let Some(patch) = phase_result_pointer(attempt, pointer)
             {
                 merge_orchestration_resources(&mut resources, patch);
             }
             if let Some(pointer) = phase.result.evidence.as_deref()
-                && let Some(mapped) = attempt.result.pointer(pointer)
+                && let Some(mapped) = phase_result_pointer(attempt, pointer)
             {
                 mapped_evidence = Some(mapped.clone());
             }
             if let Some(pointer) = phase.result.correlations.as_deref()
-                && let Some(items) = attempt.result.pointer(pointer).and_then(Value::as_array)
+                && let Some(items) =
+                    phase_result_pointer(attempt, pointer).and_then(Value::as_array)
             {
                 for item in items {
                     let Some(item) = item.as_object() else {
@@ -735,7 +737,7 @@ async fn settle_current_orchestration_epoch<
                 }
             }
             if let Some(pointer) = phase.result.next_member.as_deref()
-                && let Some(member) = attempt.result.pointer(pointer).and_then(Value::as_str)
+                && let Some(member) = phase_result_pointer(attempt, pointer).and_then(Value::as_str)
             {
                 outcome_next_member = Some(member.to_string());
             }
@@ -749,7 +751,8 @@ async fn settle_current_orchestration_epoch<
         if let Some(attempt) = phase_attempt
             && let Some(phase) = binding.policy.phases.get(&attempt.member_key)
             && let Some(pointer) = phase.result.failure_class.as_deref()
-            && let Some(failure_class) = attempt.result.pointer(pointer).and_then(Value::as_str)
+            && let Some(failure_class) =
+                phase_result_pointer(attempt, pointer).and_then(Value::as_str)
             && let Some(decision) =
                 consume_failure_budget(&binding.policy.budgets, &mut budgets, failure_class)
         {
@@ -938,6 +941,19 @@ async fn settle_current_orchestration_epoch<
         }
     }
     Ok(())
+}
+
+/// resolve an authored phase pointer against the workflow result while retaining compatibility
+/// with pointers that addressed the pipeline-attempt envelope.
+fn phase_result_pointer<'a>(
+    attempt: &'a PipelineMemberAttempt,
+    pointer: &str,
+) -> Option<&'a Value> {
+    attempt
+        .result
+        .get("result")
+        .and_then(|result| result.pointer(pointer))
+        .or_else(|| attempt.result.pointer(pointer))
 }
 
 /// Merge an author-selected state patch without granting phase output the ability to discard the

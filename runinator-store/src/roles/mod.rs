@@ -51,7 +51,7 @@ pub use notifications::NotificationStore;
 pub use orchestrations::{
     AdapterPollDispatch, ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision,
     NewOrchestrationCommand, NewOrchestrationCorrelationAlias, NewOrchestrationEpoch,
-    OrchestrationBindingUpdate, OrchestrationStore,
+    OrchestrationBindingFilter, OrchestrationBindingUpdate, OrchestrationStore,
 };
 pub use orgs::OrgStore;
 pub use rbac::RbacStore;

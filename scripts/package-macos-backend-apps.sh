@@ -156,7 +156,7 @@ for app in "${apps[@]}"; do
   cat > "$config_path" <<EOF
 name = "$binary"
 product-name = "$product_name"
-version = "${RUNINATOR_VERSION:-0.23.708}"
+version = "${RUNINATOR_VERSION:-0.25.716}"
 identifier = "$identifier"
 description = "$description"
 formats = ["app"]

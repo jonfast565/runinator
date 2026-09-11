@@ -33,6 +33,17 @@ pub struct OrchestrationBindingUpdate {
     pub finished_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct OrchestrationBindingFilter {
+    pub status: Option<OrchestrationStatus>,
+    pub pipeline_id: Option<Uuid>,
+    pub adapter_id: Option<Uuid>,
+    pub scope: Option<String>,
+    pub scope_prefix: Option<String>,
+    pub correlation_key: Option<String>,
+    pub limit: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct NewOrchestrationEpoch {
     pub id: Uuid,
@@ -169,8 +180,7 @@ pub trait OrchestrationStore: super::AdapterControlStore + Send + Sync + 'static
     fn fetch_orchestration_bindings(
         &self,
         org_id: Option<Uuid>,
-        status: Option<OrchestrationStatus>,
-        limit: i64,
+        filter: OrchestrationBindingFilter,
     ) -> impl Future<Output = Result<Vec<OrchestrationBinding>, SendableError>> + Send;
 
     /// Claim reducible bindings with an expiring lease. A binding can be returned again after

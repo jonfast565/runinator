@@ -16,6 +16,12 @@ pub(crate) struct AttemptWorktreeParams {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct PrepareCheckoutParams {
+    pub repository: String,
+    pub revision: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct WorkspaceParams {
     pub workspace: Option<String>,
     pub repo: Option<String>,

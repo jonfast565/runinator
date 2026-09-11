@@ -506,7 +506,7 @@ where
         Ok(true)
     }
     async fn prune_workspace_leases(&self) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM workspace_checkouts WHERE leased_until < ? AND effect_id NOT IN (SELECT e.id FROM workflow_effects e JOIN workflow_runs r ON r.id = e.workflow_run_id WHERE r.finished_at IS NULL)"))
+        sqlx::query(&self.render("DELETE FROM workspace_checkouts WHERE leased_until < ? AND effect_id NOT IN (SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id JOIN workflow_runs r ON r.id = c.workflow_run_id WHERE r.finished_at IS NULL)"))
             .bind(Utc::now().timestamp() - 86400).execute(self.pool()).await?;
         sqlx::query(&self.render("DELETE FROM workspace_pins WHERE workflow_run_id NOT IN (SELECT r.id FROM workflow_runs r LEFT JOIN pipeline_runs p ON p.id = r.pipeline_run_id WHERE r.finished_at IS NULL OR (p.id IS NOT NULL AND p.finished_at IS NULL))"))
             .execute(self.pool()).await?;

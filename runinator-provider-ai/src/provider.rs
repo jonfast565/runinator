@@ -67,6 +67,9 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                     ParameterMetadata::optional("role", RuninatorType::String),
                     ParameterMetadata::optional("resume_session", RuninatorType::String),
                     ParameterMetadata::optional("mcp_config", RuninatorType::String),
+                    ParameterMetadata::optional("mission_mcp", RuninatorType::Boolean)
+                        .with_default(json!(false)),
+                    ParameterMetadata::optional("mission_id", RuninatorType::String),
                     ParameterMetadata::optional("max_turns", RuninatorType::Integer),
                     ParameterMetadata::optional(
                         "extra_args",

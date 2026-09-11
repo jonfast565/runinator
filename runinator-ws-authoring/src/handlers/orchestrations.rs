@@ -7,7 +7,9 @@ use axum::{
     routing::{delete, get, post},
 };
 use chrono::Utc;
-use runinator_broker_core::{UiEventPublisher, emit_external_operation, emit_orchestration};
+use runinator_broker_core::{
+    Broker, ControlCommand, UiEventPublisher, emit_external_operation, emit_orchestration,
+};
 use runinator_engine::services::OrchestrationOperations;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
@@ -17,12 +19,15 @@ use runinator_models::{
         validate_correlation_alias_identity,
     },
     rbac::Action,
-    validation::{SHORT_TEXT_MAX, Validate, ValidationError, identifier, required_text},
+    runs::ProviderTerminalControl,
+    validation::{
+        LONG_TEXT_MAX, SHORT_TEXT_MAX, Validate, ValidationError, identifier, required_text,
+    },
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_store::roles::{
-    DefinitionStore, ExternalOperationUpdate, IngressStore, OrchestrationStore, WorkflowVmStore,
-    WorkspaceStore,
+    DefinitionStore, ExternalOperationUpdate, IngressStore, OrchestrationBindingFilter,
+    OrchestrationStore, WorkflowVmStore, WorkspaceStore,
 };
 use runinator_ws_core::{
     ValidatedJson,
@@ -45,6 +50,7 @@ pub struct OrchestrationQuery {
     pub pipeline_id: Option<Uuid>,
     pub adapter_id: Option<Uuid>,
     pub scope: Option<String>,
+    pub scope_prefix: Option<String>,
     pub correlation_key: Option<String>,
     pub limit: Option<i64>,
 }
@@ -101,7 +107,18 @@ pub async fn list<T: AuthorizationStore + OrchestrationStore>(
     };
     let operations = OrchestrationOperations::new(db.clone());
     let bindings = match operations
-        .list_bindings(ctx.org_id, status, query.limit.unwrap_or(200))
+        .list_bindings(
+            ctx.org_id,
+            OrchestrationBindingFilter {
+                status,
+                pipeline_id: query.pipeline_id,
+                adapter_id: query.adapter_id,
+                scope: query.scope.clone(),
+                scope_prefix: query.scope_prefix.clone(),
+                correlation_key: query.correlation_key.clone(),
+                limit: query.limit.unwrap_or(200),
+            },
+        )
         .await
     {
         Ok(bindings) => bindings,
@@ -120,18 +137,6 @@ pub async fn list<T: AuthorizationStore + OrchestrationStore>(
             visible
                 .as_ref()
                 .is_none_or(|ids| ids.contains(&binding.pipeline_id))
-                && query.pipeline_id.is_none_or(|id| id == binding.pipeline_id)
-                && query
-                    .adapter_id
-                    .is_none_or(|id| binding.adapter_id == Some(id))
-                && query
-                    .scope
-                    .as_ref()
-                    .is_none_or(|scope| scope == &binding.scope)
-                && query
-                    .correlation_key
-                    .as_ref()
-                    .is_none_or(|key| key == &binding.correlation_key)
         })
         .collect();
     (
@@ -504,6 +509,56 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
     )
 }
 
+/// Fence steering through the mission binding so callers never need to discover or race a raw
+/// effect id. The worker remains the sole owner of Claude stdin.
+pub async fn steer_mission<
+    T: AuthorizationStore + OrchestrationStore + WorkflowVmStore + runinator_store::RuntimeStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+    ValidatedJson(control): ValidatedJson<ProviderTerminalControl>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let operations = OrchestrationOperations::new(db.clone());
+    let binding =
+        match authorized_binding(&operations, db.as_ref(), &ctx, id, Permission::Run).await {
+            Ok(binding) => binding,
+            Err(reply) => return reply,
+        };
+    if !binding.scope.starts_with("mission.") {
+        return bad_request("orchestration is not a mission");
+    }
+    let ProviderTerminalControl::Input { data } = &control else {
+        return bad_request("mission steering accepts only structured input messages");
+    };
+    if let Err(error) = required_text("data", data, LONG_TEXT_MAX) {
+        return bad_request(error.to_string());
+    }
+    let effect = match operations.active_mission_harness_effect(&binding).await {
+        Ok(Some(effect)) => effect,
+        Ok(None) => return bad_request("mission has no active harnessed Claude Code phase"),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let Some(replica_id) = effect.current_executor_replica_id else {
+        return bad_request("the mission worker has not claimed the active harness effect yet");
+    };
+    let command = ControlCommand::for_terminal(effect.workflow_run_id, effect.id, control)
+        .targeting_replica(replica_id);
+    match broker.publish_control(command).await {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::TaskResponse(
+                runinator_models::web::TaskResponse {
+                    success: true,
+                    message: format!("Mission steering sent to effect {}", effect.id),
+                },
+            )),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
 pub async fn intent<T: AuthorizationStore + OrchestrationStore + IngressStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(publisher): Extension<UiEventPublisher>,
@@ -687,12 +742,13 @@ pub async fn requeue<
     }
 }
 
-pub fn routes<T>(pool: Arc<T>, publisher: UiEventPublisher) -> axum::Router
+pub fn routes<T>(pool: Arc<T>, broker: Arc<dyn Broker>, publisher: UiEventPublisher) -> axum::Router
 where
     T: AuthorizationStore
         + DefinitionStore
         + OrchestrationStore
         + IngressStore
+        + runinator_store::RuntimeStore
         + WorkflowVmStore
         + WorkspaceStore,
 {
@@ -721,8 +777,10 @@ where
             post(resolve_operation::<T>),
         )
         .route("/orchestrations/{id}/intents", post(intent::<T>))
+        .route("/orchestrations/{id}/steer", post(steer_mission::<T>))
         .route("/orchestrations/{id}/requeue", post(requeue::<T>))
         .layer(Extension(pool))
+        .layer(Extension(broker))
         .layer(Extension(publisher))
 }
 
@@ -754,6 +812,13 @@ const ORCHESTRATION_FILTERS: &[ParamDoc] = &[
         description: "Filter by exact correlation scope.",
         required: false,
         example: "work-items",
+    },
+    ParamDoc {
+        name: "scope_prefix",
+        location: "query",
+        description: "Filter by a correlation-scope prefix before applying the result limit.",
+        required: false,
+        example: "mission.",
     },
     ParamDoc {
         name: "correlation_key",
@@ -950,6 +1015,19 @@ pub const DOCS: &[EndpointDoc] = &[
         202,
         "intent accepted into the durable inbox",
         Example::IngressTimeline,
+    ),
+    endpoint_with_policy!(
+        "post",
+        "/orchestrations/{id}/steer",
+        "Orchestrations",
+        "Steer the current mission phase",
+        "Resolves and fences the current harnessed Claude Code effect through its mission binding.",
+        EndpointPolicy::ResourceAction(ResourceType::Pipeline, Action::Run),
+        json_body("A structured mission input message.", Example::None),
+        &[],
+        202,
+        "mission steering accepted",
+        Example::TaskResponse,
     ),
     endpoint_with_policy!(
         "post",

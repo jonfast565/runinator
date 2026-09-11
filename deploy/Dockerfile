@@ -28,7 +28,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.23.708
+ARG RUNINATOR_VERSION=0.25.716
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -72,6 +72,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         -p runinator-broker \
         -p runinator-blob \
         -p runinator-adapter-host \
+        -p runinator-ctl \
         --features "$database_features,$broker_features,runinator-ws/kubernetes,runinator-broker/tcp,runinator-blob/server" \
     && mkdir -p /out \
     && cp target/release/runinator-ws \
@@ -83,6 +84,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
           target/release/runinator-broker \
           target/release/runinator-blob \
           target/release/runinator-adapter-host \
+          target/release/runinatorctl \
           /out/
 
 # ---- shared runtime base ----
@@ -130,6 +132,7 @@ ENV USE_BUILTIN_RIPGREP=0 \
     DISABLE_AUTOUPDATER=1
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-worker /usr/local/bin/runinator-worker
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-adapter-host /usr/local/bin/runinator-adapter-host
+COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/bin/runinatorctl
 VOLUME ["/data"]
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-worker"]

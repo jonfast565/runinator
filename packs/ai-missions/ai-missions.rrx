@@ -10,10 +10,36 @@ package {
 
 namespace runinator.missions {
 
+workflow "Prepare Coding Mission Source" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: any
+    }
+    key coding_prepare
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(900s)
+        let prepare_source = git.prepare_checkout(
+            repository: params.mission.source.repository,
+            revision: params.mission.source.revision
+        )
+
+        compute {
+            return {
+                resources_patch: { coding: { source: prepare_source } },
+                evidence: { role: "source", source: prepare_source },
+                next_member: "runinator.missions.coding_implement"
+            }
+        }
+    }
+}
+
 workflow "Implement Coding Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key coding_implement
@@ -21,15 +47,17 @@ workflow "Implement Coding Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(7200s)
+        @profile("claude")
         let implementation = ai-command.claude_code(
-            prompt: "You are the implementation agent for coding mission: ${params.request.goal}. Work only in the assigned workspace. Read repository guidance before editing. Implement the smallest complete solution, run relevant checks, and leave all changes uncommitted for review. Do not commit, push, open a pull request, deploy, change credentials, or start another mission. Report the work, checks, and remaining risks in the final response.",
+            prompt: "You are the implementation agent for coding mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace pinned to source commit ${params.orchestration.resources.coding.source.sha}. Verify the checked-out commit with git before editing and read repository guidance. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Implement the smallest complete solution, run relevant checks, and leave all changes uncommitted for review. Do not commit, push, open a pull request, deploy, change credentials, or start another mission. Report the work, checks, and remaining risks in the final response.",
             harnessed: true,
             role: "implementer",
             resume_session: params.orchestration.resources.coding.implementation_session,
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 8,
-            permission_mode: "acceptEdits",
-            allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -44,7 +72,7 @@ workflow "Implement Coding Mission" v1 {
                     role: "implementer",
                     response: implementation.response
                 },
-                next_member: "runinator.missions.coding.review"
+                next_member: "runinator.missions.coding_review"
             }
         }
     }
@@ -52,8 +80,8 @@ workflow "Implement Coding Mission" v1 {
 
 workflow "Review Coding Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key coding_review
@@ -61,14 +89,16 @@ workflow "Review Coding Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(3600s)
+        @profile("claude")
         let review = ai-command.claude_code(
-            prompt: "You are the independent reviewer for coding mission: ${params.request.goal}. Inspect the assigned workspace and the current diff. Do not edit files. Assess correctness, scope, tests, and regressions. Reply with only JSON in this exact shape: {\"next_member\":\"runinator.missions.coding.verify\"|\"runinator.missions.coding.implement\",\"summary\":\"short review summary\",\"findings\":[\"...\"]}. Route to implement only for a concrete repair; otherwise route to verify. Never commit, push, deploy, use credentials, or start another mission.",
+            prompt: "You are the independent reviewer for coding mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Inspect the assigned workspace and the current diff. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Do not edit files. Assess correctness, scope, tests, and regressions. Reply with only JSON in this exact shape: {\"next_member\":\"runinator.missions.coding_verify\"|\"runinator.missions.coding_implement\",\"summary\":\"short review summary\",\"findings\":[\"...\"]}. Route to implement only for a concrete repair; otherwise route to verify. Never commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "reviewer",
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 4,
-            permission_mode: "plan",
-            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -84,8 +114,8 @@ workflow "Review Coding Mission" v1 {
 
 workflow "Verify Coding Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key coding_verify
@@ -93,14 +123,16 @@ workflow "Verify Coding Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(3600s)
+        @profile("claude")
         let verification = ai-command.claude_code(
-            prompt: "You are the verification agent for coding mission: ${params.request.goal}. Work only in the assigned workspace. Do not edit files. Run the narrowest relevant checks and inspect the current diff. Reply with only JSON in this exact shape: {\"next_member\":\"runinator.missions.coding.implement\"|\"runinator.missions.coding.summary\",\"summary\":\"short verification summary\",\"checks\":[\"...\"],\"failures\":[\"...\"]}. Route to implement only when there is a specific repairable failure; otherwise route to summary. Never commit, push, deploy, use credentials, or start another mission.",
+            prompt: "You are the verification agent for coding mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Do not edit files. Run the narrowest relevant checks and inspect the current diff. Reply with only JSON in this exact shape: {\"next_member\":\"runinator.missions.coding_implement\"|\"runinator.missions.coding_summary\",\"summary\":\"short verification summary\",\"checks\":[\"...\"],\"failures\":[\"...\"]}. Route to implement only when there is a specific repairable failure; otherwise route to summary. Never commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "verifier",
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 4,
-            permission_mode: "plan",
-            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -116,8 +148,8 @@ workflow "Verify Coding Mission" v1 {
 
 workflow "Summarize Coding Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key coding_summary
@@ -125,14 +157,16 @@ workflow "Summarize Coding Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(1800s)
+        @profile("claude")
         let summary = ai-command.claude_code(
-            prompt: "Summarize coding mission: ${params.request.goal}. Use the assigned workspace and recorded work to give a concise handoff: changes made, verification performed, review outcome, and remaining risks. Do not edit files. Do not commit, push, deploy, use credentials, or start another mission.",
+            prompt: "Summarize coding mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Use the assigned workspace, recorded work, and the capability-reduced mission MCP tools to give a concise handoff: changes made, verification performed, review outcome, and remaining risks. Do not edit files. Do not commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "reporter",
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 3,
-            permission_mode: "plan",
-            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -144,10 +178,36 @@ workflow "Summarize Coding Mission" v1 {
     }
 }
 
+workflow "Prepare Research Mission Source" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: any
+    }
+    key research_prepare
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(900s)
+        let prepare_source = git.prepare_checkout(
+            repository: params.mission.source.repository,
+            revision: params.mission.source.revision
+        )
+
+        compute {
+            return {
+                resources_patch: { research: { source: prepare_source } },
+                evidence: { role: "source", source: prepare_source },
+                next_member: "runinator.missions.research_investigate"
+            }
+        }
+    }
+}
+
 workflow "Investigate Research Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key research_investigate
@@ -155,15 +215,17 @@ workflow "Investigate Research Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(5400s)
+        @profile("claude")
         let investigation = ai-command.claude_code(
-            prompt: "You are the investigator for research/report mission: ${params.request.goal}. Work only in the assigned workspace. Gather relevant local evidence, inspect the codebase or artifacts, and write a structured research note in your final response with claims, evidence, unknowns, and suggested next questions. Do not modify files unless the request explicitly requires a report artifact. Do not commit, push, deploy, use credentials, or start another mission.",
+            prompt: "You are the investigator for research/report mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace pinned to source commit ${params.orchestration.resources.research.source.sha}. Verify the checked-out commit with git before investigating. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Gather relevant local evidence, inspect the codebase or artifacts, and write a structured research note in your final response with claims, evidence, unknowns, and suggested next questions. Do not modify files unless the request explicitly requires a report artifact. Do not commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "investigator",
             resume_session: params.orchestration.resources.research.investigator_session,
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 7,
-            permission_mode: "plan",
-            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -175,7 +237,7 @@ workflow "Investigate Research Mission" v1 {
                     }
                 },
                 evidence: { role: "investigator", response: investigation.response },
-                next_member: "runinator.missions.research.critique"
+                next_member: "runinator.missions.research_critique"
             }
         }
     }
@@ -183,8 +245,8 @@ workflow "Investigate Research Mission" v1 {
 
 workflow "Critique Research Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key research_critique
@@ -192,14 +254,16 @@ workflow "Critique Research Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(2700s)
+        @profile("claude")
         let critique = ai-command.claude_code(
-            prompt: "You are the independent critic for research/report mission: ${params.request.goal}. Inspect the assigned workspace and research evidence. Do not edit files. Reply with only JSON in this exact shape: {\"next_member\":\"runinator.missions.research.investigate\"|\"runinator.missions.research.report\",\"summary\":\"short critique summary\",\"gaps\":[\"...\"],\"confidence\":\"low|medium|high\"}. Route to investigate only for a material evidence gap; otherwise route to report. Never commit, push, deploy, use credentials, or start another mission.",
+            prompt: "You are the independent critic for research/report mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Inspect the assigned workspace and research evidence. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Do not edit files. Reply with only JSON in this exact shape: {\"next_member\":\"runinator.missions.research_investigate\"|\"runinator.missions.research_report\",\"summary\":\"short critique summary\",\"gaps\":[\"...\"],\"confidence\":\"low|medium|high\"}. Route to investigate only for a material evidence gap; otherwise route to report. Never commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "research_critic",
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 4,
-            permission_mode: "plan",
-            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -215,8 +279,8 @@ workflow "Critique Research Mission" v1 {
 
 workflow "Report Research Mission" v1 {
     params {
-        request: any
-        mission: any
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
         orchestration: any
     }
     key research_report
@@ -224,15 +288,17 @@ workflow "Report Research Mission" v1 {
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(3600s)
+        @profile("claude")
         let report = ai-command.claude_code(
-            prompt: "Produce the final research/report deliverable for: ${params.request.goal}. Use the assigned workspace and the prior investigation context. State the answer first, distinguish observed facts from inference, cite local file paths or command evidence where available, enumerate unresolved questions, and give practical next steps. Do not commit, push, deploy, use credentials, or start another mission.",
+            prompt: "Produce the final research/report deliverable for: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Use the assigned workspace, prior investigation context, and capability-reduced mission MCP tools. State the answer first, distinguish observed facts from inference, cite local file paths or command evidence where available, enumerate unresolved questions, and give practical next steps. Do not commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "research_reporter",
             resume_session: params.orchestration.resources.research.investigator_session,
-            mcp_config: params.mission.mcp_config,
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
             max_turns: 5,
-            permission_mode: "plan",
-            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*)"
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
@@ -260,41 +326,48 @@ pipeline "Bounded Coding Mission" {
     }
 
     orchestration {
-        entry "runinator.missions.coding.implement"
+        entry "runinator.missions.coding_prepare"
         max_epochs 10
         intent "cancel" effect terminate priority 100
         intent "pause" effect suspend priority 80 stop pause restart current
         intent "resume" effect resume priority 70 restart current
 
-        phase "runinator.missions.coding.implement" {
+        phase "runinator.missions.coding_prepare" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             next_member from "/next_member"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
-        phase "runinator.missions.coding.review" {
+        phase "runinator.missions.coding_implement" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             next_member from "/next_member"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
-        phase "runinator.missions.coding.verify" {
+        phase "runinator.missions.coding_review" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             next_member from "/next_member"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
-        phase "runinator.missions.coding.summary" {
+        phase "runinator.missions.coding_verify" {
+            resources_patch from "/resources_patch"
+            evidence from "/evidence"
+            next_member from "/next_member"
+            workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.missions.coding_summary" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
     }
 
-    workflow "runinator.missions.coding.implement"
-    workflow "runinator.missions.coding.review"
-    workflow "runinator.missions.coding.verify"
-    workflow "runinator.missions.coding.summary"
+    workflow "runinator.missions.coding_prepare"
+    workflow "runinator.missions.coding_implement"
+    workflow "runinator.missions.coding_review"
+    workflow "runinator.missions.coding_verify"
+    workflow "runinator.missions.coding_summary"
 }
 
 pipeline "Bounded Research and Report Mission" {
@@ -311,32 +384,94 @@ pipeline "Bounded Research and Report Mission" {
     }
 
     orchestration {
-        entry "runinator.missions.research.investigate"
+        entry "runinator.missions.research_prepare"
         max_epochs 8
         intent "cancel" effect terminate priority 100
         intent "pause" effect suspend priority 80 stop pause restart current
         intent "resume" effect resume priority 70 restart current
 
-        phase "runinator.missions.research.investigate" {
+        phase "runinator.missions.research_prepare" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             next_member from "/next_member"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
-        phase "runinator.missions.research.critique" {
+        phase "runinator.missions.research_investigate" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             next_member from "/next_member"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
-        phase "runinator.missions.research.report" {
+        phase "runinator.missions.research_critique" {
+            resources_patch from "/resources_patch"
+            evidence from "/evidence"
+            next_member from "/next_member"
+            workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
+        }
+        phase "runinator.missions.research_report" {
             resources_patch from "/resources_patch"
             evidence from "/evidence"
             workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" }
         }
     }
 
-    workflow "runinator.missions.research.investigate"
-    workflow "runinator.missions.research.critique"
-    workflow "runinator.missions.research.report"
+    workflow "runinator.missions.research_prepare"
+    workflow "runinator.missions.research_investigate"
+    workflow "runinator.missions.research_critique"
+    workflow "runinator.missions.research_report"
+}
+
+tests {
+  {
+    "tests": [
+      {
+        "name": "pins the source before entering the implementation loop",
+        "workflow": "Prepare Coding Mission Source",
+        "input": {
+          "request": { "goal": "implement a bounded change" },
+          "mission": { "kind": "coding", "correlation_key": "coding-test", "requested_by": "test", "source": { "repository": "https://example.invalid/repo.git", "revision": "abc123" } },
+          "orchestration": { "binding_id": "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111", "workspace_affinity": {}, "resources": {} }
+        },
+        "mocks": {
+          "prepare_source": { "output": { "repository": "https://example.invalid/repo.git", "revision": "abc123", "sha": "abc123", "workspace": "/workspace" } }
+        },
+        "expect": { "status": "succeeded", "reached": ["prepare_source"] }
+      },
+      {
+        "name": "parses a declared review route",
+        "workflow": "Review Coding Mission",
+        "input": {
+          "request": { "goal": "review a bounded change" },
+          "mission": { "kind": "coding", "correlation_key": "review-test", "requested_by": "test", "source": { "repository": "https://example.invalid/repo.git", "revision": "abc123" } },
+          "orchestration": { "binding_id": "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111", "workspace_affinity": {}, "resources": {} }
+        },
+        "mocks": { "review": { "output": { "response": { "result": "{\"next_member\":\"runinator.missions.coding_verify\",\"summary\":\"ready\",\"findings\":[]}" } } } },
+        "expect": { "status": "succeeded" }
+      },
+      {
+        "name": "pins the source before entering the research loop",
+        "workflow": "Prepare Research Mission Source",
+        "input": {
+          "request": { "goal": "research the implementation" },
+          "mission": { "kind": "research_report", "correlation_key": "research-test", "requested_by": "test", "source": { "repository": "https://example.invalid/repo.git", "revision": "abc123" } },
+          "orchestration": { "binding_id": "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111", "workspace_affinity": {}, "resources": {} }
+        },
+        "mocks": {
+          "prepare_source": { "output": { "repository": "https://example.invalid/repo.git", "revision": "abc123", "sha": "abc123", "workspace": "/workspace" } }
+        },
+        "expect": { "status": "succeeded", "reached": ["prepare_source"] }
+      },
+      {
+        "name": "parses a declared research route",
+        "workflow": "Critique Research Mission",
+        "input": {
+          "request": { "goal": "critique the research" },
+          "mission": { "kind": "research_report", "correlation_key": "critique-test", "requested_by": "test", "source": { "repository": "https://example.invalid/repo.git", "revision": "abc123" } },
+          "orchestration": { "binding_id": "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111", "workspace_affinity": {}, "resources": {} }
+        },
+        "mocks": { "critique": { "output": { "response": { "result": "{\"next_member\":\"runinator.missions.research_report\",\"summary\":\"complete\",\"gaps\":[],\"confidence\":\"high\"}" } } } },
+        "expect": { "status": "succeeded" }
+      }
+    ]
+  }
 }

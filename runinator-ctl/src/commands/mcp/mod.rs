@@ -29,6 +29,7 @@ use std::time::Duration;
 use runinator_models::json;
 use runinator_models::value::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use uuid::Uuid;
 
 use self::capture::OutputCapture;
 use self::protocol::{PARSE_ERROR, failure, internal_error, success};
@@ -53,6 +54,8 @@ pub(crate) struct Options {
     pub workflow_tools: bool,
     /// Do not expose raw command execution or non-mission controls to a harnessed agent session.
     pub mission_only: bool,
+    /// Optional binding fence for an MCP server running inside one mission phase.
+    pub mission_id: Option<Uuid>,
     /// the default ceiling on one command.
     pub timeout: Duration,
 }
@@ -62,6 +65,7 @@ impl Default for Options {
         Self {
             workflow_tools: false,
             mission_only: false,
+            mission_id: None,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -255,7 +259,13 @@ impl Server<'_> {
     }
 
     async fn command_tool(&mut self, tool: &schema::CommandTool, arguments: &Value) -> Value {
-        let line = match schema::command_line(tool, arguments) {
+        let mission_id = if self.options.mission_only {
+            self.options.mission_id
+        } else {
+            None
+        };
+        let arguments = fence_mission_arguments(arguments, mission_id);
+        let line = match schema::command_line(tool, &arguments) {
             Ok(line) => line,
             // a rejected argument is the model's to read and fix, so it comes back as a tool error
             // with the command's own argument names in it rather than as a transport failure.
@@ -273,3 +283,17 @@ impl Server<'_> {
         .await
     }
 }
+
+fn fence_mission_arguments(arguments: &Value, mission_id: Option<Uuid>) -> Value {
+    let mut arguments = arguments.clone();
+    if let Some(mission_id) = mission_id
+        && let Some(arguments) = arguments.as_object_mut()
+    {
+        arguments.insert("id".into(), Value::String(mission_id.to_string()));
+    }
+    arguments
+}
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

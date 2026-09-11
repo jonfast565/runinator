@@ -342,7 +342,9 @@ const starting = ref(false);
 const startError = ref<string | null>(null);
 const startPipelineId = ref("");
 const startCorrelation = ref("");
-const startParameters = ref('{\n  "request": {\n    "goal": ""\n  }\n}');
+const startParameters = ref(
+  '{\n  "request": {\n    "goal": ""\n  },\n  "mission": {\n    "source": {\n      "repository": "",\n      "revision": ""\n    }\n  }\n}',
+);
 const intentName = ref("");
 const intentReason = ref("");
 const intentSubmitting = ref(false);
@@ -384,7 +386,13 @@ async function submitSteering(): Promise<void> {
   error.value = null;
 
   try {
-    await missionsStore.steer(activity.effect.id, steeringMessage.value);
+    const missionId = selectedId.value;
+
+    if (!missionId) {
+      return;
+    }
+
+    await missionsStore.steer(missionId, steeringMessage.value);
     steeringMessage.value = "";
     await select(selectedId.value ?? "");
   } catch (cause) {

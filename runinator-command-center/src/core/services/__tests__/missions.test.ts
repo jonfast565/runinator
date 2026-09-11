@@ -3,7 +3,7 @@ import type { Pipeline } from "../../domain/models";
 
 vi.mock("../../api/commandCenterApi", () => ({
   admitPipelineIngress: vi.fn(),
-  controlWorkflowEffectTerminal: vi.fn(),
+  steerMission: vi.fn(),
   fetchOrchestration: vi.fn(),
   fetchOrchestrationEpochs: vi.fn(),
   fetchOrchestrationEvidence: vi.fn(),
@@ -15,7 +15,11 @@ vi.mock("../../api/commandCenterApi", () => ({
   sendOrchestrationIntent: vi.fn(),
 }));
 
-import { admitPipelineIngress, controlWorkflowEffectTerminal } from "../../api/commandCenterApi";
+import {
+  admitPipelineIngress,
+  fetchOrchestrations,
+  steerMission,
+} from "../../api/commandCenterApi";
 import { isMissionPipeline, sendMissionSteering, startMission } from "../missions";
 
 const codingPipeline = {
@@ -32,7 +36,10 @@ const codingPipeline = {
     max_chain_depth: null,
     default_failure_mode: "continue",
   },
-  metadata: { ingress: { scope: "mission.coding" } },
+  metadata: {
+    ingress: { scope: "mission.coding" },
+    orchestration: { entry_member: "runinator.missions.coding.implement" },
+  },
 } as Pipeline;
 
 describe("missions", () => {
@@ -65,7 +72,12 @@ describe("missions", () => {
       pipelineId: "pipeline-id",
       kind: "coding",
       correlationKey: "feature-123",
-      parameters: { request: { goal: "Add a mission dashboard" }, mission: { mcp_config: "/mcp" } },
+      parameters: {
+        request: { goal: "Add a mission dashboard" },
+        mission: {
+          source: { repository: "https://example.invalid/repo.git", revision: "abc123" },
+        },
+      },
     });
 
     expect(admitPipelineIngress).toHaveBeenCalledWith(
@@ -80,7 +92,7 @@ describe("missions", () => {
             kind: "coding",
             correlation_key: "feature-123",
             requested_by: "command_center",
-            mcp_config: "/mcp",
+            source: { repository: "https://example.invalid/repo.git", revision: "abc123" },
           },
         },
       }),
@@ -88,10 +100,14 @@ describe("missions", () => {
   });
 
   it("uses structured terminal input for harness steering", async () => {
-    await sendMissionSteering("effect-id", "Focus on the failing test");
-    expect(controlWorkflowEffectTerminal).toHaveBeenCalledWith("effect-id", {
-      type: "input",
-      data: "Focus on the failing test",
-    });
+    await sendMissionSteering("mission-id", "Focus on the failing test");
+    expect(steerMission).toHaveBeenCalledWith("mission-id", "Focus on the failing test");
+  });
+
+  it("pushes the mission scope prefix into the backend query", async () => {
+    vi.mocked(fetchOrchestrations).mockResolvedValue([]);
+    const { fetchMissions } = await import("../missions");
+    await fetchMissions({ limit: 50 });
+    expect(fetchOrchestrations).toHaveBeenCalledWith({ limit: 50, scope_prefix: "mission." });
   });
 });

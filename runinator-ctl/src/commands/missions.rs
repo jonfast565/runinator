@@ -3,7 +3,6 @@
 use super::*;
 
 use runinator_ctl_core::cli::MissionCommands;
-use runinator_models::runs::ProviderTerminalControl;
 
 pub(super) async fn missions(
     client: &Client,
@@ -54,6 +53,7 @@ pub(super) async fn missions(
                     _ => None,
                 })
                 .unwrap_or_default();
+            validate_mission_input(payload, &mission)?;
             mission.insert("kind".into(), Value::String(kind.as_str().into()));
             mission.insert("correlation_key".into(), Value::String(correlation.clone()));
             mission.insert("requested_by".into(), Value::String("runinatorctl".into()));
@@ -94,14 +94,12 @@ pub(super) async fn missions(
         }
         MissionCommands::List { status, limit } => {
             let mut bindings = client
-                .fetch_orchestrations_filtered(
-                    status.as_deref(),
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(*limit),
-                )
+                .fetch_orchestrations_filtered(OrchestrationListQuery {
+                    status: status.as_deref(),
+                    limit: Some(*limit),
+                    scope_prefix: Some("mission."),
+                    ..Default::default()
+                })
                 .await?;
             bindings.retain(|binding| binding.scope.starts_with("mission."));
             if json_output {
@@ -166,15 +164,9 @@ pub(super) async fn missions(
             );
             Ok(())
         }
-        MissionCommands::Steer { effect_id, message } => {
-            let response = client
-                .control_workflow_effect_terminal(
-                    *effect_id,
-                    ProviderTerminalControl::Input {
-                        data: message.clone(),
-                    },
-                )
-                .await?;
+        MissionCommands::Steer { id, message } => {
+            mission_binding(client, *id).await?;
+            let response = client.steer_mission(*id, message).await?;
             if json_output {
                 return output::json(&response);
             }
@@ -209,6 +201,36 @@ pub(super) async fn missions(
     }
 }
 
+fn validate_mission_input(
+    payload: &runinator_models::value::Map,
+    mission: &runinator_models::value::Map,
+) -> Result<()> {
+    let goal = payload
+        .get("request")
+        .and_then(Value::as_object)
+        .and_then(|request| request.get("goal"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if goal.is_empty() {
+        return Err(err("mission input requires a non-empty request.goal"));
+    }
+    let source = mission.get("source").and_then(Value::as_object);
+    for field in ["repository", "revision"] {
+        let value = source
+            .and_then(|source| source.get(field))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if value.is_empty() {
+            return Err(err(format!(
+                "mission input requires a non-empty mission.source.{field}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 async fn mission_binding(
     client: &Client,
     id: Uuid,
@@ -219,3 +241,7 @@ async fn mission_binding(
     }
     Ok(binding)
 }
+
+#[cfg(test)]
+#[path = "missions_tests.rs"]
+mod tests;

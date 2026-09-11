@@ -6,7 +6,7 @@ mod locator;
 mod replicas;
 mod types;
 
-pub use async_client::AsyncApiClient;
+pub use async_client::{AsyncApiClient, OrchestrationListQuery};
 pub use blocking_client::BlockingApiClient;
 pub use error::{ApiError, Result};
 pub use locator::{BlockingServiceLocator, ServiceLocator, StaticLocator};

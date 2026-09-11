@@ -21,14 +21,15 @@ pub(super) async fn orchestrations(
             limit,
         } => {
             let bindings = client
-                .fetch_orchestrations_filtered(
-                    status.as_deref(),
-                    *pipeline_id,
-                    *adapter_id,
-                    scope.as_deref(),
-                    correlation.as_deref(),
-                    Some(*limit),
-                )
+                .fetch_orchestrations_filtered(OrchestrationListQuery {
+                    status: status.as_deref(),
+                    pipeline_id: *pipeline_id,
+                    adapter_id: *adapter_id,
+                    scope: scope.as_deref(),
+                    correlation_key: correlation.as_deref(),
+                    limit: Some(*limit),
+                    scope_prefix: None,
+                })
                 .await?;
             if json_output {
                 return output::json(&bindings);

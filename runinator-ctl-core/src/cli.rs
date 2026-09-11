@@ -233,6 +233,9 @@ pub enum Commands {
         /// phase to prevent the harness from reaching the general control plane or starting work.
         #[arg(long, conflicts_with = "workflow_tools")]
         mission_only: bool,
+        /// Fence every reduced mission tool call to this binding UUID.
+        #[arg(long, requires = "mission_only")]
+        mission_id: Option<Uuid>,
         /// Seconds one command may run before its tool call gives up.
         #[arg(long, default_value_t = 300)]
         timeout: u64,
@@ -1202,8 +1205,8 @@ pub enum MissionCommands {
     Show { id: Uuid },
     /// Show durable evidence produced across mission epochs.
     Evidence { id: Uuid },
-    /// Send a bounded steering message to a currently running harnessed Claude Code effect.
-    Steer { effect_id: Uuid, message: String },
+    /// Send a bounded steering message to this mission's current harnessed Claude Code phase.
+    Steer { id: Uuid, message: String },
     /// Submit a mission-specific, policy-authored lifecycle intent with an auditable reason.
     Intent {
         id: Uuid,

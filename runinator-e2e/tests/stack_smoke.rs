@@ -6,8 +6,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::{
+    AsyncApiClient, OrchestrationListQuery, PipelineIngressRequest, StaticLocator,
+};
 use runinator_models::json;
+use runinator_models::orchestration::OrchestrationStatus;
 use runinator_models::pipelines::{PipelineMemberAttemptStatus, PipelineRunDetail};
 use runinator_models::value::Value;
 use runinator_models::workflow_vm::{WorkflowEffect, WorkflowEffectOutput, WorkflowEffectStatus};
@@ -259,6 +262,137 @@ async fn advanced_engine_pack_exercises_runtime_and_pipelines() -> E2eResult<()>
     Ok(())
 }
 
+/// Exercises the user-visible mission lifecycle through pack import, ingress admission, two
+/// orchestration epochs, evidence reduction, and the mission-prefix list query.
+#[tokio::test]
+#[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e mission_orchestration_transitions_smoke -- --ignored"]
+async fn mission_orchestration_transitions_smoke() -> E2eResult<()> {
+    if std::env::var("RUNINATOR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("set RUNINATOR_E2E=1 to run local-stack e2e tests");
+        return Ok(());
+    }
+
+    let workspace = workspace_dir();
+    build_service_binaries(&workspace)?;
+    let harness = StackHarness::start(&workspace, Ports::allocate()?).await?;
+    let api = harness.api_client()?;
+    let source = harness.run_dir.join("mission-transitions.rrx");
+    fs::write(
+        &source,
+        r#"language rexrap-1
+
+namespace runinator.tests.e2e {
+workflow "Mission Phase One" v1 {
+    params { request: any mission: any orchestration: any }
+    key mission_phase_one
+    do {
+        compute {
+            return {
+                resources_patch: { phase_one: true },
+                evidence: { phase: "one" },
+                next_member: "runinator.tests.e2e.mission_phase_two"
+            }
+        }
+    }
+}
+
+workflow "Mission Phase Two" v1 {
+    params { request: any mission: any orchestration: any }
+    key mission_phase_two
+    do {
+        compute {
+            return {
+                resources_patch: { phase_two: true },
+                evidence: { phase: "two" }
+            }
+        }
+    }
+}
+}
+
+pipeline "Mission Transition Smoke" {
+    key mission_transition_smoke
+    namespace runinator.tests.e2e
+    ingress scope "mission.e2e" { on "start" when unbound -> start }
+    orchestration {
+        entry "runinator.tests.e2e.mission_phase_one"
+        max_epochs 3
+        phase "runinator.tests.e2e.mission_phase_one" {
+            resources_patch from "/resources_patch"
+            evidence from "/evidence"
+            next_member from "/next_member"
+        }
+        phase "runinator.tests.e2e.mission_phase_two" {
+            resources_patch from "/resources_patch"
+            evidence from "/evidence"
+        }
+    }
+    workflow "runinator.tests.e2e.mission_phase_one"
+    workflow "runinator.tests.e2e.mission_phase_two"
+}
+"#,
+    )?;
+    harness.import_workflows(&source)?;
+    let pipeline = api
+        .fetch_pipelines()
+        .await?
+        .into_iter()
+        .find(|pipeline| {
+            pipeline.artifact_path().qualified() == "runinator.tests.e2e.mission_transition_smoke"
+        })
+        .ok_or("mission transition pipeline was not imported")?;
+    let correlation = format!("mission-e2e-{}", unique_suffix());
+    let admitted = api
+        .ingress_pipeline(
+            pipeline.id.ok_or("mission transition pipeline has no id")?,
+            &PipelineIngressRequest {
+                source: "runinator.e2e".into(),
+                event_id: Uuid::now_v7().to_string(),
+                event_type: "start".into(),
+                correlation_key: correlation,
+                payload: json!({
+                    "request": { "goal": "exercise mission transitions" },
+                    "mission": { "kind": "e2e" }
+                }),
+                provenance: json!({ "origin": "runinator-e2e" }),
+            },
+        )
+        .await?;
+    let binding_id = admitted
+        .orchestration_binding_id
+        .ok_or("mission ingress did not create an orchestration binding")?
+        .parse::<Uuid>()?;
+
+    let binding = poll_orchestration(&api, binding_id).await?;
+    assert_eq!(binding.status, OrchestrationStatus::Completed);
+    assert_eq!(binding.current_epoch, 2);
+    assert_eq!(api.fetch_orchestration_epochs(binding_id).await?.len(), 2);
+    assert_eq!(api.fetch_orchestration_evidence(binding_id).await?.len(), 2);
+    let missions = api
+        .fetch_orchestrations_filtered(OrchestrationListQuery {
+            limit: Some(1),
+            scope_prefix: Some("mission."),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(missions.first().map(|mission| mission.id), Some(binding_id));
+    Ok(())
+}
+
+async fn poll_orchestration(
+    api: &ApiClient,
+    binding_id: Uuid,
+) -> E2eResult<runinator_models::orchestration::OrchestrationBinding> {
+    for _ in 0..90 {
+        let binding = api.fetch_orchestration(binding_id).await?;
+        if binding.status.is_terminal() {
+            return Ok(binding);
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+    Err(format!("orchestration {binding_id} did not finish in time").into())
+}
+
 /// Wait until the effect compiled from `node_id` reaches `expected`.
 ///
 /// The node is found through the run's frozen module source map, which is how a graph node id maps
@@ -497,23 +631,26 @@ impl StackHarness {
         Err("provider catalog was not seeded in time".into())
     }
 
-    /// run `runinatorctl workflows apply` once against the given workflows file (a .json bundle,
-    /// .rexrap file, .rexrapm pack, or directory of .rexrap files).
+    /// apply one workflow source, retrying the brief SQLite writer contention possible at startup.
     fn import_workflows(&self, workflows_file: &Path) -> E2eResult<()> {
-        let status = Command::new(
-            self.workspace
-                .join("target/debug")
-                .join(bin_name("runinatorctl")),
-        )
-        .args(["--api-base-url", &self.api_url, "workflows", "apply"])
-        .arg(workflows_file)
-        .current_dir(&self.workspace)
-        .status()?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("runinatorctl workflows apply failed with {status}").into())
+        for attempt in 1..=5 {
+            let status = Command::new(
+                self.workspace
+                    .join("target/debug")
+                    .join(bin_name("runinatorctl")),
+            )
+            .args(["--api-base-url", &self.api_url, "workflows", "apply"])
+            .arg(workflows_file)
+            .current_dir(&self.workspace)
+            .status()?;
+            if status.success() {
+                return Ok(());
+            }
+            if attempt < 5 {
+                std::thread::sleep(Duration::from_millis(250));
+            }
         }
+        Err("runinatorctl workflows apply failed after 5 attempts".into())
     }
 
     fn api_client(&self) -> reqwest::Result<ApiClient> {

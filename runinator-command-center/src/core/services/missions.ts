@@ -18,7 +18,7 @@ import {
   fetchPipelineRun,
   fetchWorkflowEffectOutput,
   fetchWorkflowEffects,
-  controlWorkflowEffectTerminal,
+  steerMission,
   sendOrchestrationIntent,
 } from "../api/commandCenterApi";
 
@@ -38,7 +38,12 @@ export interface MissionEffectActivity {
 
 export function isMissionPipeline(pipeline: Pipeline): boolean {
   const ingress = asJsonRecord(pipeline.metadata.ingress);
-  return typeof ingress.scope === "string" && ingress.scope.startsWith("mission.");
+  const orchestration = asJsonRecord(pipeline.metadata.orchestration);
+  return (
+    typeof ingress.scope === "string" &&
+    ingress.scope.startsWith("mission.") &&
+    typeof orchestration.entry_member === "string"
+  );
 }
 
 export function isMission(binding: OrchestrationBinding): boolean {
@@ -52,10 +57,11 @@ export async function fetchMissionPipelines(): Promise<Pipeline[]> {
 export async function fetchMissions(
   filters: Record<string, unknown> = {},
 ): Promise<OrchestrationBinding[]> {
-  return (await fetchOrchestrations(filters)).filter(isMission);
+  return (await fetchOrchestrations({ ...filters, scope_prefix: "mission." })).filter(isMission);
 }
 
 export async function startMission(input: StartMissionInput): Promise<IngressResponse> {
+  validateMissionParameters(input.parameters);
   const mission = {
     ...asJsonRecord(input.parameters.mission),
     kind: input.kind,
@@ -96,8 +102,28 @@ export async function sendMissionIntent(
   await sendOrchestrationIntent(missionId, intent, reason, payload);
 }
 
-export async function sendMissionSteering(effectId: string, message: string): Promise<void> {
-  await controlWorkflowEffectTerminal(effectId, { type: "input", data: message });
+export async function sendMissionSteering(missionId: string, message: string): Promise<void> {
+  if (!message.trim()) {
+    throw new Error("Mission steering requires a non-empty message.");
+  }
+
+  await steerMission(missionId, message);
+}
+
+function validateMissionParameters(parameters: JsonRecord): void {
+  const request = asJsonRecord(parameters.request);
+  const mission = asJsonRecord(parameters.mission);
+  const source = asJsonRecord(mission.source);
+
+  for (const [name, value] of [
+    ["request.goal", request.goal],
+    ["mission.source.repository", source.repository],
+    ["mission.source.revision", source.revision],
+  ] as const) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`Mission input requires a non-empty ${name}.`);
+    }
+  }
 }
 
 async function fetchCurrentMissionEffects(

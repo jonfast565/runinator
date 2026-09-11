@@ -55,7 +55,7 @@ use runinator_store::DatabaseImpl;
 use runinator_store::archive::ArchiveTable;
 use runinator_store::roles::{
     ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision, NewOrchestrationCommand,
-    NewOrchestrationEpoch, OrchestrationBindingUpdate, WorkflowVmStore,
+    NewOrchestrationEpoch, OrchestrationBindingFilter, OrchestrationBindingUpdate, WorkflowVmStore,
 };
 
 fn sample_workflow(name: &str) -> WorkflowDefinition {
@@ -822,6 +822,76 @@ async fn assert_correlated_orchestration_lifecycle<T: DatabaseImpl + WorkflowVmS
         .await
         .unwrap();
     assert_eq!(duplicate.id, binding.id);
+    let unrelated_admission_id = Uuid::now_v7();
+    db.claim_ingress_admission(
+        IngressAdmission {
+            id: Some(unrelated_admission_id),
+            org_id: Some(org_id),
+            scope: format!("unrelated:{suffix}"),
+            correlation_key: "other-subject".into(),
+            generation: 1,
+            target: IngressTarget {
+                kind: IngressTargetKind::Pipeline,
+                id: pipeline_id,
+            },
+            status: IngressAdmissionStatus::Active,
+            workflow_run_id: None,
+            pipeline_run_id: None,
+            policy: json!({ "scope": "unrelated", "routes": [] }),
+            created_at: now,
+            updated_at: now,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db.create_orchestration_binding(NewOrchestrationBinding {
+        id: Uuid::now_v7(),
+        admission_id: unrelated_admission_id,
+        org_id: Some(org_id),
+        scope: format!("unrelated:{suffix}"),
+        correlation_key: "other-subject".into(),
+        generation: 1,
+        pipeline_id,
+        pipeline_revision: 1,
+        pipeline_digest: format!("sha256:unrelated-{suffix}"),
+        adapter_id: None,
+        adapter_revision: None,
+        policy: OrchestrationPolicy::default(),
+    })
+    .await
+    .unwrap();
+    let filtered = db
+        .fetch_orchestration_bindings(
+            Some(org_id),
+            OrchestrationBindingFilter {
+                pipeline_id: Some(pipeline_id),
+                adapter_id: Some(adapter_id),
+                scope_prefix: Some("parity:".into()),
+                correlation_key: Some("subject".into()),
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        filtered.iter().map(|item| item.id).collect::<Vec<_>>(),
+        [binding_id]
+    );
+    assert!(
+        db.fetch_orchestration_bindings(
+            Some(org_id),
+            OrchestrationBindingFilter {
+                scope_prefix: Some("mission.".into()),
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
 
     let owner = format!("parity-reducer-{suffix}");
     let claimed = db

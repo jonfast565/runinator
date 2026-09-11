@@ -43,6 +43,13 @@ pub(crate) struct ClaudeCodeParams {
     /// An explicit Claude Code MCP configuration file made available to this session.
     #[serde(default)]
     pub mcp_config: Option<String>,
+    /// Inject Runinator's fixed capability-reduced mission MCP server. Unlike `mcp_config`, this
+    /// does not accept caller-authored commands or paths.
+    #[serde(default)]
+    pub mission_mcp: bool,
+    /// Mission binding UUID enforced by the capability-reduced MCP subprocess.
+    #[serde(default)]
+    pub mission_id: Option<String>,
     /// Bound autonomous work performed in one Claude Code turn.
     #[serde(default)]
     pub max_turns: Option<u32>,

@@ -7,7 +7,9 @@ use std::{
 use uuid::Uuid;
 
 use chrono::Utc;
-use runinator_api::{AsyncApiClient, PipelineIngressRequest, StaticLocator};
+use runinator_api::{
+    AsyncApiClient, OrchestrationListQuery, PipelineIngressRequest, StaticLocator,
+};
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
@@ -94,6 +96,7 @@ pub async fn run_command(
         Commands::Mcp {
             workflow_tools,
             mission_only,
+            mission_id,
             timeout,
         } => {
             mcp::serve(
@@ -102,6 +105,7 @@ pub async fn run_command(
                 mcp::Options {
                     workflow_tools: *workflow_tools,
                     mission_only: *mission_only,
+                    mission_id: *mission_id,
                     timeout: Duration::from_secs(*timeout),
                 },
             )

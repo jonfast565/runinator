@@ -578,6 +578,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       idempotency_key: arg(args, "idempotencyKey"),
     }),
   },
+  steer_mission: {
+    method: "POST",
+    path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/steer`,
+    body: (args) => ({ type: "input", data: arg(args, "message") }),
+  },
   requeue_orchestration: {
     method: "POST",
     path: (args) => `orchestrations/${escape(arg(args, "orchestrationId"))}/requeue`,
