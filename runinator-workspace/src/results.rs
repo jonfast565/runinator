@@ -15,6 +15,21 @@ pub fn resolve_results(
     Ok(input.into())
 }
 
+/// Report whether input contains a deferred workspace result reference.
+pub fn has_result_references(input: &Value) -> bool {
+    let input: serde_json::Value = input.clone().into();
+    contains_reference(&input)
+}
+
+fn contains_reference(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) if object.contains_key("$workspace") => true,
+        serde_json::Value::Object(object) => object.values().any(contains_reference),
+        serde_json::Value::Array(items) => items.iter().any(contains_reference),
+        _ => false,
+    }
+}
+
 fn resolve(
     value: &mut serde_json::Value,
     results: Option<&serde_json::Value>,

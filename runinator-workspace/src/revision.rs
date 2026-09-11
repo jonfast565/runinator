@@ -68,6 +68,66 @@ pub fn save_results<S: WriteStore>(
     Ok(count.0)
 }
 
+/// Preserve the base result namespace while replacing only the supplied names.
+pub fn checkpoint_result_updates<S: WriteStore>(
+    store: S,
+    base: storage::Id,
+    base_usage: WorkspaceUsage,
+    updates: &BTreeMap<String, Value>,
+    limits: WorkspaceLimits,
+    scratch: &Path,
+) -> Result<(Edit<S>, WorkspaceUsage), SendableError> {
+    limits.validate()?;
+    let mut edit = Edit::new(store, Some(base), Layout::default(), 16 * 1024 * 1024)?;
+    let mut root = edit.attachments;
+    for (name, value) in updates {
+        if name.is_empty() || name.len() > 4096 {
+            return Err(WORKSPACE_INVALID.error("result names must contain 1 to 4096 UTF-8 bytes"));
+        }
+        let mut file = tempfile::tempfile_in(scratch)?;
+        serde_json::to_writer(&mut file, value)?;
+        let length = file.stream_position()?;
+        file.seek(SeekFrom::Start(0))?;
+        let id = pages::ingest(&edit.store, Layout::for_size(length), file)?;
+        root = radix::set(&edit.store, root, name.as_bytes(), Some(id))?;
+    }
+    edit.attachments = root;
+    let results_bytes = result_namespace_bytes(&edit.store, edit.attachments)?;
+    let logical_bytes = base_usage
+        .logical_bytes
+        .checked_sub(base_usage.results_bytes)
+        .and_then(|bytes| bytes.checked_add(results_bytes))
+        .ok_or_else(|| WORKSPACE_INVALID.error("workspace result size overflow"))?;
+    let usage = WorkspaceUsage {
+        logical_bytes,
+        results_bytes,
+        entries: base_usage.entries,
+    };
+    limits.check(usage)?;
+    Ok((edit, usage))
+}
+
+fn result_namespace_bytes<S: ReadStore>(
+    store: &S,
+    root: Option<storage::Id>,
+) -> Result<u64, SendableError> {
+    let mut bytes = 2u64;
+    let mut first = true;
+    radix::visit(store, root, &mut |name, id| {
+        let name = std::str::from_utf8(name)
+            .map_err(|_| storage::Error::Invalid("invalid result name".into()))?;
+        let name = serde_json::to_vec(name)?;
+        let file: FileObject = load(store, id, Kind::File)?;
+        bytes = bytes
+            .checked_add(file.size)
+            .and_then(|value| value.checked_add(name.len() as u64 + 1 + u64::from(!first)))
+            .ok_or_else(|| storage::Error::Invalid("result size overflow".into()))?;
+        first = false;
+        Ok(())
+    })?;
+    Ok(bytes)
+}
+
 pub fn read_result<S: ReadStore>(view: &View<S>, name: &str) -> Result<Value, SendableError> {
     let id = radix::get(&view.store, view.attachments, name.as_bytes())?
         .ok_or_else(|| WORKSPACE_INVALID.error("named result not found"))?;
@@ -494,21 +554,7 @@ pub fn usage<S: ReadStore>(view: &View<S>) -> Result<WorkspaceUsage, SendableErr
         Ok(())
     })?;
     // include the enclosing canonical JSON map and encoded result names without loading values.
-    usage.results_bytes = 2;
-    let mut first = true;
-    radix::visit(&view.store, view.attachments, &mut |name, id| {
-        let name = std::str::from_utf8(name)
-            .map_err(|_| storage::Error::Invalid("invalid result name".into()))?;
-        let name = serde_json::to_vec(name)?;
-        let file: FileObject = load(&view.store, id, Kind::File)?;
-        usage.results_bytes = usage
-            .results_bytes
-            .checked_add(file.size)
-            .and_then(|n| n.checked_add(name.len() as u64 + 1 + u64::from(!first)))
-            .ok_or_else(|| storage::Error::Invalid("result size overflow".into()))?;
-        first = false;
-        Ok(())
-    })?;
+    usage.results_bytes = result_namespace_bytes(&view.store, view.attachments)?;
     usage.logical_bytes = usage
         .logical_bytes
         .checked_add(usage.results_bytes)

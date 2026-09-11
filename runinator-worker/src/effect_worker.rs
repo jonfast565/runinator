@@ -521,6 +521,7 @@ async fn process_provider_effect(
                     workspace_deadline,
                     workspace_phases.clone(),
                     !result_only_checkpoint,
+                    !result_only_checkpoint || runinator_workspace::has_result_references(&input),
                 )
                 .await
             }

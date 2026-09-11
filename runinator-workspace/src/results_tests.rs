@@ -27,3 +27,18 @@ fn rejects_missing_or_malformed_references() {
         json!({"value": 42})
     );
 }
+
+#[test]
+fn detects_nested_result_references() {
+    assert!(has_result_references(&json!({
+        "input": [{"$workspace": "/answer"}]
+    })));
+    assert!(has_result_references(&json!({
+        "$workspace": 42,
+        "invalid": true
+    })));
+    assert!(!has_result_references(&json!({
+        "workspace": "/answer",
+        "input": [42]
+    })));
+}

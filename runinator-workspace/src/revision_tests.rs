@@ -110,6 +110,45 @@ fn result_checkpoint_reuses_the_base_namespace() -> Result<(), SendableError> {
 }
 
 #[test]
+fn result_checkpoint_updates_preserve_unmentioned_results() -> Result<(), SendableError> {
+    let source = tempfile::tempdir()?;
+    let scratch = tempfile::tempdir()?;
+    fs::write(source.path().join("file"), b"unchanged")?;
+    let original = BTreeMap::from([
+        ("result".into(), Value::from("old")),
+        ("retained".into(), Value::from(42)),
+    ]);
+    let (base_edit, base_usage) = capture(
+        Staging::new(EmptyStore, scratch.path())?,
+        source.path(),
+        &original,
+        WorkspaceLimits::default(),
+        scratch.path(),
+    )?;
+    let base = base_edit.finish("base", None)?;
+    let updates = BTreeMap::from([("result".into(), Value::from("new"))]);
+    let (checkpoint, expected) = checkpoint_result_updates(
+        Staging::new_deduplicating(&base_edit.store, scratch.path())?,
+        base,
+        base_usage,
+        &updates,
+        WorkspaceLimits::default(),
+        scratch.path(),
+    )?;
+    let revision = checkpoint.finish("checkpoint", Some(base))?;
+    let view = View::new(&checkpoint.store, revision)?;
+    assert_eq!(
+        read_results(&view)?,
+        BTreeMap::from([
+            ("result".into(), Value::from("new")),
+            ("retained".into(), Value::from(42)),
+        ])
+    );
+    assert_eq!(usage(&view)?, expected);
+    Ok(())
+}
+
+#[test]
 fn results_larger_than_a_single_storage_object() -> Result<(), SendableError> {
     let source = tempfile::tempdir()?;
     let scratch = tempfile::tempdir()?;

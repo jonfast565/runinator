@@ -10,7 +10,7 @@ mod initial_capture;
 pub mod native;
 mod results;
 pub mod revision;
-pub use results::resolve_results;
+pub use results::{has_result_references, resolve_results};
 pub use runinator_workspace_storage as storage;
 
 pub fn digest(bytes: &[u8]) -> String {

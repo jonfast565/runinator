@@ -102,6 +102,7 @@ impl ActiveWorkspace {
         deadline: std::time::Instant,
         phases: WorkspacePhaseReporter,
         materialize_files: bool,
+        load_results: bool,
     ) -> Result<Self, SendableError> {
         let execution: WorkspaceExecution = value.decode()?;
         let expires = execution.checkout.leased_until.timestamp();
@@ -110,7 +111,7 @@ impl ActiveWorkspace {
             .snapshot
             .as_ref()
             .map(|snapshot| snapshot.revision_id.clone());
-        let archive = if revision_id.is_some() {
+        let archive = if revision_id.is_some() && materialize_files {
             let phase = phases.start("workspace.restore.download");
             let bytes = download_workspace_checkout_after_claim(
                 api,
@@ -165,18 +166,17 @@ impl ActiveWorkspace {
         )?);
         let revision_for_materialize = revision_id.clone();
         let materialize_objects = objects.clone();
-        let phase = phases.start(if materialize_files {
-            "workspace.restore.materialize"
-        } else {
-            "workspace.restore.metadata"
-        });
+        let materialize_phase =
+            materialize_files.then(|| phases.start("workspace.restore.materialize"));
         let (directory, results) =
             tokio::task::spawn_blocking(move || -> Result<_, SendableError> {
                 std::fs::create_dir_all(&root)?;
                 let directory = tempfile::Builder::new()
                     .prefix(&format!("lease-{expires}-"))
                     .tempdir_in(root)?;
-                let results = if let Some(revision) = revision_for_materialize {
+                let results = if let Some(revision) = revision_for_materialize
+                    && (materialize_files || load_results)
+                {
                     let view = runinator_workspace::storage::view::View::new(
                         materialize_objects.as_ref(),
                         revision.parse()?,
@@ -184,14 +184,20 @@ impl ActiveWorkspace {
                     if materialize_files {
                         runinator_workspace::revision::materialize(&view, directory.path())?;
                     }
-                    runinator_workspace::revision::read_results(&view)?
+                    if load_results {
+                        runinator_workspace::revision::read_results(&view)?
+                    } else {
+                        Default::default()
+                    }
                 } else {
                     Default::default()
                 };
-                phase.succeeded(runinator_models::json!({
-                    "entries": usage.entries,
-                    "logical_bytes": usage.logical_bytes,
-                }));
+                if let Some(phase) = materialize_phase {
+                    phase.succeeded(runinator_models::json!({
+                        "entries": usage.entries,
+                        "logical_bytes": usage.logical_bytes,
+                    }));
+                }
                 Ok((directory, results))
             })
             .await??;
@@ -230,7 +236,11 @@ impl ActiveWorkspace {
             }));
             return Ok(None);
         }
-        let mut results = self.results.clone();
+        let mut results = if result_only {
+            std::collections::BTreeMap::new()
+        } else {
+            self.results.clone()
+        };
         let output = output.cloned().unwrap_or_default();
         results.insert("result".into(), output.clone());
         for (name, mapping) in &self.execution.results {
@@ -282,7 +292,7 @@ impl ActiveWorkspace {
             let parent = parent.map(|value| value.parse()).transpose()?;
             let (edit, usage) = match (result_only, parent, base_usage) {
                 (true, Some(parent), Some(base_usage)) => {
-                    runinator_workspace::revision::checkpoint_results(
+                    runinator_workspace::revision::checkpoint_result_updates(
                         stage,
                         parent,
                         base_usage,
