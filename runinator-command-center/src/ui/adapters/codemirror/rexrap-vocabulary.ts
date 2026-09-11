@@ -4,6 +4,13 @@
 // structural declarations that open blocks or bind names.
 export const DECL_KW = new Set([
   "workflow",
+  "pipeline",
+  "ingress",
+  "orchestration",
+  "intent",
+  "budget",
+  "phase",
+  "workspace",
   "params",
   "input",
   "let",
@@ -18,6 +25,7 @@ export const DECL_KW = new Set([
   "fn",
   "namespace",
   "import",
+  "description",
 ]);
 // control-flow statements and block headers.
 export const CONTROL_KW = new Set([
@@ -75,6 +83,10 @@ export const CONTROL_KW = new Set([
   "barrier",
   "circuit_breaker",
   "event_source",
+  "dispatch",
+  "queue",
+  "record",
+  "requeue",
 ]);
 // clause/option words that modify a statement.
 export const MODIFIER_KW = new Set([
@@ -116,6 +128,27 @@ export const MODIFIER_KW = new Set([
   "target",
   "reason",
   "filter",
+  "scope",
+  "effect",
+  "coalesce",
+  "stop",
+  "restart",
+  "revision",
+  "attempts",
+  "exhausted",
+  "via",
+  "entry",
+  "max_epochs",
+  "from",
+  "lease",
+  "recovery",
+  "labels",
+  "allow_self_originated",
+  "with_workspace",
+  "schedule",
+  "on_conflict",
+  "catchup",
+  "grace",
 ]);
 // word-form comparison/membership operators.
 export const OP_KW = new Set(["exists", "contains", "in", "starts_with", "ends_with"]);
@@ -138,6 +171,33 @@ export const ATOMS = new Set([
   "resolved",
   "child",
   "orphan_signal",
+  // pipeline member and link policies.
+  "halt",
+  "silently_continue",
+  "inquire",
+  "success",
+  "complete",
+  "fire_all",
+  "fire_once",
+  // ingress route lifecycles and orchestration control effects.
+  "unbound",
+  "active",
+  "terminal",
+  "terminate",
+  "suspend",
+  "supersede",
+  "observe",
+  "pause",
+  "cancel",
+  "replace",
+  // phase result mappings.
+  "subject_revision",
+  "resources_patch",
+  "resources",
+  "evidence",
+  "failure_class",
+  "correlations",
+  "next_member",
 ]);
 // coercion and compile-time intrinsics, highlighted as functions only when called.
 export const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);

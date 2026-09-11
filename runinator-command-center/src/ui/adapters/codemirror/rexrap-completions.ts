@@ -29,6 +29,74 @@ const snippets = [
     type: "keyword",
     detail: "workflow scaffold",
   }),
+  snippetCompletion('pipeline "${name}" {\n\tworkflow "${entry}"\n}', {
+    label: "pipeline",
+    type: "keyword",
+    detail: "pipeline scaffold",
+  }),
+  snippetCompletion('workflow "${workflow}" on_failure ${mode}', {
+    label: "pipeline workflow",
+    type: "keyword",
+    detail: "pipeline member workflow",
+  }),
+  snippetCompletion('"${from}" -> "${to}" on ${selector}', {
+    label: "pipeline link",
+    type: "keyword",
+    detail: "pipeline member dependency",
+  }),
+  snippetCompletion('join "${member}" ${mode}', {
+    label: "pipeline join",
+    type: "keyword",
+    detail: "pipeline fan-in policy",
+  }),
+  snippetCompletion("trigger schedule {\n\t${}\n}", {
+    label: "pipeline trigger schedule",
+    type: "keyword",
+    detail: "pipeline schedule trigger",
+  }),
+  snippetCompletion('ingress scope "${scope}" {\n\ton "${event}" when unbound\n\t\t-> start\n}', {
+    label: "ingress",
+    type: "keyword",
+    detail: "correlation-aware ingress routes",
+  }),
+  snippetCompletion('on "${event}" when unbound\n\t-> start', {
+    label: "ingress start",
+    type: "keyword",
+    detail: "start a pipeline from ingress",
+  }),
+  snippetCompletion('on "${event}" when active\n\t-> dispatch "${intent}"', {
+    label: "ingress dispatch",
+    type: "keyword",
+    detail: "dispatch an orchestration intent",
+  }),
+  snippetCompletion(
+    'orchestration {\n\tintent "${name}" effect ${effect} priority ${priority}\n}',
+    {
+      label: "orchestration",
+      type: "keyword",
+      detail: "correlated execution policy",
+    },
+  ),
+  snippetCompletion('intent "${name}" effect ${effect} priority ${priority}', {
+    label: "intent",
+    type: "keyword",
+    detail: "orchestration control intent",
+  }),
+  snippetCompletion('budget "${failure_class}" attempts ${attempts} exhausted ${behavior}', {
+    label: "budget",
+    type: "keyword",
+    detail: "orchestration failure budget",
+  }),
+  snippetCompletion('phase "${member}" {\n\tfailure_class from "/failure_class"\n}', {
+    label: "phase",
+    type: "keyword",
+    detail: "member result mapping policy",
+  }),
+  snippetCompletion('workspace scope "${scope}"', {
+    label: "workspace",
+    type: "keyword",
+    detail: "phase workspace policy",
+  }),
   snippetCompletion("let ${name} = ${provider}.${action}(${args})", {
     label: "action",
     type: "function",

@@ -1,3 +1,4 @@
+import { syntaxTree } from "@codemirror/language";
 import { describe, expect, it } from "vitest";
 import { CompletionContext, type CompletionSource } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
@@ -128,7 +129,7 @@ describe("rexrap completion adapter", () => {
 });
 
 describe("rexrap language completions", () => {
-  it("includes recent workflow language surfaces in the static vocabulary", () => {
+  it("includes workflow, pipeline, and orchestration surfaces in the static vocabulary", () => {
     expect(rexrapStaticCompletionLabels).toEqual(
       expect.arrayContaining([
         "fn",
@@ -141,8 +142,58 @@ describe("rexrap language completions", () => {
         "enum",
         "range",
         "lambda",
+        "pipeline",
+        "pipeline workflow",
+        "pipeline link",
+        "pipeline join",
+        "ingress",
+        "ingress dispatch",
+        "orchestration",
+        "intent",
+        "budget",
+        "phase",
+        "workspace",
       ]),
     );
+  });
+
+  it("completes pipeline and orchestration keywords without the language service", async () => {
+    const pipeline = await completeLabels("pi<>");
+    expect(pipeline).toContain("pipeline");
+
+    const orchestration = await completeLabels('pipeline "x" { or<> }');
+    expect(orchestration).toContain("orchestration");
+
+    const intent = await completeLabels('pipeline "x" { orchestration { in<> } }');
+    expect(intent).toContain("intent");
+
+    const budget = await completeLabels('pipeline "x" { orchestration { exh<> } }');
+    expect(budget).toContain("exhausted");
+
+    const phase = await completeLabels('pipeline "x" { orchestration { phase "x" { res<> } } }');
+    expect(phase).toContain("resources_patch");
+  });
+
+  it("tokenizes pipeline and orchestration syntax by language role", () => {
+    const source = `pipeline "x" {
+      ingress scope "events" { on "opened" when active -> dispatch "pause" }
+      orchestration {
+        intent "pause" effect suspend priority 10
+        budget "provider" attempts 3 exhausted terminate
+        phase "worker" { failure_class from "/failure_class" workspace scope "run" }
+      }
+    }`;
+    const state = EditorState.create({ doc: source, extensions: [rexrap()] });
+
+    expect(tokenTypeFor(state, "pipeline")).toBe("declKw");
+    expect(tokenTypeFor(state, "ingress")).toBe("declKw");
+    expect(tokenTypeFor(state, "scope")).toBe("modifierKw");
+    expect(tokenTypeFor(state, "active")).toBe("atom");
+    expect(tokenTypeFor(state, "dispatch")).toBe("controlKw");
+    expect(tokenTypeFor(state, "orchestration")).toBe("declKw");
+    expect(tokenTypeFor(state, "effect")).toBe("modifierKw");
+    expect(tokenTypeFor(state, "suspend")).toBe("atom");
+    expect(tokenTypeFor(state, "failure_class")).toBe("atom");
   });
 
   it("completes std modules and module functions without provider metadata", async () => {
@@ -173,10 +224,7 @@ describe("rexrap language completions", () => {
     const modules = await completeLabels('workflow "x" { node do { return std.', false);
     expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
 
-    const functions = await completeLabels(
-      'workflow "x" { node do { return std.strings.',
-      false,
-    );
+    const functions = await completeLabels('workflow "x" { node do { return std.strings.', false);
     expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
     expect(functions).not.toContain("http_get");
   });
@@ -209,6 +257,21 @@ async function completeLabels(source: string, explicit = true): Promise<string[]
     new CompletionContext(state, cursor >= 0 ? cursor : doc.length, explicit),
   );
   return result?.options.map((option) => option.label) ?? [];
+}
+
+function tokenTypeFor(state: EditorState, text: string): string | null {
+  const offset = state.doc.toString().indexOf(text);
+  let tokenType: string | null = null;
+
+  syntaxTree(state).iterate({
+    enter(node) {
+      if (node.from === offset && node.to === offset + text.length) {
+        tokenType = node.name;
+      }
+    },
+  });
+
+  return tokenType;
 }
 
 function provider(): ProviderMetadata {

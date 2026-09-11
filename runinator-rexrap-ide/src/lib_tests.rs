@@ -168,7 +168,23 @@ fn completes_and_hovers_correlated_orchestration_authoring() {
     "#,
         "<>",
     );
-    for expected in ["ingress", "orchestration", "intent", "budget", "phase"] {
+    for expected in [
+        "ingress",
+        "ingress start",
+        "ingress dispatch",
+        "orchestration",
+        "intent",
+        "budget",
+        "phase",
+        "phase workspace",
+        "pipeline workflow",
+        "pipeline link",
+        "pipeline join",
+        "pipeline trigger schedule",
+        "exhausted",
+        "resources_patch",
+        "allow_self_originated",
+    ] {
         assert!(
             labels.contains(&expected.to_string()),
             "missing {expected}: {labels:?}"

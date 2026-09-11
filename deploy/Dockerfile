@@ -27,8 +27,8 @@
 # run the providers compiled into them. use runinator-desktop-agent or a host worker for plugins.
 
 ARG ALPINE_VERSION=3.24
-ARG RUST_VERSION=1.97.1
-ARG RUNINATOR_VERSION=0.25.718
+ARG RUST_VERSION=1.98.1
+ARG RUNINATOR_VERSION=0.25.719
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
