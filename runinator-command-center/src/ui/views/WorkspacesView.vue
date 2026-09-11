@@ -179,9 +179,9 @@
               class="workspace-version-split"
               orientation="vertical"
               storage-key="command-center.workspaces.version-detail"
-              :initial-first-pct="42"
-              :min-first="260"
-              :min-second="300"
+              :initial-first-pct="32"
+              :min-first="120"
+              :min-second="160"
             >
               <template #first>
                 <div class="workspace-version-summary">
@@ -1113,7 +1113,7 @@ onBeforeUnmount(() => {
 .workspace-content {
   display: flex;
   height: 100%;
-  min-height: 230px;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--border-subtle);
