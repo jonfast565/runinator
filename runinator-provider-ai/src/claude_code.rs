@@ -643,7 +643,11 @@ fn build_claude_harness_argv(params: &ClaudeCodeParams) -> Vec<String> {
         "stream-json".into(),
         "--verbose".into(),
     ];
-    if let Some(session) = params.resume_session.as_deref() {
+    if let Some(session) = params
+        .resume_session
+        .as_deref()
+        .filter(|session| !session.trim().is_empty())
+    {
         argv.push("--resume".into());
         argv.push(session.into());
     }

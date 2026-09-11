@@ -14,7 +14,7 @@ workflow "Prepare Coding Mission Source" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key coding_prepare
 
@@ -40,7 +40,7 @@ workflow "Implement Coding Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key coding_implement
 
@@ -49,10 +49,10 @@ workflow "Implement Coding Mission" v1 {
         @timeout(7200s)
         @profile("claude")
         let implementation = ai-command.claude_code(
-            prompt: "You are the implementation agent for coding mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace pinned to source commit ${params.orchestration.resources.coding.source.sha}. Verify the checked-out commit with git before editing and read repository guidance. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Implement the smallest complete solution, run relevant checks, and leave all changes uncommitted for review. Do not commit, push, open a pull request, deploy, change credentials, or start another mission. Report the work, checks, and remaining risks in the final response.",
+            prompt: "You are the implementation agent for coding mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace pinned to source commit ${string(params.orchestration.resources.coding.source.sha)}. Verify the checked-out commit with git before editing and read repository guidance. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Implement the smallest complete solution, run relevant checks, and leave all changes uncommitted for review. Do not commit, push, open a pull request, deploy, change credentials, or start another mission. Report the work, checks, and remaining risks in the final response.",
             harnessed: true,
             role: "implementer",
-            resume_session: params.orchestration.resources.coding.implementation_session,
+            resume_session: string(params.orchestration.resources.coding.implementation_session ?? ""),
             mission_mcp: true,
             mission_id: params.orchestration.binding_id,
             max_turns: 8,
@@ -82,7 +82,7 @@ workflow "Review Coding Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key coding_review
 
@@ -116,7 +116,7 @@ workflow "Verify Coding Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key coding_verify
 
@@ -150,7 +150,7 @@ workflow "Summarize Coding Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key coding_summary
 
@@ -182,7 +182,7 @@ workflow "Prepare Research Mission Source" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key research_prepare
 
@@ -208,7 +208,7 @@ workflow "Investigate Research Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key research_investigate
 
@@ -217,10 +217,10 @@ workflow "Investigate Research Mission" v1 {
         @timeout(5400s)
         @profile("claude")
         let investigation = ai-command.claude_code(
-            prompt: "You are the investigator for research/report mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace pinned to source commit ${params.orchestration.resources.research.source.sha}. Verify the checked-out commit with git before investigating. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Gather relevant local evidence, inspect the codebase or artifacts, and write a structured research note in your final response with claims, evidence, unknowns, and suggested next questions. Do not modify files unless the request explicitly requires a report artifact. Do not commit, push, deploy, use credentials, or start another mission.",
+            prompt: "You are the investigator for research/report mission: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Work only in the assigned workspace pinned to source commit ${string(params.orchestration.resources.research.source.sha)}. Verify the checked-out commit with git before investigating. Use the Runinator mission MCP tools only to inspect this mission or submit a declared lifecycle intent. Gather relevant local evidence, inspect the codebase or artifacts, and write a structured research note in your final response with claims, evidence, unknowns, and suggested next questions. Do not modify files unless the request explicitly requires a report artifact. Do not commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "investigator",
-            resume_session: params.orchestration.resources.research.investigator_session,
+            resume_session: string(params.orchestration.resources.research.investigator_session ?? ""),
             mission_mcp: true,
             mission_id: params.orchestration.binding_id,
             max_turns: 7,
@@ -247,7 +247,7 @@ workflow "Critique Research Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key research_critique
 
@@ -281,7 +281,7 @@ workflow "Report Research Mission" v1 {
     params {
         request: { goal: string }
         mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
-        orchestration: any
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
     }
     key research_report
 
@@ -293,7 +293,7 @@ workflow "Report Research Mission" v1 {
             prompt: "Produce the final research/report deliverable for: ${params.request.goal}. Mission binding: ${params.orchestration.binding_id}. Use the assigned workspace, prior investigation context, and capability-reduced mission MCP tools. State the answer first, distinguish observed facts from inference, cite local file paths or command evidence where available, enumerate unresolved questions, and give practical next steps. Do not commit, push, deploy, use credentials, or start another mission.",
             harnessed: true,
             role: "research_reporter",
-            resume_session: params.orchestration.resources.research.investigator_session,
+            resume_session: string(params.orchestration.resources.research.investigator_session ?? ""),
             mission_mcp: true,
             mission_id: params.orchestration.binding_id,
             max_turns: 5,

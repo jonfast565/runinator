@@ -76,6 +76,11 @@ fn harness_uses_stream_json_and_keeps_steering_as_a_user_message() {
     assert!(argv.windows(2).any(|values| values == ["--max-turns", "7"]));
     assert!(!argv.contains(&"initial task".to_string()));
 
+    let blank_resume: ClaudeCodeParams =
+        serde_json::from_value(json!({ "prompt": "initial task", "resume_session": "" }).into())
+            .unwrap();
+    assert!(!build_claude_harness_argv(&blank_resume).contains(&"--resume".to_string()));
+
     let mut bytes = Vec::new();
     write_harness_message(&mut bytes, "refocus on the failing test").unwrap();
     let encoded = String::from_utf8(bytes).unwrap();
