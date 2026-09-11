@@ -50,6 +50,35 @@ impl<S: WriteStore> Edit<S> {
             layout,
         })
     }
+
+    /// start an edit from a complete namespace assembled by a bulk importer.
+    /// the projection is derived once instead of being rewritten for every inserted path.
+    pub fn from_workspace(
+        store: S,
+        workspace: Workspace,
+        attachments: Option<Id>,
+        layout: Layout,
+        page_cache_bytes: usize,
+    ) -> Result<Self> {
+        layout.validate()?;
+        if page_cache_bytes < layout.page_size as usize {
+            return Err(invalid("page cache must hold an 8 MiB page"));
+        }
+        let projection = load(
+            &store,
+            projection::build(&store, &workspace)?,
+            Kind::PathProjection,
+        )?;
+        Ok(Self {
+            store,
+            expected: None,
+            workspace,
+            projection,
+            attachments,
+            pages: ByteCache::new(page_cache_bytes),
+            layout,
+        })
+    }
     pub fn finish(&self, message: &str, parent: Option<Id>) -> Result<Id> {
         let projection = save(&self.store, Kind::PathProjection, &self.projection)?;
         let workspace = save(&self.store, Kind::Workspace, &self.workspace)?;
@@ -82,6 +111,10 @@ impl<S: WriteStore> Edit<S> {
     }
     pub fn base(&self) -> Option<Id> {
         self.expected
+    }
+
+    pub fn has_hardlinks(&self) -> bool {
+        self.projection.hardlinks.is_some()
     }
     pub fn mkdir(&mut self, path: &str) -> Result<()> {
         self.edit(|s, _, w, p| {

@@ -178,6 +178,9 @@ pub fn capture_from<S: WriteStore>(
 ) -> Result<(Edit<S>, WorkspaceUsage), SendableError> {
     limits.validate()?;
     let root = root.canonicalize()?;
+    if base.is_none() {
+        return crate::initial_capture::capture(store, &root, results, limits, scratch);
+    }
     let mut edit = Edit::new(store, base, Layout::default(), 16 * 1024 * 1024)?;
     if base.is_some() {
         super::reconcile::prepare(&mut edit, &root)?;
@@ -328,7 +331,7 @@ pub(crate) fn file_identity(metadata: &fs::Metadata) -> Option<(u64, u64)> {
     }
 }
 
-fn stored_metadata(metadata: &fs::Metadata) -> Metadata {
+pub(crate) fn stored_metadata(metadata: &fs::Metadata) -> Metadata {
     #[cfg(unix)]
     let mode = {
         use std::os::unix::fs::PermissionsExt;
@@ -357,64 +360,46 @@ pub fn materialize<S: ReadStore>(view: &View<S>, root: &Path) -> Result<(), Send
     let mut hardlinks = BTreeMap::new();
     let mut symlinks = BTreeMap::new();
     restore_directory(view, root, "", &mut hardlinks, &mut symlinks)?;
-    for (path, target) in &symlinks {
-        super::validate_link_graph(path, target, &symlinks)?;
+    let link_graph = symlinks
+        .iter()
+        .map(|(path, (target, _))| (path.clone(), target.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for (path, target) in &link_graph {
+        super::validate_link_graph(path, target, &link_graph)?;
     }
-    for (path, target) in symlinks {
+    for (path, (target, metadata)) in symlinks {
         #[cfg(unix)]
-        std::os::unix::fs::symlink(target, root.join(path))?;
+        {
+            let destination = root.join(path);
+            std::os::unix::fs::symlink(target, &destination)?;
+            restore_metadata(&destination, &metadata, true)?;
+        }
         #[cfg(not(unix))]
         {
-            let _ = (path, target);
+            let _ = (path, target, metadata);
             return Err(WORKSPACE_INVALID
                 .error("symbolic link restoration is unsupported on this platform"));
         }
     }
-    restore_metadata(view, root, "")?;
+    let (_, inode) = view.stat("")?;
+    restore_metadata(root, &inode.metadata, false)?;
     Ok(())
 }
 
-fn restore_metadata<S: ReadStore>(
-    view: &View<S>,
-    root: &Path,
-    relative: &str,
-) -> Result<(), SendableError> {
-    let (_, inode) = view.stat(relative)?;
-    if matches!(inode.data, InodeData::Directory(_)) {
-        let mut after = None;
-        loop {
-            let entries = view.directory(relative, after.as_deref(), 256)?;
-            if entries.is_empty() {
-                break;
-            }
-            for entry in entries {
-                let path = if relative.is_empty() {
-                    entry.name.clone()
-                } else {
-                    format!("{relative}/{}", entry.name)
-                };
-                restore_metadata(view, root, &path)?;
-                after = Some(entry.name);
-            }
-        }
-    }
-    let path = root.join(relative);
-    let ns = inode.metadata.modified_ns;
+fn restore_metadata(path: &Path, metadata: &Metadata, symlink: bool) -> Result<(), SendableError> {
+    let ns = metadata.modified_ns;
     let time = filetime::FileTime::from_unix_time(
         ns.div_euclid(1_000_000_000),
         ns.rem_euclid(1_000_000_000) as u32,
     );
-    if matches!(inode.data, InodeData::Symlink(_)) {
+    if symlink {
         filetime::set_symlink_file_times(path, time, time)?;
     } else {
-        filetime::set_file_mtime(&path, time)?;
+        filetime::set_file_mtime(path, time)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                path,
-                fs::Permissions::from_mode(inode.metadata.mode & 0o777),
-            )?;
+            fs::set_permissions(path, fs::Permissions::from_mode(metadata.mode & 0o777))?;
         }
     }
     Ok(())
@@ -425,7 +410,7 @@ fn restore_directory<S: ReadStore>(
     root: &Path,
     relative: &str,
     hardlinks: &mut BTreeMap<u64, std::path::PathBuf>,
-    symlinks: &mut BTreeMap<std::path::PathBuf, std::path::PathBuf>,
+    symlinks: &mut BTreeMap<std::path::PathBuf, (std::path::PathBuf, Metadata)>,
 ) -> Result<(), SendableError> {
     let mut after = None;
     loop {
@@ -453,6 +438,7 @@ fn restore_directory<S: ReadStore>(
                         hardlinks,
                         symlinks,
                     )?;
+                    restore_metadata(&dest, &entry.inode.metadata, false)?;
                 }
                 InodeData::File(_) => {
                     if let Some(source) = hardlinks.get(&entry.inode_number) {
@@ -462,19 +448,19 @@ fn restore_directory<S: ReadStore>(
                             .create_new(true)
                             .write(true)
                             .open(&dest)?;
-                        view.materialize_file(
-                            path.to_str()
-                                .ok_or_else(|| WORKSPACE_INVALID.error("invalid path"))?,
-                            &mut file,
-                        )?;
+                        let InodeData::File(file_id) = &entry.inode.data else {
+                            return Err(WORKSPACE_INVALID.error("invalid projected file"));
+                        };
+                        view.materialize_file_id(*file_id, &mut file)?;
                         file.flush()?;
                         hardlinks.insert(entry.inode_number, dest.clone());
                     }
+                    restore_metadata(&dest, &entry.inode.metadata, false)?;
                 }
                 InodeData::Symlink(target) => {
                     let target = Path::new(target);
                     super::validate_link(path, target)?;
-                    symlinks.insert(path.into(), target.into());
+                    symlinks.insert(path.into(), (target.into(), entry.inode.metadata.clone()));
                 }
             }
             after = Some(entry.name);

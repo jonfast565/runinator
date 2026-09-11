@@ -4,25 +4,27 @@ use runinator_models::errors::SendableError;
 use std::{collections::BTreeMap, fs, path::Path};
 
 pub(crate) fn prepare<S: WriteStore>(edit: &mut Edit<S>, root: &Path) -> Result<(), SendableError> {
-    let mut groups = BTreeMap::<u64, Vec<String>>::new();
-    inventory(edit, "", &mut groups)?;
     let mut split = std::collections::BTreeSet::new();
-    for aliases in groups.values().filter(|aliases| aliases.len() > 1) {
-        let mut identity = None;
-        for path in aliases {
-            let Ok(metadata) = fs::symlink_metadata(root.join(path)) else {
-                continue;
-            };
+    if edit.has_hardlinks() {
+        let mut groups = BTreeMap::<u64, Vec<String>>::new();
+        inventory(edit, "", &mut groups)?;
+        for aliases in groups.values().filter(|aliases| aliases.len() > 1) {
+            let mut identity = None;
+            for path in aliases {
+                let Ok(metadata) = fs::symlink_metadata(root.join(path)) else {
+                    continue;
+                };
 
-            if !metadata.is_file() {
-                continue;
+                if !metadata.is_file() {
+                    continue;
+                }
+                let next = super::revision::file_identity(&metadata);
+                if next.is_none() || identity.is_some_and(|before| Some(before) != next) {
+                    split.extend(aliases.iter().cloned());
+                    break;
+                }
+                identity = next;
             }
-            let next = super::revision::file_identity(&metadata);
-            if next.is_none() || identity.is_some_and(|before| Some(before) != next) {
-                split.extend(aliases.iter().cloned());
-                break;
-            }
-            identity = next;
         }
     }
     purge(edit, root, "", &split)

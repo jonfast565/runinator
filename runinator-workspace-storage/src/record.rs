@@ -261,8 +261,9 @@ pub fn index_pack<F: FnMut(crate::index::Location, ObjectInfo) -> Result<()>>(
     if &magic != PACK_MAGIC {
         return Err(corrupt("invalid pack magic"));
     }
+    let size = file.metadata()?.len();
     let mut offset = 8;
-    while offset < file.metadata()?.len() {
+    while offset < size {
         let (header, object) = read(&file, offset, None)?;
         let length = header.record_len()?;
         match object.kind {
@@ -318,6 +319,9 @@ pub fn index_pack<F: FnMut(crate::index::Location, ObjectInfo) -> Result<()>>(
         offset = offset
             .checked_add(length)
             .ok_or_else(|| corrupt("pack offset overflow"))?;
+    }
+    if offset != size {
+        return Err(corrupt("pack record exceeds file length"));
     }
     Ok(())
 }

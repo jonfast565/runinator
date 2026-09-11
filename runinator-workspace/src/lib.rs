@@ -6,6 +6,7 @@ use std::{
     path::{Component, Path},
 };
 pub mod errors;
+mod initial_capture;
 pub mod native;
 mod results;
 pub mod revision;

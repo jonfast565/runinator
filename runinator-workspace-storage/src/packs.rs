@@ -36,7 +36,6 @@ pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
     let root = directory.path();
     std::fs::create_dir(root.join("packs"))?;
     std::fs::create_dir(root.join("tmp"))?;
-    let marks = gc::mark_roots(store, revisions, root, false)?;
     let mut builder = Some(PackBuilder::new(root)?);
     fn flush<F: FnMut(Pack) -> Result<()>>(
         builder: PackBuilder,
@@ -57,22 +56,21 @@ pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
         }
         Ok(())
     }
-    fn add_batch<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
-        store: &S,
+    fn add_batch<B: ReadStore, F: FnMut(Pack) -> Result<()>>(
         base: &B,
-        ids: &mut Vec<Id>,
+        ids: &[Id],
+        objects: &[crate::store::Object],
         builder: &mut Option<PackBuilder>,
         root: &Path,
         emit: &mut F,
     ) -> Result<()> {
         let mut missing = Vec::with_capacity(ids.len());
-        for id in ids.drain(..) {
+        for (&id, object) in ids.iter().zip(objects) {
             if !base.contains(id)? {
-                missing.push(id);
+                missing.push(object.clone());
             }
         }
-        let objects = store.get_many(&missing)?;
-        for objects in objects.chunks(FETCH_BATCH) {
+        for objects in missing.chunks(FETCH_BATCH) {
             let current = builder.as_mut().ok_or(crate::Error::Poisoned)?;
             current.add_many(objects)?;
             if current.encoded_bytes()? >= TARGET_PACK_BYTES - 5 * 1024 * 1024 {
@@ -82,15 +80,15 @@ pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
         }
         Ok(())
     }
-    let mut ids = Vec::with_capacity(FETCH_BATCH);
-    marks.visit(|id| {
-        ids.push(id);
-        if ids.len() == FETCH_BATCH {
-            add_batch(store, base, &mut ids, &mut builder, root, &mut emit)?;
-        }
-        Ok(())
-    })?;
-    add_batch(store, base, &mut ids, &mut builder, root, &mut emit)?;
+    gc::walk_roots(
+        store,
+        revisions,
+        root,
+        false,
+        true,
+        FETCH_BATCH,
+        |ids, objects| add_batch(base, ids, objects, &mut builder, root, &mut emit),
+    )?;
     flush(
         builder.take().ok_or(crate::Error::Poisoned)?,
         root,

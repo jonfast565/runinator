@@ -130,8 +130,12 @@ impl<S: ReadStore> View<S> {
 
     /// Materialize holes by seeking, while preserving the file's full logical length.
     pub fn materialize_file(&self, path: &str, output: &mut std::fs::File) -> Result<()> {
+        self.materialize_file_id(self.file_id(path)?, output)
+    }
+
+    /// materialize a file already resolved by a directory traversal.
+    pub fn materialize_file_id(&self, id: Id, output: &mut std::fs::File) -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
-        let id = self.file_id(path)?;
         let file: FileObject = load(&self.store, id, Kind::File)?;
         output.set_len(file.size)?;
         if file.small.is_some() {

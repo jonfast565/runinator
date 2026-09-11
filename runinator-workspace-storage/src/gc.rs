@@ -344,21 +344,48 @@ pub fn mark_roots<S: ReadStore + ?Sized>(
     scratch: &Path,
     include_ancestors: bool,
 ) -> Result<DiskMarks> {
+    walk_roots(
+        s,
+        roots,
+        scratch,
+        include_ancestors,
+        false,
+        MARK_BATCH,
+        |_, _| Ok(()),
+    )
+}
+
+/// walk each reachable logical object once, exposing already-loaded traversal batches to callers.
+/// this keeps pack production from repeating the complete mark traversal and object read pass.
+pub(crate) fn walk_roots<S, F>(
+    s: &S,
+    roots: &[Id],
+    scratch: &Path,
+    include_ancestors: bool,
+    load_chunks: bool,
+    batch_size: usize,
+    mut visit: F,
+) -> Result<DiskMarks>
+where
+    S: ReadStore + ?Sized,
+    F: FnMut(&[Id], &[crate::store::Object]) -> Result<()>,
+{
     let mut marks = DiskMarks::new(scratch)?;
     let mut stack = DiskStack::<33>::new(scratch)?;
     for &id in roots {
         stack.push(edge(id, Some(Kind::Revision)))?;
     }
     loop {
-        let mut frontier = Vec::with_capacity(MARK_BATCH);
-        while frontier.len() < MARK_BATCH {
+        let mut frontier = Vec::with_capacity(batch_size);
+        while frontier.len() < batch_size {
             let Some(bytes) = stack.pop()? else { break };
             frontier.push(bytes);
         }
         if frontier.is_empty() {
             break;
         }
-        let mut objects = Vec::with_capacity(frontier.len());
+        let mut ids = Vec::with_capacity(frontier.len());
+        let mut expected_kinds = Vec::with_capacity(frontier.len());
         for bytes in frontier {
             let id = Id(bytes[..32].try_into().unwrap());
             let expected = if bytes[32] == 0 {
@@ -366,21 +393,40 @@ pub fn mark_roots<S: ReadStore + ?Sized>(
             } else {
                 Some(Kind::try_from(bytes[32])?)
             };
-            let info = s.info(id)?;
-            if expected.is_some_and(|kind| kind != info.kind) {
-                return Err(corrupt("object graph type mismatch"));
-            }
-            if marks.insert(id)? && info.kind != Kind::Chunk {
-                objects.push(id);
+            if marks.insert(id)? {
+                if !load_chunks && expected == Some(Kind::Chunk) {
+                    let info = s.info(id)?;
+                    if info.kind != Kind::Chunk {
+                        return Err(corrupt("object graph type mismatch"));
+                    }
+                    continue;
+                }
+                ids.push(id);
+                expected_kinds.push(expected);
             }
         }
-        let loaded = s.get_many(&objects)?;
+        let loaded = s.get_many(&ids)?;
+        if loaded.len() != ids.len() {
+            return Err(corrupt("bulk graph read returned incorrect object count"));
+        }
+        for (object, expected) in loaded.iter().zip(&expected_kinds) {
+            if expected.is_some_and(|kind| kind != object.kind) {
+                return Err(corrupt("object graph type mismatch"));
+            }
+        }
         let children = loaded
             .par_iter()
-            .map(|object| references(object.kind, &object.bytes, include_ancestors))
+            .map(|object| {
+                if object.kind == Kind::Chunk {
+                    Ok(Vec::new())
+                } else {
+                    references(object.kind, &object.bytes, include_ancestors)
+                }
+            })
             .collect::<Vec<_>>()
             .into_iter()
             .collect::<Result<Vec<_>>>()?;
+        visit(&ids, &loaded)?;
         for children in children {
             for (child, kind) in children {
                 stack.push(edge(child, kind))?;
@@ -693,31 +739,41 @@ fn verify_roots_inner<S: ReadStore + ?Sized>(
     include_ancestors: bool,
     verified_info: bool,
 ) -> Result<DiskMarks> {
-    let marks = mark_roots(s, roots, scratch, include_ancestors)?;
     let pages = ByteCache::new(8 * 1024 * 1024);
-    marks.visit(|id| {
-        let kind = s.info(id)?.kind;
-        match kind {
-            Kind::Workspace => verify_workspace(s, &load(s, id, Kind::Workspace)?, scratch)?,
-            Kind::File => {
-                let file = load(s, id, Kind::File)?;
-                if verified_info {
-                    verify_file_from_verified_info(s, &file)?;
-                } else {
-                    verify_file(s, &pages, &file)?;
+    walk_roots(
+        s,
+        roots,
+        scratch,
+        include_ancestors,
+        false,
+        MARK_BATCH,
+        |_, objects| {
+            for object in objects {
+                match object.kind {
+                    Kind::Workspace => {
+                        verify_workspace(s, &Workspace::decode(&object.bytes)?, scratch)?
+                    }
+                    Kind::File => {
+                        let file = FileObject::decode(&object.bytes)?;
+                        if verified_info {
+                            verify_file_from_verified_info(s, &file)?;
+                        } else {
+                            verify_file(s, &pages, &file)?;
+                        }
+                    }
+                    Kind::Revision => {
+                        let revision = Revision::decode(&object.bytes)?;
+                        let workspace: Workspace = load(s, revision.workspace, Kind::Workspace)?;
+                        let projection: PathProjection =
+                            load(s, revision.projection, Kind::PathProjection)?;
+                        projection::verify(s, &workspace, &projection)?;
+                    }
+                    _ => {}
                 }
             }
-            Kind::Revision => {
-                let revision: Revision = load(s, id, Kind::Revision)?;
-                let workspace: Workspace = load(s, revision.workspace, Kind::Workspace)?;
-                let p: PathProjection = load(s, revision.projection, Kind::PathProjection)?;
-                projection::verify(s, &workspace, &p)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    })?;
-    Ok(marks)
+            Ok(())
+        },
+    )
 }
 #[derive(Clone, Copy, Debug)]
 pub struct GcReport {

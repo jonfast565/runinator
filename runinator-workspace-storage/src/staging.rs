@@ -24,6 +24,10 @@ impl ReadStore for EmptyStore {
     fn get(&self, id: Id) -> Result<Object> {
         Err(Error::NotFound(id.to_string()))
     }
+
+    fn contains(&self, _: Id) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 pub struct Staging<S> {
