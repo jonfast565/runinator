@@ -52,6 +52,7 @@ export interface WorkflowEffectOutputEvent {
   output:
     | { type: "chunk"; stream: string; content: string }
     | { type: "artifact"; artifact: JsonValue }
+    | { type: "progress"; kind: string; payload: JsonValue }
     | { type: "terminal_interaction"; interaction: TerminalInteraction };
   created_at: number;
 }

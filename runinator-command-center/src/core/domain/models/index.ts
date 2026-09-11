@@ -264,7 +264,12 @@ export type {
 export type { SettingKind } from "./setting";
 export type { CredentialDetail, CredentialSummary } from "./credential";
 export type { TaskResponse } from "./task-response";
-export type { IngressAdmission, IngressInboxEntry, IngressTarget } from "./ingress";
+export type {
+  IngressAdmission,
+  IngressInboxEntry,
+  IngressResponse,
+  IngressTarget,
+} from "./ingress";
 export type { ServiceStatus } from "./service-status";
 export type {
   AgentDirectiveKind,

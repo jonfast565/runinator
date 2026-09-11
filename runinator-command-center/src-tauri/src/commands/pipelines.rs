@@ -161,6 +161,42 @@ pub async fn create_pipeline_run(
     Ok(response.json::<PipelineRun>().await?)
 }
 
+/// Submit a user-started ingress event so managed pipelines keep their durable admission and
+/// orchestration semantics instead of being bypassed by a direct manual run.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineIngressCommandRequest {
+    source: String,
+    event_id: String,
+    event_type: String,
+    correlation_key: String,
+    #[serde(default)]
+    payload: Option<Value>,
+    #[serde(default)]
+    provenance: Option<Value>,
+}
+
+#[tauri::command]
+pub async fn admit_pipeline_ingress(
+    state: State<'_, CommandCenterState>,
+    pipeline_id: Uuid,
+    request: PipelineIngressCommandRequest,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("pipelines/{pipeline_id}/ingress"),
+        &json!({
+            "source": request.source,
+            "event_id": request.event_id,
+            "event_type": request.event_type,
+            "correlation_key": request.correlation_key,
+            "payload": request.payload.unwrap_or_else(|| json!({})),
+            "provenance": request.provenance.unwrap_or_else(|| json!({})),
+        }),
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn fetch_pipeline_runs(
     state: State<'_, CommandCenterState>,

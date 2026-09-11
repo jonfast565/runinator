@@ -104,6 +104,7 @@ pub fn run() {
             crate::commands::save_pipeline_trigger,
             crate::commands::delete_pipeline_trigger,
             crate::commands::create_pipeline_run,
+            crate::commands::admit_pipeline_ingress,
             crate::commands::fetch_pipeline_runs,
             crate::commands::fetch_orchestrations,
             crate::commands::fetch_orchestration,

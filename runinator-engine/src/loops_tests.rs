@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use super::{
     FailureBudgetDecision, OrchestrationCommandFence, bucket_to_interval, consume_failure_budget,
-    orchestration_command_fence, select_active_member_workflow_run, select_epoch_phase_attempt,
-    should_abandon_canceled_workspace, workspace_affinity_matches,
+    merge_orchestration_resources, orchestration_command_fence, select_active_member_workflow_run,
+    select_epoch_phase_attempt, should_abandon_canceled_workspace, workspace_affinity_matches,
 };
 
 #[test]
@@ -102,6 +102,29 @@ fn named_budget_retries_until_its_exhaustion_behavior() {
     assert_eq!(
         consume_failure_budget(&policies, &mut counters, "unknown"),
         None
+    );
+}
+
+#[test]
+fn outcome_state_patch_preserves_unrelated_resource_context() {
+    let mut resources = runinator_models::json!({
+        "workspace": { "id": "kept", "branch": "mission/1" },
+        "request": { "title": "keep this" },
+    });
+    merge_orchestration_resources(
+        &mut resources,
+        &runinator_models::json!({
+            "workspace": { "revision": "abc123" },
+            "review": { "verdict": "revise" },
+        }),
+    );
+    assert_eq!(
+        resources,
+        runinator_models::json!({
+            "workspace": { "id": "kept", "branch": "mission/1", "revision": "abc123" },
+            "request": { "title": "keep this" },
+            "review": { "verdict": "revise" },
+        })
     );
 }
 

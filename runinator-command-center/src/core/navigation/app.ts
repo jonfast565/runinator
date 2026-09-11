@@ -7,6 +7,7 @@ export type AppTab =
   | "Pipelines"
   | "PipelineRuns"
   | "Orchestrations"
+  | "Missions"
   | "Workflows"
   | "Runs"
   | "Providers"

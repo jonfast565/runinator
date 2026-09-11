@@ -33,6 +33,18 @@ import { createAgentDirectivesService } from "./agent-directives";
 import { createProfileSecurityService } from "./profile-security";
 import { createExecutionProfilesService } from "./execution-profiles";
 
+export {
+  fetchMissionPipelines,
+  fetchMissionDetail,
+  fetchMissions,
+  isMission,
+  isMissionPipeline,
+  sendMissionIntent,
+  sendMissionSteering,
+  startMission,
+} from "./missions";
+export type { MissionEffectActivity, MissionKind, StartMissionInput } from "./missions";
+
 export const appService = createAppService();
 export const authService = createAuthService();
 export const profileSecurityService = createProfileSecurityService(appService, authService);
@@ -99,7 +111,12 @@ export type { PermissionsService } from "./permissions";
 export type { WorkflowServices } from "./workflows";
 export type { WorkflowServiceDeps } from "./workflows/host";
 export type { WorkflowRunExtrasService } from "./workflow-run-extras";
-export type { NodePoolsService, NodeBackendInfo, ProvisionedGroup, ScaleNodesRequest } from "./node-pools";
+export type {
+  NodePoolsService,
+  NodeBackendInfo,
+  ProvisionedGroup,
+  ScaleNodesRequest,
+} from "./node-pools";
 export type { SupervisorService, SupervisorStatus } from "./supervisor";
 export type { AgentEnrollmentService } from "./agent-enrollment";
 export type { AgentDirectivesService } from "./agent-directives";
@@ -109,8 +126,21 @@ export type { AuditLogService } from "./audit-log";
 export type { DeadLettersService } from "./dead-letters";
 export type { ReplicaSamplesService, ReplicaSample, ReplicaSampleSeries } from "./replica-samples";
 export type { DevPackService } from "./dev-pack";
-export type { OrgAdminService, OrgMembership, OrgRole, Organization, Team, User } from "./org-admin";
-export type { OrgResourcesService, OrgQuota, OrgResourceGroup, OrgUsage, RateCard } from "./org-resources";
+export type {
+  OrgAdminService,
+  OrgMembership,
+  OrgRole,
+  Organization,
+  Team,
+  User,
+} from "./org-admin";
+export type {
+  OrgResourcesService,
+  OrgQuota,
+  OrgResourceGroup,
+  OrgUsage,
+  RateCard,
+} from "./org-resources";
 export type { WorkflowSharingService } from "./workflow-sharing";
 export type { WorkflowRevisionsService } from "./workflow-revisions";
 

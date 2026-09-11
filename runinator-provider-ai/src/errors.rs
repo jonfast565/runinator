@@ -50,6 +50,11 @@ pub(crate) const CLAUDE_INTERACTIVE_NOT_PERMITTED: ErrorDescriptor = ErrorDescri
     "ai_command.claude_code.interactive_not_permitted",
     "Interactive Claude Code is only available on a desktop worker agent",
 );
+pub(crate) const CLAUDE_INPUT: ErrorDescriptor = ErrorDescriptor::new(
+    "AI012",
+    "ai_command.claude_code.input",
+    "Claude Code session input failed",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -63,6 +68,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CLAUDE_EXIT_CODE,
     CLAUDE_INVALID_JSON,
     CLAUDE_INTERACTIVE_NOT_PERMITTED,
+    CLAUDE_INPUT,
 ];
 
 impl<R> ProviderErrors for AiCommandProvider<R> {

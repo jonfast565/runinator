@@ -865,6 +865,12 @@ pub enum WorkflowEffectOutput {
     Artifact {
         artifact: Value,
     },
+    /// Structured provider progress retained beside ordinary output chunks. The event kind is
+    /// provider-owned; consumers must treat its payload as untrusted display data.
+    Progress {
+        kind: String,
+        payload: Value,
+    },
     TerminalInteraction {
         interaction: crate::runs::TerminalInteraction,
     },
@@ -876,9 +882,10 @@ impl WorkflowEffectOutput {
             Self::Chunk { stream, .. } if stream == WORKSPACE_TIMELINE_STREAM => {
                 WorkflowTimelineCategory::System
             }
-            Self::Chunk { .. } | Self::Artifact { .. } | Self::TerminalInteraction { .. } => {
-                WorkflowTimelineCategory::User
-            }
+            Self::Chunk { .. }
+            | Self::Artifact { .. }
+            | Self::Progress { .. }
+            | Self::TerminalInteraction { .. } => WorkflowTimelineCategory::User,
         }
     }
 }

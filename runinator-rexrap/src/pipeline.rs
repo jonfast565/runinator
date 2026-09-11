@@ -163,7 +163,11 @@ fn lower_orchestration(
     decl: &crate::ast::OrchestrationDecl,
     members: &HashSet<&str>,
 ) -> Result<OrchestrationPolicy, RexRapError> {
-    let mut policy = OrchestrationPolicy::default();
+    let mut policy = OrchestrationPolicy {
+        entry_member: decl.entry_member.clone(),
+        max_epochs: decl.max_epochs,
+        ..Default::default()
+    };
     for intent in &decl.intents {
         let effect = match intent.effect.as_str() {
             "terminate" => ControlEffect::Terminate,
@@ -246,9 +250,11 @@ fn lower_orchestration(
             let slot = match field.as_str() {
                 "subject_revision" => &mut phase_policy.result.subject_revision,
                 "resources" => &mut phase_policy.result.resources,
+                "resources_patch" => &mut phase_policy.result.resources_patch,
                 "evidence" => &mut phase_policy.result.evidence,
                 "failure_class" => &mut phase_policy.result.failure_class,
                 "correlations" => &mut phase_policy.result.correlations,
+                "next_member" => &mut phase_policy.result.next_member,
                 _ => unreachable!("parser restricts result mapping fields"),
             };
             if slot.replace(pointer.clone()).is_some() {
@@ -957,14 +963,22 @@ fn render_orchestration_policy(out: &mut String, policy: &OrchestrationPolicy) {
         }
         out.push('\n');
     }
+    if let Some(entry_member) = &policy.entry_member {
+        out.push_str(&format!("        entry {}\n", quote(entry_member)));
+    }
+    if let Some(max_epochs) = policy.max_epochs {
+        out.push_str(&format!("        max_epochs {max_epochs}\n"));
+    }
     for (member, phase) in &policy.phases {
         out.push_str(&format!("        phase {} {{\n", quote(member)));
         for (field, pointer) in [
             ("subject_revision", &phase.result.subject_revision),
             ("resources", &phase.result.resources),
+            ("resources_patch", &phase.result.resources_patch),
             ("evidence", &phase.result.evidence),
             ("failure_class", &phase.result.failure_class),
             ("correlations", &phase.result.correlations),
+            ("next_member", &phase.result.next_member),
         ] {
             if let Some(pointer) = pointer {
                 out.push_str(&format!("            {field} from {}\n", quote(pointer)));

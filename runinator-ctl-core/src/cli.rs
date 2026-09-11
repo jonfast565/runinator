@@ -214,6 +214,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: OrchestrationCommands,
     },
+    /// Start, inspect, and steer AI mission orchestrations. These commands are also exposed by
+    /// `runinatorctl mcp`, giving Claude Code and Codex a narrow, auditable mission surface.
+    Missions {
+        #[command(subcommand)]
+        command: MissionCommands,
+    },
     /// Serve MCP on stdin/stdout. Expose every runinatorctl command as a tool.
     /// An MCP client should launch this command; it speaks JSON-RPC, so
     /// command output is captured into tool results instead of being printed.
@@ -223,6 +229,10 @@ pub enum Commands {
         /// would bury the commands that author them.
         #[arg(long)]
         workflow_tools: bool,
+        /// Expose only read/evidence/intent controls. Use this profile in a Claude Code mission
+        /// phase to prevent the harness from reaching the general control plane or starting work.
+        #[arg(long, conflicts_with = "workflow_tools")]
+        mission_only: bool,
         /// Seconds one command may run before its tool call gives up.
         #[arg(long, default_value_t = 300)]
         timeout: u64,
@@ -979,6 +989,30 @@ pub enum PipelineCommands {
         #[arg(long)]
         follow: bool,
     },
+    /// Submit an auditable event to a pipeline's ingress policy. Use this for managed pipeline
+    /// starts instead of bypassing the binding/reducer with a manual run.
+    Ingress {
+        /// Pipeline UUID or canonical namespace.key.
+        pipeline: String,
+        /// Admission correlation key. Reusing it follows the pipeline's active/terminal policy.
+        #[arg(long)]
+        correlation: String,
+        /// Event source recorded in the immutable ingress ledger.
+        #[arg(long, default_value = "runinatorctl")]
+        source: String,
+        /// Event type matched by the pipeline ingress policy.
+        #[arg(long, default_value = "start")]
+        event_type: String,
+        /// Stable event identity for a safe retry. A UUID is generated when omitted.
+        #[arg(long)]
+        event_id: Option<String>,
+        /// Event payload as KEY=VALUE; repeat for several. Values parse as JSON when they can.
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
+        /// Read the full event payload from a JSON file instead.
+        #[arg(long = "json-file")]
+        json_file: Option<PathBuf>,
+    },
     /// List a pipeline's immutable revision history, newest first.
     Revisions {
         pipeline: String,
@@ -1120,6 +1154,66 @@ pub enum OrchestrationCommands {
     Adapters {
         #[command(subcommand)]
         command: OrchestrationAdapterCommands,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliMissionKind {
+    #[default]
+    Coding,
+    ResearchReport,
+}
+
+impl CliMissionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Coding => "coding",
+            Self::ResearchReport => "research_report",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MissionCommands {
+    /// Start a coding or research/report mission through a managed pipeline's ingress policy.
+    Start {
+        /// Mission pipeline UUID or canonical namespace.key.
+        pipeline: String,
+        #[arg(long, value_enum, default_value_t = CliMissionKind::Coding)]
+        kind: CliMissionKind,
+        /// Stable mission identity. It is the correlation key for lifecycle and recovery events.
+        #[arg(long)]
+        correlation: String,
+        /// Full mission input object. Its fields become the initial pipeline parameters.
+        #[arg(long = "json-file")]
+        json_file: PathBuf,
+        /// Optional idempotent ingress event identity; generated when omitted.
+        #[arg(long)]
+        event_id: Option<String>,
+    },
+    /// List mission bindings. A mission is an orchestration whose ingress scope starts with `mission.`.
+    List {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+    },
+    /// Show a mission binding and its frozen policy.
+    Show { id: Uuid },
+    /// Show durable evidence produced across mission epochs.
+    Evidence { id: Uuid },
+    /// Send a bounded steering message to a currently running harnessed Claude Code effect.
+    Steer { effect_id: Uuid, message: String },
+    /// Submit a mission-specific, policy-authored lifecycle intent with an auditable reason.
+    Intent {
+        id: Uuid,
+        name: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long = "payload")]
+        payload: Option<PathBuf>,
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
 }
 

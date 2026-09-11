@@ -346,6 +346,7 @@ async fn poll_effect_chunks(api: &ApiClient, effect_id: Uuid) -> E2eResult<Strin
             .filter_map(|event| match &event.output {
                 WorkflowEffectOutput::Chunk { content, .. } => Some(content.as_str()),
                 WorkflowEffectOutput::Artifact { .. }
+                | WorkflowEffectOutput::Progress { .. }
                 | WorkflowEffectOutput::TerminalInteraction { .. } => None,
             })
             .collect::<Vec<_>>()

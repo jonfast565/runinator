@@ -541,7 +541,7 @@ impl<T: OrchestrationStore + IngressStore> OrchestrationOperations<T> {
             self.enqueue_epoch(
                 &binding,
                 1,
-                None,
+                binding.policy.entry_member.clone(),
                 event.payload.clone(),
                 "initial admission",
             )
@@ -1057,7 +1057,7 @@ fn resolve_restart_member(
     selector: &RestartSelector,
 ) -> Option<String> {
     match selector {
-        RestartSelector::Entry => None,
+        RestartSelector::Entry => binding.policy.entry_member.clone(),
         RestartSelector::Current => binding.current_phase.clone(),
         RestartSelector::Member(member) => Some(member.clone()),
     }

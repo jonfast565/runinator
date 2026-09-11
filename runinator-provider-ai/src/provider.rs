@@ -47,7 +47,7 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                     .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
                 ActionMetadata::new(
                     "claude_code",
-                    "Invoke Claude Code with a prompt and model, optionally in an interactive terminal",
+                    "Invoke Claude Code as a one-shot command, interactive terminal, or steerable JSONL harness session",
                 )
                 .with_parameters(vec![
                     ParameterMetadata::required("prompt", RuninatorType::String),
@@ -62,6 +62,12 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                     ParameterMetadata::optional("output_format", RuninatorType::String)
                         .with_default(json!(default_output_format())),
                     ParameterMetadata::optional("permission_mode", RuninatorType::String),
+                    ParameterMetadata::optional("harnessed", RuninatorType::Boolean)
+                        .with_default(json!(false)),
+                    ParameterMetadata::optional("role", RuninatorType::String),
+                    ParameterMetadata::optional("resume_session", RuninatorType::String),
+                    ParameterMetadata::optional("mcp_config", RuninatorType::String),
+                    ParameterMetadata::optional("max_turns", RuninatorType::Integer),
                     ParameterMetadata::optional(
                         "extra_args",
                         RuninatorType::array(RuninatorType::String),

@@ -140,9 +140,37 @@ pub(crate) fn find(name: &str) -> Option<&'static CommandTool> {
     command_tools().iter().find(|tool| tool.name == name)
 }
 
+/// Tool lookup for the capability-reduced MCP server injected into a mission phase. The command
+/// catalog remains the source of truth, while this policy boundary only permits its `missions`
+/// group.
+pub(crate) fn find_mission(name: &str) -> Option<&'static CommandTool> {
+    command_tools()
+        .iter()
+        .find(|tool| tool.name == name && is_harness_mission_tool(tool))
+}
+
 /// the MCP tool definitions, one per command.
 pub(crate) fn definitions() -> Vec<Value> {
     command_tools().iter().map(definition).collect()
+}
+
+pub(crate) fn mission_definitions() -> Vec<Value> {
+    command_tools()
+        .iter()
+        .filter(|tool| is_harness_mission_tool(tool))
+        .map(definition)
+        .collect()
+}
+
+/// A harnessed agent can inspect its mission's state and submit a declared intent. Starting a
+/// different mission, listing another tenant's work, and steering arbitrary effects stay with the
+/// external operator MCP profile. The server credential remains the authorization boundary.
+fn is_harness_mission_tool(tool: &CommandTool) -> bool {
+    matches!(
+        tool.path.as_slice(),
+        [group, command]
+            if group == "missions" && matches!(command.as_str(), "show" | "evidence" | "intent")
+    )
 }
 
 fn definition(tool: &CommandTool) -> Value {

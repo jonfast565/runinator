@@ -203,7 +203,7 @@ ingress_predicate = { "if" ~ string ~ ingress_predicate_op ~ expr? }
 ingress_predicate_op = { "!=" | "==" | "in" | "contains" | "exists" }
 
 orchestration_decl = { "orchestration" ~ "{" ~ orchestration_item* ~ "}" }
-orchestration_item = { orchestration_intent | orchestration_budget | orchestration_phase }
+orchestration_item = { orchestration_intent | orchestration_budget | orchestration_entry | orchestration_max_epochs | orchestration_phase }
 orchestration_intent = { "intent" ~ string ~ "effect" ~ control_effect ~ "priority" ~ integer ~ orchestration_intent_option* }
 control_effect = { "terminate" | "suspend" | "resume" | "supersede" | "observe" | "signal" }
 orchestration_intent_option = { orchestration_coalesce | orchestration_stop | orchestration_restart | orchestration_revision | orchestration_signal_name | orchestration_allow_self }
@@ -216,11 +216,14 @@ orchestration_revision = { "revision" ~ string }
 orchestration_signal_name = { "signal" ~ string }
 orchestration_allow_self = { "allow_self_originated" }
 orchestration_budget = { "budget" ~ string ~ "attempts" ~ integer ~ "exhausted" ~ budget_exhaustion ~ ("via" ~ string)? }
+orchestration_entry = { "entry" ~ string }
+orchestration_max_epochs = { "max_epochs" ~ integer }
 budget_exhaustion = { "fail" | "pause" | "terminate" }
 orchestration_phase = { "phase" ~ string ~ "{" ~ orchestration_phase_item* ~ "}" }
 orchestration_phase_item = { orchestration_mapping | orchestration_workspace }
 orchestration_mapping = { mapping_field ~ "from" ~ string }
-mapping_field = { "subject_revision" | "resources" | "evidence" | "failure_class" | "correlations" }
+// Keep the longer `resources_patch` alternative before `resources`: PEG alternatives are ordered.
+mapping_field = { "subject_revision" | "resources_patch" | "resources" | "evidence" | "failure_class" | "correlations" | "next_member" }
 orchestration_workspace = { "workspace" ~ "scope" ~ string ~ orchestration_workspace_option* }
 orchestration_workspace_option = { workspace_reuse | workspace_lease | workspace_recovery | workspace_labels }
 workspace_reuse = { "reuse" }

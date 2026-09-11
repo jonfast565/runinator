@@ -61,6 +61,50 @@ pipeline "Release train" {
 }
 
 #[test]
+fn orchestration_entry_and_outcome_routes_round_trip() {
+    let source = r#"
+pipeline "Bounded mission" {
+    workflow "acme.mission.implement"
+    workflow "acme.mission.review"
+
+    ingress scope "mission.coding" {
+        on "start" when unbound -> start
+    }
+
+    orchestration {
+        entry "acme.mission.implement"
+        max_epochs 4
+        phase "acme.mission.implement" {
+            resources_patch from "/resources_patch"
+            next_member from "/next_member"
+        }
+        phase "acme.mission.review" {
+            evidence from "/evidence"
+        }
+    }
+}
+"#;
+    let bundle = parse_pipeline_str(source).expect("parse bounded mission");
+    let policy = bundle.pipelines[0]
+        .metadata
+        .get("orchestration")
+        .expect("orchestration policy");
+    assert_eq!(
+        policy.get("entry_member").and_then(|value| value.as_str()),
+        Some("acme.mission.implement")
+    );
+    assert_eq!(
+        policy.get("max_epochs").and_then(|value| value.as_u64()),
+        Some(4)
+    );
+    let rendered = pipeline_to_rexrapp(&bundle);
+    assert!(rendered.contains("entry \"acme.mission.implement\""));
+    assert!(rendered.contains("resources_patch from \"/resources_patch\""));
+    assert!(rendered.contains("next_member from \"/next_member\""));
+    assert_eq!(bundle, parse_pipeline_str(&rendered).expect("round trip"));
+}
+
+#[test]
 fn link_selector_defaults_from_failure_policy() {
     // halt (default) -> links without `on` fire on success.
     let halt = parse_pipeline_str(r#"pipeline "P" { workflow "acme.test.a" workflow "acme.test.b" "acme.test.a" -> "acme.test.b" }"#)

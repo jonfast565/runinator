@@ -63,6 +63,7 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                 // payloads so an old/misbehaving provider cannot wedge the result channel.
                 EffectResultKind::Chunk { .. }
                 | EffectResultKind::Artifact { .. }
+                | EffectResultKind::Progress { .. }
                 | EffectResultKind::TerminalInteraction { .. }
                 | EffectResultKind::Claimed { .. } => Ok(()),
             };
@@ -278,6 +279,23 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
             EffectResultKind::Artifact { artifact } => {
                 let output = WorkflowEffectOutput::Artifact {
                     artifact: artifact.clone(),
+                };
+                db.append_workflow_effect_output(WorkflowEffectOutputEvent {
+                    event_id: delivery.result.event_id,
+                    effect_id: delivery.result.effect_id,
+                    workflow_run_id: delivery.result.workflow_run_id,
+                    continuation_id: delivery.result.continuation_id,
+                    attempt: delivery.result.attempt,
+                    timeline_category: output.timeline_category(),
+                    output,
+                    created_at: delivery.result.timestamp.timestamp(),
+                })
+                .await
+            }
+            EffectResultKind::Progress { kind, payload } => {
+                let output = WorkflowEffectOutput::Progress {
+                    kind: kind.clone(),
+                    payload: payload.clone(),
                 };
                 db.append_workflow_effect_output(WorkflowEffectOutputEvent {
                     event_id: delivery.result.event_id,
@@ -583,6 +601,7 @@ async fn record_external_operation_result<T: OrchestrationStore>(
         }
         EffectResultKind::Chunk { .. }
         | EffectResultKind::Artifact { .. }
+        | EffectResultKind::Progress { .. }
         | EffectResultKind::TerminalInteraction { .. } => return Ok(None),
     };
     let updated = db

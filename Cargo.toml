@@ -81,4 +81,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.24.711"
+version = "0.25.712"

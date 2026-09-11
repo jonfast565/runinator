@@ -39,6 +39,8 @@ export interface OrchestrationPolicy {
   intents: Record<string, IntentPolicy>;
   phases: Record<string, PhasePolicy>;
   budgets: Record<string, BudgetPolicy>;
+  entry_member?: string | null;
+  max_epochs?: number | null;
   defaults: JsonValue;
 }
 
@@ -65,6 +67,8 @@ export interface ResultMapping {
   evidence?: string | null;
   failure_class?: string | null;
   correlations?: string | null;
+  resources_patch?: string | null;
+  next_member?: string | null;
 }
 
 export interface OrchestrationCorrelationAlias {

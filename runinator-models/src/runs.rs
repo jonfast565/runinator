@@ -150,6 +150,14 @@ pub enum ProviderExecutionEvent {
     Message {
         message: String,
     },
+    /// A structured, non-terminal provider event. This keeps long-lived agent and other
+    /// streaming providers observable without treating provider-specific payloads as workflow
+    /// completion output.
+    Progress {
+        kind: String,
+        #[serde(default)]
+        payload: Value,
+    },
     TerminalInteraction {
         interaction: TerminalInteraction,
     },

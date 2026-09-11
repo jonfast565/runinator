@@ -39,3 +39,16 @@ export interface IngressInboxEntry {
   workflow_run_id: string | null;
   pipeline_run_id: string | null;
 }
+
+/** Immediate acknowledgement from a workflow or pipeline ingress admission. */
+export interface IngressResponse {
+  admission_id: string;
+  generation: number;
+  disposition: string;
+  duplicate: boolean;
+  queue_position?: number | null;
+  workflow_run_id?: string | null;
+  pipeline_run_id?: string | null;
+  orchestration_binding_id?: string | null;
+  message: string;
+}

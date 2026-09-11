@@ -675,6 +675,7 @@ async fn settle_current_orchestration_epoch<
     let mut budgets = binding.budgets.clone();
     let mut mapped_evidence = None;
     let mut mapped_correlations = Vec::new();
+    let mut outcome_next_member = None;
     let mut next_epoch = None;
     let handoff_outcome = epoch
         .reason
@@ -694,6 +695,11 @@ async fn settle_current_orchestration_epoch<
                 && let Some(mapped) = attempt.result.pointer(pointer)
             {
                 resources = mapped.clone();
+            }
+            if let Some(pointer) = phase.result.resources_patch.as_deref()
+                && let Some(patch) = attempt.result.pointer(pointer)
+            {
+                merge_orchestration_resources(&mut resources, patch);
             }
             if let Some(pointer) = phase.result.evidence.as_deref()
                 && let Some(mapped) = attempt.result.pointer(pointer)
@@ -727,6 +733,11 @@ async fn settle_current_orchestration_epoch<
                         correlation_key.to_string(),
                     ));
                 }
+            }
+            if let Some(pointer) = phase.result.next_member.as_deref()
+                && let Some(member) = attempt.result.pointer(pointer).and_then(Value::as_str)
+            {
+                outcome_next_member = Some(member.to_string());
             }
         }
     }
@@ -795,6 +806,47 @@ async fn settle_current_orchestration_epoch<
 
     if let Some(outcome) = handoff_outcome {
         status = status_for_budget_exhaustion(outcome);
+    }
+
+    // Outcome routes are controlled dynamism: an action result may select one of the phases that
+    // was frozen into this binding's policy, but it cannot alter edges or author a new graph while
+    // a pipeline run is executing. A route always becomes a fresh durable epoch.
+    if handoff_outcome.is_none()
+        && run.status == runinator_models::workflows::WorkflowStatus::Succeeded
+        && let Some(member) = outcome_next_member
+    {
+        if !binding.policy.phases.contains_key(&member) {
+            status = OrchestrationStatus::Failed;
+            mapped_evidence = Some(runinator_models::json!({
+                "failure": "outcome_route_invalid_member",
+                "member": member,
+                "phase": current_phase.clone(),
+            }));
+        } else if binding
+            .policy
+            .max_epochs
+            .is_some_and(|limit| current_epoch >= i64::from(limit))
+        {
+            status = OrchestrationStatus::Failed;
+            mapped_evidence = Some(runinator_models::json!({
+                "failure": "outcome_route_epoch_budget_exhausted",
+                "max_epochs": binding.policy.max_epochs,
+                "phase": current_phase.clone(),
+            }));
+        } else {
+            current_epoch += 1;
+            status = OrchestrationStatus::Running;
+            restart_member = Some(member.clone());
+            next_epoch = Some((
+                current_epoch,
+                member.clone(),
+                epoch.parameters.clone(),
+                format!(
+                    "phase outcome route from {} to {member}",
+                    current_phase.as_deref().unwrap_or_default()
+                ),
+            ));
+        }
     }
 
     if let Some((next_epoch, member, parameters, reason)) = &next_epoch {
@@ -886,6 +938,41 @@ async fn settle_current_orchestration_epoch<
         }
     }
     Ok(())
+}
+
+/// Merge an author-selected state patch without granting phase output the ability to discard the
+/// rest of the durable mission context. Scalar or array patches are ignored deliberately: phase
+/// resource state is always an object at this boundary.
+fn merge_orchestration_resources(resources: &mut Value, patch: &Value) {
+    let (Some(resources), Some(patch)) = (resources.as_object_mut(), patch.as_object()) else {
+        return;
+    };
+    for (key, value) in patch {
+        match (resources.get_mut(key), value) {
+            (Some(Value::Object(current)), Value::Object(next)) => {
+                merge_orchestration_resource_objects(current, next);
+            }
+            _ => {
+                resources.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+fn merge_orchestration_resource_objects(
+    current: &mut runinator_models::value::Map,
+    patch: &runinator_models::value::Map,
+) {
+    for (key, value) in patch {
+        match (current.get_mut(key), value) {
+            (Some(Value::Object(existing)), Value::Object(next)) => {
+                merge_orchestration_resource_objects(existing, next);
+            }
+            _ => {
+                current.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 async fn abandon_canceled_epoch_workspaces<T: WorkspaceStore>(

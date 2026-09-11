@@ -46,6 +46,13 @@ pub(crate) fn definitions(workflow_tools: Vec<Value>) -> Vec<Value> {
     tools
 }
 
+/// The intentionally small MCP surface mounted into one harnessed mission phase. General help,
+/// raw exec, mission creation, and arbitrary effect steering are absent because they would be an
+/// escape hatch to unrelated control-plane verbs.
+pub(crate) fn mission_definitions() -> Vec<Value> {
+    schema::mission_definitions()
+}
+
 fn help_tool() -> Value {
     json!({
         "name": HELP_TOOL,

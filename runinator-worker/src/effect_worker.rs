@@ -1310,6 +1310,29 @@ impl ProviderEventSink for EffectOutputSink {
                     publish_result(broker.as_ref(), outbox.as_ref(), &mut result, true).await
                 });
             }
+            runinator_models::runs::ProviderExecutionEvent::Progress { kind, payload } => {
+                let broker = self.broker.clone();
+                let command = self.command.clone();
+                let outbox = self.outbox.clone();
+                let publish_order = self.publish_order.clone();
+                self.spawn(async move {
+                    let _ordered = publish_order.lock().await;
+                    let mut result = EffectResult {
+                        workspace_commit: None,
+                        version: command.version,
+                        event_id: Uuid::now_v7(),
+                        effect_id: command.effect_id,
+                        workflow_run_id: command.workflow_run_id,
+                        continuation_id: command.continuation_id,
+                        attempt: command.attempt,
+                        kind: EffectResultKind::Progress { kind, payload },
+                        timestamp: chrono::Utc::now(),
+                        trace_id: command.trace_id,
+                        notification_delivery_id: command.notification_delivery_id,
+                    };
+                    publish_result(broker.as_ref(), outbox.as_ref(), &mut result, false).await
+                });
+            }
             runinator_models::runs::ProviderExecutionEvent::TerminalInteraction { interaction } => {
                 let broker = self.broker.clone();
                 let command = self.command.clone();

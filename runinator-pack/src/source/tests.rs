@@ -71,6 +71,7 @@ fn checked_in_packs_all_compile_and_settings_parse() {
     let manifests = vec![
         packs_dir.join("hello-world"),
         packs_dir.join("autonomous-development"),
+        packs_dir.join("ai-missions"),
         packs_dir.join("claude-availability"),
     ];
 
@@ -137,6 +138,30 @@ fn checked_in_packs_all_compile_and_settings_parse() {
             });
         }
     }
+}
+
+#[test]
+fn bounded_mission_pack_pipelines_compile() {
+    let source = repo_root()
+        .join("packs")
+        .join("ai-missions")
+        .join("ai-missions.rrx");
+    let source_text = std::fs::read_to_string(&source)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()));
+    let blocks = runinator_rexrap::parse_rrx_blocks(&source_text)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", source.display()));
+    let pipelines =
+        runinator_rexrap::parse_pipeline_str(&blocks.pipelines).unwrap_or_else(|error| {
+            panic!("failed to compile {} pipelines: {error}", source.display())
+        });
+    assert_eq!(pipelines.pipelines.len(), 2);
+    assert!(pipelines.pipelines.iter().all(|pipeline| {
+        pipeline
+            .metadata
+            .get("orchestration")
+            .and_then(|policy| policy.get("entry_member"))
+            .is_some()
+    }));
 }
 
 #[test]

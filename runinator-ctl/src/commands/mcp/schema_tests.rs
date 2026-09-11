@@ -38,6 +38,27 @@ fn every_command_group_is_advertised() {
     );
 }
 
+#[test]
+fn harnessed_mission_profile_exposes_only_observation_and_declared_intents() {
+    let names = mission_definitions()
+        .iter()
+        .filter_map(|definition| definition.get("name").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "runinator_missions_show".to_string(),
+            "runinator_missions_evidence".to_string(),
+            "runinator_missions_intent".to_string(),
+        ]
+    );
+    assert!(find_mission("runinator_missions_show").is_some());
+    assert!(find_mission("runinator_missions_start").is_none());
+    assert!(find_mission("runinator_missions_steer").is_none());
+    assert!(find_mission("runinator_runs_show").is_none());
+}
+
 // MCP names tools with `^[a-zA-Z0-9_-]{1,64}$`, and a client keys its call table on them.
 #[test]
 fn tool_names_are_unique_and_legal() {

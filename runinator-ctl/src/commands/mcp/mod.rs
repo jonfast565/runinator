@@ -51,6 +51,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 pub(crate) struct Options {
     /// expose every saved workflow as a tool of its own.
     pub workflow_tools: bool,
+    /// Do not expose raw command execution or non-mission controls to a harnessed agent session.
+    pub mission_only: bool,
     /// the default ceiling on one command.
     pub timeout: Duration,
 }
@@ -59,6 +61,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             workflow_tools: false,
+            mission_only: false,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -122,13 +125,23 @@ impl Server<'_> {
             "ping" => success(id, json!({})),
             "tools/list" => success(id, json!({ "tools": self.tool_definitions().await })),
             "tools/call" => self.call(id, params).await,
+            "resources/list" if self.options.mission_only => {
+                success(id, json!({ "resources": [] }))
+            }
             "resources/list" => success(
                 id,
                 json!({ "resources": resources::list(self.client).await }),
             ),
+            "resources/templates/list" if self.options.mission_only => {
+                success(id, json!({ "resourceTemplates": [] }))
+            }
             "resources/templates/list" => {
                 success(id, json!({ "resourceTemplates": resources::templates() }))
             }
+            "resources/read" if self.options.mission_only => internal_error(
+                id,
+                "the mission MCP profile does not expose general resources",
+            ),
             "resources/read" => match params.get("uri").and_then(Value::as_str) {
                 Some(uri) => match resources::read(self.client, uri).await {
                     Ok(contents) => success(id, contents),
@@ -162,6 +175,9 @@ impl Server<'_> {
     /// server still advertises the command line — which is what the caller needs to find out *why*
     /// it is unreachable.
     async fn tool_definitions(&self) -> Vec<Value> {
+        if self.options.mission_only {
+            return tools::mission_definitions();
+        }
         let workflows = match self.options.workflow_tools {
             true => self.client.fetch_workflows().await.unwrap_or_default(),
             false => Vec::new(),
@@ -183,6 +199,15 @@ impl Server<'_> {
     }
 
     async fn tool(&mut self, name: &str, arguments: Value) -> Value {
+        if self.options.mission_only {
+            let Some(tool) = schema::find_mission(name) else {
+                return protocol::text_result(
+                    format!("'{name}' is not available to a harnessed mission session"),
+                    true,
+                );
+            };
+            return self.command_tool(tool, &arguments).await;
+        }
         if name == tools::HELP_TOOL {
             return tools::help(&arguments);
         }

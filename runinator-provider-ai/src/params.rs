@@ -30,6 +30,22 @@ pub(crate) struct ClaudeCodeParams {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub permission_mode: Option<String>,
+    /// Keep Claude Code alive as a JSONL session so a mission controller can steer it between
+    /// turns. This is intentionally distinct from `interactive`, which owns a human-facing PTY.
+    #[serde(default)]
+    pub harnessed: bool,
+    /// A descriptive role retained in the action result and streamed progress records.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Resume an explicit Claude Code session. Omission always starts a fresh session.
+    #[serde(default)]
+    pub resume_session: Option<String>,
+    /// An explicit Claude Code MCP configuration file made available to this session.
+    #[serde(default)]
+    pub mcp_config: Option<String>,
+    /// Bound autonomous work performed in one Claude Code turn.
+    #[serde(default)]
+    pub max_turns: Option<u32>,
 }
 
 pub(crate) fn default_binary() -> String {

@@ -214,6 +214,11 @@ pub enum EffectResultKind {
     Artifact {
         artifact: Value,
     },
+    Progress {
+        kind: String,
+        #[serde(default)]
+        payload: Value,
+    },
     TerminalInteraction {
         interaction: TerminalInteraction,
     },

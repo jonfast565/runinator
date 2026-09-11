@@ -850,6 +850,22 @@ export async function createPipelineRun(pipelineId: string, parameters: unknown 
   return command<PipelineRun>("create_pipeline_run", { pipelineId, parameters });
 }
 
+export interface PipelineIngressInput {
+  source: string;
+  eventId: string;
+  eventType: string;
+  correlationKey: string;
+  payload: unknown;
+  provenance?: unknown;
+}
+
+export async function admitPipelineIngress(pipelineId: string, input: PipelineIngressInput) {
+  return command<import("../domain/models").IngressResponse>("admit_pipeline_ingress", {
+    pipelineId,
+    request: input,
+  });
+}
+
 export async function fetchPipelineRuns() {
   return command<PipelineRun[]>("fetch_pipeline_runs");
 }

@@ -67,6 +67,12 @@ export const navSections: NavSection[] = [
         description: "Inspect correlated work or configure the adapter that admits it.",
       },
       {
+        tab: "Missions",
+        label: "Missions",
+        icon: "branch",
+        description: "Start and guide bounded AI coding or research/report missions.",
+      },
+      {
         tab: "Approvals",
         label: "Approvals",
         icon: "approve",

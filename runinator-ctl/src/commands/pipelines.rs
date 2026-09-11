@@ -59,6 +59,48 @@ pub(super) async fn pipelines(
             println!("pipeline run {} [{}]", run.id, run.status.as_str());
             Ok(())
         }
+        PipelineCommands::Ingress {
+            pipeline,
+            correlation,
+            source,
+            event_type,
+            event_id,
+            params,
+            json_file,
+        } => {
+            let pipeline = resolve_pipeline(client, pipeline).await?;
+            let event_id = event_id
+                .clone()
+                .unwrap_or_else(|| Uuid::now_v7().to_string());
+            let response = client
+                .ingress_pipeline(
+                    pipeline_id(&pipeline)?,
+                    &PipelineIngressRequest {
+                        source: source.clone(),
+                        event_id: event_id.clone(),
+                        event_type: event_type.clone(),
+                        correlation_key: correlation.clone(),
+                        payload: params::load_object(json_file.as_deref(), params)?,
+                        provenance: json!({ "origin": "runinatorctl" }),
+                    },
+                )
+                .await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!(
+                "ingress {} for {} [{}]{}",
+                response.disposition,
+                pipeline.name,
+                event_id,
+                response
+                    .orchestration_binding_id
+                    .as_deref()
+                    .map(|id| format!(" mission {id}"))
+                    .unwrap_or_default(),
+            );
+            Ok(())
+        }
         PipelineCommands::Revisions { pipeline, limit } => {
             let pipeline = resolve_pipeline(client, pipeline).await?;
             let revisions = client
@@ -325,7 +367,7 @@ pub(super) async fn resolve_pipeline(client: &Client, reference: &str) -> Result
         .ok_or_else(|| err(format!("pipeline '{reference}' not found")))
 }
 
-fn pipeline_id(pipeline: &Pipeline) -> Result<Uuid> {
+pub(super) fn pipeline_id(pipeline: &Pipeline) -> Result<Uuid> {
     pipeline
         .id
         .ok_or_else(|| err("pipeline has no persisted id"))

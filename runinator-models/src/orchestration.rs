@@ -376,6 +376,15 @@ pub struct ResultMapping {
     /// future ingress to this binding generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlations: Option<String>,
+    /// JSON pointer to an object merged into the binding resources after a phase succeeds. This
+    /// carries compact state such as a reviewed plan or a report outline without replacing
+    /// unrelated mission context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources_patch: Option<String>,
+    /// JSON pointer to a string naming the next declared phase. The reducer starts it as a new
+    /// immutable epoch; it never rewires the current pipeline graph in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_member: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -436,6 +445,13 @@ pub struct OrchestrationPolicy {
     pub phases: BTreeMap<String, PhasePolicy>,
     #[serde(default)]
     pub budgets: BTreeMap<String, BudgetPolicy>,
+    /// The member used for the first epoch. Subsequent routing can only select declared phases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_member: Option<String>,
+    /// An explicit cap on epochs created by outcome routes. This prevents an agent-produced route
+    /// from creating an unbounded loop when a mission author forgot a terminal outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_epochs: Option<u32>,
     #[serde(default)]
     pub defaults: Value,
 }
@@ -482,6 +498,8 @@ impl OrchestrationPolicy {
                 &phase.result.evidence,
                 &phase.result.failure_class,
                 &phase.result.correlations,
+                &phase.result.resources_patch,
+                &phase.result.next_member,
             ]
             .into_iter()
             .flatten()
@@ -507,6 +525,16 @@ impl OrchestrationPolicy {
                     "orchestration budget handoff member '{member}' does not exist"
                 ));
             }
+        }
+        if self.max_epochs == Some(0) {
+            return Err("orchestration max_epochs must be positive when supplied".into());
+        }
+        if let Some(member) = &self.entry_member
+            && !member_keys.contains(member.as_str())
+        {
+            return Err(format!(
+                "orchestration entry member '{member}' does not exist"
+            ));
         }
         Ok(())
     }
@@ -1166,6 +1194,23 @@ mod ingress_policy_tests {
             }],
         };
         assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn orchestration_entry_must_be_a_declared_member_and_epoch_budget_is_positive() {
+        let policy = OrchestrationPolicy {
+            entry_member: Some("acme.mission.implement".into()),
+            max_epochs: Some(3),
+            ..Default::default()
+        };
+        assert!(policy.validate(["acme.mission.implement"]).is_ok());
+        assert!(policy.validate(["acme.mission.review"]).is_err());
+
+        let zero_budget = OrchestrationPolicy {
+            max_epochs: Some(0),
+            ..Default::default()
+        };
+        assert!(zero_budget.validate(["acme.mission.implement"]).is_err());
     }
 
     #[test]

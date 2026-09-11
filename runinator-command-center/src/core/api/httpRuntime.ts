@@ -435,6 +435,18 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/runs`,
     body: (args) => ({ parameters: argOpt(args, "parameters") ?? {} }),
   },
+  admit_pipeline_ingress: {
+    method: "POST",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/ingress`,
+    body: (args) => ({
+      source: arg(args, "source"),
+      event_id: arg(args, "eventId"),
+      event_type: arg(args, "eventType"),
+      correlation_key: arg(args, "correlationKey"),
+      payload: argOpt(args, "payload") ?? {},
+      provenance: argOpt(args, "provenance") ?? {},
+    }),
+  },
   fetch_pipeline_runs: { method: "GET", path: () => "pipeline_runs" },
   fetch_orchestrations: {
     method: "GET",

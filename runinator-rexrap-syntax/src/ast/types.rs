@@ -129,6 +129,8 @@ pub struct PipelineDecl {
 pub struct OrchestrationDecl {
     pub intents: Vec<OrchestrationIntentDecl>,
     pub budgets: Vec<OrchestrationBudgetDecl>,
+    pub entry_member: Option<String>,
+    pub max_epochs: Option<u32>,
     pub phases: Vec<OrchestrationPhaseDecl>,
     pub span: Span,
 }

@@ -440,7 +440,7 @@ pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + Work
     {
         return reply;
     }
-    let interactive_action = matches!(
+    let controlled_action = matches!(
         &effect.request,
         runinator_models::workflow_vm::WorkflowEffectRequest::Action {
             provider,
@@ -449,11 +449,13 @@ pub async fn control_effect_terminal<T: AuthorizationStore + RuntimeStore + Work
             ..
         } if ((provider == "console" && function == "run")
             || (provider == "ai-command" && function == "claude_code"))
-            && input.get("interactive").and_then(Value::as_bool) == Some(true)
+            && (input.get("interactive").and_then(Value::as_bool) == Some(true)
+                || (provider == "ai-command"
+                    && input.get("harnessed").and_then(Value::as_bool) == Some(true)))
     );
-    if !interactive_action {
+    if !controlled_action {
         return runinator_ws_core::responses::bad_request(
-            "terminal control is only available for interactive provider effects",
+            "terminal control is only available for interactive or harnessed provider effects",
         );
     }
     if !matches!(

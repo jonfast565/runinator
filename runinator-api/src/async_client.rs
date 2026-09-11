@@ -61,6 +61,7 @@ use runinator_models::{
         ReplicaRegistrationRequest, ReplicaStatus,
     },
     revisions::{PipelineRevision, WorkflowRevision},
+    runs::ProviderTerminalControl,
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
@@ -82,7 +83,7 @@ use uuid::Uuid;
 use crate::{
     error::{ApiError, Result},
     locator::ServiceLocator,
-    types::ArtifactContentResponse,
+    types::{ArtifactContentResponse, IngressResponse, PipelineIngressRequest},
 };
 
 /// Default cap on a single request's total wall-clock time. Bounds a hung or slow web service so a
@@ -378,6 +379,21 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRun>().await?)
+    }
+
+    /// Submit a generic pipeline ingress event. Managed pipelines turn the accepted event into a
+    /// durable orchestration binding; ordinary pipelines start their normal ingress run.
+    pub async fn ingress_pipeline(
+        &self,
+        pipeline_id: Uuid,
+        request: &PipelineIngressRequest,
+    ) -> Result<IngressResponse> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/ingress"))
+            .await?;
+        let response = self.send(self.http_post(url.clone()).json(request)).await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<IngressResponse>().await?)
     }
 
     pub async fn fetch_orchestrations(
@@ -2742,6 +2758,23 @@ where
             Self::handle_response(url.clone(), self.send(self.http_get(url.clone())).await?)
                 .await?;
         Ok(response.json::<Vec<WorkflowEffectOutputEvent>>().await?)
+    }
+
+    /// Deliver one structured steering message to the worker currently owning a harnessed effect.
+    /// The service validates that the effect is active and opted into harness/terminal control.
+    pub async fn control_workflow_effect_terminal(
+        &self,
+        effect_id: Uuid,
+        control: ProviderTerminalControl,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_effects/{effect_id}/terminal"))
+            .await?;
+        let response = self
+            .send(self.http_post(url.clone()).json(&control))
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn settle_workflow_effect(

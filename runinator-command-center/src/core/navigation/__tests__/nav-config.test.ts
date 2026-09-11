@@ -77,6 +77,7 @@ describe("visibleNavSections", () => {
       "Runs",
       "PipelineRuns",
       "Orchestrations",
+      "Missions",
       "Approvals",
       "Gates",
     ]);

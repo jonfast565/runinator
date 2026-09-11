@@ -816,6 +816,8 @@ fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRa
     let span = span_of(&pair);
     let mut intents = Vec::new();
     let mut budgets = Vec::new();
+    let mut entry_member = None;
+    let mut max_epochs = None;
     let mut phases = Vec::new();
     for item in pair
         .into_inner()
@@ -825,6 +827,33 @@ fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRa
         match item.as_rule() {
             Rule::orchestration_intent => intents.push(parse_orchestration_intent(item)?),
             Rule::orchestration_budget => budgets.push(parse_orchestration_budget(item)?),
+            Rule::orchestration_entry => {
+                let member = item
+                    .into_inner()
+                    .find(|part| part.as_rule() == Rule::string)
+                    .ok_or_else(|| RexRapError::syntax(span, "entry is missing a member"))?;
+                if entry_member.replace(plain_string(member)?).is_some() {
+                    return Err(RexRapError::syntax(
+                        span,
+                        "orchestration can only declare one entry member",
+                    ));
+                }
+            }
+            Rule::orchestration_max_epochs => {
+                let integer = item
+                    .into_inner()
+                    .find(|part| part.as_rule() == Rule::integer)
+                    .ok_or_else(|| RexRapError::syntax(span, "max_epochs is missing a value"))?;
+                let parsed = integer.as_str().parse::<u32>().map_err(|_| {
+                    RexRapError::syntax(span, "max_epochs must be a positive integer")
+                })?;
+                if max_epochs.replace(parsed).is_some() {
+                    return Err(RexRapError::syntax(
+                        span,
+                        "orchestration can only declare one max_epochs value",
+                    ));
+                }
+            }
             Rule::orchestration_phase => phases.push(parse_orchestration_phase(item)?),
             _ => {}
         }
@@ -832,6 +861,8 @@ fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRa
     Ok(OrchestrationDecl {
         intents,
         budgets,
+        entry_member,
+        max_epochs,
         phases,
         span,
     })
