@@ -24,6 +24,8 @@ pub enum Kind {
     TinyBlock = 14,
     /// Physical-only compression group for logical Chunk objects.
     ChunkBlock = 15,
+    /// Physical-only container for small logical metadata objects.
+    MetadataBlock = 16,
 }
 impl TryFrom<u8> for Kind {
     type Error = crate::Error;
@@ -44,6 +46,7 @@ impl TryFrom<u8> for Kind {
             13 => Self::RefList,
             14 => Self::TinyBlock,
             15 => Self::ChunkBlock,
+            16 => Self::MetadataBlock,
             _ => return Err(corrupt("unknown object kind")),
         })
     }

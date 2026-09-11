@@ -48,6 +48,8 @@ pub struct SharedObjects<T: DurableWorkspaceStore> {
     pub runtime: tokio::runtime::Handle,
     pub reader: Option<LazyReaderGuard<T>>,
     pub records: storage::cache::ByteCache,
+    pub decoded_records: storage::cache::ByteCache,
+    pub indexed_records: std::sync::Mutex<std::collections::HashSet<Id>>,
     pub database_reads: std::sync::atomic::AtomicU64,
     pub blob_reads: std::sync::atomic::AtomicU64,
     pub locations: std::sync::Mutex<std::collections::HashMap<Id, WorkspaceObjectLocation>>,
@@ -83,6 +85,10 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
         // bounded to one small directory page's metadata, including traversal nodes.
         if locations.len() >= 8192 {
             locations.clear();
+            self.indexed_records
+                .lock()
+                .map_err(|_| storage::Error::Poisoned)?
+                .clear();
         }
         locations.insert(id, location.clone());
         Ok(location)
@@ -122,6 +128,10 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
                 .map_err(|_| storage::Error::Poisoned)?;
             if locations.len().saturating_add(objects.len()) >= 8192 {
                 locations.clear();
+                self.indexed_records
+                    .lock()
+                    .map_err(|_| storage::Error::Poisoned)?
+                    .clear();
             }
             for object in objects {
                 let id = object.id.parse()?;
@@ -165,6 +175,129 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
             Err(error) => return Err(error),
         };
         storage::record::decode_range(&bytes, id, location.member)
+    }
+    fn read_location_group(
+        &self,
+        location: &WorkspaceObjectLocation,
+        members: &[(usize, Id, u32)],
+    ) -> storage::Result<Vec<(usize, Object)>> {
+        let _permit = self
+            .runtime
+            .block_on(self.metadata_reads.acquire())
+            .map_err(|_| storage::Error::Conflict)?;
+        if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
+            return Err(storage::Error::Conflict);
+        }
+        if location.length > storage::codec::MAX_OBJECT as u64 + storage::record::HEADER_LEN + 65536
+        {
+            return Err(storage::Error::Corrupt("oversized physical record".into()));
+        }
+        let key = Self::record_key(location);
+        let load = || {
+            self.runtime
+                .block_on(self.read_record(location))
+                .map_err(storage_error)
+        };
+        let bytes = match self
+            .records
+            .get_or_load(key, location.length as usize, load)
+        {
+            Ok(bytes) => bytes,
+            Err(storage::Error::CacheFull) => Arc::new(load()?),
+            Err(error) => return Err(error),
+        };
+        let indexed = self
+            .indexed_records
+            .lock()
+            .map_err(|_| storage::Error::Poisoned)?
+            .contains(&key);
+        if !indexed
+            && let Some(index) =
+                storage::record::metadata_block_members_cached(&bytes, &self.decoded_records)?
+        {
+            let mut locations = self
+                .locations
+                .lock()
+                .map_err(|_| storage::Error::Poisoned)?;
+            if locations.len().saturating_add(index.len()) >= 8192 {
+                locations.clear();
+                self.indexed_records
+                    .lock()
+                    .map_err(|_| storage::Error::Poisoned)?
+                    .clear();
+            }
+            for member in index {
+                let mut indexed = location.clone();
+                indexed.member = member.member;
+                indexed.kind = member.kind as u8;
+                indexed.raw_len = member.raw_len as u64;
+                locations.insert(member.id, indexed);
+            }
+            self.indexed_records
+                .lock()
+                .map_err(|_| storage::Error::Poisoned)?
+                .insert(key);
+        }
+        let requests = members
+            .iter()
+            .map(|(_, id, member)| (*id, *member))
+            .collect::<Vec<_>>();
+        let objects =
+            storage::record::decode_ranges_cached(&bytes, &requests, &self.decoded_records)?;
+        Ok(members
+            .iter()
+            .map(|(position, _, _)| *position)
+            .zip(objects)
+            .collect())
+    }
+
+    fn read_locations(
+        &self,
+        ids: &[Id],
+        locations: &[WorkspaceObjectLocation],
+    ) -> storage::Result<Vec<Object>> {
+        let mut grouped = std::collections::BTreeMap::<
+            (String, u64, u64),
+            (WorkspaceObjectLocation, Vec<(usize, Id, u32)>),
+        >::new();
+        for (position, (id, location)) in ids.iter().zip(locations).enumerate() {
+            grouped
+                .entry((location.pack.clone(), location.offset, location.length))
+                .or_insert_with(|| (location.clone(), Vec::new()))
+                .1
+                .push((position, *id, location.member));
+        }
+        let groups = grouped.into_values().collect::<Vec<_>>();
+        let grouped_objects = std::thread::scope(|scope| {
+            let chunk_size = groups.len().div_ceil(8).max(1);
+            let tasks = groups
+                .chunks(chunk_size)
+                .map(|groups| {
+                    scope.spawn(move || {
+                        let mut output = Vec::new();
+                        for (location, members) in groups {
+                            output.extend(self.read_location_group(location, members)?);
+                        }
+                        Ok::<_, storage::Error>(output)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut output = Vec::with_capacity(ids.len());
+            for task in tasks {
+                output.extend(task.join().map_err(|_| storage::Error::Conflict)??);
+            }
+            Ok::<_, storage::Error>(output)
+        })?;
+        let mut ordered = vec![None; ids.len()];
+        for (position, object) in grouped_objects {
+            ordered[position] = Some(object);
+        }
+        ordered
+            .into_iter()
+            .map(|object| {
+                object.ok_or_else(|| storage::Error::Corrupt("bulk record omitted object".into()))
+            })
+            .collect()
     }
     fn read(&self, id: Id) -> storage::Result<Object> {
         if let Some(reader) = &self.reader {
@@ -379,28 +512,7 @@ impl<T: DurableWorkspaceStore> ReadStore for SharedObjects<T> {
         self.runtime
             .block_on(self.prefetch_records(&locations))
             .map_err(storage_error)?;
-        // scoped threads borrow the request's reader guard; all finish before it is released.
-        std::thread::scope(|scope| {
-            let chunk_size = ids.len().div_ceil(8).max(1);
-            let tasks: Vec<_> = ids
-                .chunks(chunk_size)
-                .zip(locations.chunks(chunk_size))
-                .map(|(ids, locations)| {
-                    scope.spawn(move || {
-                        ids.iter()
-                            .copied()
-                            .zip(locations.iter().cloned())
-                            .map(|(id, location)| self.read_location(id, location))
-                            .collect::<storage::Result<Vec<_>>>()
-                    })
-                })
-                .collect();
-            let mut objects = Vec::with_capacity(ids.len());
-            for task in tasks {
-                objects.extend(task.join().map_err(|_| storage::Error::Conflict)??);
-            }
-            Ok(objects)
-        })
+        self.read_locations(ids, &locations)
     }
 
     fn info(&self, id: Id) -> storage::Result<ObjectInfo> {

@@ -132,7 +132,10 @@ impl<S: ReadStore> ReadStore for Staging<S> {
 impl<S: ReadStore> WriteStore for Staging<S> {
     fn put(&self, kind: Kind, raw: &[u8]) -> Result<Id> {
         if raw.len() > crate::codec::MAX_OBJECT
-            || matches!(kind, Kind::TinyBlock | Kind::ChunkBlock)
+            || matches!(
+                kind,
+                Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock
+            )
         {
             return Err(invalid("invalid logical object"));
         }

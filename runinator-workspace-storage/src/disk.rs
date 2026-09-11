@@ -87,6 +87,19 @@ impl RawDisk {
             Ok((*object.bytes).clone())
         })
     }
+    fn metadata_block(&self, file: &File, loc: &Location) -> Result<Arc<Vec<u8>>> {
+        let h = record::header(file, loc.offset)?;
+        if h.kind != Kind::MetadataBlock
+            || h.record_len()? != loc.length
+            || h.raw_len > crate::metadata_block::BLOCK_LIMIT as u64
+        {
+            return Err(corrupt("invalid metadata block location"));
+        }
+        self.tiny_blocks.get_or_load(h.id, h.raw_len as usize, || {
+            let (_, object) = record::read(file, loc.offset, Some(h.id))?;
+            Ok((*object.bytes).clone())
+        })
+    }
 }
 impl ReadStore for RawDisk {
     fn info(&self, id: Id) -> Result<ObjectInfo> {
@@ -109,13 +122,24 @@ impl ReadStore for RawDisk {
                         raw_len: crate::chunkblock::info(&raw, loc.member, id)?,
                     })
                 }
+                Kind::MetadataBlock => {
+                    let raw = self.metadata_block(&file, &loc)?;
+                    let member = crate::metadata_block::member(&raw, loc.member, id)?;
+                    Ok(ObjectInfo {
+                        kind: member.kind,
+                        raw_len: member.raw.len(),
+                    })
+                }
                 _ => Err(corrupt("indexed member points at non-container record")),
             };
         }
         let h = record::header(&file, loc.offset)?;
         if h.id != id
             || h.record_len()? != loc.length
-            || matches!(h.kind, Kind::TinyBlock | Kind::ChunkBlock)
+            || matches!(
+                h.kind,
+                Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock
+            )
         {
             return Err(corrupt("record/index mismatch"));
         }
@@ -142,12 +166,23 @@ impl ReadStore for RawDisk {
                         bytes: Arc::new(member.raw),
                     })
                 }
+                Kind::MetadataBlock => {
+                    let raw = self.metadata_block(&file, &loc)?;
+                    let member = crate::metadata_block::member(&raw, loc.member, id)?;
+                    Ok(Object {
+                        kind: member.kind,
+                        bytes: Arc::new(member.raw.to_vec()),
+                    })
+                }
                 _ => Err(corrupt("indexed member points at non-container record")),
             };
         }
         let (h, object) = record::read(&file, loc.offset, Some(id))?;
         if h.record_len()? != loc.length
-            || matches!(object.kind, Kind::TinyBlock | Kind::ChunkBlock)
+            || matches!(
+                object.kind,
+                Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock
+            )
         {
             return Err(corrupt("record/index mismatch"));
         }
@@ -320,6 +355,7 @@ pub(crate) struct PackBuilder {
     sort: ExternalSorter,
     objects: u64,
     tiny: tiny::Pending,
+    metadata: crate::metadata_block::Pending,
     chunks: crate::chunkblock::Pending,
 }
 pub(crate) struct SealedPack {
@@ -338,11 +374,15 @@ impl PackBuilder {
             sort: ExternalSorter::new(&root.join("tmp"))?,
             objects: 0,
             tiny: tiny::Pending::default(),
+            metadata: crate::metadata_block::Pending::default(),
             chunks: crate::chunkblock::Pending::default(),
         })
     }
     pub fn add(&mut self, kind: Kind, raw: &[u8]) -> Result<Id> {
-        if matches!(kind, Kind::TinyBlock | Kind::ChunkBlock) {
+        if matches!(
+            kind,
+            Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock
+        ) {
             return Err(invalid(
                 "cannot insert a physical container as a logical object",
             ));
@@ -353,6 +393,11 @@ impl PackBuilder {
                 self.flush_tiny()?;
             }
             self.tiny.push(id, raw)?;
+        } else if crate::metadata_block::eligible(kind, raw) {
+            if self.metadata.would_overflow(raw.len()) {
+                self.flush_metadata()?;
+            }
+            self.metadata.push(id, kind, raw)?;
         } else if kind == Kind::Chunk {
             if self.chunks.would_overflow(raw.len()) {
                 self.flush_chunks()?;
@@ -416,6 +461,23 @@ impl PackBuilder {
         }
         Ok(())
     }
+    fn flush_metadata(&mut self) -> Result<()> {
+        let Some((raw, ids)) = self.metadata.take()? else {
+            return Ok(());
+        };
+        let offset = self.file.stream_position()?;
+        let (_, length) = record::write(&mut self.file, Kind::MetadataBlock, &raw)?;
+        for (slot, id) in ids.into_iter().enumerate() {
+            self.sort.push(Location {
+                id,
+                pack: Id::default(),
+                offset,
+                length,
+                member: slot as u32,
+            })?;
+        }
+        Ok(())
+    }
     fn flush_chunks(&mut self) -> Result<()> {
         let Some((raw, ids)) = self.chunks.take()? else {
             return Ok(());
@@ -438,6 +500,7 @@ impl PackBuilder {
     }
     pub fn finish(mut self, root: &Path) -> Result<SealedPack> {
         self.flush_tiny()?;
+        self.flush_metadata()?;
         self.flush_chunks()?;
         self.file.flush()?;
         let pack = if self.objects == 0 {

@@ -191,7 +191,7 @@ pub fn references(
     let mut out = Vec::new();
     match kind {
         Kind::Chunk => {}
-        Kind::TinyBlock | Kind::ChunkBlock => {
+        Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock => {
             return Err(corrupt("physical container is not a logical object"));
         }
         Kind::Page => {

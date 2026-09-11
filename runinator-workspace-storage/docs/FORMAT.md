@@ -17,8 +17,10 @@ serialize every sibling. Namespace and projection changes are atomic within an e
 Record/pack magic is `RNWREC01` / `RNWPACK1`. Decoding verifies lengths, object kinds, payload
 checksums and typed logical IDs. Objects are at most 16 MiB; compression groups are at most 4 MiB
 of decoded members, dictionaries at most 32 KiB, and delta bases are full members in the same
-physical record. Tiny blocks and chunk groups retain independent member IDs. Decoding a member
-may need its bounded physical group and delta base, never an entire workspace archive.
+physical record. Tiny-file blocks, 512 KiB metadata blocks, and chunk groups retain independent
+member IDs. Metadata blocks colocate small namespace, projection, revision, and file-manifest
+objects without changing their logical IDs. Decoding a member may need its bounded physical group
+and delta base, never an entire workspace archive.
 
 Production packs target 64 MiB with an 80 MiB transport ceiling. Server-side indexing validates
 uploaded records and derives every object location and raw kind/length; clients cannot submit

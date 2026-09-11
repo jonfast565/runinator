@@ -14,6 +14,14 @@ mod tests;
 pub const HEADER_LEN: u64 = 96;
 pub const PACK_MAGIC: &[u8; 8] = b"RNWPACK1";
 const RECORD_MAGIC: &[u8; 8] = b"RNWREC01";
+
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicalMemberInfo {
+    pub id: Id,
+    pub member: u32,
+    pub kind: Kind,
+    pub raw_len: usize,
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Header {
     pub id: Id,
@@ -65,6 +73,9 @@ impl Header {
             || (x.kind == Kind::TinyBlock
                 && (x.raw_len > crate::tiny::BLOCK_LIMIT as u64
                     || x.encoded_len > crate::tiny::BLOCK_LIMIT as u64 + 65536))
+            || (x.kind == Kind::MetadataBlock
+                && (x.raw_len > crate::metadata_block::BLOCK_LIMIT as u64
+                    || x.encoded_len > crate::metadata_block::BLOCK_LIMIT as u64 + 65536))
             || (x.kind == Kind::ChunkBlock && x.raw_len > crate::codec::MAX_OBJECT as u64)
         {
             return Err(corrupt("invalid record sizes/codec"));
@@ -113,6 +124,30 @@ fn decode_payload(h: Header, encoded: Vec<u8>) -> Result<Object> {
 }
 /// Decode exactly one ranged physical record and resolve an indexed logical member.
 pub fn decode_range(bytes: &[u8], expected: Id, member: u32) -> Result<Object> {
+    decode_ranges(bytes, &[(expected, member)])?
+        .pop()
+        .ok_or_else(|| corrupt("empty record range request"))
+}
+
+/// Decode one physical record once and resolve an ordered batch of indexed members.
+pub fn decode_ranges(bytes: &[u8], members: &[(Id, u32)]) -> Result<Vec<Object>> {
+    decode_ranges_inner(bytes, members, None)
+}
+
+/// Decode indexed members while retaining only bounded, request-local physical block payloads.
+pub fn decode_ranges_cached(
+    bytes: &[u8],
+    members: &[(Id, u32)],
+    decoded: &crate::cache::ByteCache,
+) -> Result<Vec<Object>> {
+    decode_ranges_inner(bytes, members, Some(decoded))
+}
+
+/// Read a physical metadata block's compact member index without hashing every logical object.
+pub fn metadata_block_members_cached(
+    bytes: &[u8],
+    decoded: &crate::cache::ByteCache,
+) -> Result<Option<Vec<PhysicalMemberInfo>>> {
     let header: [u8; 96] = bytes
         .get(..96)
         .ok_or_else(|| corrupt("truncated record"))?
@@ -122,8 +157,60 @@ pub fn decode_range(bytes: &[u8], expected: Id, member: u32) -> Result<Object> {
     if h.record_len()? != bytes.len() as u64 {
         return Err(corrupt("record range length mismatch"));
     }
-    let object = decode_payload(h, bytes[96..].to_vec())?;
-    resolve_member(h, object, expected, member)
+    if h.kind != Kind::MetadataBlock {
+        return Ok(None);
+    }
+    let key = Id::sha256(&h.encode());
+    let raw = decoded.get_or_load(key, h.raw_len as usize, || {
+        Ok((*decode_payload(h, bytes[96..].to_vec())?.bytes).clone())
+    })?;
+    let output = crate::metadata_block::table(&raw)?
+        .into_iter()
+        .enumerate()
+        .map(|(slot, member)| PhysicalMemberInfo {
+            id: member.id,
+            member: slot as u32,
+            kind: member.kind,
+            raw_len: member.raw.len(),
+        })
+        .collect();
+    Ok(Some(output))
+}
+
+fn decode_ranges_inner(
+    bytes: &[u8],
+    members: &[(Id, u32)],
+    decoded: Option<&crate::cache::ByteCache>,
+) -> Result<Vec<Object>> {
+    if members.is_empty() {
+        return Ok(Vec::new());
+    }
+    let header: [u8; 96] = bytes
+        .get(..96)
+        .ok_or_else(|| corrupt("truncated record"))?
+        .try_into()
+        .map_err(|_| corrupt("record header"))?;
+    let h = Header::decode(header)?;
+    if h.record_len()? != bytes.len() as u64 {
+        return Err(corrupt("record range length mismatch"));
+    }
+    let object = if matches!(
+        h.kind,
+        Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock
+    ) && let Some(decoded) = decoded
+    {
+        let key = Id::sha256(&h.encode());
+        let raw = decoded.get_or_load(key, h.raw_len as usize, || {
+            Ok((*decode_payload(h, bytes[96..].to_vec())?.bytes).clone())
+        })?;
+        Object {
+            kind: h.kind,
+            bytes: raw,
+        }
+    } else {
+        decode_payload(h, bytes[96..].to_vec())?
+    };
+    resolve_members(h, object, members)
 }
 
 /// Read an indexed member while verifying and decoding its shared physical container once.
@@ -154,38 +241,93 @@ pub fn read_indexed(
 }
 
 fn resolve_member(h: Header, object: Object, expected: Id, member: u32) -> Result<Object> {
-    if member == crate::index::STANDALONE {
-        if h.id != expected || matches!(h.kind, Kind::TinyBlock | Kind::ChunkBlock) {
+    resolve_members(h, object, &[(expected, member)])?
+        .pop()
+        .ok_or_else(|| corrupt("empty record member request"))
+}
+
+fn resolve_members(h: Header, object: Object, members: &[(Id, u32)]) -> Result<Vec<Object>> {
+    if members
+        .iter()
+        .any(|(_, member)| *member == crate::index::STANDALONE)
+    {
+        if members.len() != 1
+            || members[0].1 != crate::index::STANDALONE
+            || h.id != members[0].0
+            || matches!(
+                h.kind,
+                Kind::TinyBlock | Kind::ChunkBlock | Kind::MetadataBlock
+            )
+        {
             return Err(corrupt("logical record mismatch"));
         }
-        return Ok(object);
+        return Ok(vec![object]);
     }
     match h.kind {
         Kind::TinyBlock => {
-            let item = crate::tiny::member(&object.bytes, member, expected)?;
-            crate::tiny::verify(item)?;
-            Ok(Object {
-                kind: Kind::File,
-                bytes: Arc::new(item.raw.to_vec()),
-            })
+            let table = crate::tiny::table(&object.bytes)?;
+            members
+                .iter()
+                .map(|(expected, slot)| {
+                    let item = *table
+                        .get(*slot as usize)
+                        .ok_or_else(|| corrupt("tiny slot outside table"))?;
+                    if item.id != *expected {
+                        return Err(corrupt("tiny index/member mismatch"));
+                    }
+                    crate::tiny::verify(item)?;
+                    Ok(Object {
+                        kind: Kind::File,
+                        bytes: Arc::new(item.raw.to_vec()),
+                    })
+                })
+                .collect()
         }
-        Kind::ChunkBlock => Ok(Object {
-            kind: Kind::Chunk,
-            bytes: Arc::new(crate::chunkblock::member(&object.bytes, member, expected)?.raw),
-        }),
+        Kind::ChunkBlock => {
+            let table = crate::chunkblock::table(&object.bytes)?;
+            members
+                .iter()
+                .map(|(expected, slot)| {
+                    let item = table
+                        .get(*slot as usize)
+                        .ok_or_else(|| corrupt("chunk slot outside table"))?;
+                    if item.id != *expected {
+                        return Err(corrupt("chunk index/member mismatch"));
+                    }
+                    Ok(Object {
+                        kind: Kind::Chunk,
+                        bytes: Arc::new(item.raw.clone()),
+                    })
+                })
+                .collect()
+        }
+        Kind::MetadataBlock => members
+            .iter()
+            .map(|(expected, slot)| {
+                let item = crate::metadata_block::member(&object.bytes, *slot, *expected)?;
+                Ok(Object {
+                    kind: item.kind,
+                    bytes: Arc::new(item.raw.to_vec()),
+                })
+            })
+            .collect(),
         _ => Err(corrupt("member record is not a physical container")),
     }
 }
 pub fn write<W: Write>(writer: &mut W, kind: Kind, raw: &[u8]) -> Result<(Id, u64)> {
-    if raw.len() > MAX_OBJECT || (kind == Kind::TinyBlock && raw.len() > crate::tiny::BLOCK_LIMIT) {
+    if raw.len() > MAX_OBJECT
+        || (kind == Kind::TinyBlock && raw.len() > crate::tiny::BLOCK_LIMIT)
+        || (kind == Kind::MetadataBlock && raw.len() > crate::metadata_block::BLOCK_LIMIT)
+    {
         return Err(invalid("object exceeds decoded size limit"));
     }
     let id = Id::object(kind, raw);
-    let compressed = if (kind == Kind::Chunk || kind == Kind::TinyBlock) && !raw.is_empty() {
-        Some(zstd::bulk::compress(raw, 3)?)
-    } else {
-        None
-    };
+    let compressed =
+        if matches!(kind, Kind::Chunk | Kind::TinyBlock | Kind::MetadataBlock) && !raw.is_empty() {
+            Some(zstd::bulk::compress(raw, 3)?)
+        } else {
+            None
+        };
     let (codec, payload) = match &compressed {
         Some(c) if c.len() < raw.len() => (1, c.as_slice()),
         _ => (0, raw),
@@ -236,6 +378,18 @@ pub fn visit_pack<F: FnMut(Id, Object) -> Result<()>>(
                     Object {
                         kind: Kind::Chunk,
                         bytes: Arc::new(member.raw),
+                    },
+                )?;
+                count += 1;
+            }
+        } else if object.kind == Kind::MetadataBlock {
+            for member in crate::metadata_block::table(&object.bytes)? {
+                crate::metadata_block::verify(member)?;
+                visit(
+                    member.id,
+                    Object {
+                        kind: member.kind,
+                        bytes: Arc::new(member.raw.to_vec()),
                     },
                 )?;
                 count += 1;
@@ -300,6 +454,27 @@ pub fn index_pack<F: FnMut(crate::index::Location, ObjectInfo) -> Result<()>>(
                         },
                         ObjectInfo {
                             kind: Kind::Chunk,
+                            raw_len: item.raw.len(),
+                        },
+                    )?;
+                }
+            }
+            Kind::MetadataBlock => {
+                for (slot, item) in crate::metadata_block::table(&object.bytes)?
+                    .into_iter()
+                    .enumerate()
+                {
+                    crate::metadata_block::verify(item)?;
+                    visit(
+                        crate::index::Location {
+                            id: item.id,
+                            pack,
+                            offset,
+                            length,
+                            member: slot as u32,
+                        },
+                        ObjectInfo {
+                            kind: item.kind,
                             raw_len: item.raw.len(),
                         },
                     )?;

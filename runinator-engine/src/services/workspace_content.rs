@@ -65,14 +65,14 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                 .object_caches
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            if caches.len() >= 8 && !caches.contains_key(&workspace) {
+            if caches.len() >= 4 && !caches.contains_key(&workspace) {
                 caches.clear();
             }
             caches
                 .entry(workspace)
                 .or_insert_with(|| {
                     std::sync::Arc::new(runinator_workspace::storage::cache::BufferedCache::new(
-                        32 * 1024 * 1024,
+                        8 * 1024 * 1024,
                     ))
                 })
                 .clone()
@@ -88,7 +88,11 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                 blob_reads: Default::default(),
                 locations: std::sync::Mutex::new(std::collections::HashMap::new()),
                 metadata_reads: self.metadata_reads.clone(),
-                records: runinator_workspace::storage::cache::ByteCache::new(64 * 1024 * 1024),
+                records: runinator_workspace::storage::cache::ByteCache::new(16 * 1024 * 1024),
+                decoded_records: runinator_workspace::storage::cache::ByteCache::new(
+                    8 * 1024 * 1024,
+                ),
+                indexed_records: std::sync::Mutex::new(std::collections::HashSet::new()),
             },
             object_cache,
         )

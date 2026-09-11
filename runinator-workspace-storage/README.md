@@ -20,9 +20,11 @@ Worker restore transfers one native archive per checkout. The engine batches reg
 by physical pack and downloads each required pack into a bounded local cache; logical `ReadStore`
 lookups must never become one worker-to-server request per object.
 
-`record::read_indexed` uses a bounded decoded-record cache for local immutable packs. Shared
-compression containers are verified once while resident; each requested member still has its
-logical identity checked. This avoids rereading and hashing the full container for every chunk.
+`record::read_indexed` uses a bounded decoded-record cache for local immutable packs. Small
+metadata objects are physically colocated so a directory page needs only a few ranged reads.
+Shared compression containers are verified once while resident; each requested member still has
+its logical identity checked. This avoids rereading and hashing the full container for every
+logical object.
 
 `Repository` is a Unix filesystem reference implementation used by examples and tests. Runinator's
 cluster uses engine-owned blob access, SQL object locations, validated receipts and fenced

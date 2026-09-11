@@ -15,6 +15,10 @@ pub mod gc;
 pub mod id;
 pub mod index;
 mod io_util;
+mod metadata_block;
+#[cfg(test)]
+#[path = "metadata_block_tests.rs"]
+mod metadata_block_tests;
 pub mod model;
 pub mod namespace;
 pub mod oci;
