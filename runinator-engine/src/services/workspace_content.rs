@@ -60,23 +60,6 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
     ) -> runinator_workspace::storage::cache::BufferedStore<
         super::workspace_objects::SharedObjects<T>,
     > {
-        let object_cache = {
-            let mut caches = self
-                .object_caches
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if caches.len() >= 4 && !caches.contains_key(&workspace) {
-                caches.clear();
-            }
-            caches
-                .entry(workspace)
-                .or_insert_with(|| {
-                    std::sync::Arc::new(runinator_workspace::storage::cache::BufferedCache::new(
-                        8 * 1024 * 1024,
-                    ))
-                })
-                .clone()
-        };
         runinator_workspace::storage::cache::BufferedStore::with_cache(
             super::workspace_objects::SharedObjects {
                 db: self.store.clone(),
@@ -94,7 +77,7 @@ impl<T: DurableWorkspaceStore> ObjectGraphStorageProvider<T> {
                 ),
                 indexed_records: std::sync::Mutex::new(std::collections::HashSet::new()),
             },
-            object_cache,
+            self.object_cache.clone(),
         )
     }
     pub(super) async fn version_objects(

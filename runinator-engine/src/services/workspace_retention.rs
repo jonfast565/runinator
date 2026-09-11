@@ -25,6 +25,13 @@ struct RevocableStore<S> {
 }
 
 impl<S: ReadStore> ReadStore for RevocableStore<S> {
+    fn get_many(&self, ids: &[Id]) -> storage::Result<Vec<Object>> {
+        if !self.valid.load(Ordering::Acquire) {
+            return Err(storage::Error::Conflict);
+        }
+        self.inner.get_many(ids)
+    }
+
     fn get(&self, id: Id) -> storage::Result<Object> {
         if !self.valid.load(Ordering::Acquire) {
             return Err(storage::Error::Conflict);

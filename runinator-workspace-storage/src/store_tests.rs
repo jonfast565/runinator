@@ -20,6 +20,10 @@ impl ReadStore for ConcurrentStore {
     }
 
     fn get(&self, id: Id) -> Result<Object> {
+        assert!(
+            rayon::current_thread_index().is_none(),
+            "blocking io ran on a rayon worker"
+        );
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(active, Ordering::SeqCst);
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -51,7 +55,7 @@ fn default_batch_reads_concurrently_and_preserves_order() -> Result<()> {
 
     let objects = pool.install(|| store.get_many(&ids))?;
 
-    assert!(store.peak.load(Ordering::SeqCst) > 1);
+    assert!((2..=8).contains(&store.peak.load(Ordering::SeqCst)));
     assert_eq!(
         objects
             .iter()

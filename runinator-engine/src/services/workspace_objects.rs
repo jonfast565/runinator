@@ -148,33 +148,11 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
             .collect()
     }
     fn read_location(&self, id: Id, location: WorkspaceObjectLocation) -> storage::Result<Object> {
-        let _permit = self
-            .runtime
-            .block_on(self.metadata_reads.acquire())
-            .map_err(|_| storage::Error::Conflict)?;
-        if self.reader.as_ref().is_some_and(|reader| !reader.alive()) {
-            return Err(storage::Error::Conflict);
-        }
-        let key = Self::record_key(&location);
-        if location.length > storage::codec::MAX_OBJECT as u64 + storage::record::HEADER_LEN + 65536
-        {
-            return Err(storage::Error::Corrupt("oversized physical record".into()));
-        }
-        let load = || {
-            self.runtime
-                .block_on(self.read_record(&location))
-                .map_err(storage_error)
-        };
-        let bytes = match self
-            .records
-            .get_or_load(key, location.length as usize, load)
-        {
-            Ok(bytes) => bytes,
-            // concurrent large records may fill the cache; the shared read limit bounds fallback buffers.
-            Err(storage::Error::CacheFull) => Arc::new(load()?),
-            Err(error) => return Err(error),
-        };
-        storage::record::decode_range(&bytes, id, location.member)
+        let member = location.member;
+        self.read_location_group(&location, &[(0, id, member)])?
+            .pop()
+            .map(|(_, object)| object)
+            .ok_or_else(|| storage::Error::Corrupt("record omitted object".into()))
     }
     fn read_location_group(
         &self,
@@ -432,7 +410,9 @@ impl<T: DurableWorkspaceStore> SharedObjects<T> {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let blobs = self.blobs.clone();
             let workspace = self.workspace;
+            let metadata_reads = self.metadata_reads.clone();
             tasks.spawn(async move {
+                let _permit = metadata_reads.acquire_owned().await?;
                 let bytes = read_pack_range_from(
                     blobs,
                     workspace,
@@ -502,6 +482,9 @@ pub(super) fn storage_error(error: SendableError) -> storage::Error {
 
 impl<T: DurableWorkspaceStore> ReadStore for SharedObjects<T> {
     fn get_many(&self, ids: &[Id]) -> storage::Result<Vec<Object>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         if let Some(reader) = &self.reader {
             reader.ensure(&self.runtime)?;
         }

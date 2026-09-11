@@ -29,11 +29,25 @@ pub trait ReadStore: Sync {
         if ids.len() < PARALLEL_BATCH_MIN {
             return ids.iter().map(|id| self.get(*id)).collect();
         }
-        ids.par_iter()
-            .map(|id| self.get(*id))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .collect()
+        // remote adapters may wait on an async runtime; never lend their io to rayon callers.
+        std::thread::scope(|scope| {
+            let tasks = ids
+                .chunks(ids.len().div_ceil(8))
+                .map(|batch| {
+                    scope.spawn(move || {
+                        batch
+                            .iter()
+                            .map(|id| self.get(*id))
+                            .collect::<Result<Vec<_>>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut objects = Vec::with_capacity(ids.len());
+            for task in tasks {
+                objects.extend(task.join().map_err(|_| Error::Conflict)??);
+            }
+            Ok(objects)
+        })
     }
     fn contains(&self, id: Id) -> Result<bool> {
         match self.info(id) {

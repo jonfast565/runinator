@@ -132,7 +132,8 @@ async fn sequential_and_bulk_directory_measurements() {
     for sequential in [true, false] {
         let reader = WorkspaceService::new(db.clone(), blobs.clone());
         let store = Sequential(reader.objects(id));
-        let warm_store = Sequential(reader.objects(id));
+        // more than four workspaces must not flush previously loaded immutable metadata.
+        let warm_reader = reader;
         let revision: Id = revision_id.parse().unwrap();
         tokio::task::spawn_blocking(move || {
             let started = std::time::Instant::now();
@@ -157,13 +158,23 @@ async fn sequential_and_bulk_directory_measurements() {
             }
             println!("sequential={sequential} entries={count} first_ms={first_ms} total_ms={} database_reads={database_reads} blob_reads={blob_reads}", started.elapsed().as_millis());
             if !sequential {
+                for _ in 0..8 {
+                    let _ = warm_reader.objects(uuid::Uuid::now_v7());
+                }
+                let mut warm_store = warm_reader.objects(id);
+                // a cache-only read must not try acquiring a lease for this nonexistent version.
+                warm_store.inner.reader = Some(super::workspace_objects::LazyReaderGuard::new(
+                    warm_store.inner.db.clone(), id, 999,
+                ));
                 let warm_started = std::time::Instant::now();
-                let warm_view = View::new(&warm_store.0, revision).unwrap();
+                let warm_view = View::new(&warm_store, revision).unwrap();
                 assert_eq!(warm_view.directory("", None, 200).unwrap().len(), 200);
+                assert_eq!(warm_store.inner.database_reads.load(Ordering::Relaxed), 0);
+                assert_eq!(warm_store.inner.blob_reads.load(Ordering::Relaxed), 0);
                 println!("warm_first_ms={} database_reads={} blob_reads={}",
                     warm_started.elapsed().as_millis(),
-                    warm_store.0.inner.database_reads.load(Ordering::Relaxed),
-                    warm_store.0.inner.blob_reads.load(Ordering::Relaxed));
+                    warm_store.inner.database_reads.load(Ordering::Relaxed),
+                    warm_store.inner.blob_reads.load(Ordering::Relaxed));
             }
         }).await.unwrap();
     }
