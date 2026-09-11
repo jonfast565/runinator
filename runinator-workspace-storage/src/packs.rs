@@ -1,6 +1,8 @@
 //! Bounded pack production for shared storage and native transfers.
 
-use crate::{Id, Result, disk::PackBuilder, gc, index::DiskIndex, store::ReadStore};
+use crate::{
+    Id, Result, disk::PackBuilder, gc, index::DiskIndex, staging::StagedStore, store::ReadStore,
+};
 use std::path::{Path, PathBuf};
 
 pub const TARGET_PACK_BYTES: u64 = 64 * 1024 * 1024;
@@ -25,6 +27,27 @@ pub fn seal<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
     seal_roots(store, base, &[revision], scratch, emit)
 }
 
+/// Emit only reachable objects created by the current staged edit.
+///
+/// Unstaged edges belong to the immutable base and are pruned before they are loaded. The callback
+/// must consume each pack before returning; no revision ref is published.
+pub fn seal_staged<S: StagedStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
+    store: &S,
+    base: &B,
+    revision: Id,
+    scratch: &Path,
+    mut emit: F,
+) -> Result<()> {
+    seal_filtered(
+        store,
+        base,
+        &[revision],
+        scratch,
+        |id| store.is_staged(id),
+        &mut emit,
+    )
+}
+
 pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
     store: &S,
     base: &B,
@@ -32,6 +55,23 @@ pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
     scratch: &Path,
     mut emit: F,
 ) -> Result<()> {
+    seal_filtered(store, base, revisions, scratch, |_| Ok(true), &mut emit)
+}
+
+fn seal_filtered<S, B, P, F>(
+    store: &S,
+    base: &B,
+    revisions: &[Id],
+    scratch: &Path,
+    select: P,
+    mut emit: F,
+) -> Result<()>
+where
+    S: ReadStore,
+    B: ReadStore,
+    P: FnMut(Id) -> Result<bool>,
+    F: FnMut(Pack) -> Result<()>,
+{
     let directory = tempfile::tempdir_in(scratch)?;
     let root = directory.path();
     std::fs::create_dir(root.join("packs"))?;
@@ -80,13 +120,16 @@ pub fn seal_roots<S: ReadStore, B: ReadStore, F: FnMut(Pack) -> Result<()>>(
         }
         Ok(())
     }
-    gc::walk_roots(
+    gc::walk_roots_filtered(
         store,
         revisions,
         root,
-        false,
-        true,
-        FETCH_BATCH,
+        gc::WalkOptions {
+            include_ancestors: false,
+            load_chunks: true,
+            batch_size: FETCH_BATCH,
+        },
+        select,
         |ids, objects| add_batch(base, ids, objects, &mut builder, root, &mut emit),
     )?;
     flush(

@@ -364,10 +364,45 @@ pub(crate) fn walk_roots<S, F>(
     include_ancestors: bool,
     load_chunks: bool,
     batch_size: usize,
+    visit: F,
+) -> Result<DiskMarks>
+where
+    S: ReadStore + ?Sized,
+    F: FnMut(&[Id], &[crate::store::Object]) -> Result<()>,
+{
+    walk_roots_filtered(
+        s,
+        roots,
+        scratch,
+        WalkOptions {
+            include_ancestors,
+            load_chunks,
+            batch_size,
+        },
+        |_| Ok(true),
+        visit,
+    )
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct WalkOptions {
+    pub include_ancestors: bool,
+    pub load_chunks: bool,
+    pub batch_size: usize,
+}
+
+/// Walk reachable objects accepted by `select`, pruning rejected subtrees before loading them.
+pub(crate) fn walk_roots_filtered<S, P, F>(
+    s: &S,
+    roots: &[Id],
+    scratch: &Path,
+    options: WalkOptions,
+    mut select: P,
     mut visit: F,
 ) -> Result<DiskMarks>
 where
     S: ReadStore + ?Sized,
+    P: FnMut(Id) -> Result<bool>,
     F: FnMut(&[Id], &[crate::store::Object]) -> Result<()>,
 {
     let mut marks = DiskMarks::new(scratch)?;
@@ -376,8 +411,8 @@ where
         stack.push(edge(id, Some(Kind::Revision)))?;
     }
     loop {
-        let mut frontier = Vec::with_capacity(batch_size);
-        while frontier.len() < batch_size {
+        let mut frontier = Vec::with_capacity(options.batch_size);
+        while frontier.len() < options.batch_size {
             let Some(bytes) = stack.pop()? else { break };
             frontier.push(bytes);
         }
@@ -394,7 +429,10 @@ where
                 Some(Kind::try_from(bytes[32])?)
             };
             if marks.insert(id)? {
-                if !load_chunks && expected == Some(Kind::Chunk) {
+                if !select(id)? {
+                    continue;
+                }
+                if !options.load_chunks && expected == Some(Kind::Chunk) {
                     let info = s.info(id)?;
                     if info.kind != Kind::Chunk {
                         return Err(corrupt("object graph type mismatch"));
@@ -420,7 +458,7 @@ where
                 if object.kind == Kind::Chunk {
                     Ok(Vec::new())
                 } else {
-                    references(object.kind, &object.bytes, include_ancestors)
+                    references(object.kind, &object.bytes, options.include_ancestors)
                 }
             })
             .collect::<Vec<_>>()

@@ -94,6 +94,12 @@ pub struct ActiveWorkspace {
     phases: WorkspacePhaseReporter,
 }
 
+struct WorkspaceRestoreOptions {
+    root: std::path::PathBuf,
+    materialize_files: bool,
+    load_results: bool,
+}
+
 impl ActiveWorkspace {
     pub async fn restore(
         api: &(impl WorkspaceCheckoutClient + WorkspaceObjectTransport + Clone + 'static),
@@ -104,9 +110,37 @@ impl ActiveWorkspace {
         materialize_files: bool,
         load_results: bool,
     ) -> Result<Self, SendableError> {
+        let root = cache_root()?;
+        Self::restore_in(
+            api,
+            value,
+            replica_id,
+            deadline,
+            phases,
+            WorkspaceRestoreOptions {
+                root,
+                materialize_files,
+                load_results,
+            },
+        )
+        .await
+    }
+
+    async fn restore_in(
+        api: &(impl WorkspaceCheckoutClient + WorkspaceObjectTransport + Clone + 'static),
+        value: &Value,
+        replica_id: uuid::Uuid,
+        deadline: std::time::Instant,
+        phases: WorkspacePhaseReporter,
+        options: WorkspaceRestoreOptions,
+    ) -> Result<Self, SendableError> {
         let execution: WorkspaceExecution = value.decode()?;
         let expires = execution.checkout.leased_until.timestamp();
-        let root = cache_root()?;
+        let WorkspaceRestoreOptions {
+            root,
+            materialize_files,
+            load_results,
+        } = options;
         let revision_id = execution
             .snapshot
             .as_ref()
@@ -319,18 +353,29 @@ impl ActiveWorkspace {
             let pack_phase = phases.start("workspace.snapshot.pack_upload");
             let mut packs_uploaded = 0u64;
             let mut bytes_uploaded = 0u64;
-            packs::seal(
-                &edit.store,
-                &objects.cached(),
-                revision,
-                scratch.path(),
-                |pack| {
-                    let bytes = std::fs::read(pack.path)?;
-                    bytes_uploaded = bytes_uploaded.saturating_add(bytes.len() as u64);
-                    packs_uploaded = packs_uploaded.saturating_add(1);
-                    objects.upload(bytes)
-                },
-            )?;
+            let mut upload_pack = |pack: packs::Pack| {
+                let bytes = std::fs::read(pack.path)?;
+                bytes_uploaded = bytes_uploaded.saturating_add(bytes.len() as u64);
+                packs_uploaded = packs_uploaded.saturating_add(1);
+                objects.upload(bytes)
+            };
+            if result_only {
+                packs::seal_staged(
+                    &edit.store,
+                    &objects.cached(),
+                    revision,
+                    scratch.path(),
+                    &mut upload_pack,
+                )?;
+            } else {
+                packs::seal(
+                    &edit.store,
+                    &objects.cached(),
+                    revision,
+                    scratch.path(),
+                    &mut upload_pack,
+                )?;
+            }
             pack_phase.succeeded(runinator_models::json!({
                 "packs": packs_uploaded,
                 "bytes": bytes_uploaded,

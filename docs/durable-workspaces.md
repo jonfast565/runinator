@@ -197,8 +197,9 @@ load or decompress object content merely to answer whether an object already exi
 actions should override a writing workflow default with `@workspace({ ..., access: "read" })` so
 they reuse the restored snapshot and never scan, pack, upload, or seal unchanged content.
 The compiler-generated completion checkpoint reads only the base objects needed to preserve and
-replace named results. It does not download the workspace archive, materialize files, or rescan the
-workspace filesystem.
+replace named results. It seals only reachable objects created by that result edit, pruning the
+unchanged filesystem graph before any object reads. It does not download the workspace archive,
+materialize files, or rescan the workspace filesystem.
 
 Workspace-affined effects publish bounded lifecycle records for archive download and indexing,
 materialization or metadata-only recovery, change or result capture, pack upload, staging cleanup,

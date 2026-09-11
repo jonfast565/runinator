@@ -30,6 +30,11 @@ impl ReadStore for EmptyStore {
     }
 }
 
+/// A readable overlay that can identify objects created by its current edit.
+pub trait StagedStore: ReadStore {
+    fn is_staged(&self, id: Id) -> Result<bool>;
+}
+
 pub struct Staging<S> {
     pub base: S,
     directory: tempfile::TempDir,
@@ -104,6 +109,12 @@ impl<S: ReadStore> Staging<S> {
         }
         drop(state);
         self.base.get(id)
+    }
+}
+
+impl<S: ReadStore> StagedStore for Staging<S> {
+    fn is_staged(&self, id: Id) -> Result<bool> {
+        Staging::is_staged(self, id)
     }
 }
 

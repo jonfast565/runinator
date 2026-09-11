@@ -236,3 +236,9 @@ impl<S: storage::store::WriteStore> storage::store::WriteStore for CheckedStore<
         self.inner.put(kind, bytes)
     }
 }
+impl<S: storage::staging::StagedStore> storage::staging::StagedStore for CheckedStore<S> {
+    fn is_staged(&self, id: Id) -> storage::Result<bool> {
+        self.deadline.remaining()?;
+        self.inner.is_staged(id)
+    }
+}
