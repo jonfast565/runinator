@@ -1229,6 +1229,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       contentType: "application/zip",
     }),
   },
+  fetch_starter_packs: { method: "GET", path: () => "starter-packs" },
+  install_starter_pack: {
+    method: "POST",
+    path: (args) => `starter-packs/${escape(arg(args, "key"))}/install`,
+    body: () => ({}),
+  },
   list_workflow_files: { method: "GET", path: () => "workflow_files" },
   list_execution_profiles: { method: "GET", path: () => "execution_profiles" },
   list_execution_profile_collection_statuses: {

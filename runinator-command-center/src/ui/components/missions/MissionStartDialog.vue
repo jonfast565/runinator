@@ -12,7 +12,12 @@
           <h3>What should this mission do?</h3>
         </div>
         <label class="field-label">
-          <span>Mission recipe</span>
+          <span class="flex items-center gap-1"
+            >Mission recipe
+            <HelpBubble label="About mission recipes">
+              {{ recipeDescription }}
+            </HelpBubble></span
+          >
           <select v-model="pipelineId" class="input" required>
             <option value="" disabled>Choose a mission recipe…</option>
             <option
@@ -24,9 +29,6 @@
             </option>
           </select>
         </label>
-        <p v-if="selectedPipeline" class="mission-start-help">
-          {{ selectedPipeline.description || recipeDescription }}
-        </p>
       </section>
 
       <section class="mission-start-section">
@@ -43,19 +45,6 @@
             required
           ></textarea>
         </label>
-        <label class="field-label">
-          <span>Mission reference</span>
-          <input
-            v-model.trim="correlationKey"
-            class="input"
-            placeholder="feature-auth-refresh"
-            autocomplete="off"
-            required
-          />
-        </label>
-        <p class="mission-start-help">
-          Use a stable, unique reference. Reusing one is treated as the same logical mission.
-        </p>
       </section>
 
       <section class="mission-start-section">
@@ -65,7 +54,13 @@
         </div>
         <div class="mission-source-grid">
           <label class="field-label mission-source-repository">
-            <span>Repository URL</span>
+            <span class="flex items-center gap-1"
+              >Repository URL
+              <HelpBubble label="About mission source">
+                The worker resolves the supplied revision once and records the resulting commit
+                before work begins.
+              </HelpBubble></span
+            >
             <input
               v-model.trim="repository"
               class="input"
@@ -85,17 +80,25 @@
             />
           </label>
         </div>
-        <p class="mission-start-help">
-          The worker resolves this once and records the resulting commit before it begins.
-        </p>
       </section>
 
       <details class="mission-advanced">
         <summary>Advanced payload</summary>
-        <p>
-          Add optional JSON fields for a recipe-specific input. The objective and source above stay
-          authoritative.
-        </p>
+        <label class="field-label mt-2">
+          <span class="flex items-center gap-1"
+            >Mission reference
+            <HelpBubble label="About mission references">
+              Reusing a stable reference is treated as the same logical mission. A unique reference
+              is generated automatically.
+            </HelpBubble></span
+          >
+          <input
+            v-model.trim="correlationKey"
+            class="input"
+            placeholder="Generated automatically"
+            autocomplete="off"
+          />
+        </label>
         <textarea
           v-model="additionalParameters"
           class="input min-h-28 font-mono text-xs"
@@ -122,6 +125,7 @@ import { asJsonRecord, type JsonRecord } from "../../../core/domain/json";
 import type { Pipeline } from "../../../core/domain/models";
 import type { MissionKind, StartMissionInput } from "../../../core/services";
 import Button from "../shared/Button.vue";
+import HelpBubble from "../shared/HelpBubble.vue";
 import Modal from "../shared/Modal.vue";
 
 const props = withDefaults(
@@ -143,7 +147,7 @@ const emit = defineEmits<{
 
 const pipelineId = ref("");
 const goal = ref("");
-const correlationKey = ref("");
+const correlationKey = ref(`mission-${crypto.randomUUID()}`);
 const repository = ref("");
 const revision = ref("");
 const additionalParameters = ref("");
@@ -157,10 +161,12 @@ const kind = computed<MissionKind>(() => {
   return scope === "mission.research_report" ? "research_report" : "coding";
 });
 const recipeLabel = computed(() => (kind.value === "coding" ? "coding" : "research/report"));
-const recipeDescription = computed(() =>
-  kind.value === "coding"
-    ? "Implement, independently review, verify, and hand off a bounded code change."
-    : "Investigate a question, independently critique the evidence, and produce a durable report.",
+const recipeDescription = computed(
+  () =>
+    selectedPipeline.value?.description ??
+    (kind.value === "coding"
+      ? "Implement, independently review, verify, and hand off a bounded code change."
+      : "Investigate a question, independently critique the evidence, and produce a durable report."),
 );
 const visibleError = computed(() => advancedPayloadError.value ?? props.error);
 
@@ -198,7 +204,7 @@ function submit(): void {
   emit("start", {
     pipelineId: pipeline.id,
     kind: kind.value,
-    correlationKey: correlationKey.value,
+    correlationKey: correlationKey.value || `mission-${crypto.randomUUID()}`,
     parameters: {
       ...additional,
       request: { ...extraRequest, goal: goal.value },

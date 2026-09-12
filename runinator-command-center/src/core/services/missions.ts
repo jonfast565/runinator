@@ -18,9 +18,12 @@ import {
   fetchPipelineRun,
   fetchWorkflowEffectOutput,
   fetchWorkflowEffects,
+  fetchStarterPacks,
+  installStarterPack,
   steerMission,
   sendOrchestrationIntent,
 } from "../api/commandCenterApi";
+import type { StarterPackSummary } from "../api/commandCenterApi";
 
 export type MissionKind = "coding" | "research_report";
 
@@ -52,6 +55,14 @@ export function isMission(binding: OrchestrationBinding): boolean {
 
 export async function fetchMissionPipelines(): Promise<Pipeline[]> {
   return (await fetchPipelines()).filter(isMissionPipeline);
+}
+
+export async function fetchMissionStarterPack(): Promise<StarterPackSummary | null> {
+  return (await fetchStarterPacks()).find((pack) => pack.key === "ai-missions") ?? null;
+}
+
+export async function installMissionStarterPack(): Promise<void> {
+  await installStarterPack("ai-missions");
 }
 
 export async function fetchMissions(

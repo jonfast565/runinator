@@ -10,12 +10,15 @@ import type {
 import {
   fetchMissionDetail,
   fetchMissionPipelines,
+  fetchMissionStarterPack,
   fetchMissions,
   sendMissionIntent,
   sendMissionSteering,
+  installMissionStarterPack,
   startMission,
 } from "../../../core/services";
 import type { MissionEffectActivity, StartMissionInput } from "../../../core/services";
+import type { StarterPackSummary } from "../../../core/api/commandCenterApi";
 
 export const useMissionsStore = defineStore("missions", () => {
   const missionPipelines = ref<Pipeline[]>([]);
@@ -25,6 +28,8 @@ export const useMissionsStore = defineStore("missions", () => {
   const epochs = ref<OrchestrationEpoch[]>([]);
   const evidence = ref<OrchestrationEvidence[]>([]);
   const effects = ref<MissionEffectActivity[]>([]);
+  const starterPack = shallowRef<StarterPackSummary | null>(null);
+  const installingStarter = ref(false);
   const loading = ref(false);
   const detailLoading = ref(false);
   const error = ref<string | null>(null);
@@ -45,9 +50,14 @@ export const useMissionsStore = defineStore("missions", () => {
     error.value = null;
 
     try {
-      const [pipelines, bindings] = await Promise.all([fetchMissionPipelines(), fetchMissions()]);
+      const [pipelines, bindings, starter] = await Promise.all([
+        fetchMissionPipelines(),
+        fetchMissions(),
+        fetchMissionStarterPack().catch(() => null),
+      ]);
       missionPipelines.value = pipelines;
       missions.value = bindings;
+      starterPack.value = starter;
 
       if (selectedId.value && bindings.some((binding) => binding.id === selectedId.value)) {
         await select(selectedId.value);
@@ -97,6 +107,21 @@ export const useMissionsStore = defineStore("missions", () => {
     return startMission(input);
   }
 
+  async function installStarter(): Promise<void> {
+    installingStarter.value = true;
+    error.value = null;
+
+    try {
+      await installMissionStarterPack();
+      await refresh();
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause);
+      throw cause;
+    } finally {
+      installingStarter.value = false;
+    }
+  }
+
   async function steer(missionId: string, message: string): Promise<void> {
     await sendMissionSteering(missionId, message);
   }
@@ -113,12 +138,15 @@ export const useMissionsStore = defineStore("missions", () => {
     epochs,
     evidence,
     effects,
+    starterPack,
+    installingStarter,
     loading,
     detailLoading,
     error,
     refresh,
     select,
     start,
+    installStarter,
     steer,
     intent,
   };

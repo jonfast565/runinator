@@ -86,8 +86,16 @@
       <div v-if="tab === 'Admission Routes'" class="grid gap-3">
         <header class="orchestration-section-heading">
           <div>
-            <h3>Choose which events enter this pipeline</h3>
-            <p>Routes are checked in order against an orchestration's current lifecycle.</p>
+            <div class="flex items-center gap-1">
+              <h3>Admission Routes</h3>
+              <HelpBubble label="About admission routes">
+                <strong>Incoming events</strong>
+                <p>
+                  Routes decide which provider events start, record, or control correlated work.
+                  They are checked in order against the current lifecycle.
+                </p>
+              </HelpBubble>
+            </div>
           </div>
           <button type="button" class="btn btn-primary btn-sm" @click="addRoute">
             <Icon name="plus" :size="15" />
@@ -194,8 +202,16 @@
       <div v-else-if="tab === 'Intents'" class="grid gap-3">
         <header class="orchestration-section-heading">
           <div>
-            <h3>Define how active runs react</h3>
-            <p>Each intent needs a unique name and priority so event races resolve predictably.</p>
+            <div class="flex items-center gap-1">
+              <h3>Intents</h3>
+              <HelpBubble label="About intents">
+                <strong>Responses</strong>
+                <p>
+                  Intents describe how active work responds to an event. Priority decides which
+                  response wins when several match.
+                </p>
+              </HelpBubble>
+            </div>
           </div>
           <button type="button" class="btn btn-primary btn-sm" @click="addIntent">
             <Icon name="plus" :size="15" />
@@ -295,8 +311,16 @@
       <div v-else-if="tab === 'Budgets'" class="grid gap-3">
         <header class="orchestration-section-heading">
           <div>
-            <h3>Bound retries by failure class</h3>
-            <p>Budget names must be unique or one policy would overwrite another.</p>
+            <div class="flex items-center gap-1">
+              <h3>Budgets</h3>
+              <HelpBubble label="About budgets">
+                <strong>Failure handling</strong>
+                <p>
+                  Budgets limit retries for a named failure class and choose what happens when the
+                  limit is reached.
+                </p>
+              </HelpBubble>
+            </div>
           </div>
           <button type="button" class="btn btn-primary btn-sm" @click="addBudget">
             <Icon name="plus" :size="15" />
@@ -356,8 +380,16 @@
       <div v-else-if="tab === 'Phase Mappings'" class="grid gap-3">
         <header class="orchestration-section-heading">
           <div>
-            <h3>Map workflow results into orchestration state</h3>
-            <p>Leave a mapping blank when that phase does not produce the value.</p>
+            <div class="flex items-center gap-1">
+              <h3>Phase Mappings</h3>
+              <HelpBubble label="About phase mappings">
+                <strong>Saved phase results</strong>
+                <p>
+                  Mappings copy selected workflow results into durable orchestration state. Leave a
+                  mapping blank when the phase does not produce that value.
+                </p>
+              </HelpBubble>
+            </div>
           </div>
         </header>
         <section
@@ -385,8 +417,16 @@
       <div v-else-if="tab === 'Workspaces'" class="grid gap-3">
         <header class="orchestration-section-heading">
           <div>
-            <h3>Lease worker-local workspaces</h3>
-            <p>Only enable a lease for phases that need durable machine-local state.</p>
+            <div class="flex items-center gap-1">
+              <h3>Workspaces</h3>
+              <HelpBubble label="About orchestration workspaces">
+                <strong>Working files</strong>
+                <p>
+                  Workspace leases keep compatible machine-local files available across phases.
+                  Enable them only for phases that need that state.
+                </p>
+              </HelpBubble>
+            </div>
           </div>
         </header>
         <section
@@ -431,9 +471,20 @@
         </article>
       </div>
 
-      <pre v-else class="max-h-[32rem] overflow-auto rounded bg-surface-raised p-3 text-xs">{{
-        sourcePreview
-      }}</pre>
+      <div v-else class="grid gap-3">
+        <header class="orchestration-section-heading">
+          <div class="flex items-center gap-1">
+            <h3>Preview</h3>
+            <HelpBubble label="About orchestration preview">
+              <strong>Advanced policy</strong>
+              <p>This is the generated REXRAP policy saved with the next pipeline revision.</p>
+            </HelpBubble>
+          </div>
+        </header>
+        <pre class="max-h-[32rem] overflow-auto rounded bg-surface-raised p-3 text-xs">{{
+          sourcePreview
+        }}</pre>
+      </div>
       <datalist id="orchestration-events">
         <option v-for="event in canonicalEvents" :key="event" :value="event" />
       </datalist>

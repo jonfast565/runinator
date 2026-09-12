@@ -25,6 +25,11 @@ The setup helper validates both packs, creates the `claude` execution-profile de
 does not exist, and installs both mission pipelines. It does not deploy the cluster, sign in to
 Claude, approve credentials, or start billable model work.
 
+In Command Center, open **Missions** and choose **Install starter missions**. This explicitly
+installs the embedded coding and research/report recipes together with the `claude` profile
+definition. Existing definitions are preserved. The button remains available when any required
+starter item is missing.
+
 For a local supervisor stack:
 
 ```bash
@@ -171,8 +176,8 @@ only the current mission, read its evidence, and submit its declared lifecycle i
 ## Troubleshooting
 
 - **No mission recipes appear:** rerun `bash scripts/setup-ai-missions.sh` against the same API URL
-  used by Command Center. Packs are installed explicitly and are not imported by Kubernetes
-  deployment.
+  used by Command Center, or choose **Install starter missions** on the Missions page. Packs are
+  installed explicitly and are not imported by Kubernetes deployment.
 - **The profile is pending or unavailable:** keep the desktop agent running, approve the current
   profile digest, allow macOS Keychain access, and verify `claude` is logged in locally.
 - **Checkout fails:** use a reachable HTTPS or SSH URL and make its credentials available to the

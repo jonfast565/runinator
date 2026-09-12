@@ -16,9 +16,11 @@ import {
   fetchEnumCatalogs,
   fetchNodeKinds,
   fetchOrchestrationAliases,
+  fetchStarterPacks,
   fetchTriggerKinds,
   fetchWorkflowRun,
   importPackArchive,
+  installStarterPack,
   listTeamMembers,
   listCurrentSessions,
   revokeOtherSessions,
@@ -974,6 +976,22 @@ describe("command center permissions API in web mode", () => {
         body: bytes,
         headers: expect.objectContaining({ "content-type": "application/zip" }),
       }),
+    );
+  });
+
+  it("lists and installs an embedded starter pack", async () => {
+    await fetchStarterPacks();
+    await installStarterPack("ai-missions");
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/starter-packs",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/starter-packs/ai-missions/install",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({}) }),
     );
   });
 

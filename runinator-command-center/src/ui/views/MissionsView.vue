@@ -19,10 +19,27 @@
           </Button>
         </PanelHeader>
         <p v-if="error" class="mission-page-error">{{ error }}</p>
-        <p v-else-if="!missionPipelines.length && !loading" class="mission-page-notice">
-          No mission recipes are installed. Apply the AI missions pack, then return here to launch
-          one.
-        </p>
+        <div
+          v-else-if="starterPack?.state !== 'installed' && !loading"
+          class="mission-page-notice flex items-center justify-between gap-3"
+        >
+          <span class="flex items-center gap-1"
+            >Mission setup is incomplete.
+            <HelpBubble label="About starter missions">
+              The starter pack installs bounded coding and research/report recipes plus the Claude
+              execution-profile definition. Existing items are preserved, and installation does not
+              start billable work.
+            </HelpBubble></span
+          >
+          <Button
+            variant="primary"
+            icon="download"
+            :loading="installingStarter"
+            @click="installStarter"
+          >
+            Install starter missions
+          </Button>
+        </div>
       </div>
 
       <section v-if="missions.length" class="mission-summary" aria-label="Mission summary">
@@ -310,6 +327,7 @@ import type { StartMissionInput } from "../../core/services";
 import { useMissionsStore } from "../adapters/pinia/missions";
 import MissionQueuePanel from "../components/missions/MissionQueuePanel.vue";
 import MissionStartDialog from "../components/missions/MissionStartDialog.vue";
+import HelpBubble from "../components/shared/HelpBubble.vue";
 import Button from "../components/shared/Button.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
@@ -325,6 +343,8 @@ const {
   epochs,
   evidence,
   effects,
+  starterPack,
+  installingStarter,
   loading,
   detailLoading,
   error,
@@ -369,6 +389,14 @@ watch(selectedId, () => {
 
 async function refresh(): Promise<void> {
   await missionsStore.refresh();
+}
+
+async function installStarter(): Promise<void> {
+  try {
+    await missionsStore.installStarter();
+  } catch {
+    // the store exposes the actionable server error in the existing page error region.
+  }
 }
 
 async function select(id: string): Promise<void> {

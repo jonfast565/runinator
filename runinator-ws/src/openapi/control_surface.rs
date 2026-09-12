@@ -49,6 +49,7 @@ const CAPABILITY_PATHS: &[(&str, &str)] = &[
     ("/workflow_files", "workflow-files"),
     ("/artifacts", "workflow-files"),
     ("/console", "console"),
+    ("/starter-packs", "packs"),
     ("/packs", "packs"),
     ("/audit_log", "observability"),
     ("/dead_letters", "observability"),

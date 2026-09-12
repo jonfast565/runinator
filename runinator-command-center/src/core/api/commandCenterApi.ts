@@ -2435,6 +2435,22 @@ export interface PackImportResult {
   pipelines: Pipeline[];
 }
 
+export interface StarterPackSummary {
+  key: string;
+  name: string;
+  version: number;
+  state: "missing" | "installed" | "outdated";
+  required_profile?: string | null;
+}
+
+export async function fetchStarterPacks() {
+  return command<StarterPackSummary[]>("fetch_starter_packs", {});
+}
+
+export async function installStarterPack(key: string) {
+  return command<PackImportResult>("install_starter_pack", { key });
+}
+
 /** Upload a compiled pack ZIP. Source packs are compiled locally before reaching this endpoint. */
 export async function importPackArchive(bytes: ArrayBuffer, overwrite = false) {
   return command<PackImportResult>(

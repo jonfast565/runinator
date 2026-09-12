@@ -3,7 +3,7 @@
 # nginx image serving the command center's web build. the tauri shell is not involved: src-tauri is
 # excluded by .dockerignore and this stage only runs vite.
 
-ARG RUNINATOR_VERSION=0.27.732
+ARG RUNINATOR_VERSION=0.28.733
 # stamped into the ui's version readout. the build context is this directory, so there is no .git
 # for vite to read a commit from; xtask passes the sha in.
 ARG RUNINATOR_BUILD_ID=""

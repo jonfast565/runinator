@@ -38,7 +38,7 @@ pub use notification_operations::NotificationOperations;
 pub use orchestration_operations::{
     IntentDecision, OrchestrationOperations, OutOfBandOverrideRequest, choose_intent,
 };
-pub use pack_operations::{PackImportRequest, PackOperations};
+pub use pack_operations::{PackImportRequest, PackOperations, PackReadinessRequest};
 pub use pipeline_ingress::{PipelineIngressError, PipelineIngressRequest, PipelineIngressResult};
 pub use pipeline_operations::PipelineOperations;
 pub use replica_registry::{

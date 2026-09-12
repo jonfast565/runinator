@@ -14,6 +14,9 @@ pub const API_WORKFLOWS_SIMULATE: &str = "/workflows/simulate";
 pub const API_WORKFLOWS_EXPORT: &str = "/workflows/export";
 /// compiled pack zip import (workflows + optional secrets).
 pub const API_PACKS_IMPORT: &str = "/packs/import";
+/// explicitly installable product-owned starter packs.
+pub const API_STARTER_PACKS: &str = "/starter-packs";
+pub const API_STARTER_PACK_INSTALL: &str = "/starter-packs/{key}/install";
 pub const API_REXRAP_COMPLETE: &str = "/rexrap/complete";
 pub const API_REXRAP_HOVER: &str = "/rexrap/hover";
 pub const API_REXRAP_COMPILE: &str = "/rexrap/compile";

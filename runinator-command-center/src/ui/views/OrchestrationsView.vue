@@ -18,6 +18,10 @@
           >
             {{ item }}
           </button>
+          <HelpBubble :label="`About ${mode}`">
+            <strong>{{ modeSimpleName }}</strong>
+            <p>{{ modeExplanation }}</p>
+          </HelpBubble>
         </div>
       </PanelHeader>
 
@@ -31,13 +35,26 @@
       <div v-if="mode === 'Definitions'" class="orchestration-definition-toolbar">
         <div>
           <p class="adapter-eyebrow">Authoring</p>
-          <h2>Orchestration definitions</h2>
-          <p>
-            Select the pipeline that owns this policy. Saving creates its next immutable pipeline
-            revision.
-          </p>
+          <div class="flex items-center gap-1">
+            <h2>Orchestration definitions</h2>
+            <HelpBubble label="About orchestration definitions">
+              <strong>Reusable setup</strong>
+              <p>
+                Select the pipeline that owns this policy. Saving creates its next immutable
+                pipeline revision.
+              </p>
+            </HelpBubble>
+          </div>
         </div>
         <div class="btn-row">
+          <button
+            class="btn btn-primary"
+            :disabled="definitionLoading || !definitionPipeline"
+            @click="openSetupWizard"
+          >
+            <Icon name="branch" />
+            <span>Guided setup</span>
+          </button>
           <button class="btn" :disabled="definitionLoading" @click="refreshDefinitions">
             <LoadingSpinner v-if="definitionLoading" size="sm" label="Refreshing pipelines" />
             <Icon v-else name="refresh" />
@@ -142,7 +159,13 @@
       <section class="panel orchestration-definition-panel overflow-auto">
         <div class="orchestration-definition-picker">
           <label class="orchestration-filter orchestration-definition-select">
-            <span>Associated pipeline</span>
+            <span class="flex items-center gap-1"
+              >Associated pipeline
+              <HelpBubble label="About the associated pipeline">
+                The pipeline supplies the executable phases; its orchestration policy decides how
+                adapter events admit, control, and reconcile them.
+              </HelpBubble></span
+            >
             <select v-model="definitionPipelineId" :disabled="definitionLoading">
               <option
                 v-for="item in definitionPipelines"
@@ -153,10 +176,6 @@
               </option>
             </select>
           </label>
-          <p>
-            The pipeline supplies the executable phases; this policy decides how adapter events
-            admit, control, and reconcile those phases.
-          </p>
         </div>
 
         <p v-if="definitionError" class="orchestration-definition-error">
@@ -203,7 +222,13 @@
             <div class="orchestration-list-heading">
               <div>
                 <p class="adapter-eyebrow">Correlated execution</p>
-                <h3>Instances</h3>
+                <div class="flex items-center gap-1">
+                  <h3>Instances</h3>
+                  <HelpBubble label="About orchestration instances">
+                    <strong>Running work</strong>
+                    <p>Each instance is one durable correlation and its execution history.</p>
+                  </HelpBubble>
+                </div>
               </div>
               <span class="adapter-count">{{ store.bindings.length }}</span>
             </div>
@@ -1289,6 +1314,16 @@
       </SplitPane>
     </template>
 
+    <OrchestrationSetupWizard
+      v-if="setupWizardOpen && definitionPipeline"
+      :pipeline="definitionPipeline"
+      :adapters="store.adapters"
+      :adapter-kinds="store.adapterKinds"
+      :saving="setupWizardSaving"
+      @close="setupWizardOpen = false"
+      @save="saveGuidedSetup"
+    />
+
     <Modal
       v-if="intentName"
       :title="`Dispatch ${intentName}`"
@@ -1768,6 +1803,7 @@ import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineOrchestrationEditor from "../components/pipeline/PipelineOrchestrationEditor.vue";
 import PipelineRexRapEditor from "../components/pipeline/PipelineRexRapEditor.vue";
+import OrchestrationSetupWizard from "../components/orchestration/OrchestrationSetupWizard.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import HelpBubble from "../components/shared/HelpBubble.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -1780,6 +1816,7 @@ import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import TypedValueEditor from "../components/shared/TypedValueEditor.vue";
 import { downloadTextFile } from "../adapters/browser/files";
+import { classifyOrchestrationSetup } from "../../core/services";
 
 const store = useOrchestrationsStore();
 const app = useAppStore();
@@ -1790,9 +1827,33 @@ const workflows = useWorkflowsStore();
 const modes = ["Definitions", "Instances", "Adapters"] as const;
 type Mode = (typeof modes)[number];
 const mode = ref<Mode>(store.selectedId ? "Instances" : "Definitions");
+const modeSimpleName = computed(() => {
+  if (mode.value === "Definitions") {
+    return "Reusable setup";
+  }
+
+  if (mode.value === "Instances") {
+    return "Running work";
+  }
+
+  return "Event connections";
+});
+const modeExplanation = computed(() => {
+  if (mode.value === "Definitions") {
+    return "Configure how a pipeline groups events, responds to updates, and carries results between phases.";
+  }
+
+  if (mode.value === "Instances") {
+    return "Inspect each durable correlation, its current state, history, evidence, and available controls.";
+  }
+
+  return "Connect provider events to orchestration admission without changing the pipeline itself.";
+});
 const definitionPipelineId = ref<string | null>(null);
 const definitionLoading = ref(false);
 const definitionError = ref<string | null>(null);
+const setupWizardOpen = ref(false);
+const setupWizardSaving = ref(false);
 const definitionEditorKey = computed(() => {
   const pipeline = definitionPipeline.value;
 
@@ -2370,6 +2431,48 @@ async function saveDefinition(metadata: JsonRecord): Promise<void> {
   app.setStatus(
     `Saved orchestration definition for ${definitionPipeline.value?.name ?? "pipeline"}`,
   );
+}
+
+function openSetupWizard(): void {
+  const pipeline = definitionPipeline.value;
+
+  if (!pipeline) {
+    return;
+  }
+
+  if (classifyOrchestrationSetup(pipeline) === "custom") {
+    definitionError.value =
+      "This definition contains custom policy. Continue with the existing editor to preserve it.";
+    return;
+  }
+
+  definitionError.value = null;
+  setupWizardOpen.value = true;
+}
+
+async function saveGuidedSetup(metadata: JsonRecord): Promise<void> {
+  const id = definitionPipelineId.value;
+
+  if (!id) {
+    return;
+  }
+
+  setupWizardSaving.value = true;
+  definitionError.value = null;
+
+  try {
+    const saved = await pipelines.savePipelineMetadataFor(id, metadata);
+
+    if (!saved) {
+      definitionError.value = pipelines.error ?? "Could not save the orchestration setup.";
+      return;
+    }
+
+    setupWizardOpen.value = false;
+    app.setStatus(`Saved orchestration setup for ${definitionPipeline.value?.name ?? "pipeline"}`);
+  } finally {
+    setupWizardSaving.value = false;
+  }
 }
 
 function switchMode(next: Mode): void {

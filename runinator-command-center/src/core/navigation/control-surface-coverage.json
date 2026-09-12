@@ -554,11 +554,11 @@
       "area": "Workflow lifecycle",
       "label": "Workflow packs",
       "summary": "Portable import and export of workflows, pipelines, settings, and functions.",
-      "tabs": ["Workflows", "Pipelines", "Functions"],
+      "tabs": ["Workflows", "Pipelines", "Functions", "Missions"],
       "coverage": {
         "discoverable": {
           "outcome": "surface",
-          "detail": "Import and export actions on owning build pages"
+          "detail": "Import and export actions on owning build pages, plus mission starter-pack readiness"
         },
         "configurable": {
           "outcome": "surface",
@@ -570,7 +570,7 @@
         },
         "controllable": {
           "outcome": "surface",
-          "detail": "Inspect, import, export, and development apply controls"
+          "detail": "Inspect, import, export, install starter packs, and development apply controls"
         },
         "intentional": {
           "outcome": "surface",

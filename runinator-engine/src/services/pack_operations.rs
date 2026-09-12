@@ -45,6 +45,15 @@ pub struct PackImportRequest<'a> {
     pub overwrite: bool,
 }
 
+/// product-owned definitions required before a starter pack is ready to use.
+pub struct PackReadinessRequest<'a> {
+    pub org_id: Option<Uuid>,
+    pub pipeline_namespace: &'a str,
+    pub pipeline_keys: &'a [&'a str],
+    pub execution_profile: &'a str,
+    pub visible_pipeline_ids: Option<&'a std::collections::HashSet<Uuid>>,
+}
+
 impl<T> PackOperations<T> {
     pub fn new(store: Arc<T>, blobs: Arc<dyn BlobStore>, events: UiEventPublisher) -> Self {
         Self {
@@ -196,6 +205,36 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
 
     pub fn workflows_changed(&self, org_id: Option<Uuid>) {
         emit_workflows_changed(&self.events, org_id);
+    }
+}
+
+impl<T: DefinitionStore + ExecutionProfileStore> PackOperations<T> {
+    pub async fn is_ready(&self, request: PackReadinessRequest<'_>) -> Result<bool, SendableError> {
+        let available = self
+            .store
+            .fetch_pipelines()
+            .await?
+            .into_iter()
+            .filter(|pipeline| pipeline.namespace.as_deref() == Some(request.pipeline_namespace))
+            .filter(|pipeline| {
+                request.visible_pipeline_ids.is_none_or(|ids| {
+                    pipeline
+                        .id
+                        .is_some_and(|pipeline_id| ids.contains(&pipeline_id))
+                })
+            })
+            .filter_map(|pipeline| pipeline.key)
+            .collect::<std::collections::HashSet<_>>();
+        let pipelines_ready = request
+            .pipeline_keys
+            .iter()
+            .all(|key| available.contains(*key));
+        let profile_ready = self
+            .store
+            .fetch_execution_profile_by_name(request.org_id, request.execution_profile)
+            .await?
+            .is_some();
+        Ok(pipelines_ready && profile_ready)
     }
 }
 

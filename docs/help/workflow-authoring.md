@@ -245,6 +245,12 @@ adapter definitions and reports polling health. See
 [`packs/autonomous-development`](../../packs/autonomous-development/README.md) for the complete
 ticket-scoped example.
 
+For common policies, select a pipeline under **Orchestrations → Definitions** and choose **Guided
+setup**. A preset creates the admission routes, intents, budgets, phase mappings, and workspaces;
+the review step shows the generated policy before saving. The primary editor keeps those canonical
+concept names and remains the lossless editing surface. Its information bubbles provide simpler
+names and explanations without changing stored policy or source syntax.
+
 #### Webhook and polling adapters
 
 Adapters are inbound translators: they authenticate or fetch provider events, normalize them, and

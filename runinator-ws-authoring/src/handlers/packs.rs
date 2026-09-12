@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
-use axum::{Extension, Json, body::Bytes, extract::Query, http::StatusCode};
+use axum::{
+    Extension, Json,
+    body::Bytes,
+    extract::{Path, Query},
+    http::StatusCode,
+};
 use runinator_models::{
     auth::{AuthContext, PrincipalKind},
     rbac::{Action, ScopeKind, ScopeRef},
@@ -16,13 +21,87 @@ use runinator_store::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use runinator_engine::services::{PackImportRequest, PackOperations};
+use runinator_engine::services::{PackImportRequest, PackOperations, PackReadinessRequest};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, PACK_IMPORT_PARAMS, RequestDoc, endpoint,
 };
 use runinator_ws_core::responses::{api_error, bad_request};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore};
+
+const AI_MISSIONS_STARTER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ai-missions.zip"));
+const AI_MISSIONS_KEY: &str = "ai-missions";
+const AI_MISSIONS_VERSION: u32 = 1;
+
+pub async fn list_starter_packs<T: DefinitionStore + ExecutionProfileStore + AuthorizationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(packs): Extension<Arc<PackOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let visible = match runinator_ws_middleware::authz::AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_pipeline_ids()
+        .await
+    {
+        Ok(value) => value,
+        Err(reply) => return reply,
+    };
+    let installed = match packs
+        .is_ready(PackReadinessRequest {
+            org_id: ctx.org_id,
+            pipeline_namespace: "runinator.missions",
+            pipeline_keys: &["coding_mission", "research_report_mission"],
+            execution_profile: "claude",
+            visible_pipeline_ids: visible.as_ref(),
+        })
+        .await
+    {
+        Ok(installed) => installed,
+        Err(error) => return api_error(error.to_string()),
+    };
+    (
+        StatusCode::OK,
+        Json(ApiResponse::JsonValue(
+            serde_json::json!([{
+                "key": AI_MISSIONS_KEY,
+                "name": "AI missions",
+                "version": AI_MISSIONS_VERSION,
+                "state": if installed { "installed" } else { "missing" },
+                "required_profile": "claude"
+            }])
+            .into(),
+        )),
+    )
+}
+
+pub async fn install_starter_pack<
+    T: DefinitionStore
+        + AuthorizationStore
+        + RuntimeStore
+        + PackTransactionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + SettingStore
+        + ExecutionProfileStore,
+>(
+    Extension(packs): Extension<Arc<PackOperations<T>>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(key): Path<String>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if key != AI_MISSIONS_KEY {
+        return bad_request(format!("unknown starter pack '{key}'"));
+    }
+    import_pack::<T>(
+        Extension(packs),
+        Extension(ctx),
+        Query(PackImportParams {
+            contract_override_reason: None,
+            overwrite: false,
+        }),
+        Bytes::from_static(AI_MISSIONS_STARTER),
+    )
+    .await
+}
 
 // query parameters for the pack import endpoint.
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -190,30 +269,68 @@ pub fn routes<
         + SettingStore
         + ExecutionProfileStore,
 >(
-    _pool: std::sync::Arc<T>,
+    pool: std::sync::Arc<T>,
 ) -> axum::Router {
-    use axum::routing::post;
-    axum::Router::new().route(
-        runinator_models::api_routes::API_PACKS_IMPORT,
-        post(import_pack::<T>),
-    )
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_PACKS_IMPORT,
+            post(import_pack::<T>),
+        )
+        .route(
+            runinator_models::api_routes::API_STARTER_PACKS,
+            get(list_starter_packs::<T>),
+        )
+        .route(
+            runinator_models::api_routes::API_STARTER_PACK_INSTALL,
+            post(install_starter_pack::<T>),
+        )
+        .layer(Extension(pool))
 }
 
 /// the openapi entries for the routes above.
-pub const DOCS: &[EndpointDoc] = &[endpoint!(
-    "post",
-    "/packs/import",
-    "Packs",
-    "Import a compiled pack zip",
-    "Imports a compiled pack zip containing `workflows.json` and optional versioned `settings.json`. Legacy `secrets.json` remains readable for one compatibility release. The backend reads compiled JSON only; it does not compile REXRAP.",
-    false,
-    Some(RequestDoc {
-        description: "Compiled pack zip.",
-        example: Example::WorkflowBundle,
-        content_type: "application/zip",
-    }),
-    PACK_IMPORT_PARAMS,
-    200,
-    "pack import result",
-    Example::WorkflowBundle,
-)];
+pub const DOCS: &[EndpointDoc] = &[
+    endpoint!(
+        "post",
+        "/packs/import",
+        "Packs",
+        "Import a compiled pack zip",
+        "Imports a compiled pack zip containing `workflows.json` and optional versioned `settings.json`. Legacy `secrets.json` remains readable for one compatibility release. The backend reads compiled JSON only; it does not compile REXRAP.",
+        false,
+        Some(RequestDoc {
+            description: "Compiled pack zip.",
+            example: Example::WorkflowBundle,
+            content_type: "application/zip",
+        }),
+        PACK_IMPORT_PARAMS,
+        200,
+        "pack import result",
+        Example::WorkflowBundle,
+    ),
+    endpoint!(
+        "get",
+        "/starter-packs",
+        "Packs",
+        "List starter packs",
+        "Lists product-owned packs that can be installed explicitly.",
+        false,
+        None,
+        &[],
+        200,
+        "starter pack catalog",
+        Example::StarterPackList,
+    ),
+    endpoint!(
+        "post",
+        "/starter-packs/{key}/install",
+        "Packs",
+        "Install a starter pack",
+        "Explicitly imports one embedded compiled starter pack.",
+        false,
+        None,
+        &[],
+        200,
+        "pack import result",
+        Example::WorkflowBundle,
+    ),
+];

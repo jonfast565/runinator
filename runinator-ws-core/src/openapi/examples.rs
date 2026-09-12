@@ -24,6 +24,7 @@ pub enum Example {
     Workflow,
     WorkflowList,
     WorkflowBundle,
+    StarterPackList,
     WorkflowRunRequest,
     WorkflowRun,
     WorkflowRunList,
@@ -150,6 +151,13 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::WorkflowBundle => {
             json!({ "workflows": [workflow_example()], "triggers": [trigger_example()] })
         }
+        Example::StarterPackList => json!([{
+            "key": "ai-missions",
+            "name": "AI missions",
+            "version": 1,
+            "state": "missing",
+            "required_profile": "claude"
+        }]),
         Example::WorkflowRunRequest => {
             json!({ "parameters": { "environment": "dev" }, "debug": false, "name": "manual smoke test" })
         }

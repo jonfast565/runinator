@@ -35,15 +35,35 @@ import { createExecutionProfilesService } from "./execution-profiles";
 
 export {
   fetchMissionPipelines,
+  fetchMissionStarterPack,
   fetchMissionDetail,
   fetchMissions,
   isMission,
   isMissionPipeline,
+  installMissionStarterPack,
   sendMissionIntent,
   sendMissionSteering,
   startMission,
 } from "./missions";
 export type { MissionEffectActivity, MissionKind, StartMissionInput } from "./missions";
+export {
+  applyPreset,
+  classifyOrchestrationSetup,
+  compileOrchestrationSetup,
+  defaultSetupDraft,
+  draftFromPipeline,
+  mergeSetupMetadata,
+  setupBehaviorSummary,
+} from "./orchestration-setup";
+export type {
+  ActiveEventBehavior,
+  CompiledOrchestrationSetup,
+  MissionRecipeKind,
+  OrchestrationPhaseDraft,
+  OrchestrationSetupDraft,
+  OrchestrationSetupPreset,
+  TerminalEventBehavior,
+} from "./orchestration-setup";
 
 export const appService = createAppService();
 export const authService = createAuthService();

@@ -783,7 +783,7 @@ function applyTemplate(kind: "aws" | "claude" | "github") {
       enabled: true,
     },
     claude: {
-      name: "claude-default",
+      name: "claude",
       description: "Claude Code desktop login",
       credential_scopes: ["claude"],
       collection: {

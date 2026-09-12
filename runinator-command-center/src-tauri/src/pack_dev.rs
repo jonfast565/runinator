@@ -12,6 +12,7 @@ use runinator_models::{
 };
 use runinator_rexrap::WorkflowSignature;
 use serde::Serialize;
+use serde_json::Value;
 use tauri::State;
 
 use crate::{
@@ -68,6 +69,25 @@ pub async fn import_pack_archive(
         overwrite.unwrap_or(false)
     );
     let value = crate::client::post_bytes(&state, &path, "application/zip", bytes).await?;
+    serde_json::from_value(value).map_err(|err| CommandError::Unexpected(err.to_string()))
+}
+
+#[tauri::command]
+pub async fn fetch_starter_packs(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    crate::client::get_json(&state, "starter-packs").await
+}
+
+#[tauri::command]
+pub async fn install_starter_pack(
+    state: State<'_, CommandCenterState>,
+    key: String,
+) -> CommandResult<PackImportResult> {
+    let value = crate::client::post_json(
+        &state,
+        &format!("starter-packs/{key}/install"),
+        &serde_json::json!({}),
+    )
+    .await?;
     serde_json::from_value(value).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 

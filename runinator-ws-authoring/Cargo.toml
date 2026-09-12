@@ -2,6 +2,7 @@
 name = "runinator-ws-authoring"
 version.workspace = true
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
@@ -35,6 +36,11 @@ runinator-ws-middleware = { path = "../runinator-ws-middleware" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[build-dependencies]
+runinator-models = { path = "../runinator-models" }
+runinator-pack = { path = "../runinator-pack", default-features = false }
+runinator-pack-wire = { path = "../runinator-pack-wire" }
 
 [features]
 db-sqlite = ["runinator-provider-catalog/db-sqlite"]
