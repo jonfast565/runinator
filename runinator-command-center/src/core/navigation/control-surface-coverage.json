@@ -1,0 +1,582 @@
+{
+  "version": 1,
+  "requirements": ["discoverable", "configurable", "observable", "controllable", "intentional"],
+  "capabilities": [
+    {
+      "id": "providers",
+      "area": "Providers and execution profiles",
+      "label": "Provider catalog",
+      "summary": "Provider actions, typed contracts, delivery semantics, and credential requirements.",
+      "tabs": ["Providers", "Workflows"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Providers catalog and workflow action picker"
+        },
+        "configurable": {
+          "outcome": "intentional",
+          "detail": "Provider registration and bundle import are deployment and pack concerns; action inputs are configured in Workflows."
+        },
+        "observable": { "outcome": "surface", "detail": "Provider and action contract detail" },
+        "controllable": {
+          "outcome": "intentional",
+          "detail": "Workers own provider lifecycle; operators control worker replicas from Replicas."
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Headless registration boundaries are recorded in OpenAPI."
+        }
+      }
+    },
+    {
+      "id": "execution-profiles",
+      "area": "Providers and execution profiles",
+      "label": "Execution profiles",
+      "summary": "Private desktop identities collected, approved, published, and bound to actions.",
+      "tabs": ["ExecutionProfiles"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Execution Profiles inventory and templates"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Typed identity, collection, limits, labels, and scope editor"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Collection agents, revisions, publication health, and failures"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Dry run, rotate, publish, edit, enable, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Secret contents remain write-only and agent-mediated."
+        }
+      }
+    },
+    {
+      "id": "credentials",
+      "area": "Providers and execution profiles",
+      "label": "Configuration and secrets",
+      "summary": "Scoped visible configuration and write-only secret references used by providers.",
+      "tabs": ["Configs", "Secrets"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Separate Configs and Secrets inventories"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Typed config values, secret rotation, aliases, scopes, and expiry"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Metadata, schema, references, expiry, and write-only state"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Create, move, rotate, re-encrypt, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Plaintext resolution remains a worker and agent system-role protocol."
+        }
+      }
+    },
+    {
+      "id": "adapters",
+      "area": "Orchestration and ingress",
+      "label": "Inbound adapters",
+      "summary": "Metadata-driven webhook and polling admission with fleet health and diagnostics.",
+      "tabs": ["Orchestrations"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Adapter fleet inside Orchestrations" },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Typed transport, authentication, routing, and advanced editors"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Fleet state, attempts, deliveries, checkpoints, revisions, and host availability"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Validate, test, enable, pause, review, release, and reload controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Adapter ABI v2 owns semantic validation and metadata."
+        }
+      }
+    },
+    {
+      "id": "orchestrations",
+      "area": "Orchestration and ingress",
+      "label": "Orchestration instances",
+      "summary": "Correlated work, evidence, epochs, intents, operations, and steering.",
+      "tabs": ["Orchestrations", "Missions"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Orchestrations and Missions inventories"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Pipeline orchestration policy and mission recipes"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Events, evidence, epochs, member work, and operation state"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Start, steer, command, resolve, requeue, and archive controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Durable orchestration remains engine-owned."
+        }
+      }
+    },
+    {
+      "id": "ingress-control",
+      "area": "Orchestration and ingress",
+      "label": "Ingress admission",
+      "summary": "External and broker admission gates, inboxes, review, and FIFO release.",
+      "tabs": ["IngressControl", "Runs"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Ingress Control and run ingress timeline"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Typed target gates and broker inspection session"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "External and broker inboxes with admission history"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Hold, approve, drop, release, renew, and disable controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Public ingress publication remains a data-plane surface."
+        }
+      }
+    },
+    {
+      "id": "runtime-fleet",
+      "area": "Replicas and background health",
+      "label": "Runtime fleet",
+      "summary": "Replicas, desktop agents, provisioning, telemetry, and runtime directives.",
+      "tabs": ["Replicas", "OrgResources"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Replicas inventory grouped by runtime and machine"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Enrollment, provisioning scale, quotas, and server runtime policy"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Liveness, samples, providers, agent state, directives, and runtime settings"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Drain, undrain, restart, kick, enroll, revoke, scale, and stop controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Heartbeats and registration remain system-role protocols."
+        }
+      }
+    },
+    {
+      "id": "notifications",
+      "area": "Notifications and external operations",
+      "label": "Notifications",
+      "summary": "Operator inbox, delivery history, and event-driven delivery policy.",
+      "tabs": ["Notifications"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Notifications inbox and unread count" },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Typed event, channel, severity, target, and threshold policies"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Notification state and per-notification delivery history"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Mark read, dismiss, create, edit, enable, and delete policy controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Pack-managed policies identify their immutable source."
+        }
+      }
+    },
+    {
+      "id": "external-operations",
+      "area": "Notifications and external operations",
+      "label": "External operations",
+      "summary": "Approvals, gates, provider-owned items, automation events, and idempotency evidence.",
+      "tabs": ["Approvals", "Gates", "ExternalItems", "Events"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Dedicated review and integration inventories"
+        },
+        "configurable": {
+          "outcome": "intentional",
+          "detail": "Workflows and providers declare these runtime records."
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "State, provenance, linked runs, and event payloads"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Resolve approvals, operate gates, and remove retained events"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Idempotency mutation is a caller protocol, while evidence remains observable."
+        }
+      }
+    },
+    {
+      "id": "operational-policy",
+      "area": "Retention and operational policy",
+      "label": "Operational policy",
+      "summary": "Catalog-driven server policy, freeze windows, calendars, retention, and runtime limits.",
+      "tabs": ["AdminSettings", "Schedules"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Settings sections and Schedules inventory"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Catalog-generated controls with defaults, bounds, and usual ranges"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Current effective policy, validation, and active freeze windows"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Save policy and create, edit, remove, or subscribe to schedules"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Bootstrap, protocol, and safety invariants remain explicitly fixed."
+        }
+      }
+    },
+    {
+      "id": "observability",
+      "area": "Retention and operational policy",
+      "label": "Operational evidence",
+      "summary": "Audit records, broker traces, dead letters, and service-level diagnostics.",
+      "tabs": ["AuditLog", "Events", "Replicas"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Audit Log, Events, and replica diagnostics"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Retention and telemetry settings in Settings"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Filterable audit, broker, dead-letter, and runtime evidence"
+        },
+        "controllable": {
+          "outcome": "intentional",
+          "detail": "Evidence is append-only or retention-managed; replay belongs to the owning run surface."
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Metrics and health endpoints are public data-plane diagnostics."
+        }
+      }
+    },
+    {
+      "id": "access-control",
+      "area": "Identity and ownership",
+      "label": "Identity and permissions",
+      "summary": "Users, teams, API keys, service accounts, sessions, roles, grants, and ownership.",
+      "tabs": ["Permissions", "Profile"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Permissions and Profile & security" },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Typed membership, role, grant, key, and session controls"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Effective access, ownership, sessions, keys, and audit linkage"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Grant, revoke, transfer, rotate, disable, and sign-out controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Bootstrap authentication is separately classified."
+        }
+      }
+    },
+    {
+      "id": "organizations",
+      "area": "Identity and ownership",
+      "label": "Organizations and billing",
+      "summary": "Organization membership, active scope, quota, resource allocation, usage, and pricing.",
+      "tabs": ["Organization", "OrgResources"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Organization and Resources & Billing" },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Members, roles, quotas, and allocated nodes"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Usage, costs, quota, membership, and active scope"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Create, switch, edit, delete, invite, remove, and scale controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Platform and organization scope boundaries are explicit."
+        }
+      }
+    },
+    {
+      "id": "workflow-authoring",
+      "area": "Workflow lifecycle",
+      "label": "Workflow authoring",
+      "summary": "Workflow definitions, REXRAP tooling, triggers, revisions, contracts, and catalogs.",
+      "tabs": ["Workflows"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Workflows inventory and editor" },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Rich graph, REXRAP, trigger, schedule, and policy editors"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Diagnostics, contract impact, revision history, and trigger state"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Validate, save, enable, duplicate, restore, export, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Compiler and catalog endpoints support the editor rather than duplicate it."
+        }
+      }
+    },
+    {
+      "id": "workflow-runtime",
+      "area": "Workflow lifecycle",
+      "label": "Workflow runtime",
+      "summary": "Runs, continuations, effects, journals, transitions, debugging, replay, and recovery.",
+      "tabs": ["Runs"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Workflow Runs inventory" },
+        "configurable": {
+          "outcome": "intentional",
+          "detail": "Runtime behavior is configured by the pinned workflow definition and server policy."
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Timeline, cursors, effects, outputs, journals, artifacts, and provenance"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Start, pause, resume, cancel, signal, debug, replay, rename, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Effect settlement endpoints remain system-owned where appropriate."
+        }
+      }
+    },
+    {
+      "id": "pipelines",
+      "area": "Workflow lifecycle",
+      "label": "Pipelines",
+      "summary": "Multi-workflow definitions, orchestration routes, triggers, revisions, and member runs.",
+      "tabs": ["Pipelines", "PipelineRuns"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Pipelines and Pipeline Runs inventories"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Canvas, REXRAP, mappings, joins, ingress, and orchestration policy"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Member attempts, hand-offs, revisions, triggers, and debug view"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Start, pause, resume, cancel, resolve, retry, enable, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Member execution delegates to the ordinary workflow runtime."
+        }
+      }
+    },
+    {
+      "id": "functions",
+      "area": "Workflow lifecycle",
+      "label": "Packaged functions",
+      "summary": "Published packages, immutable artifacts, exports, aliases, and invocations.",
+      "tabs": ["Functions", "Runs"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Functions catalog and workflow action picker"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Package publish metadata and alias promotion"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Versions, exports, digests, aliases, invocation runs, and artifacts"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Publish, invoke, cancel, archive, restore, and move alias controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Browser publishing consumes an operator-built archive."
+        }
+      }
+    },
+    {
+      "id": "workspaces",
+      "area": "Workflow lifecycle",
+      "label": "Durable workspaces",
+      "summary": "Workspace keys, versions, files, results, transfers, downloads, and diffs.",
+      "tabs": ["Workspaces"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Workspaces inventory" },
+        "configurable": {
+          "outcome": "intentional",
+          "detail": "Workflow definitions declare workspace behavior."
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Versions, files, results, producing attempts, diffs, and transfers"
+        },
+        "controllable": { "outcome": "surface", "detail": "Download and delete controls" },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Checkout, seal, and object transfer endpoints remain worker protocols."
+        }
+      }
+    },
+    {
+      "id": "workflow-files",
+      "area": "Workflow lifecycle",
+      "label": "Workflow files and artifacts",
+      "summary": "Reusable input files, immutable revisions, and produced run artifacts.",
+      "tabs": ["Files", "Runs"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Files inventory and run artifact detail"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "File staging, naming, upload, and workflow binding"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Revision metadata, content, producer, and run linkage"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Upload, download, pin, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Artifact byte upload remains an authenticated runtime protocol."
+        }
+      }
+    },
+    {
+      "id": "console",
+      "area": "Workflow lifecycle",
+      "label": "Console sessions",
+      "summary": "Persistent REXRAP notebook sessions, cells, replay, cancellation, and output.",
+      "tabs": ["Console"],
+      "coverage": {
+        "discoverable": { "outcome": "surface", "detail": "Console page and shared command help" },
+        "configurable": { "outcome": "surface", "detail": "Session and cell authoring" },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Cell status, output, artifacts, and session history"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Run, cancel, replay, clear, rename, and delete controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Parsing and command vocabulary are shared with runinatorctl."
+        }
+      }
+    },
+    {
+      "id": "packs",
+      "area": "Workflow lifecycle",
+      "label": "Workflow packs",
+      "summary": "Portable import and export of workflows, pipelines, settings, and functions.",
+      "tabs": ["Workflows", "Pipelines", "Functions"],
+      "coverage": {
+        "discoverable": {
+          "outcome": "surface",
+          "detail": "Import and export actions on owning build pages"
+        },
+        "configurable": {
+          "outcome": "surface",
+          "detail": "Conflict policy and explicit import options"
+        },
+        "observable": {
+          "outcome": "surface",
+          "detail": "Import result, validation diagnostics, and resulting revisions"
+        },
+        "controllable": {
+          "outcome": "surface",
+          "detail": "Inspect, import, export, and development apply controls"
+        },
+        "intentional": {
+          "outcome": "surface",
+          "detail": "Cluster deployment never imports packs automatically."
+        }
+      }
+    }
+  ]
+}

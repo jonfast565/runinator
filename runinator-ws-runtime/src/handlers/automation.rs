@@ -23,7 +23,8 @@ use runinator_ws_core::models::{
     ApiResponse, AutomationRecordQuery, GateQuery, IdempotencyRequest,
 };
 use runinator_ws_core::openapi::docs::{
-    AUTOMATION_FILTERS, EndpointDoc, Example, GATE_FILTERS, IDEMPOTENCY_QUERY, endpoint, json_body,
+    AUTOMATION_FILTERS, EndpointDoc, EndpointPolicy, Example, GATE_FILTERS, IDEMPOTENCY_QUERY,
+    endpoint, endpoint_with_policy, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
@@ -657,26 +658,34 @@ pub const DOCS: &[EndpointDoc] = &[
         "approval request created",
         Example::AutomationRecord,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "get",
         "/idempotency_keys",
         "Control Plane",
         "Get an idempotency key",
         "Fetches a stored idempotency result by scope and key. Service credentials or admin privileges are required.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         None,
         IDEMPOTENCY_QUERY,
         200,
         "idempotency result",
         Example::Idempotency,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "post",
         "/idempotency_keys",
         "Control Plane",
         "Put an idempotency key",
         "Stores an idempotency result for later duplicate-request suppression.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         json_body("Idempotency scope, key, and result.", Example::Idempotency),
         &[],
         200,

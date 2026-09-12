@@ -35,6 +35,7 @@
     <AdminSettingsView v-if="app.activeTab === 'AdminSettings'" />
     <PermissionsView v-if="app.activeTab === 'Permissions'" />
     <IngressControlView v-if="app.activeTab === 'IngressControl'" />
+    <ControlCoverageView v-if="app.activeTab === 'ControlCoverage'" />
     <AuditLogView v-if="app.activeTab === 'AuditLog'" />
   </AppShell>
   <ReplayPlanDialog v-if="replayPlan" :plan="replayPlan" @complete="completeReplayReview" />
@@ -122,6 +123,9 @@ const OrganizationView = defineAsyncComponent(() => import("./ui/views/Organizat
 const OrgResourcesView = defineAsyncComponent(() => import("./ui/views/OrgResourcesView.vue"));
 const AdminSettingsView = defineAsyncComponent(() => import("./ui/views/AdminSettingsView.vue"));
 const IngressControlView = defineAsyncComponent(() => import("./ui/views/IngressControlView.vue"));
+const ControlCoverageView = defineAsyncComponent(
+  () => import("./ui/views/ControlCoverageView.vue"),
+);
 const AuditLogView = defineAsyncComponent(() => import("./ui/views/AuditLogView.vue"));
 
 const app = useAppStore();

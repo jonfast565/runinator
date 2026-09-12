@@ -232,6 +232,16 @@ export const navSections: NavSection[] = [
           "Observe, hold, approve, or drop scoped ingress before it reaches orchestration.",
       },
       {
+        tab: "ControlCoverage",
+        label: "Capability Coverage",
+        icon: "shield",
+        description:
+          "Audit which backend capabilities are discoverable, configurable, observable, controllable, or intentionally headless.",
+        requires: "audit:read",
+        requiresPlatformScope: true,
+        searchPlaceholder: "Search capabilities",
+      },
+      {
         tab: "AuditLog",
         label: "Audit Log",
         icon: "list",

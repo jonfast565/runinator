@@ -13,7 +13,8 @@ use runinator_store::{
 
 use runinator_engine::services::SchedulingOperations;
 use runinator_ws_core::openapi::docs::{
-    EndpointDoc, Example, WORKFLOW_TRIGGER_FILTERS, endpoint, json_body,
+    EndpointDoc, EndpointPolicy, Example, WORKFLOW_TRIGGER_FILTERS, endpoint, endpoint_with_policy,
+    json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_core::{ValidatedJson, models::ApiResponse};
@@ -207,13 +208,16 @@ pub const DOCS: &[EndpointDoc] = &[
         "stored workflow trigger",
         Example::Trigger,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "get",
         "/workflow_triggers/due",
         "Control Plane",
         "List due workflow triggers",
         "Returns workflow triggers that are ready to fire. Used by scheduler loops and diagnostics.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Waker,
+        ]),
         None,
         WORKFLOW_TRIGGER_FILTERS,
         200,

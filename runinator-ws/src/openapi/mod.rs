@@ -16,6 +16,8 @@ use crate::handlers;
 use crate::models::ApiError;
 use crate::websocket;
 
+mod control_surface;
+
 // the doc vocabulary is shared with every handler crate, so it lives in runinator-ws-core; these
 // re-exports keep the `crate::openapi::docs` path the handlers and the WebSocket module already use.
 pub(crate) use runinator_ws_core::openapi::{docs, examples};
@@ -411,17 +413,29 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "post",
         "/idempotency_keys/claim",
-        docs::EndpointPolicy::Authenticated,
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
     ),
     (
         "post",
         "/idempotency_keys/complete",
-        docs::EndpointPolicy::Authenticated,
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
     ),
     (
         "post",
         "/idempotency_keys/release",
-        docs::EndpointPolicy::Authenticated,
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
     ),
     ("post", "/nodes/scale", docs::EndpointPolicy::Authenticated),
     ("post", "/nodes/stop", docs::EndpointPolicy::Authenticated),
@@ -695,10 +709,7 @@ fn enrich_openapi_document(document: &mut Value) {
             "x-runinator-authorization".into(),
             endpoint_policy_json(*policy),
         );
-        operation.insert(
-            "x-runinator-control-surface".into(),
-            json!(endpoint_control_surface(path, *policy)),
-        );
+        control_surface::enrich_control_surface(operation, path, *policy);
         operation
             .entry("responses")
             .or_insert_with(|| json!({ "200": { "description": "successful response" } }));
@@ -719,10 +730,7 @@ fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
         "x-runinator-authorization".into(),
         endpoint_policy_json(doc.policy),
     );
-    operation.insert(
-        "x-runinator-control-surface".into(),
-        json!(endpoint_control_surface(doc.path, doc.policy)),
-    );
+    control_surface::enrich_control_surface(operation, doc.path, doc.policy);
     operation.insert("parameters".into(), json!(parameters_for(doc)));
     if let Some(request) = doc.request {
         enrich_request_body(operation, request);
@@ -736,23 +744,6 @@ fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
             "source": curl_sample(doc),
         }]),
     );
-}
-
-fn endpoint_control_surface(path: &str, policy: docs::EndpointPolicy) -> &'static str {
-    if matches!(policy, docs::EndpointPolicy::SystemRole(_)) {
-        return "headless";
-    }
-    if policy.is_public() {
-        return if matches!(
-            path,
-            "/auth/config" | "/auth/login" | "/auth/refresh" | "/agents/enroll"
-        ) {
-            "bootstrap"
-        } else {
-            "data_plane"
-        };
-    }
-    "operator"
 }
 
 fn parameters_for(doc: &EndpointDoc) -> Vec<Value> {
@@ -1054,6 +1045,52 @@ mod policy_tests {
         assert!(
             missing.is_empty(),
             "unclassified control surfaces: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_operator_endpoint_belongs_to_a_command_center_capability() {
+        let document = openapi_document();
+        let manifest: Value = serde_json::from_str(include_str!(
+            "../../../runinator-command-center/src/core/navigation/control-surface-coverage.json"
+        ))
+        .expect("Command Center control-surface manifest");
+        let declared = manifest["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .filter_map(|entry| entry["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        let mut observed = BTreeSet::new();
+        let mut missing = Vec::new();
+
+        for (path, item) in document["paths"].as_object().expect("paths object") {
+            for method in ["get", "post", "put", "patch", "delete"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                if operation["x-runinator-control-surface"] != json!("operator") {
+                    continue;
+                }
+                let capability = operation
+                    .get("x-runinator-capability")
+                    .and_then(Value::as_str);
+                if let Some(capability) = capability {
+                    observed.insert(capability);
+                }
+                if !capability.is_some_and(|capability| declared.contains(capability)) {
+                    missing.push(format!("{method} {path}: {capability:?}"));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "operator endpoints without declared Command Center capability coverage: {missing:?}"
+        );
+        assert_eq!(
+            declared, observed,
+            "Command Center capability manifest and operator OpenAPI surface diverged"
         );
     }
 

@@ -29,7 +29,8 @@ use runinator_ws_core::models::{
     WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
 };
 use runinator_ws_core::openapi::docs::{
-    EndpointDoc, Example, ParamDoc, WORKFLOW_RUN_FILTERS, endpoint, json_body,
+    EndpointDoc, EndpointPolicy, Example, ParamDoc, WORKFLOW_RUN_FILTERS, endpoint,
+    endpoint_with_policy, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, IntoReply};
@@ -1191,13 +1192,17 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow runs",
         Example::WorkflowRunList,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "post",
         "/scheduler/workflow_runs/claim",
         "Control Plane",
         "Claim workflow runs for scheduling",
         "Service-control endpoint used by scheduler loops to claim runnable workflow runs with a lease.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         json_body(
             "Scheduler id, lease deadline, statuses, and limit.",
             Example::SchedulerRunClaim,
@@ -1285,26 +1290,34 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow run",
         Example::WorkflowRun,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "patch",
         "/workflow_runs/{id}",
         "Control Plane",
         "Update a workflow run",
         "Service-control endpoint used by runtime loops to update workflow-run status, state, and active node.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         json_body("Workflow run status update.", Example::WorkflowRunStatus),
         &[],
         200,
         "workflow run updated",
         Example::TaskResponse,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "post",
         "/scheduler/workflow_runs/{id}/claim/renew",
         "Control Plane",
         "Renew a workflow-run claim",
         "Renews a scheduler lease for a claimed workflow run.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         json_body(
             "Scheduler id and new lease deadline.",
             Example::SchedulerRunLease,
@@ -1314,13 +1327,17 @@ pub const DOCS: &[EndpointDoc] = &[
         "workflow-run claim renewed",
         Example::TaskResponse,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "post",
         "/scheduler/workflow_runs/{id}/claim/release",
         "Control Plane",
         "Release a workflow-run claim",
         "Releases a scheduler lease for a claimed workflow run.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         json_body(
             "Scheduler id releasing the claim.",
             Example::SchedulerRunLease,

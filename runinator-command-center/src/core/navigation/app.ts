@@ -28,6 +28,7 @@ export type AppTab =
   | "AdminSettings"
   | "Permissions"
   | "IngressControl"
+  | "ControlCoverage"
   | "AuditLog"
   | "Organization"
   | "OrgResources";

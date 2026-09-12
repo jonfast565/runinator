@@ -24,7 +24,8 @@ use runinator_ws_core::models::{
     ApiResponse, CredentialPutRequest, CredentialQuery, SettingMoveRequest,
 };
 use runinator_ws_core::openapi::docs::{
-    CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body,
+    CREDENTIAL_QUERY, EndpointDoc, EndpointPolicy, Example, endpoint, endpoint_with_policy,
+    json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker, IntoReply};
@@ -633,13 +634,16 @@ pub const DOCS: &[EndpointDoc] = &[
         "setting moved",
         Example::Credential,
     ),
-    endpoint!(
+    endpoint_with_policy!(
         "get",
         "/runtime/secrets/{id}",
         "Credentials",
         "Resolve runtime secret plaintext",
         "System-role-only endpoint used by workers and agents to materialize a scoped secret by UUID.",
-        false,
+        EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Agent,
+        ]),
         None,
         &[],
         200,
