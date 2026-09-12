@@ -623,8 +623,8 @@ impl Env {
                     ));
                 }
             }
-            ExprKind::Str(parts) => {
-                for part in parts {
+            ExprKind::Str(literal) => {
+                for part in &literal.parts {
                     if let StrPart::Expr(inner) = part {
                         self.check_expr(inner, diagnostics);
                     }

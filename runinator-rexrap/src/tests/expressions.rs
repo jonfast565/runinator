@@ -2,6 +2,140 @@
 //! form they format back to.
 
 use super::*;
+use runinator_rexrap_syntax::ast::{ExprKind, StrPart, StringStyle};
+
+#[test]
+fn string_literals_preserve_their_authored_style_and_content() {
+    let cases = [
+        ("\"hello ${params.name}\"", StringStyle::Quoted, "hello ", 1),
+        (
+            "\"\"\"first\n    second ${params.name}\"\"\"",
+            StringStyle::Multiline,
+            "first\n    second ",
+            1,
+        ),
+        (
+            r#"@"C:\work\${literal} ""quoted""""#,
+            StringStyle::Verbatim,
+            r#"C:\work\${literal} "quoted""#,
+            0,
+        ),
+        (
+            "@\"\"\"first\n    ${literal} \\\\ path\n\"\"\"",
+            StringStyle::VerbatimMultiline,
+            "first\n    ${literal} \\\\ path\n",
+            0,
+        ),
+    ];
+
+    for (source, style, expected_text, expected_interpolations) in cases {
+        let expr = crate::parse_expression_fragment(source).expect("parse string");
+        let ExprKind::Str(literal) = expr.kind else {
+            panic!("expected string literal");
+        };
+        assert_eq!(literal.style, style, "{source}");
+        let text = literal
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                StrPart::Lit(text) => Some(text.as_str()),
+                StrPart::Expr(_) => None,
+            })
+            .collect::<String>();
+        assert_eq!(text, expected_text, "{source}");
+        assert_eq!(
+            literal
+                .parts
+                .iter()
+                .filter(|part| matches!(part, StrPart::Expr(_)))
+                .count(),
+            expected_interpolations,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn string_literal_forms_lower_to_the_same_value() {
+    let options = CompileOptions::default();
+    let quoted = crate::lower_fragment(r#""path\\ops""#, RexRapFragmentKind::Expression, &options)
+        .expect("lower quoted");
+    let verbatim =
+        crate::lower_fragment(r#"@"path\ops""#, RexRapFragmentKind::Expression, &options)
+            .expect("lower verbatim");
+    assert_eq!(quoted, verbatim);
+
+    let multiline = crate::lower_fragment(
+        "\"\"\"first\n    second\"\"\"",
+        RexRapFragmentKind::Expression,
+        &options,
+    )
+    .expect("lower multiline");
+    let verbatim_multiline = crate::lower_fragment(
+        "@\"\"\"first\n    second\"\"\"",
+        RexRapFragmentKind::Expression,
+        &options,
+    )
+    .expect("lower verbatim multiline");
+    assert_eq!(multiline, verbatim_multiline);
+}
+
+#[test]
+fn string_literal_delimiters_handle_embedded_quotes_and_plain_string_positions() {
+    let expr = crate::parse_expression_fragment("\"\"\"before \\\"\"\" after\"\"\"")
+        .expect("escaped triple delimiter");
+    let ExprKind::Str(literal) = expr.kind else {
+        panic!("expected string literal");
+    };
+    assert_eq!(
+        literal.parts,
+        vec![StrPart::Lit("before \"\"\" after".into())]
+    );
+
+    let document =
+        parse_document(r#"workflow @"String ""Form""" { do {} }"#).expect("verbatim workflow name");
+    assert_eq!(document.workflows[0].name, "String \"Form\"");
+    assert!(crate::parse_expression_fragment("@\"\"\"before \"\"\" after\"\"\"").is_err());
+    assert!(crate::parse_expression_fragment("\"\"\"unterminated").is_err());
+}
+
+#[test]
+fn multiline_and_verbatim_strings_format_and_decompile_canonically() {
+    let source = r#"
+        workflow @"String Forms" v1 {
+            do {
+                let write = console.run(
+                    body: """first
+    second ${params.name}""",
+                    path: @"C:\work\reports"
+                )
+            }
+        }
+    "#;
+    let formatted = format_str(source).expect("format");
+    assert!(
+        formatted.contains("workflow \"String Forms\" v1"),
+        "{formatted}"
+    );
+    assert!(
+        formatted.contains("\"\"\"first\n    second ${params.name}\"\"\""),
+        "{formatted}"
+    );
+    assert!(formatted.contains("@\"C:\\work\\reports\""), "{formatted}");
+    assert_eq!(format_str(&formatted).expect("reformat"), formatted);
+
+    let definition = compile(source);
+    let decompiled = decompile(&definition).expect("decompile");
+    assert!(
+        decompiled.contains("\"\"\"first\n    second"),
+        "{decompiled}"
+    );
+    assert!(
+        decompiled.contains("@\"C:\\work\\reports\""),
+        "{decompiled}"
+    );
+    assert_round_trips(source);
+}
 
 #[test]
 fn comparison_operators_lower_to_intrinsic_calls() {

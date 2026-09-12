@@ -1549,7 +1549,10 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
         ExprKind::Bool(value) => (ExprPrec::Primary, value.to_string()),
         ExprKind::Int(value) => (ExprPrec::Primary, value.to_string()),
         ExprKind::Float(value) => (ExprPrec::Primary, value.to_string()),
-        ExprKind::Str(parts) => (ExprPrec::Primary, format_string_parts(parts)),
+        ExprKind::Str(literal) => (
+            ExprPrec::Primary,
+            format_string_parts(&literal.parts, literal.style),
+        ),
         ExprKind::FileInclude { path } => (ExprPrec::Primary, format!("file({})", quote(path))),
         ExprKind::DirInclude {
             path,
@@ -1867,16 +1870,96 @@ fn format_object_entries_multiline(entries: &[(String, Expr)], indent_level: usi
     out
 }
 
-fn format_string_parts(parts: &[StrPart]) -> String {
-    let mut out = String::new();
-    out.push('"');
+/// render a literal runtime string in the canonical REXRAP spelling.
+///
+/// Compiled workflows retain string values rather than their authored delimiter style. This helper
+/// restores readable source when they are decompiled: newline-bearing values use triple quotes,
+/// and verbatim forms win only when they are strictly shorter than their escaped equivalent.
+pub fn format_literal_string(text: &str) -> String {
+    let literal = [StrPart::Lit(text.to_string())];
+    let escaped_style = if text.contains('\n') {
+        StringStyle::Multiline
+    } else {
+        StringStyle::Quoted
+    };
+    let escaped = format_string_parts(&literal, escaped_style);
+    let verbatim_style = if text.contains('\n') {
+        StringStyle::VerbatimMultiline
+    } else {
+        StringStyle::Verbatim
+    };
+    if verbatim_style == StringStyle::VerbatimMultiline && text.contains("\"\"\"") {
+        return escaped;
+    }
+    let verbatim = format_string_parts(&literal, verbatim_style);
+    if verbatim.len() < escaped.len() {
+        verbatim
+    } else {
+        escaped
+    }
+}
+
+fn format_string_parts(parts: &[StrPart], style: StringStyle) -> String {
+    let style = if style == StringStyle::VerbatimMultiline
+        && parts
+            .iter()
+            .any(|part| matches!(part, StrPart::Lit(text) if text.contains("\"\"\"")))
+    {
+        StringStyle::Multiline
+    } else if style.is_verbatim() && parts.iter().any(|part| matches!(part, StrPart::Expr(_))) {
+        if style.is_multiline() {
+            StringStyle::Multiline
+        } else {
+            StringStyle::Quoted
+        }
+    } else {
+        style
+    };
+    match style {
+        StringStyle::Quoted => format_escaped_string(parts, "\"", "\"", escape_string_lit),
+        StringStyle::Multiline => {
+            format_escaped_string(parts, "\"\"\"", "\"\"\"", escape_multiline_string_lit)
+        }
+        StringStyle::Verbatim => format_verbatim_string(parts, "@\"", "\"", false),
+        StringStyle::VerbatimMultiline => format_verbatim_string(parts, "@\"\"\"", "\"\"\"", true),
+    }
+}
+
+fn format_escaped_string(
+    parts: &[StrPart],
+    opener: &str,
+    closer: &str,
+    escape: fn(&str) -> String,
+) -> String {
+    let mut out = String::from(opener);
     for part in parts {
         match part {
-            StrPart::Lit(text) => out.push_str(&escape_string_lit(text)),
+            StrPart::Lit(text) => out.push_str(&escape(text)),
             StrPart::Expr(expr) => out.push_str(&format!("${{{}}}", format_expr(expr))),
         }
     }
-    out.push('"');
+    out.push_str(closer);
+    out
+}
+
+fn format_verbatim_string(
+    parts: &[StrPart],
+    opener: &str,
+    closer: &str,
+    multiline: bool,
+) -> String {
+    let mut out = String::from(opener);
+    for part in parts {
+        let StrPart::Lit(text) = part else {
+            continue;
+        };
+        if multiline {
+            out.push_str(text);
+        } else {
+            out.push_str(&text.replace('"', "\"\""));
+        }
+    }
+    out.push_str(closer);
     out
 }
 
@@ -1905,8 +1988,8 @@ fn format_access(base: &Expr, key: &Expr) -> Option<String> {
     if let ExprKind::Int(index) = &key.kind {
         return Some(format!("{base_text}[{index}]"));
     }
-    if let ExprKind::Str(parts) = &key.kind
-        && let Some(text) = literal_string(parts)
+    if let ExprKind::Str(literal) = &key.kind
+        && let Some(text) = literal_string(&literal.parts)
     {
         if is_ident(&text) {
             return Some(format!("{base_text}.{text}"));
@@ -1921,7 +2004,7 @@ fn format_access(base: &Expr, key: &Expr) -> Option<String> {
 fn foldable_access_key(key: &Expr) -> Option<()> {
     match &key.kind {
         ExprKind::Int(index) if *index >= 0 => Some(()),
-        ExprKind::Str(parts) if literal_string(parts).is_some() => Some(()),
+        ExprKind::Str(literal) if literal_string(&literal.parts).is_some() => Some(()),
         _ => None,
     }
 }
@@ -2058,11 +2141,7 @@ fn format_key(key: &str) -> String {
 }
 
 fn quote(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    out.push_str(&escape_string_lit(text));
-    out.push('"');
-    out
+    format_literal_string(text)
 }
 
 fn escape_string_lit(text: &str) -> String {
@@ -2077,6 +2156,29 @@ fn escape_string_lit(text: &str) -> String {
             '\r' => out.push_str("\\r"),
             other => out.push(other),
         }
+    }
+    out
+}
+
+fn escape_multiline_string_lit(text: &str) -> String {
+    let mut out = String::new();
+    let mut index = 0;
+    while index < text.len() {
+        let rest = &text[index..];
+        if rest.starts_with("\"\"\"") {
+            out.push_str("\\\"\"\"");
+            index += 3;
+            continue;
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '$' => out.push_str("\\$"),
+            other => out.push(other),
+        }
+        index += ch.len_utf8();
     }
     out
 }
@@ -2099,7 +2201,7 @@ fn contains_object(expr: &Expr) -> bool {
             items.iter().any(contains_object)
         }
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) => contains_object(inner),
-        ExprKind::Str(parts) => parts.iter().any(|part| match part {
+        ExprKind::Str(literal) => literal.parts.iter().any(|part| match part {
             StrPart::Expr(expr) => contains_object(expr),
             StrPart::Lit(_) => false,
         }),

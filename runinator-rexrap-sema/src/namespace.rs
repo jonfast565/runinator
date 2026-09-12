@@ -845,8 +845,8 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), RexRapError> {
             resolve_expr(then, scope)?;
             resolve_expr(els, scope)?;
         }
-        ExprKind::Str(parts) => {
-            for part in parts.iter_mut() {
+        ExprKind::Str(literal) => {
+            for part in literal.parts.iter_mut() {
                 if let StrPart::Expr(part) = part {
                     resolve_expr(part, scope)?;
                 }

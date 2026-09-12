@@ -16,6 +16,8 @@ import {
 
 interface RexRapState {
   inBlockComment: boolean;
+  // an open REXRAP string literal carried across physical lines.
+  stringMode: RexRapStringMode | null;
   // previous significant token was a `.` (member access).
   afterDot: boolean;
   // previous token was a provider name awaiting its `.action`.
@@ -36,25 +38,50 @@ interface RexRapState {
   braceStack: ("type" | "value")[];
 }
 
-// consume the rest of a string literal on the current line, respecting escapes. returns
-// true when the closing quote was found on this line.
-function consumeString(stream: StringStream): boolean {
-  let escaped = false;
+interface RexRapStringMode {
+  verbatim: boolean;
+  multiline: boolean;
+}
+
+// consume the rest of a string literal on the current line. returns true when its matching
+// delimiter was found, preserving state for an unterminated multiline literal.
+function consumeString(stream: StringStream, mode: RexRapStringMode): boolean {
+  if (mode.multiline) {
+    while (!stream.eol()) {
+      if (!mode.verbatim && stream.peek() === "\\") {
+        stream.next();
+
+        if (!stream.eol()) {
+          stream.next();
+        }
+
+        continue;
+      }
+
+      if (stream.match('"""')) {
+        return true;
+      }
+
+      stream.next();
+    }
+
+    return false;
+  }
 
   while (!stream.eol()) {
     const ch = stream.next();
 
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escaped = true;
+    if (!mode.verbatim && ch === "\\") {
+      stream.next();
       continue;
     }
 
     if (ch === '"') {
+      if (mode.verbatim && stream.peek() === '"') {
+        stream.next();
+        continue;
+      }
+
       return true;
     }
   }
@@ -117,6 +144,7 @@ function classifyWord(word: string, stream: StringStream): string {
 export const rexrapParser = StreamLanguage.define<RexRapState>({
   startState: () => ({
     inBlockComment: false,
+    stringMode: null,
     afterDot: false,
     afterProvider: false,
     expectAction: false,
@@ -138,6 +166,14 @@ export const rexrapParser = StreamLanguage.define<RexRapState>({
       }
 
       return "comment";
+    }
+
+    if (state.stringMode) {
+      if (consumeString(stream, state.stringMode)) {
+        state.stringMode = null;
+      }
+
+      return "string";
     }
 
     // type expressions are single-line; reset type context at the start of each line so a field
@@ -183,9 +219,24 @@ export const rexrapParser = StreamLanguage.define<RexRapState>({
     }
 
     // strings (interpolation `${...}` is highlighted as part of the string for now).
-    if (stream.peek() === '"') {
+    let stringMode: RexRapStringMode | null = null;
+
+    if (stream.match('@"""')) {
+      stringMode = { verbatim: true, multiline: true };
+    } else if (stream.match('@"')) {
+      stringMode = { verbatim: true, multiline: false };
+    } else if (stream.match('"""')) {
+      stringMode = { verbatim: false, multiline: true };
+    } else if (stream.peek() === '"') {
       stream.next();
-      consumeString(stream);
+      stringMode = { verbatim: false, multiline: false };
+    }
+
+    if (stringMode) {
+      if (!consumeString(stream, stringMode)) {
+        state.stringMode = stringMode;
+      }
+
       return "string";
     }
 

@@ -260,7 +260,8 @@ fn expr_children_mut(kind: &mut ExprKind) -> Vec<&mut Expr> {
             out.extend(args.iter_mut());
             out
         }
-        ExprKind::Str(parts) => parts
+        ExprKind::Str(literal) => literal
+            .parts
             .iter_mut()
             .filter_map(|part| match part {
                 StrPart::Expr(expr) => Some(expr),

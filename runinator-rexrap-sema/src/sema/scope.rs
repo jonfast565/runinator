@@ -126,7 +126,11 @@ pub(super) fn analyze(
     let require_literal = |value: &Expr, message: &str, diagnostics: &mut Vec<Diagnostic>| {
         let is_literal_string = matches!(
             &value.kind,
-            ExprKind::Str(parts) if parts.iter().all(|part| matches!(part, StrPart::Lit(_)))
+            ExprKind::Str(literal)
+                if literal
+                    .parts
+                    .iter()
+                    .all(|part| matches!(part, StrPart::Lit(_)))
         );
         if !is_literal_string {
             diagnostics.push(Diagnostic::error(value.span, message));
@@ -604,8 +608,8 @@ impl Resolver<'_> {
             | ExprKind::FileInclude { .. }
             | ExprKind::DirInclude { .. }
             | ExprKind::InlineCode { .. } => {}
-            ExprKind::Str(parts) => {
-                for part in parts {
+            ExprKind::Str(literal) => {
+                for part in &literal.parts {
                     if let StrPart::Expr(inner) = part {
                         self.resolve_expr(inner, scope, ctx, diagnostics);
                     }
@@ -731,8 +735,8 @@ fn resolve_default_expr(
         | ExprKind::FileInclude { .. }
         | ExprKind::DirInclude { .. }
         | ExprKind::InlineCode { .. } => {}
-        ExprKind::Str(parts) => {
-            for part in parts {
+        ExprKind::Str(literal) => {
+            for part in &literal.parts {
                 if let StrPart::Expr(inner) = part {
                     resolve_default_expr(inner, registry, diagnostics);
                 }

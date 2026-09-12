@@ -781,11 +781,22 @@ null_lit = { "null" }
 
 ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
-// string literals with ${...} interpolation. compound-atomic so inner text keeps its
-// bytes; interpolation re-enables whitespace for the embedded expression.
-string        = ${ "\"" ~ str_part* ~ "\"" }
-str_part      = { interpolation | escape | str_text }
-interpolation = !{ "${" ~ expr ~ "}" }
-escape        = @{ "\\" ~ ANY }
-str_text      = @{ (!("\"" | "\\" | "${") ~ ANY)+ }
+// string literals. compound-atomic keeps literal bytes intact while interpolation re-enables
+// whitespace for the embedded expression. the ordinary quoted form continues to accept raw
+// newlines for compatibility; triple delimiters make that spelling readable and canonical.
+string                     = ${ verbatim_multiline | verbatim | multiline | quoted }
+quoted                     = { "\"" ~ str_part* ~ "\"" }
+multiline                  = { "\"\"\"" ~ multiline_str_part* ~ "\"\"\"" }
+verbatim                   = { "@\"" ~ verbatim_part* ~ "\"" }
+verbatim_multiline         = { "@\"\"\"" ~ verbatim_multiline_text* ~ "\"\"\"" }
+str_part                   = { interpolation | escape | str_text }
+multiline_str_part         = { interpolation | escape | multiline_str_text }
+interpolation              = !{ "${" ~ expr ~ "}" }
+escape                     = @{ "\\" ~ ANY }
+str_text                   = @{ (!("\"" | "\\" | "${") ~ ANY)+ }
+multiline_str_text         = @{ (!("\"\"\"" | "\\" | "${") ~ ANY)+ }
+verbatim_part              = { verbatim_quote | verbatim_text }
+verbatim_quote             = @{ "\"\"" }
+verbatim_text              = @{ (!("\"") ~ ANY)+ }
+verbatim_multiline_text    = @{ (!("\"\"\"") ~ ANY)+ }
 raw_block     = ${ "```" ~ (!"```" ~ ANY)* ~ "```" }

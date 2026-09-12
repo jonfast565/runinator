@@ -327,8 +327,8 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), RexRapError>
                 expand_expr(arg, aliases)?;
             }
         }
-        ExprKind::Str(parts) => {
-            for part in parts.iter_mut() {
+        ExprKind::Str(literal) => {
+            for part in literal.parts.iter_mut() {
                 if let StrPart::Expr(part) = part {
                     expand_expr(part, aliases)?;
                 }

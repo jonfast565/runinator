@@ -4,7 +4,7 @@
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 
-use runinator_rexrap_syntax::errors::RexRapError;
+use runinator_rexrap_syntax::{errors::RexRapError, format::format_literal_string};
 
 use super::Decompiler;
 
@@ -14,7 +14,9 @@ impl Decompiler<'_> {
             Value::Null => Ok("null".to_string()),
             Value::Bool(b) => Ok(b.to_string()),
             Value::Number(_) => Ok(value.to_string()),
-            Value::String(text) => Ok(self.secret_path(text).unwrap_or_else(|| quote(text))),
+            Value::String(text) => Ok(self
+                .secret_path(text)
+                .unwrap_or_else(|| format_literal_string(text))),
             Value::Array(items) => {
                 let parts = items
                     .iter()
@@ -316,7 +318,10 @@ impl Decompiler<'_> {
             if is_ident(name) {
                 return Ok(Some(format!("{base_text}.{name}")));
             }
-            return Ok(Some(format!("{base_text}[{}]", quote(name))));
+            return Ok(Some(format!(
+                "{base_text}[{}]",
+                format_literal_string(name)
+            )));
         }
         // a dynamic key (a ref/call/arithmetic expression) renders as a bracketed expression.
         Ok(Some(format!("{base_text}[{}]", self.expr(key)?)))
@@ -406,7 +411,7 @@ impl Decompiler<'_> {
                     out.push('.');
                     out.push_str(key);
                 }
-                Value::String(key) => out.push_str(&format!("[{}]", quote(key))),
+                Value::String(key) => out.push_str(&format!("[{}]", format_literal_string(key))),
                 Value::Number(index) => out.push_str(&format!("[{index}]")),
                 other => out.push_str(&format!("[{}]", other)),
             }
@@ -591,7 +596,7 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
 
 fn render_type_value(value: &runinator_models::value::Value) -> String {
     match value {
-        runinator_models::value::Value::String(text) => quote(text),
+        runinator_models::value::Value::String(text) => format_literal_string(text),
         other => other.to_string(),
     }
 }
@@ -623,24 +628,6 @@ fn is_ident(seg: &str) -> bool {
     let mut chars = seg.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-fn quote(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for ch in text.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '$' => out.push_str("\\$"),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            other => out.push(other),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

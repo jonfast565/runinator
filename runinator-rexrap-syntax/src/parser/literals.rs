@@ -1,7 +1,7 @@
 use pest::iterators::Pair;
 
 use crate::{
-    ast::{ExprKind, StrPart},
+    ast::{ExprKind, StrPart, StringLiteral, StringStyle},
     errors::{RexRapError, Span},
 };
 
@@ -54,24 +54,41 @@ pub(super) fn parse_optional_count(pair: Pair<Rule>) -> Result<Option<i64>, RexR
     }
 }
 
-pub(super) fn string_parts(pair: Pair<Rule>) -> Result<Vec<StrPart>, RexRapError> {
+pub(super) fn string_literal(pair: Pair<Rule>) -> Result<StringLiteral, RexRapError> {
+    let pair = first_inner(pair)?;
+    let style = match pair.as_rule() {
+        Rule::quoted => StringStyle::Quoted,
+        Rule::multiline => StringStyle::Multiline,
+        Rule::verbatim => StringStyle::Verbatim,
+        Rule::verbatim_multiline => StringStyle::VerbatimMultiline,
+        other => {
+            return Err(RexRapError::lower(format!(
+                "unexpected string style {other:?}"
+            )));
+        }
+    };
     let mut parts = Vec::new();
     for inner in pair.into_inner() {
-        if inner.as_rule() != Rule::str_part {
-            continue;
-        }
-        let token = first_inner(inner)?;
+        let token = if inner.as_rule() == Rule::verbatim_multiline_text {
+            inner
+        } else {
+            first_inner(inner)?
+        };
         match token.as_rule() {
-            Rule::str_text => push_lit(&mut parts, token.as_str()),
+            Rule::str_text
+            | Rule::multiline_str_text
+            | Rule::verbatim_text
+            | Rule::verbatim_multiline_text => push_lit(&mut parts, token.as_str()),
             Rule::escape => push_lit(&mut parts, &decode_escape(token.as_str())),
             Rule::interpolation => parts.push(StrPart::Expr(parse_expr(first_inner(token)?)?)),
+            Rule::verbatim_quote => push_lit(&mut parts, "\""),
             _ => {}
         }
     }
     if parts.is_empty() {
         parts.push(StrPart::Lit(String::new()));
     }
-    Ok(parts)
+    Ok(StringLiteral { style, parts })
 }
 
 fn push_lit(parts: &mut Vec<StrPart>, text: &str) {
@@ -112,7 +129,7 @@ pub(super) fn raw_block_content(text: &str) -> String {
 
 pub(super) fn plain_string(pair: Pair<Rule>) -> Result<String, RexRapError> {
     let mut out = String::new();
-    for part in string_parts(pair)? {
+    for part in string_literal(pair)?.parts {
         match part {
             StrPart::Lit(text) => out.push_str(&text),
             StrPart::Expr(_) => {

@@ -40,6 +40,18 @@ fn ignores_comment_markers_inside_strings() {
 }
 
 #[test]
+fn ignores_markers_inside_multiline_and_verbatim_strings() {
+    let src = "\"\"\"\n// multiline\n/* still text */\n\"\"\" @\"// verbatim \\\\ ${value}\" @\"\"\"\n/* verbatim multiline */\n\"\"\"";
+    assert!(texts(src).is_empty());
+}
+
+#[test]
+fn verbatim_quotes_do_not_end_comment_scanning_early() {
+    let comments = texts("@\"say \"\"// still text\"\"\" // real");
+    assert_eq!(comments, vec!["// real"]);
+}
+
+#[test]
 fn ignores_markers_inside_interpolation_nested_string() {
     // interpolation re-enables expressions, which may contain nested strings holding `//`.
     assert!(texts("\"${ f(\"a//b\") }\"").is_empty());

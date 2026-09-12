@@ -30,7 +30,7 @@ impl Lowerer {
             ExprKind::Bool(value) => Ok(Value::Bool(*value)),
             ExprKind::Int(value) => Ok(Value::from(*value)),
             ExprKind::Float(value) => Ok(Value::from(*value)),
-            ExprKind::Str(parts) => self.lower_string(parts),
+            ExprKind::Str(literal) => self.lower_string(&literal.parts),
             ExprKind::FileInclude { path } => self.lower_file_include(expr, path),
             ExprKind::DirInclude {
                 path,

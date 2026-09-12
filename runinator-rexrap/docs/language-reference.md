@@ -153,6 +153,27 @@ higher-order calls with lambdas (`std.collections.map(xs, x => x.id)`, `…filte
 object/array literals. See [Namespaces](#namespaces-and-imports) for the `std.<module>.<leaf>`
 addressing and `import`.
 
+**Strings** use four forms in every position that accepts a string literal:
+
+```
+"hello ${params.name}"                 // escaped and interpolated
+"""first line
+    second line: ${params.name}"""      // multiline, escaped and interpolated
+@"C:\work\${literal} ""quoted"""        // verbatim: no escapes or interpolation
+@"""literal ${text}
+and backslashes \ stay literal"""         // multiline verbatim
+```
+
+The characters between delimiters are the value exactly: REXRAP never trims the first/last newline
+or common indentation. In escaped forms, `\\` and `${…}` retain their ordinary behavior; an
+embedded triple delimiter in `"""…"""` is written `\\\"""`. Verbatim strings make both
+backslashes and `${…}` literal. A single-line verbatim string writes an interior quote as `""`;
+a verbatim multiline string cannot contain its `"""` delimiter sequence and should use an escaped
+multiline string or concatenation instead. Existing ordinary strings may still contain raw
+newlines for compatibility, but formatting and decompilation render newline-bearing values with
+triple delimiters. Decompilation uses a verbatim spelling only when it is shorter than the escaped
+equivalent, so delimiter choice is not persisted in compiled workflows.
+
 **Access chaining**: any value-producing expression can be followed by `.key` / `.0` (dot) or
 `[expr]` (bracket) access — `http_get(url).body`, `split(s, ",")[0]`, `(a ?? b).field`,
 `items[params.idx]`. On a plain reference this just extends the path (`params.items[0].name` is one

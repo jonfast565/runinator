@@ -169,9 +169,9 @@ fn lower_profile(decl: &ProfileDecl) -> Result<ExecutionProfileBundleEntry, RexR
 /// cannot interpolate runtime expressions.
 fn profile_literal_value(expr: &Expr) -> Result<Value, RexRapError> {
     match &expr.kind {
-        ExprKind::Str(parts) => {
+        ExprKind::Str(literal) => {
             let mut text = String::new();
-            for part in parts {
+            for part in &literal.parts {
                 match part {
                     StrPart::Lit(lit) => text.push_str(lit),
                     StrPart::Expr(inner) => {
@@ -263,7 +263,7 @@ fn literal_value(expr: &Expr) -> Result<Value, RexRapError> {
         ExprKind::Bool(value) => Ok(Value::Bool(*value)),
         ExprKind::Int(value) => Ok(Value::from(*value)),
         ExprKind::Float(value) => Ok(Value::from(*value)),
-        ExprKind::Str(parts) => literal_string(parts, expr.span),
+        ExprKind::Str(literal) => literal_string(&literal.parts, expr.span),
         ExprKind::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items {

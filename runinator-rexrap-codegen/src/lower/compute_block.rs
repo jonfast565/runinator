@@ -338,8 +338,8 @@ fn collect_locals_expr(expr: &Expr, out: &mut HashSet<String>) {
         ExprKind::Neg(inner) | ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
             collect_locals_expr(inner, out);
         }
-        ExprKind::Str(parts) => {
-            for part in parts {
+        ExprKind::Str(literal) => {
+            for part in &literal.parts {
                 if let StrPart::Expr(inner) = part {
                     collect_locals_expr(inner, out);
                 }

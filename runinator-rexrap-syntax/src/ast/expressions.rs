@@ -23,7 +23,7 @@ pub enum ExprKind {
     Int(i64),
     Float(f64),
     /// a string literal, possibly with `${...}` interpolations.
-    Str(Vec<StrPart>),
+    Str(StringLiteral),
     /// a compile-time text include, resolved relative to the source file's directory.
     FileInclude {
         path: String,
@@ -161,16 +161,55 @@ pub enum StrPart {
     Expr(Expr),
 }
 
+/// the authored delimiter form of a string literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringStyle {
+    Quoted,
+    Multiline,
+    Verbatim,
+    VerbatimMultiline,
+}
+
+impl StringStyle {
+    pub fn is_verbatim(self) -> bool {
+        matches!(self, Self::Verbatim | Self::VerbatimMultiline)
+    }
+
+    pub fn is_multiline(self) -> bool {
+        matches!(self, Self::Multiline | Self::VerbatimMultiline)
+    }
+}
+
+/// a string's parsed content and its authored delimiter form.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StringLiteral {
+    pub style: StringStyle,
+    pub parts: Vec<StrPart>,
+}
+
+impl StringLiteral {
+    pub fn quoted(parts: Vec<StrPart>) -> Self {
+        Self {
+            style: StringStyle::Quoted,
+            parts,
+        }
+    }
+
+    pub fn literal(text: impl Into<String>) -> Self {
+        Self::quoted(vec![StrPart::Lit(text.into())])
+    }
+}
+
 /// the statically-known string keys an expression denotes, used to type key-driven intrinsics
 /// (`at`/`pick`/`omit`): a plain string literal yields one key, a literal array of string literals
 /// yields several, and anything else (interpolation, a reference, a non-string) yields `None`.
 pub fn static_string_keys(expr: &Expr) -> Option<Vec<String>> {
     match &expr.kind {
-        ExprKind::Str(parts) => literal_string(parts).map(|key| vec![key]),
+        ExprKind::Str(literal) => literal_string(&literal.parts).map(|key| vec![key]),
         ExprKind::Array(items) => items
             .iter()
             .map(|item| match &item.kind {
-                ExprKind::Str(parts) => literal_string(parts),
+                ExprKind::Str(literal) => literal_string(&literal.parts),
                 _ => None,
             })
             .collect(),

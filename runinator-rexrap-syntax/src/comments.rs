@@ -42,7 +42,8 @@ impl CommentSet {
 }
 
 /// lex every comment out of `src`, skipping comment-like byte sequences that live inside string
-/// literals (including `${...}` interpolation) and raw ` ``` ` blocks. returns them in source order.
+/// literals (including `${...}` interpolation), verbatim strings, and raw ` ``` ` blocks. returns
+/// them in source order.
 pub fn extract_comments(src: &str) -> Vec<Comment> {
     let bytes = src.as_bytes();
     let len = bytes.len();
@@ -51,6 +52,7 @@ pub fn extract_comments(src: &str) -> Vec<Comment> {
     while i < len {
         match bytes[i] {
             b'`' if starts_with(bytes, i, b"```") => i = skip_raw_block(bytes, i),
+            b'@' if starts_with(bytes, i, b"@\"") => i = skip_string(bytes, i),
             b'"' => i = skip_string(bytes, i),
             b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
                 let start = i;
@@ -103,15 +105,26 @@ fn starts_with(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
     bytes.len() >= i + needle.len() && &bytes[i..i + needle.len()] == needle
 }
 
-// advance past a `"..."` string literal, honoring `\` escapes and `${...}` interpolation.
+// advance past a string literal, honoring escaped/interpolated and verbatim delimiter rules.
 fn skip_string(bytes: &[u8], mut i: usize) -> usize {
     let len = bytes.len();
-    i += 1; // opening quote.
+    let verbatim = starts_with(bytes, i, b"@\"");
+    if verbatim {
+        i += 1;
+    }
+    let multiline = starts_with(bytes, i, b"\"\"\"");
+    i += if multiline { 3 } else { 1 };
     while i < len {
+        if multiline && starts_with(bytes, i, b"\"\"\"") {
+            return i + 3;
+        }
         match bytes[i] {
-            b'\\' => i += 2,
-            b'"' => return i + 1,
-            b'$' if i + 1 < len && bytes[i + 1] == b'{' => i = skip_interpolation(bytes, i + 2),
+            b'\\' if !verbatim => i += 2,
+            b'"' if !multiline && verbatim && i + 1 < len && bytes[i + 1] == b'"' => i += 2,
+            b'"' if !multiline => return i + 1,
+            b'$' if !verbatim && i + 1 < len && bytes[i + 1] == b'{' => {
+                i = skip_interpolation(bytes, i + 2)
+            }
             _ => i += 1,
         }
     }
@@ -125,6 +138,7 @@ fn skip_interpolation(bytes: &[u8], mut i: usize) -> usize {
     let mut depth = 1usize;
     while i < len && depth > 0 {
         match bytes[i] {
+            b'@' if starts_with(bytes, i, b"@\"") => i = skip_string(bytes, i),
             b'"' => i = skip_string(bytes, i),
             b'`' if starts_with(bytes, i, b"```") => i = skip_raw_block(bytes, i),
             b'/' if i + 1 < len && bytes[i + 1] == b'/' => {

@@ -196,6 +196,23 @@ describe("rexrap language completions", () => {
     expect(tokenTypeFor(state, "failure_class")).toBe("atom");
   });
 
+  it("keeps multiline and verbatim literals in string mode", () => {
+    const source = [
+      'let escaped = """first',
+      "second // escaped",
+      '"""',
+      'let verbatim = @"${not_interpolated} \\ ""quote"""',
+      'let raw = @"""first',
+      "second /* verbatim */",
+      '"""',
+    ].join("\n");
+    const state = EditorState.create({ doc: source, extensions: [rexrap()] });
+
+    expect(tokenTypeFor(state, "second // escaped")).toBe("string");
+    expect(tokenTypeFor(state, '@"${not_interpolated} \\ ""quote"""')).toBe("string");
+    expect(tokenTypeFor(state, "second /* verbatim */")).toBe("string");
+  });
+
   it("completes std modules and module functions without provider metadata", async () => {
     const modules = await completeLabels('workflow "x" { node do { return std.<> }');
     expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));

@@ -15,7 +15,7 @@ use crate::errors::{RexRapError, Span};
 mod literals;
 use literals::{
     parse_duration, parse_i64, parse_number, parse_optional_count, plain_string, raw_block_content,
-    string_parts,
+    string_literal,
 };
 
 #[derive(Parser)]
@@ -2909,7 +2909,7 @@ fn parse_input(pair: Pair<Rule>) -> Result<InputStmt, RexRapError> {
 fn parse_approval(pair: Pair<Rule>) -> Result<ApprovalStmt, RexRapError> {
     let span = span_of(&pair);
     let mut prompt = Expr::new(
-        ExprKind::Str(vec![StrPart::Lit("Approval required".into())]),
+        ExprKind::Str(StringLiteral::literal("Approval required")),
         span,
     );
     let mut approval_type = None;
@@ -4293,7 +4293,7 @@ fn path_seg_key(pair: Pair<Rule>) -> Result<Expr, RexRapError> {
     let seg = first_inner(pair)?;
     match seg.as_rule() {
         Rule::ident => Ok(Expr::new(
-            ExprKind::Str(vec![StrPart::Lit(seg.as_str().to_string())]),
+            ExprKind::Str(StringLiteral::literal(seg.as_str())),
             span,
         )),
         Rule::integer => Ok(Expr::new(
@@ -4332,9 +4332,9 @@ fn index_access(base: Expr, key: Expr, span: Span) -> Expr {
 fn static_path_seg(key: &Expr) -> Option<PathSeg> {
     match &key.kind {
         ExprKind::Int(index) if *index >= 0 => Some(PathSeg::Index(*index as usize)),
-        ExprKind::Str(parts) => {
+        ExprKind::Str(literal) => {
             let mut text = String::new();
-            for part in parts {
+            for part in &literal.parts {
                 match part {
                     StrPart::Lit(lit) => text.push_str(lit),
                     StrPart::Expr(_) => return None,
@@ -4362,7 +4362,7 @@ fn parse_primary(pair: Pair<Rule>) -> Result<Expr, RexRapError> {
         Rule::number => parse_number(inner.as_str(), span)?,
         Rule::boolean => ExprKind::Bool(inner.as_str() == "true"),
         Rule::null_lit => ExprKind::Null,
-        Rule::string => ExprKind::Str(string_parts(inner)?),
+        Rule::string => ExprKind::Str(string_literal(inner)?),
         Rule::path => return parse_path(inner),
         other => return Err(RexRapError::lower(format!("unexpected primary {other:?}"))),
     };
@@ -4566,7 +4566,7 @@ fn expect_int(value: Option<&Expr>, label: &str) -> Result<i64, RexRapError> {
 
 fn expect_string(value: &Expr, label: &str) -> Result<String, RexRapError> {
     match &value.kind {
-        ExprKind::Str(parts) if parts.len() == 1 => match &parts[0] {
+        ExprKind::Str(literal) if literal.parts.len() == 1 => match &literal.parts[0] {
             StrPart::Lit(text) => Ok(text.clone()),
             StrPart::Expr(_) => Err(RexRapError::lower(format!(
                 "{label} expects a literal string"
@@ -4606,8 +4606,8 @@ fn value_to_target(value: &Expr) -> Result<Target, RexRapError> {
             }
             Err(RexRapError::lower("invalid target"))
         }
-        ExprKind::Str(parts) if parts.len() == 1 => {
-            if let StrPart::Lit(name) = &parts[0] {
+        ExprKind::Str(literal) if literal.parts.len() == 1 => {
+            if let StrPart::Lit(name) = &literal.parts[0] {
                 return Ok(Target::Label(name.clone()));
             }
             Err(RexRapError::lower("invalid target"))
