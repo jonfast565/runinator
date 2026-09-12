@@ -90,6 +90,24 @@ fn validate_configuration(
             severity: AdapterValidationSeverity::Error,
         });
     }
+    if metadata.kind == "jira"
+        && request
+            .configuration
+            .get("routing_scope")
+            .and_then(Value::as_str)
+            .is_some_and(|scope| scope.trim() == "mission.sdlc")
+        && !request
+            .configuration
+            .get("sdlc_profile")
+            .is_some_and(Value::is_object)
+    {
+        issues.push(AdapterValidationIssue {
+            path: "configuration.sdlc_profile".into(),
+            code: "required_for_sdlc".into(),
+            message: "an SDLC project profile is required when routing to mission.sdlc".into(),
+            severity: AdapterValidationSeverity::Error,
+        });
+    }
     AdapterValidationResponse { issues }
 }
 struct GenericWebhook;

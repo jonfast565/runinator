@@ -1,0 +1,610 @@
+language rexrap-1
+
+package {
+  {
+    "item_type": "rexrap_pack",
+    "name": "Label-driven SDLC Missions",
+    "version": 1
+  }
+}
+
+namespace runinator.sdlc {
+
+workflow "Select Jira Ticket" v1 {
+    params {
+        issue: { id: string, key: string, fields: any }
+        profile: any
+        orchestration: any
+    }
+    key select
+    import settings jira as jira_settings
+
+    do {
+        let ticket = jira.fetch(
+            base_url: params.profile.jira.base_url,
+            token: jira_settings.secret.token,
+            email: params.profile.jira.email,
+            key: params.issue.key
+        )
+
+        compute {
+            return {
+                resources_patch: {
+                    sdlc: {
+                        issue: params.issue,
+                        ticket: ticket,
+                        profile: params.profile
+                    }
+                },
+                evidence: { role: "ticket_selection", ticket: ticket },
+                next_member: "runinator.sdlc.context"
+            }
+        }
+    }
+}
+
+workflow "Read Slack Context" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key context
+    import settings slack as slack_settings
+
+    do {
+        let context = slack.search_messages(
+            token: slack_settings.secret.token,
+            query: params.profile.slack.search_query,
+            count: 50,
+            sort: "timestamp",
+            sort_dir: "desc"
+        )
+
+        compute {
+            return {
+                resources_patch: { sdlc: { slack_context: context } },
+                evidence: { role: "slack_context", context: context },
+                next_member: "runinator.sdlc.prepare"
+            }
+        }
+    }
+}
+
+workflow "Prepare Ticket Workspace" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key prepare
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(900s)
+        let workspace = git.attempt_worktree(
+            repo: params.profile.repository.local_path,
+            branch: params.profile.automation.branch_prefix ++ params.issue.key,
+            base_ref: params.profile.repository.base_ref
+        )
+
+        compute {
+            return {
+                resources_patch: { sdlc: { workspace: workspace } },
+                evidence: { role: "workspace", workspace: workspace },
+                next_member: "runinator.sdlc.plan"
+            }
+        }
+    }
+}
+
+workflow "Plan Ticket Mission" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key plan
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(1800s)
+        @profile("claude")
+        let plan = ai-command.claude_code(
+            prompt: "Plan Jira ticket ${params.issue.key}. Ticket: ${json(params.orchestration.resources.sdlc.ticket)}. Relevant Slack context: ${json(params.orchestration.resources.sdlc.slack_context)}. Read repository guidance and the current source. Produce a concrete implementation and verification plan. Do not modify files, commit, push, open a pull request, merge, or deploy.",
+            harnessed: true,
+            role: "planner",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 5,
+            permission_mode: "plan",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            return {
+                resources_patch: { sdlc: { plan: plan.response.result } },
+                evidence: { role: "planner", response: plan.response },
+                next_member: "runinator.sdlc.implement"
+            }
+        }
+    }
+}
+
+workflow "Implement Ticket Mission" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key implement
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(7200s)
+        @profile("claude")
+        let implementation = ai-command.claude_code(
+            prompt: "Implement Jira ticket ${params.issue.key}. Follow this accepted plan: ${string(params.orchestration.resources.sdlc.plan)}. Work only in the assigned workspace, follow repository instructions, make the smallest complete change, and run narrow checks. Leave changes uncommitted for independent review. Do not push, open a pull request, merge, deploy, change credentials, or start another mission.",
+            harnessed: true,
+            role: "implementer",
+            resume_session: string(params.orchestration.resources.sdlc.implementation_session ?? ""),
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 10,
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            return {
+                resources_patch: {
+                    sdlc: {
+                        implementation_session: implementation.response.session_id,
+                        implementation: implementation.response.result
+                    }
+                },
+                evidence: { role: "implementer", response: implementation.response },
+                next_member: "runinator.sdlc.review"
+            }
+        }
+    }
+}
+
+workflow "Review Ticket Mission" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key review
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(3600s)
+        @profile("claude")
+        let review = ai-command.claude_code(
+            prompt: "Independently review the uncommitted implementation for ${params.issue.key}. Inspect the ticket, plan, workspace diff, correctness, scope, tests, and regressions. Do not edit files. Reply only with JSON: {\"next_member\":\"runinator.sdlc.implement\"|\"runinator.sdlc.verify\",\"summary\":\"short summary\",\"findings\":[\"...\"]}. Route to implement only for a concrete repair. Do not commit, push, merge, or deploy.",
+            harnessed: true,
+            role: "reviewer",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 5,
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            let decision: { next_member: string, summary: string, findings: string[] } = std.encoding.parse_json(review.response.result)
+            return {
+                resources_patch: { sdlc: { internal_review: decision } },
+                evidence: { role: "reviewer", review: decision },
+                next_member: decision.next_member
+            }
+        }
+    }
+}
+
+workflow "Verify Ticket Mission" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key verify
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(3600s)
+        console.run(command: params.profile.automation.local_check_command)
+        let committed = git.commit(message: params.issue.key ++ ": " ++ string(params.issue.fields.summary))
+        let revision = git.capture_revision()
+
+        compute {
+            return {
+                candidate_revision: revision.sha,
+                resources_patch: {
+                    sdlc: { verification: { command: params.profile.automation.local_check_command, commit: committed, revision: revision.sha } }
+                },
+                evidence: { role: "verifier", command: params.profile.automation.local_check_command, revision: revision.sha },
+                next_member: "runinator.sdlc.publish"
+            }
+        }
+    }
+}
+
+workflow "Publish Pull Request" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key publish
+    import settings github as github_settings
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        let revision = git.capture_revision()
+        let promoted = git.promote_revision(
+            repo: params.profile.repository.local_path,
+            candidate_sha: revision.sha,
+            target_ref: params.profile.automation.branch_prefix ++ params.issue.key,
+            remote: params.profile.repository.remote,
+            push: true
+        )
+        let request = github.ensure_pr(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            title: params.issue.key ++ ": " ++ string(params.issue.fields.summary),
+            head: params.profile.automation.branch_prefix ++ params.issue.key,
+            base: params.profile.repository.base_branch,
+            body: "Runinator SDLC mission for ${params.issue.key}. Candidate revision: ${revision.sha}."
+        )
+
+        compute {
+            return {
+                candidate_revision: revision.sha,
+                resources_patch: {
+                    sdlc: {
+                        pull_number: request.number,
+                        pull_url: request.html_url,
+                        branch: params.profile.automation.branch_prefix ++ params.issue.key,
+                        published_revision: revision.sha
+                    }
+                },
+                correlations: [
+                    { source: "github", scope: params.profile.repository.github_scope, correlation_key: "pr:${string(request.response.id)}" },
+                    { source: "github", scope: params.profile.repository.github_scope, correlation_key: "pr-number:${string(request.number)}" }
+                ],
+                evidence: { role: "publisher", promotion: promoted, pull_url: request.html_url, revision: revision.sha },
+                next_member: "runinator.sdlc.await_feedback"
+            }
+        }
+    }
+}
+
+workflow "Await Pull Request Feedback" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key await_feedback
+
+    do {
+        signal "review_feedback" key params.orchestration.binding_id {
+            ticket: params.issue.key,
+            revision: params.orchestration.resources.sdlc.published_revision
+        }
+
+        compute {
+            return {
+                evidence: { role: "feedback_wait", revision: params.orchestration.resources.sdlc.published_revision },
+                next_member: "runinator.sdlc.feedback"
+            }
+        }
+    }
+}
+
+workflow "Assess Pull Request Feedback" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key feedback
+    import settings github as github_settings
+
+    do {
+        let reviews = github.reviews(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            pull_number: string(params.orchestration.resources.sdlc.pull_number)
+        )
+        let comments = github.comments(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            issue_number: string(params.orchestration.resources.sdlc.pull_number)
+        )
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(1800s)
+        @profile("claude")
+        let assessment = ai-command.claude_code(
+            prompt: "Assess current feedback for ${params.issue.key} at exact candidate ${params.orchestration.resources.sdlc.published_revision}. Reviews: ${json(reviews.response)}. Comments: ${json(comments.response)}. Do not edit files. Reply only with JSON: {\"next_member\":\"runinator.sdlc.repair\"|\"runinator.sdlc.merge\"|\"runinator.sdlc.await_feedback\",\"approved\":true|false,\"summary\":\"short summary\",\"findings\":[\"...\"]}. Choose merge only when required reviews approve and no unresolved change request remains; choose repair for actionable changes; otherwise wait.",
+            harnessed: true,
+            role: "feedback_reviewer",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 4,
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            let decision: { next_member: string, approved: bool, summary: string, findings: string[] } = std.encoding.parse_json(assessment.response.result)
+            return {
+                resources_patch: { sdlc: { feedback: decision } },
+                evidence: { role: "feedback_reviewer", decision: decision, reviews: reviews.response, comments: comments.response },
+                next_member: decision.next_member
+            }
+        }
+    }
+}
+
+workflow "Repair Pull Request Feedback" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key repair
+    import settings slack as slack_settings
+
+    do {
+        let context = slack.search_messages(
+            token: slack_settings.secret.token,
+            query: params.profile.slack.search_query,
+            count: 50,
+            sort: "timestamp",
+            sort_dir: "desc"
+        )
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(7200s)
+        @profile("claude")
+        let repair = ai-command.claude_code(
+            prompt: "Repair pull request feedback for ${params.issue.key}. Findings: ${json(params.orchestration.resources.sdlc.feedback)}. Refreshed Slack context: ${json(context)}. Work only in the assigned workspace. Make the smallest correct repair and run narrow checks. Leave changes uncommitted. Do not push, merge, deploy, change credentials, or start another mission.",
+            harnessed: true,
+            role: "repairer",
+            resume_session: string(params.orchestration.resources.sdlc.implementation_session ?? ""),
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 8,
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            return {
+                resources_patch: { sdlc: { repair: repair.response.result, repair_slack_context: context } },
+                evidence: { role: "repairer", response: repair.response },
+                next_member: "runinator.sdlc.review"
+            }
+        }
+    }
+}
+
+workflow "Merge Exact Pull Request Revision" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key merge
+    import settings github as github_settings
+
+    do {
+        assert {
+            "review_approved": params.orchestration.resources.sdlc.feedback.approved == true
+        }
+        let checks = github.exact_revision_check_summary(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            revision: params.orchestration.resources.sdlc.published_revision
+        )
+        assert {
+            "exact_revision": checks.revision == params.orchestration.resources.sdlc.published_revision,
+            "checks_complete": checks.status == "completed",
+            "checks_passed": checks.failed == 0
+        }
+        let merged = github.merge_pr(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            pull_number: string(params.orchestration.resources.sdlc.pull_number),
+            merge_method: params.profile.automation.merge_method,
+            sha: params.orchestration.resources.sdlc.published_revision
+        )
+
+        compute {
+            return {
+                resources_patch: { sdlc: { merge: merged.response, checks: checks } },
+                evidence: { role: "merger", revision: params.orchestration.resources.sdlc.published_revision, checks: checks, merge: merged.response },
+                next_member: "runinator.sdlc.impact"
+            }
+        }
+    }
+}
+
+workflow "Assess Deployment Impact" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key impact
+
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(1800s)
+        @profile("claude")
+        let impact = ai-command.claude_code(
+            prompt: "Assess deployment impact for merged ticket ${params.issue.key} at ${params.orchestration.resources.sdlc.published_revision}. Inspect the committed diff and repository deployment guidance. Reply only with JSON: {\"next_member\":\"runinator.sdlc.deploy\"|\"runinator.sdlc.close\",\"summary\":\"short rationale\"}. Select deploy only when the configured named deployment workflow is required for these changes. Do not edit files, dispatch, deploy, or change credentials.",
+            harnessed: true,
+            role: "deployment_analyst",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 4,
+            permission_mode: "dontAsk",
+            allowed_tools: "Read,Glob,Grep,Bash(git show:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            let decision: { next_member: string, summary: string } = std.encoding.parse_json(impact.response.result)
+            return {
+                resources_patch: { sdlc: { deployment_impact: decision } },
+                evidence: { role: "deployment_analyst", decision: decision },
+                next_member: decision.next_member
+            }
+        }
+    }
+}
+
+workflow "Dispatch Named Deployment" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key deploy
+    import settings github as github_settings
+
+    do {
+        let deployment = github.dispatch(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            workflow_id: params.profile.deployment.workflow_id,
+            ref: params.profile.deployment.ref,
+            inputs: { revision: string(params.orchestration.resources.sdlc.published_revision), ticket: string(params.issue.key) }
+        )
+
+        compute {
+            return {
+                resources_patch: { sdlc: { deployment: deployment.response } },
+                evidence: { role: "deployment_dispatch", workflow: params.profile.deployment.workflow_id, response: deployment.response },
+                next_member: "runinator.sdlc.deploy_monitor"
+            }
+        }
+    }
+}
+
+workflow "Monitor Named Deployment" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key deploy_monitor
+    import settings github as github_settings
+
+    do {
+        wait 60s
+        let runs = github.workflow_runs(
+            token: github_settings.secret.token,
+            owner: params.profile.repository.owner,
+            repo: params.profile.repository.name,
+            branch: params.profile.deployment.ref,
+            event: "workflow_dispatch",
+            workflow_id: params.profile.deployment.workflow_id
+        )
+        @timeout(900s)
+        @profile("claude")
+        let assessment = ai-command.claude_code(
+            prompt: "Classify the newest workflow_dispatch deployment for ticket ${params.issue.key} and revision ${params.orchestration.resources.sdlc.published_revision}. Runs: ${json(runs.response)}. Reply only with JSON: {\"next_member\":\"runinator.sdlc.close\"|\"runinator.sdlc.deploy_monitor\"|\"runinator.sdlc.handoff\",\"summary\":\"short status\"}. Close only for a successful matching deployment, monitor while queued/in progress or not yet visible, and hand off on failure or ambiguity.",
+            harnessed: true,
+            role: "deployment_monitor",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            max_turns: 3,
+            permission_mode: "dontAsk",
+            allowed_tools: "mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
+        )
+
+        compute {
+            let decision: { next_member: string, summary: string } = std.encoding.parse_json(assessment.response.result)
+            return {
+                resources_patch: { sdlc: { deployment_status: decision, deployment_runs: runs.response } },
+                evidence: { role: "deployment_monitor", decision: decision, runs: runs.response },
+                next_member: decision.next_member
+            }
+        }
+    }
+}
+
+workflow "Close Jira Ticket" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key close
+    import settings jira as jira_settings
+
+    do {
+        let notice = jira.ensure_comment(
+            base_url: params.profile.jira.base_url,
+            token: jira_settings.secret.token,
+            email: params.profile.jira.email,
+            key: params.issue.key,
+            body: "Runinator completed ${params.issue.key}. Pull request: ${params.orchestration.resources.sdlc.pull_url}. Revision: ${params.orchestration.resources.sdlc.published_revision}."
+        )
+        let transition = jira.ensure_transition(
+            base_url: params.profile.jira.base_url,
+            token: jira_settings.secret.token,
+            email: params.profile.jira.email,
+            key: params.issue.key,
+            transition_id: params.profile.jira.done_transition_id,
+            target_status: params.profile.jira.done_status
+        )
+
+        compute {
+            return { evidence: { role: "ticket_close", comment: notice, transition: transition } }
+        }
+    }
+}
+
+workflow "SDLC Operator Handoff" v1 {
+    params { issue: any, profile: any, orchestration: any }
+    key handoff
+    import settings jira as jira_settings
+
+    do {
+        let notice = jira.ensure_comment(
+            base_url: params.profile.jira.base_url,
+            token: jira_settings.secret.token,
+            email: params.profile.jira.email,
+            key: params.issue.key,
+            body: "Runinator paused the SDLC mission for operator attention. Review the orchestration evidence and preserved workspace before resuming."
+        )
+        compute {
+            return { evidence: { role: "operator_handoff", notification: notice, exhaustion: params.orchestration.exhaustion } }
+        }
+    }
+}
+
+}
+
+pipeline "Label-driven SDLC Mission" {
+    key sdlc_mission
+    namespace runinator.sdlc
+    description "Runs one durable Jira-to-GitHub-to-deployment lifecycle as bounded Claude Code jobs."
+    concurrency 2 on_conflict queue
+
+    ingress scope "mission.sdlc" {
+        on "issue_updated" when unbound
+            if "/issue/fields/labels" contains "runinator"
+            -> start
+        on "issue_updated" when active -> record
+        on "comment_created" when active -> record
+        on "pull_request_review" when active -> dispatch "review_revision"
+        on "issue_comment" when active -> dispatch "review_comment"
+        on "check_run" when active -> record
+        on "workflow_run" when active -> record
+        on "cancel" when active -> dispatch "cancel"
+        on "pause" when active -> dispatch "pause"
+        on "resume" when active -> dispatch "resume"
+        on "requeue" when terminal -> requeue
+    }
+
+    orchestration {
+        entry "runinator.sdlc.select"
+        max_epochs 40
+        intent "cancel" effect terminate priority 100
+        intent "pause" effect suspend priority 90 stop pause restart current
+        intent "resume" effect resume priority 80 restart current
+        intent "review_revision" effect signal priority 60 coalesce 30s revision "/subject_revision" signal "review_feedback"
+        intent "review_comment" effect signal priority 50 coalesce 30s signal "review_feedback"
+
+        budget "deterministic" attempts 2 exhausted pause via "runinator.sdlc.handoff"
+        budget "transient" attempts 3 exhausted pause via "runinator.sdlc.handoff"
+
+        phase "runinator.sdlc.select" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" }
+        phase "runinator.sdlc.context" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" }
+        phase "runinator.sdlc.prepare" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.plan" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.implement" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.review" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.verify" { subject_revision from "/candidate_revision" resources_patch from "/resources_patch" evidence from "/evidence" failure_class from "/failure_class" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.publish" { subject_revision from "/candidate_revision" resources_patch from "/resources_patch" correlations from "/correlations" evidence from "/evidence" failure_class from "/failure_class" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.await_feedback" { evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.feedback" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" }
+        phase "runinator.sdlc.repair" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.merge" { resources_patch from "/resources_patch" evidence from "/evidence" failure_class from "/failure_class" next_member from "/next_member" }
+        phase "runinator.sdlc.impact" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "sdlc-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.sdlc.deploy" { resources_patch from "/resources_patch" evidence from "/evidence" failure_class from "/failure_class" next_member from "/next_member" }
+        phase "runinator.sdlc.deploy_monitor" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" }
+        phase "runinator.sdlc.close" { evidence from "/evidence" }
+        phase "runinator.sdlc.handoff" { evidence from "/evidence" }
+    }
+
+    workflow "runinator.sdlc.select"
+    workflow "runinator.sdlc.context"
+    workflow "runinator.sdlc.prepare"
+    workflow "runinator.sdlc.plan"
+    workflow "runinator.sdlc.implement"
+    workflow "runinator.sdlc.review"
+    workflow "runinator.sdlc.verify"
+    workflow "runinator.sdlc.publish"
+    workflow "runinator.sdlc.await_feedback"
+    workflow "runinator.sdlc.feedback"
+    workflow "runinator.sdlc.repair"
+    workflow "runinator.sdlc.merge"
+    workflow "runinator.sdlc.impact"
+    workflow "runinator.sdlc.deploy"
+    workflow "runinator.sdlc.deploy_monitor"
+    workflow "runinator.sdlc.close"
+    workflow "runinator.sdlc.handoff"
+}

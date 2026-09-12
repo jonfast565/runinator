@@ -798,6 +798,51 @@ fn field(
     }
 }
 
+fn sdlc_profile_type() -> RuninatorType {
+    RuninatorType::structure([
+        (
+            "repository",
+            RuninatorType::structure([
+                ("owner", RuninatorType::String),
+                ("name", RuninatorType::String),
+                ("remote", RuninatorType::String),
+                ("base_branch", RuninatorType::String),
+                ("base_ref", RuninatorType::String),
+                ("local_path", RuninatorType::String),
+                ("github_scope", RuninatorType::String),
+            ]),
+        ),
+        (
+            "automation",
+            RuninatorType::structure([
+                ("branch_prefix", RuninatorType::String),
+                ("local_check_command", RuninatorType::String),
+                ("merge_method", RuninatorType::String),
+            ]),
+        ),
+        (
+            "jira",
+            RuninatorType::structure([
+                ("base_url", RuninatorType::String),
+                ("email", RuninatorType::String),
+                ("done_transition_id", RuninatorType::String),
+                ("done_status", RuninatorType::String),
+            ]),
+        ),
+        (
+            "slack",
+            RuninatorType::structure([("search_query", RuninatorType::String)]),
+        ),
+        (
+            "deployment",
+            RuninatorType::structure([
+                ("workflow_id", RuninatorType::String),
+                ("ref", RuninatorType::String),
+            ]),
+        ),
+    ])
+}
+
 fn generic_metadata() -> AdapterKindMetadata {
     AdapterKindMetadata {
         kind: "generic_webhook".into(),
@@ -935,6 +980,22 @@ fn jira_metadata() -> AdapterKindMetadata {
                 "Stored Secret expected as the webhook bearer token.",
                 Value::Null,
             ),
+            field(
+                "routing_scope",
+                RuninatorType::String,
+                false,
+                false,
+                "Optional orchestration scope override. Use mission.sdlc for label-driven SDLC admission.",
+                Value::Null,
+            ),
+            field(
+                "sdlc_profile",
+                sdlc_profile_type(),
+                false,
+                false,
+                "Project delivery profile injected into admitted mission payloads.",
+                Value::Null,
+            ),
         ],
         polling_fields: vec![
             field("instance_id", RuninatorType::String, true, false, "Stable Jira instance identity, such as the site hostname.", Value::Null),
@@ -942,6 +1003,8 @@ fn jira_metadata() -> AdapterKindMetadata {
             field("email", RuninatorType::String, true, false, "Jira account email.", Value::Null),
             field("jql", RuninatorType::String, true, false, "JQL selecting issues to poll.", Value::Null),
             field("poll_interval_seconds", RuninatorType::Integer, false, false, "Polling cadence in seconds (30–3600).", 60.into()),
+            field("routing_scope", RuninatorType::String, false, false, "Optional orchestration scope override. Use mission.sdlc for label-driven SDLC admission.", Value::Null),
+            field("sdlc_profile", sdlc_profile_type(), false, false, "Project delivery profile injected into admitted mission payloads.", Value::Null),
         ],
         event_names: vec!["issue_updated".into(), "comment_created".into()],
         canonical_pointers: vec![
@@ -962,12 +1025,12 @@ fn jira_metadata() -> AdapterKindMetadata {
         )],
         execution_profile_scopes: vec![],
         execution_profile_required_labels: BTreeMap::new(),
-        identity_fields: vec!["instance_id".into()],
+        identity_fields: vec!["instance_id".into(), "routing_scope".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
             "For webhooks, configure Jira automation to POST issue and comment deliveries and send the selected Secret as a bearer token.".into(),
             "For polling, select an API-token Secret and configure the Jira base URL, account email, JQL, and cadence.".into(),
-            "Set the stable Jira instance identity before enabling the adapter; it becomes part of every correlation scope.".into(),
+            "Set the stable Jira instance identity and optional routing scope before enabling the adapter; both become part of admitted correlation identity.".into(),
         ],
     }
 }
@@ -992,6 +1055,8 @@ fn github_metadata() -> AdapterKindMetadata {
         ],
         event_names: vec![
             "pull_request".into(),
+            "pull_request_review".into(),
+            "issue_comment".into(),
             "check_run".into(),
             "workflow_run".into(),
         ],
@@ -1019,7 +1084,7 @@ fn github_metadata() -> AdapterKindMetadata {
         identity_fields: vec!["repositories".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
-            "For webhooks, use the displayed URL with application/json, select a matching webhook Secret, and subscribe to the required pull request, check run, and workflow run events.".into(),
+            "For webhooks, use the displayed URL with application/json, select a matching webhook Secret, and subscribe to pull request, pull request review, issue comment, check run, and workflow run events.".into(),
             "For polling, choose either a stored API token or a GitHub execution profile, list repositories as owner/name, and configure the cadence. Both modes invoke the GitHub CLI.".into(),
         ],
     }
@@ -1526,6 +1591,7 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
     let token = poll_secret(request, "api_token")?;
     let instance_id = configured_string(&request.configuration, "instance_id")?;
     let jql = configured_string(&request.configuration, "jql")?;
+    let routing_scope = configured_routing_scope(&request.configuration);
 
     let issue_stream = format!("{instance_id}:issue");
     let comment_stream = format!("{instance_id}:comment");
@@ -1547,7 +1613,10 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
             .query(&[
                 ("jql", query.as_str()),
                 ("maxResults", "100"),
-                ("fields", "summary,project,updated,comment"),
+                (
+                    "fields",
+                    "summary,description,project,status,labels,issuetype,priority,assignee,components,updated,comment",
+                ),
             ]);
         if let Some(token) = &next_page_token {
             call = call.query(&[("nextPageToken", token)]);
@@ -1612,16 +1681,26 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
             continue;
         }
         advance(&mut marks, &issue_stream, &updated);
+        let (scope, correlation_key) = jira_routing_identity(
+            routing_scope,
+            instance_id,
+            project.as_str(),
+            issue_id.as_str(),
+        );
         events.push(NormalizedAdapterEvent {
             source: "jira".into(),
             delivery_id: format!("jira:{instance_id}:issue:{issue_id}:{updated}"),
             event_type: "issue_updated".into(),
-            scope: format!("jira:{instance_id}:project:{project}"),
-            correlation_key: format!("issue:{issue_id}"),
+            scope: scope.clone(),
+            correlation_key: correlation_key.clone(),
             subject_revision: None,
             occurred_at: parse_occurred_at(&Value::String(updated.clone())).ok(),
             provenance: operation_provenance(&issue).into(),
-            payload: json!({ "issue": issue.clone() }).into(),
+            payload: jira_payload_with_profile(
+                json!({ "issue": issue.clone() }),
+                &request.configuration,
+            )
+            .into(),
         });
         for comment in issue
             .pointer("/fields/comment/comments")
@@ -1649,12 +1728,16 @@ async fn poll_jira_inner(request: &AdapterPollRequest) -> Result<AdapterPollResp
                     comment.get("id").map(value_string).unwrap_or_default()
                 ),
                 event_type: "comment_created".into(),
-                scope: format!("jira:{instance_id}:project:{project}"),
-                correlation_key: format!("issue:{issue_id}"),
+                scope: scope.clone(),
+                correlation_key: correlation_key.clone(),
                 subject_revision: None,
                 occurred_at: parse_occurred_at(&Value::String(comment_updated)).ok(),
                 provenance: operation_provenance(&comment).into(),
-                payload: json!({"issue": issue, "comment": comment}).into(),
+                payload: jira_payload_with_profile(
+                    json!({ "issue": issue, "comment": comment }),
+                    &request.configuration,
+                )
+                .into(),
             });
         }
     }
@@ -1686,6 +1769,42 @@ fn configured_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String>
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("missing configuration '{key}'"))
+}
+
+fn configured_routing_scope(configuration: &Value) -> Option<&str> {
+    configuration
+        .get("routing_scope")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn jira_routing_identity(
+    routing_scope: Option<&str>,
+    instance_id: &str,
+    project_id: &str,
+    issue_id: &str,
+) -> (String, String) {
+    match routing_scope {
+        Some(scope) => (
+            scope.to_owned(),
+            format!("jira:{instance_id}:issue:{issue_id}"),
+        ),
+        None => (
+            format!("jira:{instance_id}:project:{project_id}"),
+            format!("issue:{issue_id}"),
+        ),
+    }
+}
+
+fn jira_payload_with_profile(mut payload: Value, configuration: &Value) -> Value {
+    if let Some(profile) = configuration.get("sdlc_profile")
+        && !profile.is_null()
+        && let Some(payload) = payload.as_object_mut()
+    {
+        payload.insert("profile".into(), profile.clone());
+    }
+    payload
 }
 
 fn pointer_string(value: &Value, pointer: &str) -> Result<String, String> {
@@ -1875,6 +1994,12 @@ fn handle_github(request: AdapterRequest, body_limit: usize) -> AdapterResponse 
         .map(|value| format!("pr:{}", value_string(value)))
         .or_else(|| {
             payload
+                .pointer("/issue/pull_request")
+                .zip(payload.pointer("/issue/number"))
+                .map(|(_, value)| format!("pr-number:{}", value_string(value)))
+        })
+        .or_else(|| {
+            payload
                 .pointer("/check_run/id")
                 .map(|value| format!("check:{}", value_string(value)))
         })
@@ -1904,6 +2029,9 @@ fn handle_github(request: AdapterRequest, body_limit: usize) -> AdapterResponse 
                 &payload,
                 &[
                     "/pull_request/updated_at",
+                    "/review/submitted_at",
+                    "/comment/updated_at",
+                    "/comment/created_at",
                     "/check_run/completed_at",
                     "/check_run/started_at",
                     "/workflow_run/updated_at",
@@ -1963,17 +2091,25 @@ fn handle_jira(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
             "Jira event lacks stable delivery, project, or issue identity",
         );
     }
+    let (scope, correlation_key) = jira_routing_identity(
+        configured_routing_scope(&request.configuration),
+        instance_id,
+        &project_id,
+        &issue_id,
+    );
     let provenance = operation_provenance(&payload);
+    let occurred_at = first_occurred_at(&payload, &["/timestamp"]);
+    let payload = jira_payload_with_profile(payload, &request.configuration);
     AdapterResponse {
         verified: true,
         events: vec![NormalizedAdapterEvent {
             source: "jira".into(),
             delivery_id,
             event_type,
-            scope: format!("jira:{instance_id}:project:{project_id}"),
-            correlation_key: format!("issue:{issue_id}"),
+            scope,
+            correlation_key,
             subject_revision: None,
-            occurred_at: first_occurred_at(&payload, &["/timestamp"]),
+            occurred_at,
             payload: payload.into(),
             provenance: provenance.into(),
         }],
@@ -2126,6 +2262,36 @@ mod tests {
             pull_request.events[0].correlation_key
         );
         assert_eq!(check.events[0].subject_revision.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn github_review_and_pr_comment_events_route_back_to_the_pull_request() {
+        let review_body = br#"{"repository":{"id":10},"pull_request":{"id":20,"head":{"sha":"abc"}},"review":{"submitted_at":"2026-08-27T12:05:00Z"}}"#;
+        let comment_body = br#"{"repository":{"id":10},"issue":{"number":7,"pull_request":{"url":"https://api.github.test/pulls/7"}},"comment":{"created_at":"2026-08-27T12:06:00Z"}}"#;
+        let normalize = |body: &[u8], event: &str| {
+            handle_github(
+                AdapterRequest {
+                    method: "POST".into(),
+                    headers: BTreeMap::from([
+                        ("x-hub-signature-256".into(), signature("secret", body)),
+                        ("x-github-delivery".into(), format!("{event}-delivery")),
+                        ("x-github-event".into(), event.into()),
+                    ]),
+                    body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                    configuration: Value::Null,
+                    secrets: json!({ "secret": "secret" }),
+                },
+                DEFAULT_BODY_LIMIT,
+            )
+        };
+
+        let review = normalize(review_body, "pull_request_review");
+        let comment = normalize(comment_body, "issue_comment");
+        assert_eq!(review.events[0].correlation_key, "pr:20");
+        assert_eq!(review.events[0].subject_revision.as_deref(), Some("abc"));
+        assert_eq!(comment.events[0].correlation_key, "pr-number:7");
+        assert!(review.events[0].occurred_at.is_some());
+        assert!(comment.events[0].occurred_at.is_some());
     }
 
     #[test]
@@ -2293,6 +2459,41 @@ mod tests {
         );
         assert_eq!(response.events[0].correlation_key, "issue:20");
         assert!(response.events[0].occurred_at.is_some());
+    }
+
+    #[test]
+    fn jira_routing_scope_admits_one_mission_per_instance_issue() {
+        let body = br#"{"timestamp":1787832000000,"webhookEvent":"jira:issue_updated","issue":{"id":"20","fields":{"project":{"id":"10"}}}}"#;
+        let response = handle_jira(
+            AdapterRequest {
+                method: "POST".into(),
+                headers: BTreeMap::from([
+                    ("authorization".into(), "Bearer secret".into()),
+                    ("x-atlassian-webhook-identifier".into(), "delivery".into()),
+                ]),
+                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                configuration: json!({
+                    "instance_id": "acme.atlassian.net",
+                    "routing_scope": "mission.sdlc",
+                    "sdlc_profile": { "repository": { "name": "service" } }
+                }),
+                secrets: json!({ "secret": "secret" }),
+            },
+            DEFAULT_BODY_LIMIT,
+        );
+
+        assert!(response.verified);
+        assert_eq!(response.events[0].scope, "mission.sdlc");
+        assert_eq!(
+            response.events[0].correlation_key,
+            "jira:acme.atlassian.net:issue:20"
+        );
+        assert_eq!(
+            response.events[0]
+                .payload
+                .pointer("/profile/repository/name"),
+            Some(&json!("service").into())
+        );
     }
 
     #[test]

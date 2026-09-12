@@ -11,6 +11,14 @@ A mission is a durable orchestration, not one long subprocess. Each phase is rec
 the source revision and pipeline policy are frozen when the mission starts, and every retry or
 review loop remains visible in the Missions page and CLI.
 
+Runinator also ships an opt-in `runinator.sdlc.sdlc_mission` pack for a complete label-driven
+software-delivery lifecycle. A Jira polling adapter admits an issue when it sees the `runinator`
+label; smaller mission phases then gather Jira and Slack context, plan, implement, review, verify,
+publish and repair a pull request, enforce an exact-SHA merge gate, assess deployment impact,
+monitor a named deployment workflow when needed, and close the ticket. See
+[`packs/sdlc-missions/README.md`](../../packs/sdlc-missions/README.md) for the adapter and project
+profile contract. Install this pack explicitly; the ordinary mission setup helper does not apply it.
+
 ## Quick setup
 
 The setup helper validates both packs, creates the `claude` execution-profile definition when it
@@ -175,4 +183,5 @@ only the current mission, read its evidence, and submit its declared lifecycle i
   and research/report missions allow eight; exhaustion fails explicitly instead of looping forever.
 
 For the phase policies and security boundaries, see
-[`packs/ai-missions/README.md`](../../packs/ai-missions/README.md).
+[`packs/ai-missions/README.md`](../../packs/ai-missions/README.md). For the Jira-to-deployment
+lifecycle, see [`packs/sdlc-missions/README.md`](../../packs/sdlc-missions/README.md).

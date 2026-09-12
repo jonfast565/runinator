@@ -47,3 +47,30 @@ fn polling_validation_is_owned_by_the_adapter_kind() {
             .any(|issue| issue.path == "configuration.poll_interval_seconds")
     );
 }
+
+#[test]
+fn sdlc_routing_requires_a_project_profile() {
+    let request: AdapterValidationRequest = serde_json::from_value(serde_json::json!({
+        "transport": "polling",
+        "configuration": {
+            "instance_id": "acme.atlassian.net",
+            "base_url": "https://acme.atlassian.net",
+            "email": "automation@acme.example",
+            "jql": "project = EXAMPLE AND labels = runinator",
+            "routing_scope": "mission.sdlc"
+        },
+        "authentication": {
+            "kind": "secrets",
+            "secret_bindings": { "api_token": "00000000-0000-0000-0000-000000000001" }
+        }
+    }))
+    .unwrap();
+
+    let response = registry()["jira"].validate(request);
+    assert!(
+        response
+            .issues
+            .iter()
+            .any(|issue| issue.path == "configuration.sdlc_profile")
+    );
+}
