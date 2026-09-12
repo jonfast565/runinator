@@ -116,10 +116,57 @@ where
         let Some(mut record) = self.fetch_adapter_delivery(id).await? else {
             return Ok(false);
         };
+        if record.state == "held" && record.hold_mode == Some(ExternalIngressGateMode::Paused) {
+            return Ok(false);
+        }
         record.approved = approve;
         record.error = None;
         Ok(sqlx::query(&self.render("UPDATE adapter_deliveries SET state = ?, data = ?, updated_at = ? WHERE id = ? AND state IN ('held', 'failed', 'rejected')"))
             .bind(if approve {"approved"} else {"dropped"}).bind(serde_json::to_string(&record)?).bind(Utc::now().timestamp()).bind(id).execute(self.pool()).await?.affected()>0)
+    }
+    async fn release_paused_adapter_deliveries(
+        &self,
+        adapter_id: Uuid,
+        limit: i64,
+    ) -> Result<(u64, u64), SendableError> {
+        let rows = sqlx::query(&self.render("SELECT id, data, state FROM adapter_deliveries WHERE adapter_id = ? AND state = 'held' ORDER BY received_at, id LIMIT ?"))
+            .bind(adapter_id)
+            .bind(limit.clamp(1, 1_000))
+            .fetch_all(self.pool())
+            .await?;
+        let mut released = 0;
+        for row in rows {
+            let mut record = delivery(row.get("data"), row.get("state"))?;
+            if record.hold_mode != Some(ExternalIngressGateMode::Paused) {
+                continue;
+            }
+            record.approved = true;
+            record.error = None;
+            if sqlx::query(&self.render("UPDATE adapter_deliveries SET state = 'approved', data = ?, updated_at = ? WHERE id = ? AND state = 'held'"))
+                .bind(serde_json::to_string(&record)?)
+                .bind(Utc::now().timestamp())
+                .bind(record.id)
+                .execute(self.pool())
+                .await?
+                .affected() > 0
+            {
+                released += 1;
+            }
+        }
+        let remaining_rows = sqlx::query(&self.render(
+            "SELECT data, state FROM adapter_deliveries WHERE adapter_id = ? AND state = 'held'",
+        ))
+        .bind(adapter_id)
+        .fetch_all(self.pool())
+        .await?;
+        let mut remaining = 0;
+        for row in remaining_rows {
+            let record = delivery(row.get("data"), row.get("state"))?;
+            if record.hold_mode == Some(ExternalIngressGateMode::Paused) {
+                remaining += 1;
+            }
+        }
+        Ok((released, remaining))
     }
     async fn claim_adapter_delivery(
         &self,

@@ -157,6 +157,7 @@ export type {
   AdapterKindCatalogEntry,
   AdapterKindMetadata,
   AdapterPollStatus,
+  AdapterRuntimeSummary,
   AdapterRevision,
   DeliverySemantics,
   ExternalOperation,

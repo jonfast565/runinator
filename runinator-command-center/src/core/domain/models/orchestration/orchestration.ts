@@ -207,6 +207,7 @@ export interface AdapterKindMetadata {
   display_name: string;
   description?: string | null;
   fields: AdapterConfigurationField[];
+  polling_fields: AdapterConfigurationField[];
   event_names: string[];
   canonical_pointers: string[];
   capabilities: string[];
@@ -214,6 +215,8 @@ export interface AdapterKindMetadata {
   polling_authentication: ("secrets" | "execution_profile")[];
   polling_secret_fields: AdapterConfigurationField[];
   execution_profile_scopes: string[];
+  execution_profile_required_labels: Record<string, string>;
+  identity_fields: string[];
 }
 
 export type AdapterAuthentication =
@@ -305,6 +308,7 @@ export interface AdapterDeliveryRecord {
     payload: unknown;
   } | null;
   state: string;
+  hold_mode?: "disabled" | "paused" | "review" | null;
   error?: string | null;
   preview: Record<string, unknown>;
   outcome: Record<string, unknown> | null;
@@ -322,4 +326,16 @@ export interface AdapterPollAttempt {
   created_at: string;
   updated_at: string;
   deadline_at: string;
+}
+
+export interface AdapterRuntimeSummary {
+  adapter: AdapterDefinition;
+  revision?: AdapterRevision | null;
+  state: "unavailable" | "disabled" | "paused" | "review" | "failing" | "initializing" | "active";
+  inspection_mode: "disabled" | "paused" | "review";
+  kind_available: boolean;
+  last_delivery_at?: string | null;
+  last_attempt_at?: string | null;
+  latest_error?: string | null;
+  delivery_counts: Record<string, number>;
 }

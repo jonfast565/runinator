@@ -16,8 +16,9 @@ use axum::{
 };
 use runinator_adapter_contract::{
     ADAPTER_ABI_VERSION, AdapterMetadataEnvelope, AdapterPollRequest, AdapterPollResponse,
-    AdapterRequest, AdapterResponse, FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL,
-    METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, verify_bearer, verify_hmac_sha256,
+    AdapterRequest, AdapterResponse, AdapterValidationRequest, AdapterValidationResponse,
+    FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn,
+    POLL_SYMBOL, VALIDATE_SYMBOL, verify_bearer, verify_hmac_sha256,
 };
 use runinator_models::{
     orchestration::{
@@ -105,6 +106,12 @@ struct PollInvokeRequest {
     request: AdapterPollRequest,
 }
 
+#[derive(Debug, Deserialize)]
+struct ValidateInvokeRequest {
+    kind: String,
+    request: AdapterValidationRequest,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().collect::<Vec<_>>();
@@ -123,6 +130,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.get(1).map(String::as_str) == Some("--child-poll") {
         return child_poll(
+            Path::new(required_arg(&args, 2)?),
+            Path::new(required_arg(&args, 3)?),
+            Path::new(required_arg(&args, 4)?),
+        );
+    }
+    if args.get(1).map(String::as_str) == Some("--child-validate") {
+        return child_validate(
             Path::new(required_arg(&args, 2)?),
             Path::new(required_arg(&args, 3)?),
             Path::new(required_arg(&args, 4)?),
@@ -166,6 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/kinds", get(kinds))
         .route("/reload", post(reload))
         .route("/verify-normalize", post(invoke))
+        .route("/validate", post(validate))
         .route("/poll", post(poll))
         .layer(DefaultBodyLimit::max(host_request_limit))
         .with_state(state);
@@ -375,6 +390,41 @@ async fn poll(
     (StatusCode::OK, Json(value))
 }
 
+async fn validate(
+    State(state): State<HostState>,
+    headers: HeaderMap,
+    Json(request): Json<ValidateInvokeRequest>,
+) -> (StatusCode, Json<Value>) {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    let entry = state.catalog.read().await.get(&request.kind).cloned();
+    let Some(entry) = entry else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "adapter kind not found" })),
+        );
+    };
+    let response = if entry.origin == "builtin" {
+        builtin_validate(&request.kind, request.request)
+    } else {
+        invoke_dynamic_validation(Path::new(&entry.origin), &request.request, state.limits)
+            .await
+            .unwrap_or_else(|error| AdapterValidationResponse {
+                issues: vec![runinator_adapter_contract::AdapterValidationIssue {
+                    path: String::new(),
+                    code: "adapter_validation_failed".into(),
+                    message: error,
+                    severity: runinator_adapter_contract::AdapterValidationSeverity::Error,
+                }],
+            })
+    };
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(response).unwrap_or_default()),
+    )
+}
+
 fn authorized(state: &HostState, headers: &HeaderMap) -> bool {
     headers
         .get("authorization")
@@ -448,19 +498,24 @@ fn is_library(path: &Path) -> bool {
 
 async fn dynamic_metadata(path: &Path, limits: HostLimits) -> Result<AdapterKindMetadata, String> {
     let temp = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
-    let status = timeout(
+    let output = timeout(
         limits.timeout,
         Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .arg("--child-metadata")
             .arg(path)
             .arg(temp.path())
-            .status(),
+            .output(),
     )
     .await
     .map_err(|_| "adapter metadata timed out".to_string())?
     .map_err(|error| error.to_string())?;
-    if !status.success() {
-        return Err(format!("metadata child exited with {status}"));
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!("metadata child exited with {}", output.status)
+        } else {
+            detail
+        });
     }
     let bytes = std::fs::read(temp.path()).map_err(|error| error.to_string())?;
     if bytes.len() > limits.output_bytes {
@@ -469,7 +524,10 @@ async fn dynamic_metadata(path: &Path, limits: HostLimits) -> Result<AdapterKind
     let envelope: AdapterMetadataEnvelope =
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     if envelope.abi_version != ADAPTER_ABI_VERSION {
-        return Err("adapter ABI version mismatch".into());
+        return Err(format!(
+            "adapter ABI {} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}",
+            envelope.abi_version
+        ));
     }
     Ok(envelope.metadata)
 }
@@ -542,6 +600,40 @@ async fn invoke_dynamic_poll(
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
+async fn invoke_dynamic_validation(
+    path: &Path,
+    request: &AdapterValidationRequest,
+    limits: HostLimits,
+) -> Result<AdapterValidationResponse, String> {
+    let request_file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+    let response_file = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
+    let request_bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
+    if request_bytes.len() > limits.body_bytes {
+        return Err("adapter validation request exceeds limit".into());
+    }
+    std::fs::write(request_file.path(), request_bytes).map_err(|error| error.to_string())?;
+    let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .arg("--child-validate")
+        .arg(path)
+        .arg(request_file.path())
+        .arg(response_file.path())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let status = timeout(limits.timeout, child.wait())
+        .await
+        .map_err(|_| "adapter validation timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Err(format!("adapter validation child exited with {status}"));
+    }
+    let bytes = std::fs::read(response_file.path()).map_err(|error| error.to_string())?;
+    if bytes.len() > limits.output_bytes {
+        return Err("adapter validation output exceeds limit".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
 fn child_metadata(
     library_path: &Path,
     response_path: &Path,
@@ -550,8 +642,12 @@ fn child_metadata(
     unsafe {
         let library = libloading::Library::new(library_path)?;
         let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        if marker() != ADAPTER_ABI_VERSION {
-            return Err("adapter ABI version mismatch".into());
+        let version = marker();
+        if version != ADAPTER_ABI_VERSION {
+            return Err(format!(
+                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
+            )
+            .into());
         }
         let name = library.get::<NameFn>(NAME_SYMBOL)?;
         let _ = CStr::from_ptr(name()).to_str()?;
@@ -570,8 +666,12 @@ fn child_handle(
     unsafe {
         let library = libloading::Library::new(library_path)?;
         let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        if marker() != ADAPTER_ABI_VERSION {
-            return Err("adapter ABI version mismatch".into());
+        let version = marker();
+        if version != ADAPTER_ABI_VERSION {
+            return Err(format!(
+                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
+            )
+            .into());
         }
         let operation = library.get::<FileOperationFn>(HANDLE_SYMBOL)?;
         invoke_file_operation(*operation, Some(request_path), response_path)?;
@@ -588,10 +688,36 @@ fn child_poll(
     unsafe {
         let library = libloading::Library::new(library_path)?;
         let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
-        if marker() != ADAPTER_ABI_VERSION {
-            return Err("adapter ABI version mismatch".into());
+        let version = marker();
+        if version != ADAPTER_ABI_VERSION {
+            return Err(format!(
+                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
+            )
+            .into());
         }
         let operation = library.get::<FileOperationFn>(POLL_SYMBOL)?;
+        invoke_file_operation(*operation, Some(request_path), response_path)?;
+    }
+    Ok(())
+}
+
+fn child_validate(
+    library_path: &Path,
+    request_path: &Path,
+    response_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // SAFETY: all dynamically loaded code is contained in this disposable child process.
+    unsafe {
+        let library = libloading::Library::new(library_path)?;
+        let marker = library.get::<MarkerFn>(MARKER_SYMBOL)?;
+        let version = marker();
+        if version != ADAPTER_ABI_VERSION {
+            return Err(format!(
+                "adapter ABI {version} unsupported; rebuild with adapter SDK v{ADAPTER_ABI_VERSION}"
+            )
+            .into());
+        }
+        let operation = library.get::<FileOperationFn>(VALIDATE_SYMBOL)?;
         invoke_file_operation(*operation, Some(request_path), response_path)?;
     }
     Ok(())
@@ -641,12 +767,15 @@ fn placeholder_metadata(path: &Path) -> AdapterKindMetadata {
         display_name: "Invalid adapter".into(),
         description: None,
         fields: vec![],
+        polling_fields: vec![],
         event_names: vec![],
         canonical_pointers: vec![],
         capabilities: vec![],
         polling_authentication: vec![],
         polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
+        execution_profile_required_labels: BTreeMap::new(),
+        identity_fields: vec![],
         setup_instructions: vec![],
     }
 }
@@ -757,6 +886,7 @@ fn generic_metadata() -> AdapterKindMetadata {
                 Value::Null,
             ),
         ],
+        polling_fields: vec![],
         event_names: vec![],
         canonical_pointers: vec![
             "/delivery_id".into(),
@@ -768,6 +898,12 @@ fn generic_metadata() -> AdapterKindMetadata {
         polling_authentication: vec![],
         polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
+        execution_profile_required_labels: BTreeMap::new(),
+        identity_fields: vec![
+            "delivery_id_pointer".into(),
+            "scope_pointer".into(),
+            "correlation_pointer".into(),
+        ],
         setup_instructions: vec![
             "Configure the sender to POST the original JSON bytes to the webhook URL above.".into(),
             "For HMAC-SHA256, send sha256=<hex digest> in X-Runinator-Signature; for bearer authentication, send Authorization: Bearer <token>.".into(),
@@ -800,6 +936,13 @@ fn jira_metadata() -> AdapterKindMetadata {
                 Value::Null,
             ),
         ],
+        polling_fields: vec![
+            field("instance_id", RuninatorType::String, true, false, "Stable Jira instance identity, such as the site hostname.", Value::Null),
+            field("base_url", RuninatorType::String, true, false, "Jira site URL.", Value::Null),
+            field("email", RuninatorType::String, true, false, "Jira account email.", Value::Null),
+            field("jql", RuninatorType::String, true, false, "JQL selecting issues to poll.", Value::Null),
+            field("poll_interval_seconds", RuninatorType::Integer, false, false, "Polling cadence in seconds (30–3600).", 60.into()),
+        ],
         event_names: vec!["issue_updated".into(), "comment_created".into()],
         canonical_pointers: vec![
             "/issue/id".into(),
@@ -818,6 +961,8 @@ fn jira_metadata() -> AdapterKindMetadata {
             Value::Null,
         )],
         execution_profile_scopes: vec![],
+        execution_profile_required_labels: BTreeMap::new(),
+        identity_fields: vec!["instance_id".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
             "For webhooks, configure Jira automation to POST issue and comment deliveries and send the selected Secret as a bearer token.".into(),
@@ -841,6 +986,10 @@ fn github_metadata() -> AdapterKindMetadata {
             "Stored Secret used to verify X-Hub-Signature-256.",
             Value::Null,
         )],
+        polling_fields: vec![
+            field("repositories", RuninatorType::array(RuninatorType::String), true, false, "Repositories to poll in owner/name form.", Value::Null),
+            field("poll_interval_seconds", RuninatorType::Integer, false, false, "Polling cadence in seconds (30–3600).", 60.into()),
+        ],
         event_names: vec![
             "pull_request".into(),
             "check_run".into(),
@@ -866,6 +1015,8 @@ fn github_metadata() -> AdapterKindMetadata {
             Value::Null,
         )],
         execution_profile_scopes: vec!["github".into()],
+        execution_profile_required_labels: BTreeMap::from([("runner".into(), "desktop".into())]),
+        identity_fields: vec!["repositories".into()],
         setup_instructions: vec![
             "Choose webhook delivery or polling when creating the adapter.".into(),
             "For webhooks, use the displayed URL with application/json, select a matching webhook Secret, and subscribe to the required pull request, check run, and workflow run events.".into(),
@@ -886,6 +1037,20 @@ async fn builtin_poll(kind: &str, request: AdapterPollRequest) -> AdapterPollRes
         Some(adapter) => adapter.poll(request).await,
         None => builtins::unsupported_poll(request),
     }
+}
+
+fn builtin_validate(kind: &str, request: AdapterValidationRequest) -> AdapterValidationResponse {
+    builtins::registry().get(kind).map_or_else(
+        || AdapterValidationResponse {
+            issues: vec![runinator_adapter_contract::AdapterValidationIssue {
+                path: String::new(),
+                code: "unknown_adapter_kind".into(),
+                message: "unknown built-in adapter".into(),
+                severity: runinator_adapter_contract::AdapterValidationSeverity::Error,
+            }],
+        },
+        |adapter| adapter.validate(request),
+    )
 }
 
 fn poll_secret<'a>(request: &'a AdapterPollRequest, name: &str) -> Result<&'a str, String> {

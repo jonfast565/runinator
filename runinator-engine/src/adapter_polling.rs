@@ -1,6 +1,7 @@
 //! Durable GitHub/Jira adapter polling. The loop claims persisted schedules and feeds normalized
 //! events through the same pipeline-ingress service used by webhook HTTP handlers.
 
+use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use chrono::{TimeDelta, Utc};
@@ -158,6 +159,8 @@ async fn poll_one<T: BackgroundEngineStore>(
         .resolve_secrets(adapter.org_id, &secret_bindings)
         .await?;
     let initialize = status.checkpoint.is_null();
+    let started = Instant::now();
+    let kind = adapter.kind.clone();
     let response = host
         .poll(
             &adapter.kind,
@@ -189,6 +192,15 @@ async fn poll_one<T: BackgroundEngineStore>(
         .as_ref()
         .err()
         .map(|failure| failure.message.clone());
+    crate::stability::adapter_poll(
+        &kind,
+        if error.is_some() {
+            "failed"
+        } else {
+            "succeeded"
+        },
+        started.elapsed().as_secs_f64() * 1_000.0,
+    );
     store
         .finish_adapter_poll_attempt(
             attempt_id,

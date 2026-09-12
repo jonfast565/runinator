@@ -1,4 +1,5 @@
 //! Recoverable adapter publication, delivery admission, and approved ingress application.
+use crate::settings::ServerSettingsHandle;
 use crate::{
     engine::BackgroundEngineStore,
     events::EventSender,
@@ -24,6 +25,7 @@ pub async fn run_adapter_control_loop<T: BackgroundEngineStore>(
     store: Arc<T>,
     broker: Arc<dyn Broker>,
     events: EventSender,
+    settings: ServerSettingsHandle,
     shutdown: Arc<Notify>,
 ) {
     let pipelines = PipelineOperations::new(store.clone(), broker.clone(), events.clone(), None);
@@ -88,6 +90,14 @@ pub async fn run_adapter_control_loop<T: BackgroundEngineStore>(
                         record.error = Some(error.to_string());
                     }
                     record.updated_at = Utc::now();
+                    let kind = store
+                        .fetch_orchestration_adapter(record.origin.adapter_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|adapter| adapter.kind)
+                        .unwrap_or_else(|| "unknown".into());
+                    crate::stability::adapter_delivery(&kind, &record.state);
                     if let Err(error) = store.finish_adapter_delivery(record, token).await {
                         warn!(%error,"could not finish adapter delivery");
                     }
@@ -148,9 +158,16 @@ pub async fn run_adapter_control_loop<T: BackgroundEngineStore>(
             }
         }
         if Utc::now() - last_cleanup >= chrono::Duration::minutes(1) {
-            if let Err(error) = store
-                .purge_adapter_diagnostics(Utc::now() - chrono::Duration::days(7))
-                .await
+            let retention = settings
+                .current()
+                .orchestration
+                .adapter_diagnostic_retention_seconds;
+            if retention > 0
+                && let Err(error) = store
+                    .purge_adapter_diagnostics(
+                        Utc::now() - chrono::Duration::seconds(retention as i64),
+                    )
+                    .await
             {
                 warn!(%error,"could not prune adapter diagnostics");
             }

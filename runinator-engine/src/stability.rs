@@ -40,6 +40,9 @@ const METRIC_QUEUE_FAILURES: &str = "runinator_engine_queue_failures_total";
 const METRIC_REPLICAS: &str = "runinator_engine_replicas";
 const METRIC_REPLICA_HEARTBEAT_AGE: &str = "runinator_engine_replica_max_heartbeat_age_seconds";
 const METRIC_REPLICA_TRANSITIONS: &str = "runinator_engine_replica_transitions_total";
+const METRIC_ADAPTER_POLL_ATTEMPTS: &str = "runinator_adapter_poll_attempts_total";
+const METRIC_ADAPTER_POLL_DURATION_MS: &str = "runinator_adapter_poll_duration_ms";
+const METRIC_ADAPTER_DELIVERY_OUTCOMES: &str = "runinator_adapter_delivery_outcomes_total";
 
 static PROMETHEUS: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -73,6 +76,9 @@ struct OtelCounters {
     replicas: Gauge<u64>,
     replica_heartbeat_age: Gauge<u64>,
     replica_transitions: Counter<u64>,
+    adapter_poll_attempts: Counter<u64>,
+    adapter_poll_duration_ms: Histogram<f64>,
+    adapter_delivery_outcomes: Counter<u64>,
 }
 
 static OTEL_COUNTERS: OnceLock<OtelCounters> = OnceLock::new();
@@ -125,8 +131,36 @@ fn otel_counters() -> &'static OtelCounters {
                 .with_unit("s")
                 .build(),
             replica_transitions: meter.u64_counter(METRIC_REPLICA_TRANSITIONS).build(),
+            adapter_poll_attempts: meter.u64_counter(METRIC_ADAPTER_POLL_ATTEMPTS).build(),
+            adapter_poll_duration_ms: meter
+                .f64_histogram(METRIC_ADAPTER_POLL_DURATION_MS)
+                .with_unit("ms")
+                .build(),
+            adapter_delivery_outcomes: meter.u64_counter(METRIC_ADAPTER_DELIVERY_OUTCOMES).build(),
         }
     })
+}
+
+pub fn adapter_poll(kind: &str, outcome: &str, millis: f64) {
+    metrics::counter!(METRIC_ADAPTER_POLL_ATTEMPTS, "kind" => kind.to_owned(), "outcome" => outcome.to_owned()).increment(1);
+    metrics::histogram!(METRIC_ADAPTER_POLL_DURATION_MS, "kind" => kind.to_owned(), "outcome" => outcome.to_owned()).record(millis);
+    let labels = [
+        KeyValue::new("kind", kind.to_owned()),
+        KeyValue::new("outcome", outcome.to_owned()),
+    ];
+    otel_counters().adapter_poll_attempts.add(1, &labels);
+    otel_counters()
+        .adapter_poll_duration_ms
+        .record(millis, &labels);
+}
+
+pub fn adapter_delivery(kind: &str, outcome: &str) {
+    metrics::counter!(METRIC_ADAPTER_DELIVERY_OUTCOMES, "kind" => kind.to_owned(), "outcome" => outcome.to_owned()).increment(1);
+    let labels = [
+        KeyValue::new("kind", kind.to_owned()),
+        KeyValue::new("outcome", outcome.to_owned()),
+    ];
+    otel_counters().adapter_delivery_outcomes.add(1, &labels);
 }
 
 /// install the prometheus recorder once per process. safe to call repeatedly; only the first call

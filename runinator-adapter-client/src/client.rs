@@ -16,6 +16,15 @@ pub trait AdapterVerifier: Send + Sync {
 }
 
 #[async_trait]
+pub trait AdapterValidator: Send + Sync {
+    async fn validate(
+        &self,
+        kind: &str,
+        request: AdapterValidationRequest,
+    ) -> Result<AdapterValidationResponse>;
+}
+
+#[async_trait]
 pub trait AdapterHostAdmin: Send + Sync {
     fn host_url(&self) -> &str;
     fn token_configured(&self) -> bool;
@@ -24,8 +33,14 @@ pub trait AdapterHostAdmin: Send + Sync {
     async fn reload(&self) -> Result<serde_json::Value>;
 }
 
-pub trait AdapterHostClient: AdapterPoller + AdapterVerifier + AdapterHostAdmin {}
-impl<T: AdapterPoller + AdapterVerifier + AdapterHostAdmin> AdapterHostClient for T {}
+pub trait AdapterHostClient:
+    AdapterPoller + AdapterVerifier + AdapterValidator + AdapterHostAdmin
+{
+}
+impl<T: AdapterPoller + AdapterVerifier + AdapterValidator + AdapterHostAdmin> AdapterHostClient
+    for T
+{
+}
 
 /// Clones share a connection pool and circuit; independently constructed clients are isolated.
 #[derive(Clone)]
@@ -120,6 +135,22 @@ impl AdapterVerifier for HttpAdapterHostClient {
     ) -> Result<AdapterResponse> {
         self.post_json(
             "/verify-normalize",
+            serde_json::json!({ "kind": kind, "request": request }),
+            VERIFY_TIMEOUT,
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl AdapterValidator for HttpAdapterHostClient {
+    async fn validate(
+        &self,
+        kind: &str,
+        request: AdapterValidationRequest,
+    ) -> Result<AdapterValidationResponse> {
+        self.post_json(
+            "/validate",
             serde_json::json!({ "kind": kind, "request": request }),
             VERIFY_TIMEOUT,
         )

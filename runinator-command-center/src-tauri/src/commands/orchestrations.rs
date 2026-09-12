@@ -195,6 +195,11 @@ pub async fn fetch_adapters(
 }
 
 #[tauri::command]
+pub async fn fetch_adapter_summaries(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "orchestrations/adapters/summaries").await
+}
+
+#[tauri::command]
 pub async fn fetch_adapter(
     state: State<'_, CommandCenterState>,
     adapter_id: Uuid,
@@ -236,6 +241,29 @@ pub async fn apply_adapter(
         .map(|id| format!("orchestrations/adapters/{id}"))
         .unwrap_or_else(|| "orchestrations/adapters".into());
     post_json(&state, &path, &adapter).await
+}
+
+#[tauri::command]
+pub async fn validate_adapter_draft(
+    state: State<'_, CommandCenterState>,
+    adapter: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "orchestrations/adapters/validate", &adapter).await
+}
+
+#[tauri::command]
+pub async fn test_adapter_draft(
+    state: State<'_, CommandCenterState>,
+    draft: Value,
+    headers: Option<Value>,
+    body_base64: String,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        "orchestrations/adapters/test",
+        &json!({ "draft": draft, "headers": headers.unwrap_or_else(|| json!({})), "body_base64": body_base64 }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -310,7 +338,7 @@ pub async fn steer_mission(
     state: State<'_, CommandCenterState>,
     orchestration_id: Uuid,
     message: String,
-) -> CommandResult<runinator_models::web::TaskResponse> {
+) -> CommandResult<Value> {
     post_json(
         &state,
         &format!("orchestrations/{orchestration_id}/steer"),

@@ -137,6 +137,25 @@ pub async fn decide<T: AuthorizationStore + OrchestrationStore>(
         Err(error) => api_error(error.to_string()),
     }
 }
+pub async fn release<T: AuthorizationStore + OrchestrationStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = require_adapter(db.as_ref(), &ctx, id, Permission::Run).await {
+        return reply;
+    }
+    match AdapterOperations::new(db)
+        .release_paused_deliveries(id)
+        .await
+    {
+        Ok((released, remaining)) => json(serde_json::json!({
+            "released": released,
+            "remaining": remaining,
+        })),
+        Err(error) => api_error(error.to_string()),
+    }
+}
 pub async fn debug_control<T: AuthorizationStore + OrchestrationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -190,6 +209,10 @@ pub fn routes<T: AuthorizationStore + OrchestrationStore>(pool: Arc<T>) -> axum:
         .route(
             "/orchestrations/adapters/{id}/deliveries/{delivery_id}/{decision}",
             post(decide::<T>),
+        )
+        .route(
+            "/orchestrations/adapters/{id}/deliveries/release",
+            post(release::<T>),
         )
         .route(
             "/pipelines/{id}/orchestration-debug",
@@ -262,6 +285,19 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "Control result",
+        Example::AdapterDecision
+    ),
+    endpoint!(
+        "post",
+        "/orchestrations/adapters/{id}/deliveries/release",
+        "Adapter Control",
+        "Release paused adapter deliveries",
+        "Releases paused deliveries in arrival order while leaving the gate paused for new traffic.",
+        false,
+        None,
+        &[],
+        200,
+        "Release result",
         Example::AdapterDecision
     ),
     endpoint!(

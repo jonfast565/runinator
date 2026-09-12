@@ -5,6 +5,7 @@ import type {
   AdapterKindMetadata,
   AdapterPollStatus,
   AdapterRevision,
+  AdapterRuntimeSummary,
   ExternalOperation,
   OrchestrationBinding,
   OrchestrationCommand,
@@ -22,6 +23,7 @@ import {
   fetchAdapterKinds,
   fetchAdapterPollStatus,
   fetchAdapterRevisions,
+  fetchAdapterSummaries,
   fetchAdapters,
   fetchExternalOperations,
   fetchOrchestration,
@@ -53,6 +55,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
   const aliases = ref<OrchestrationCorrelationAlias[]>([]);
   const adapterKinds = shallowRef<AdapterKindMetadata[]>([]);
   const adapters = ref<AdapterDefinition[]>([]);
+  const adapterSummaries = shallowRef<AdapterRuntimeSummary[]>([]);
   const selectedAdapterId = ref<string | null>(null);
   const selectedAdapter = ref<AdapterDefinition | null>(null);
   const adapterRevisions = shallowRef<AdapterRevision[]>([]);
@@ -187,8 +190,13 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     error.value = null;
 
     try {
-      const [catalog, definitions] = await Promise.all([fetchAdapterKinds(), fetchAdapters()]);
+      const [catalog, definitions, summaries] = await Promise.all([
+        fetchAdapterKinds(),
+        fetchAdapters(),
+        fetchAdapterSummaries(),
+      ]);
       adapters.value = definitions;
+      adapterSummaries.value = summaries;
       adapterKinds.value = catalog
         .filter((entry) => entry.healthy && !entry.error)
         .map((entry) => entry.metadata);
@@ -278,6 +286,7 @@ export const useOrchestrationsStore = defineStore("orchestrations", () => {
     aliases,
     adapterKinds,
     adapters,
+    adapterSummaries,
     selectedAdapterId,
     selectedAdapter,
     adapterRevisions,

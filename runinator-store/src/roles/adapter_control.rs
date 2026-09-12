@@ -35,6 +35,11 @@ pub trait AdapterControlStore: Send + Sync + 'static {
         id: Uuid,
         approve: bool,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+    fn release_paused_adapter_deliveries(
+        &self,
+        adapter_id: Uuid,
+        limit: i64,
+    ) -> impl Future<Output = Result<(u64, u64), SendableError>> + Send;
     fn claim_adapter_delivery(
         &self,
         token: Uuid,

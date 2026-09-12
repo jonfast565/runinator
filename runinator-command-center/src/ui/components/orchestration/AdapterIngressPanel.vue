@@ -14,12 +14,21 @@
         >Incoming deliveries
         <select v-model="mode" class="input" :disabled="!currentId || busy" @change="saveMode">
           <option value="disabled">Observe and admit</option>
+          <option value="paused">Pause and queue in arrival order</option>
           <option value="review">Hold for review</option>
         </select>
       </label>
       <button class="btn" :disabled="!currentId || busy" @click="refresh">Refresh</button>
+      <button
+        v-if="mode === 'paused' && pausedCount"
+        class="btn"
+        :disabled="busy"
+        @click="releasePaused"
+      >
+        Release queued ({{ pausedCount }})
+      </button>
       <span class="text-sm text-fg-muted"
-        >Completed history: 7 days. Held and failed deliveries remain available.</span
+        >Completed history follows the server's adapter diagnostic retention setting.</span
       >
     </div>
     <p v-if="error" role="alert" class="text-danger">{{ error }}</p>
@@ -64,7 +73,12 @@
         </p>
         <p v-if="record.error" class="m-0 text-danger">{{ record.error }}</p>
         <div class="flex flex-wrap gap-2">
-          <template v-if="['held', 'failed', 'rejected'].includes(record.state)">
+          <template
+            v-if="
+              ['held', 'failed', 'rejected'].includes(record.state) &&
+              !(record.state === 'held' && record.hold_mode === 'paused')
+            "
+          >
             <button
               v-if="record.event"
               class="btn btn-sm"
@@ -113,6 +127,7 @@ import {
   fetchAdapterInspection,
   setAdapterInspection,
   decideAdapterDelivery,
+  releasePausedAdapterDeliveries,
 } from "../../../core/api/commandCenterApi";
 import { formatDate, pretty } from "../../../core/utils/format";
 import { useAppStore } from "../../adapters/pinia/app";
@@ -130,6 +145,11 @@ const attempts = ref<AdapterPollAttempt[]>([]);
 const mode = ref<"disabled" | "paused" | "review">("disabled");
 const error = ref("");
 const busy = ref(false);
+const pausedCount = computed(
+  () =>
+    deliveries.value.filter((record) => record.state === "held" && record.hold_mode === "paused")
+      .length,
+);
 let timer = 0;
 
 async function refresh() {
@@ -178,6 +198,10 @@ function saveMode() {
 
 function decide(record: AdapterDeliveryRecord, decision: "approve" | "retry" | "drop") {
   return mutate(() => decideAdapterDelivery(currentId.value, record.id, decision));
+}
+
+function releasePaused() {
+  return mutate(() => releasePausedAdapterDeliveries(currentId.value));
 }
 
 function bindingId(record: AdapterDeliveryRecord) {

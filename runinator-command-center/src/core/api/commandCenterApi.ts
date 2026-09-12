@@ -974,6 +974,10 @@ export async function fetchAdapters() {
   return command<import("../domain/models").AdapterDefinition[]>("fetch_adapters");
 }
 
+export async function fetchAdapterSummaries() {
+  return command<import("../domain/models").AdapterRuntimeSummary[]>("fetch_adapter_summaries");
+}
+
 export async function fetchAdapter(adapterId: string) {
   return command<import("../domain/models").AdapterDefinition>("fetch_adapter", { adapterId });
 }
@@ -1006,6 +1010,25 @@ export async function applyAdapter(adapter: AdapterApplyInput, adapterId?: strin
     adapter,
     adapterId,
   });
+}
+
+export interface AdapterValidationIssue {
+  path: string;
+  code: string;
+  message: string;
+  severity: "error" | "warning";
+}
+
+export async function validateAdapterDraft(adapter: AdapterApplyInput) {
+  return command<{ issues: AdapterValidationIssue[] }>("validate_adapter_draft", { adapter });
+}
+
+export async function testAdapterDraft(
+  draft: AdapterApplyInput,
+  headers: Record<string, string>,
+  bodyBase64: string,
+) {
+  return command<unknown>("test_adapter_draft", { draft, headers, bodyBase64 });
 }
 
 export async function setAdapterEnabled(adapterId: string, enabled: boolean) {
@@ -2820,6 +2843,13 @@ export function decideAdapterDelivery(
 ) {
   return fetchIngressJson(
     `orchestrations/adapters/${encodeURIComponent(adapterId)}/deliveries/${encodeURIComponent(deliveryId)}/${decision}`,
+    { method: "POST" },
+  );
+}
+
+export function releasePausedAdapterDeliveries(adapterId: string) {
+  return fetchIngressJson<{ released: number; remaining: number }>(
+    `orchestrations/adapters/${encodeURIComponent(adapterId)}/deliveries/release`,
     { method: "POST" },
   );
 }

@@ -139,6 +139,7 @@ pub(super) async fn delivery_journal_and_broker_trace_are_adapter_scoped<T: Data
         attempt_id: Some(attempt),
         event: None,
         state: "rejected".into(),
+        hold_mode: None,
         error: Some("invalid signature".into()),
         preview: Value::Null,
         outcome: Value::Null,
@@ -163,6 +164,32 @@ pub(super) async fn delivery_journal_and_broker_trace_are_adapter_scoped<T: Data
             .await
             .unwrap()
             .is_empty()
+    );
+    let mut paused = stored.clone();
+    paused.id = Uuid::now_v7();
+    paused.state = "held".into();
+    paused.hold_mode = Some(ExternalIngressGateMode::Paused);
+    paused.error = None;
+    paused.received_at += chrono::Duration::seconds(1);
+    paused.updated_at = paused.received_at;
+    db.record_adapter_delivery(paused.clone()).await.unwrap();
+    let mut next = paused.clone();
+    next.id = Uuid::now_v7();
+    next.received_at += chrono::Duration::seconds(1);
+    next.updated_at = next.received_at;
+    db.record_adapter_delivery(next).await.unwrap();
+    assert!(!db.decide_adapter_delivery(paused.id, true).await.unwrap());
+    assert_eq!(
+        db.release_paused_adapter_deliveries(adapter_id, 1)
+            .await
+            .unwrap(),
+        (1, 1)
+    );
+    assert_eq!(
+        db.release_paused_adapter_deliveries(adapter_id, 10)
+            .await
+            .unwrap(),
+        (1, 0)
     );
     db.record_broker_message(BrokerMessageRecord {
         id: Uuid::now_v7(),

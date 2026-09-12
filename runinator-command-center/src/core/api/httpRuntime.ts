@@ -545,6 +545,20 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     },
     body: (args) => arg(args, "adapter"),
   },
+  validate_adapter_draft: {
+    method: "POST",
+    path: () => "orchestrations/adapters/validate",
+    body: (args) => arg(args, "adapter"),
+  },
+  test_adapter_draft: {
+    method: "POST",
+    path: () => "orchestrations/adapters/test",
+    body: (args) => ({
+      draft: arg(args, "draft"),
+      headers: argOpt(args, "headers") ?? {},
+      body_base64: arg(args, "bodyBase64"),
+    }),
+  },
   set_adapter_enabled: {
     method: "POST",
     path: (args) => `orchestrations/adapters/${escape(arg(args, "adapterId"))}/enabled`,
@@ -563,6 +577,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     }),
   },
   fetch_adapter_health: { method: "GET", path: () => "orchestrations/adapters/health" },
+  fetch_adapter_summaries: { method: "GET", path: () => "orchestrations/adapters/summaries" },
   reload_adapter_host: {
     method: "POST",
     path: () => "orchestrations/adapters/reload",

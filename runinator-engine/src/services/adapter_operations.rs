@@ -502,6 +502,11 @@ impl<T: OrchestrationStore> AdapterOperations<T> {
     pub async fn decide_delivery(&self, id: Uuid, approve: bool) -> Result<bool, SendableError> {
         self.store.decide_adapter_delivery(id, approve).await
     }
+    pub async fn release_paused_deliveries(&self, id: Uuid) -> Result<(u64, u64), SendableError> {
+        self.store
+            .release_paused_adapter_deliveries(id, 1_000)
+            .await
+    }
     pub async fn inspection(
         &self,
         id: Uuid,

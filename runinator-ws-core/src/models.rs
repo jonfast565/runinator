@@ -323,6 +323,15 @@ pub struct AdapterTestRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AdapterDraftTestRequest {
+    pub draft: AdapterApplyRequest,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub body_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ExternalOperationResolutionRequest {
     pub resolution: String,
     pub reason: String,
@@ -745,17 +754,7 @@ impl Validate for AdapterApplyRequest {
                     identifier(&format!("authentication.secret_bindings.{key}"), key)?;
                 }
             }
-            runinator_models::orchestration::AdapterAuthentication::ExecutionProfile {
-                required_labels,
-                ..
-            } => {
-                if required_labels.is_empty() {
-                    return Err(ValidationError::new(
-                        "authentication.required_labels",
-                        "must select at least one worker label",
-                    ));
-                }
-            }
+            runinator_models::orchestration::AdapterAuthentication::ExecutionProfile { .. } => {}
         }
         Ok(())
     }
@@ -796,6 +795,29 @@ impl Validate for AdapterTestRequest {
             ));
         }
         bounded_text("body_base64", &self.body_base64, 16 * 1024 * 1024)
+    }
+}
+
+impl Validate for AdapterDraftTestRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        self.draft.validate()?;
+        if self.headers.len() > 128 {
+            return Err(ValidationError::new(
+                "headers",
+                "must contain at most 128 headers",
+            ));
+        }
+        for (name, value) in &self.headers {
+            identifier(&format!("headers.{name}"), name)?;
+            if value.contains(['\r', '\n']) {
+                return Err(ValidationError::new(
+                    format!("headers.{name}"),
+                    "must not contain line breaks",
+                ));
+            }
+            bounded_text(&format!("headers.{name}"), value, 8 * 1024)?;
+        }
+        bounded_text("body_base64", &self.body_base64, 2 * 1024 * 1024)
     }
 }
 

@@ -23,3 +23,27 @@ async fn webhook_only_poll_keeps_checkpoint() {
     assert!(response.events.is_empty());
     assert!(response.error.is_some());
 }
+
+#[test]
+fn polling_validation_is_owned_by_the_adapter_kind() {
+    let request: AdapterValidationRequest = serde_json::from_value(serde_json::json!({
+        "transport": "polling",
+        "configuration": {"repositories": ["missing-separator"], "poll_interval_seconds": 10},
+        "authentication": {"kind": "secrets", "secret_bindings": {"access_token": "00000000-0000-0000-0000-000000000001"}}
+    }))
+    .unwrap();
+    let response = registry()["github"].validate(request);
+    assert!(!response.is_valid());
+    assert!(
+        response
+            .issues
+            .iter()
+            .any(|issue| issue.path == "configuration.repositories")
+    );
+    assert!(
+        response
+            .issues
+            .iter()
+            .any(|issue| issue.path == "configuration.poll_interval_seconds")
+    );
+}

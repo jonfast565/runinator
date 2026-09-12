@@ -60,6 +60,7 @@ pub struct OrchestrationSettings {
     pub workspace_reconcile_interval_seconds: u64,
     pub usage_sample_interval_seconds: u64,
     pub operational_metrics_interval_seconds: u64,
+    pub adapter_diagnostic_retention_seconds: u64,
     pub settings_refresh_interval_seconds: u64,
     pub synchronous_invocation_wait_ms: u64,
     pub synchronous_invocation_poll_ms: u64,
@@ -81,6 +82,7 @@ impl Default for OrchestrationSettings {
             workspace_reconcile_interval_seconds: 60,
             usage_sample_interval_seconds: 300,
             operational_metrics_interval_seconds: 15,
+            adapter_diagnostic_retention_seconds: 7 * 24 * 60 * 60,
             settings_refresh_interval_seconds: 5,
             synchronous_invocation_wait_ms: 5_000,
             synchronous_invocation_poll_ms: 200,
@@ -491,6 +493,18 @@ pub fn server_setting_catalog() -> Vec<ServerSettingDefinition> {
             3_600,
             5,
             60
+        ),
+        setting!(
+            "orchestration.adapter_diagnostic_retention_seconds",
+            "Orchestration",
+            "Adapter diagnostic retention",
+            "How long terminal adapter deliveries and polling attempts remain available in Command Center. Set to zero to disable pruning.",
+            "seconds",
+            604_800,
+            0,
+            31_536_000,
+            86_400,
+            2_592_000
         ),
         setting!(
             "orchestration.settings_refresh_interval_seconds",
@@ -1042,6 +1056,9 @@ impl ServerSettings {
             }
             "orchestration.operational_metrics_interval_seconds" => {
                 self.orchestration.operational_metrics_interval_seconds
+            }
+            "orchestration.adapter_diagnostic_retention_seconds" => {
+                self.orchestration.adapter_diagnostic_retention_seconds
             }
             "orchestration.settings_refresh_interval_seconds" => {
                 self.orchestration.settings_refresh_interval_seconds

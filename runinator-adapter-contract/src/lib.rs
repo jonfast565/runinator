@@ -5,16 +5,19 @@
 
 use std::collections::BTreeMap;
 
-use runinator_models::orchestration::{AdapterKindMetadata, NormalizedAdapterEvent};
+use runinator_models::orchestration::{
+    AdapterAuthentication, AdapterKindMetadata, AdapterTransport, NormalizedAdapterEvent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const ADAPTER_ABI_VERSION: u32 = 1;
+pub const ADAPTER_ABI_VERSION: u32 = 2;
 pub const MARKER_SYMBOL: &[u8] = b"runinator_adapter_abi_version\0";
 pub const NAME_SYMBOL: &[u8] = b"runinator_adapter_name\0";
 pub const METADATA_SYMBOL: &[u8] = b"runinator_adapter_metadata\0";
 pub const HANDLE_SYMBOL: &[u8] = b"runinator_adapter_handle\0";
 pub const POLL_SYMBOL: &[u8] = b"runinator_adapter_poll\0";
+pub const VALIDATE_SYMBOL: &[u8] = b"runinator_adapter_validate\0";
 
 /// Verify a bearer credential without leaking a length-dependent early mismatch.
 pub fn verify_bearer(expected: &str, authorization: &str) -> bool {
@@ -72,6 +75,46 @@ pub struct AdapterResponse {
     pub events: Vec<NormalizedAdapterEvent>,
     #[serde(default)]
     pub errors: Vec<String>,
+}
+
+/// A draft configuration submitted before an adapter definition is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterValidationRequest {
+    pub transport: AdapterTransport,
+    #[serde(default)]
+    pub configuration: Value,
+    #[serde(default)]
+    pub authentication: AdapterAuthentication,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterValidationSeverity {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdapterValidationIssue {
+    pub path: String,
+    pub code: String,
+    pub message: String,
+    pub severity: AdapterValidationSeverity,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdapterValidationResponse {
+    #[serde(default)]
+    pub issues: Vec<AdapterValidationIssue>,
+}
+
+impl AdapterValidationResponse {
+    pub fn is_valid(&self) -> bool {
+        !self
+            .issues
+            .iter()
+            .any(|issue| issue.severity == AdapterValidationSeverity::Error)
+    }
 }
 
 /// A pull request made by the durable adapter scheduler. `checkpoint` is opaque to Runinator and

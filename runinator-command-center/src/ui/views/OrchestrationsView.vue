@@ -749,7 +749,9 @@
                 <span class="min-w-0 flex-1">
                   <span class="flex min-w-0 items-start justify-between gap-2">
                     <span class="truncate font-medium text-fg">{{ adapter.name }}</span>
-                    <StatusBadge :status="adapter.enabled" true-label="Live" false-label="Paused" />
+                    <span class="badge" :class="adapterRuntimeClass(adapter.id)">
+                      {{ adapterRuntimeState(adapter.id) }}
+                    </span>
                   </span>
                   <span class="mt-1 block truncate text-xs text-fg-muted">
                     {{ adapter.kind }} · revision {{ adapter.current_revision }}
@@ -1547,66 +1549,23 @@
                   </button>
                 </div>
               </div>
-              <label class="adapter-form-field">
-                <span>Check every</span>
-                <div class="adapter-number-field">
-                  <input
-                    v-model.number="adapterForm.configuration.poll_interval_seconds"
-                    type="number"
-                    min="30"
-                    max="3600"
-                    required
-                  />
-                  <span>seconds</span>
-                </div>
-                <small>Between 30 seconds and one hour.</small>
-              </label>
               <label
-                v-if="adapterForm.kind === 'github'"
-                class="adapter-form-field adapter-field-wide"
+                v-for="field in pollingConfigurationFields"
+                :key="field.name"
+                class="adapter-form-field"
               >
-                <span>Repositories</span>
+                <span
+                  >{{ humanizeKey(field.name) }}<template v-if="field.required"> *</template></span
+                >
                 <TypedValueEditor
-                  :model-value="adapterForm.configuration.repositories"
-                  :ty="repositoryListType"
+                  :model-value="adapterForm.configuration[field.name]"
+                  :ty="field.value_type"
                   :allow-expressions="false"
-                  required
-                  @update:model-value="updateConfigField('repositories', $event)"
+                  :required="field.required"
+                  @update:model-value="updateConfigField(field.name, $event)"
                 />
-                <small>One <code>owner/repository</code> per line.</small>
+                <small v-if="field.description">{{ field.description }}</small>
               </label>
-              <template v-if="adapterForm.kind === 'jira'">
-                <label class="adapter-form-field">
-                  <span>Jira site</span>
-                  <input
-                    v-model="adapterForm.configuration.instance_id"
-                    required
-                    placeholder="acme.atlassian.net"
-                  />
-                  <small>A stable identity for this Jira instance.</small>
-                </label>
-                <label class="adapter-form-field">
-                  <span>Base URL</span>
-                  <input
-                    v-model="adapterForm.configuration.base_url"
-                    required
-                    type="url"
-                    placeholder="https://acme.atlassian.net"
-                  />
-                </label>
-                <label class="adapter-form-field">
-                  <span>Account email</span>
-                  <input v-model="adapterForm.configuration.email" required type="email" />
-                </label>
-                <label class="adapter-form-field adapter-field-wide">
-                  <span>Issues to watch (JQL)</span>
-                  <input
-                    v-model="adapterForm.configuration.jql"
-                    required
-                    placeholder="project = ENG AND statusCategory != Done"
-                  />
-                </label>
-              </template>
               <label
                 v-if="adapterForm.authentication_kind === 'execution_profile'"
                 class="adapter-form-field"
@@ -1789,7 +1748,11 @@ import type {
   RuninatorType,
   WorkspaceLease,
 } from "../../core/domain/models";
-import { fetchExecutionProfiles } from "../../core/api/commandCenterApi";
+import {
+  fetchExecutionProfiles,
+  validateAdapterDraft,
+  type AdapterApplyInput,
+} from "../../core/api/commandCenterApi";
 import type { IconName } from "../../core/domain/icons";
 import {
   fetchAdapterHealth,
@@ -1975,7 +1938,6 @@ const editingAdapterId = ref<string | null>(null);
 const adapterFormSaving = ref(false);
 const adapterFormError = ref<string | null>(null);
 const adapterIdentity = shallowRef<JsonValue>({});
-const repositoryListType: RuninatorType = { type: "array", items: { type: "string" } };
 const identityMapType: RuninatorType = { type: "map", values: { type: "any" } };
 interface AdapterFormState {
   name: string;
@@ -2006,6 +1968,7 @@ const formKind = computed<AdapterKindMetadata | undefined>(() =>
 const configurationFields = computed(
   () => formKind.value?.fields.filter((field) => !field.secret) ?? [],
 );
+const pollingConfigurationFields = computed(() => formKind.value?.polling_fields ?? []);
 const secretFields = computed(() => formKind.value?.fields.filter((field) => field.secret) ?? []);
 const supportsPolling = computed(() => formKind.value?.capabilities.includes("polling") ?? false);
 const pollingAuthenticationOptions = computed(() => formKind.value?.polling_authentication ?? []);
@@ -2210,6 +2173,30 @@ function adapterMark(kind: string): string {
   const compact = kind.replace(/[^a-z0-9]/gi, "").slice(0, 2);
 
   return compact ? compact.toUpperCase() : "AD";
+}
+
+function adapterRuntimeState(id: string): string {
+  return (
+    store.adapterSummaries.find((summary) => summary.adapter.id === id)?.state ?? "initializing"
+  );
+}
+
+function adapterRuntimeClass(id: string): string {
+  const state = adapterRuntimeState(id);
+
+  if (["failing", "unavailable"].includes(state)) {
+    return "status-failed";
+  }
+
+  if (state === "active") {
+    return "status-succeeded";
+  }
+
+  if (["paused", "review"].includes(state)) {
+    return "status-waiting";
+  }
+
+  return "status-muted";
 }
 
 function humanizeKey(value: string): string {
@@ -2663,12 +2650,18 @@ function initializeKind(): void {
   adapterForm.authentication_kind = formKind.value?.polling_authentication.at(0) ?? "secrets";
   adapterIdentity.value = {};
 
-  if (adapterForm.kind !== "github" && adapterForm.kind !== "jira") {
+  if (!supportsPolling.value) {
     adapterForm.transport = "webhook";
   }
 
   for (const field of formKind.value?.fields ?? []) {
     if (!field.secret) {
+      adapterForm.configuration[field.name] = field.default as JsonValue;
+    }
+  }
+
+  for (const field of formKind.value?.polling_fields ?? []) {
+    if (!field.secret && field.default !== null && field.default !== undefined) {
       adapterForm.configuration[field.name] = field.default as JsonValue;
     }
   }
@@ -2695,10 +2688,10 @@ function selectTransport(transport: "webhook" | "polling"): void {
       adapterForm.authentication_kind = pollingAuthenticationOptions.value.at(0) ?? "secrets";
     }
 
-    adapterForm.configuration.poll_interval_seconds ??= 60;
-
-    if (adapterForm.kind === "github") {
-      adapterForm.configuration.repositories ??= [];
+    for (const field of formKind.value?.polling_fields ?? []) {
+      if (!(field.name in adapterForm.configuration)) {
+        adapterForm.configuration[field.name] = field.default as JsonValue;
+      }
     }
   } else {
     adapterForm.authentication_kind = "secrets";
@@ -2770,7 +2763,8 @@ async function saveAdapter(): Promise<void> {
       ? {
           kind: "execution_profile",
           profile: { id: adapterForm.profile_id, name: profile?.name ?? `${kind.kind}-profile` },
-          required_labels: { runner: "desktop" },
+          required_labels: { ...kind.execution_profile_required_labels },
+          required_scopes: [...kind.execution_profile_scopes],
         }
       : { kind: "secrets", secret_bindings: bindings };
 
@@ -2778,21 +2772,26 @@ async function saveAdapter(): Promise<void> {
   adapterFormError.value = null;
 
   try {
-    await store.saveAdapter(
-      {
-        name: adapterForm.name.trim(),
-        kind: kind.kind,
-        kind_version: kind.version,
-        transport: adapterForm.transport,
-        configuration,
-        authentication,
-        identity_configuration: adapterIdentity.value,
-        ...(editingAdapterId.value && store.selectedAdapter
-          ? { expected_revision: store.selectedAdapter.current_revision }
-          : {}),
-      },
-      editingAdapterId.value ?? undefined,
-    );
+    const input: AdapterApplyInput = {
+      name: adapterForm.name.trim(),
+      kind: kind.kind,
+      kind_version: kind.version,
+      transport: adapterForm.transport,
+      configuration,
+      authentication,
+      identity_configuration: adapterIdentity.value,
+      ...(editingAdapterId.value && store.selectedAdapter
+        ? { expected_revision: store.selectedAdapter.current_revision }
+        : {}),
+    };
+    const validation = await validateAdapterDraft(input);
+    const errors = validation.issues.filter((issue) => issue.severity === "error");
+
+    if (errors.length) {
+      throw new Error(errors.map((issue) => `${issue.path}: ${issue.message}`).join("; "));
+    }
+
+    await store.saveAdapter(input, editingAdapterId.value ?? undefined);
     adapterFormOpen.value = false;
   } catch (cause) {
     adapterFormError.value = cause instanceof Error ? cause.message : String(cause);

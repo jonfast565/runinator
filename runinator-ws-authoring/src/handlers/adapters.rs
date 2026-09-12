@@ -11,7 +11,9 @@ use axum::{
 };
 use chrono::Utc;
 use runinator_adapter_client::{AdapterHostClient, HttpAdapterHostClient};
-use runinator_adapter_contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest};
+use runinator_adapter_contract::{
+    AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterValidationRequest,
+};
 use runinator_broker_core::{UiEventPublisher, emit_adapter};
 use runinator_engine::services::{AdapterOperations, ExecutionProfileOperations};
 use runinator_models::{
@@ -32,7 +34,10 @@ use runinator_store::{
 };
 use runinator_ws_core::{
     ValidatedJson,
-    models::{AdapterApplyRequest, AdapterEnableRequest, AdapterTestRequest, ApiResponse},
+    models::{
+        AdapterApplyRequest, AdapterDraftTestRequest, AdapterEnableRequest, AdapterTestRequest,
+        ApiResponse,
+    },
     openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body},
     responses::{api_error, bad_request, not_found},
 };
@@ -257,24 +262,6 @@ async fn current_revision<T: OrchestrationStore>(
     }
 }
 
-fn valid_github_repositories(configuration: &runinator_models::value::Value) -> bool {
-    configuration
-        .get("repositories")
-        .and_then(|value| value.as_array())
-        .is_some_and(|items| {
-            !items.is_empty()
-                && items.iter().all(|item| {
-                    item.as_str().is_some_and(|value| {
-                        let value = value.trim();
-                        !value.is_empty()
-                            && value.split_once('/').is_some_and(|(owner, repository)| {
-                                !owner.is_empty() && !repository.is_empty()
-                            })
-                    })
-                })
-        })
-}
-
 fn validate_definition(
     request: &AdapterApplyRequest,
     kind: &AdapterKindMetadata,
@@ -289,41 +276,33 @@ fn validate_definition(
             kind.kind, kind.version, request.kind_version
         ));
     }
-    if request.transport == AdapterTransport::Polling {
-        // an absent interval takes the default; a present one must be a valid integer in range.
-        // folding a negative or non-numeric value into the default would accept a configuration the
-        // poll loop then silently clamps to something the author never asked for.
-        match request.configuration.get("poll_interval_seconds") {
-            None | Some(runinator_models::value::Value::Null) => {}
-            Some(value) => {
-                let interval = value.as_i64().ok_or(
-                    "poll_interval_seconds must be an integer number of seconds".to_string(),
-                )?;
-                if !(30..=3_600).contains(&interval) {
-                    return Err("poll_interval_seconds must be between 30 and 3600".into());
-                }
-            }
-        }
+    let fields = if request.transport == AdapterTransport::Polling {
         if !kind.polling_authentication.contains(&authentication.kind()) {
             return Err(format!(
                 "adapter kind '{}' does not support the selected polling authentication mode",
                 request.kind
             ));
         }
-        let has_polling_secrets = matches!(&authentication, AdapterAuthentication::Secrets { secret_bindings } if kind.polling_secret_fields.iter().filter(|field| field.required).all(|field| secret_bindings.contains_key(&field.name)));
-        match request.kind.as_str() {
-            "github" if valid_github_repositories(&request.configuration) && (has_polling_secrets || matches!(authentication, AdapterAuthentication::ExecutionProfile { .. })) => return Ok(()),
-            "jira" if ["instance_id", "base_url", "email", "jql"].iter().all(|field| request.configuration.get(*field).and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty())) && has_polling_secrets => return Ok(()),
-            "github" => return Err("GitHub polling requires repositories and either an access-token secret or a GitHub execution profile".into()),
-            "jira" => return Err("Jira polling requires instance_id, base_url, email, jql, and api_token secret binding".into()),
-            _ => return Err("only GitHub and Jira adapters support polling".into()),
+        if let AdapterAuthentication::Secrets { secret_bindings } = &authentication {
+            for field in kind
+                .polling_secret_fields
+                .iter()
+                .filter(|field| field.required)
+            {
+                if !secret_bindings.contains_key(&field.name) {
+                    return Err(format!("secret binding '{}' is required", field.name));
+                }
+            }
         }
-    }
+        &kind.polling_fields
+    } else {
+        &kind.fields
+    };
     let secret_bindings = authentication
         .secret_bindings()
         .cloned()
         .unwrap_or_default();
-    for field in &kind.fields {
+    for field in fields {
         if field.secret {
             if field.required && !secret_bindings.contains_key(&field.name) {
                 return Err(format!("secret binding '{}' is required", field.name));
@@ -355,6 +334,32 @@ fn validate_definition(
     Ok(())
 }
 
+async fn validate_with_host(
+    host: &dyn AdapterHostClient,
+    kind: String,
+    request: AdapterValidationRequest,
+) -> Result<(), String> {
+    let validation = host
+        .validate(&kind, request)
+        .await
+        .map_err(|error| error.to_string())?;
+    if validation.is_valid() {
+        return Ok(());
+    }
+    Err(validation
+        .issues
+        .into_iter()
+        .filter(|issue| {
+            matches!(
+                issue.severity,
+                runinator_adapter_contract::AdapterValidationSeverity::Error
+            )
+        })
+        .map(|issue| format!("{}: {}", issue.path, issue.message))
+        .collect::<Vec<_>>()
+        .join("; "))
+}
+
 fn effective_authentication(request: &AdapterApplyRequest) -> AdapterAuthentication {
     match &request.authentication {
         AdapterAuthentication::Secrets { secret_bindings }
@@ -374,37 +379,227 @@ fn authentication_for_kind(
 ) -> AdapterAuthentication {
     let mut authentication = effective_authentication(request);
     if let AdapterAuthentication::ExecutionProfile {
-        required_scopes, ..
+        required_labels,
+        required_scopes,
+        ..
     } = &mut authentication
     {
+        *required_labels = kind.execution_profile_required_labels.clone();
         *required_scopes = kind.execution_profile_scopes.clone();
     }
     authentication
 }
 
+pub async fn validate_draft<T: RbacStore + AuthorizationStore + ExecutionProfileStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<AdapterApplyRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let org_id = match require_scope(&ctx, Action::Edit) {
+        Ok(value) => value,
+        Err(reply) => return reply.into_reply(),
+    };
+    let kinds = match catalog(host.as_ref()).await {
+        Ok(values) => values,
+        Err(error) => return api_error(error),
+    };
+    let Some(kind) = kinds
+        .into_iter()
+        .find(|entry| entry.healthy && entry.metadata.kind == request.kind)
+        .map(|entry| entry.metadata)
+    else {
+        return bad_request(format!("adapter kind '{}' is not loaded", request.kind));
+    };
+    let authentication = authentication_for_kind(&request, &kind);
+    if let Err(reply) = validate_adapter_auth_access(
+        &db,
+        Some(&ctx),
+        None,
+        org_id,
+        &authentication,
+        &kind.execution_profile_scopes,
+    )
+    .await
+    {
+        return reply.into_reply();
+    }
+    if let Err(error) = validate_definition(&request, &kind) {
+        return bad_request(error);
+    }
+    match host
+        .validate(
+            &request.kind,
+            AdapterValidationRequest {
+                transport: request.transport,
+                configuration: serde_json::to_value(&request.configuration).unwrap_or_default(),
+                authentication,
+            },
+        )
+        .await
+    {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                serde_json::to_value(response).unwrap_or_default().into(),
+            )),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn test_draft<
+    T: OrchestrationStore
+        + AuthorizationStore
+        + SettingStore
+        + RuntimeStore
+        + DefinitionStore
+        + IngressStore
+        + ExecutionProfileStore,
+>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<AdapterDraftTestRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let org_id = match require_scope(&ctx, Action::Edit) {
+        Ok(value) => value,
+        Err(reply) => return reply.into_reply(),
+    };
+    let kinds = match catalog(host.as_ref()).await {
+        Ok(values) => values,
+        Err(error) => return api_error(error),
+    };
+    let Some(kind) = kinds
+        .into_iter()
+        .find(|entry| entry.healthy && entry.metadata.kind == request.draft.kind)
+        .map(|entry| entry.metadata)
+    else {
+        return bad_request(format!(
+            "adapter kind '{}' is not loaded",
+            request.draft.kind
+        ));
+    };
+    if let Err(error) = validate_definition(&request.draft, &kind) {
+        return bad_request(error);
+    }
+    let validation_request = AdapterValidationRequest {
+        transport: request.draft.transport,
+        configuration: serde_json::to_value(&request.draft.configuration).unwrap_or_default(),
+        authentication: authentication_for_kind(&request.draft, &kind),
+    };
+    if let Err(error) = validate_with_host(
+        host.as_ref(),
+        request.draft.kind.clone(),
+        validation_request,
+    )
+    .await
+    {
+        return bad_request(error);
+    }
+    let authentication = authentication_for_kind(&request.draft, &kind);
+    if let Err(reply) = validate_adapter_auth_access(
+        &db,
+        Some(&ctx),
+        None,
+        org_id,
+        &authentication,
+        &kind.execution_profile_scopes,
+    )
+    .await
+    {
+        return reply.into_reply();
+    }
+    if matches!(
+        authentication,
+        AdapterAuthentication::ExecutionProfile { .. }
+    ) {
+        return bad_request("save the adapter before testing an execution-profile poll");
+    }
+    let bindings = authentication
+        .secret_bindings()
+        .cloned()
+        .unwrap_or_default();
+    let operations = AdapterOperations::new(db.clone());
+    let secrets = match operations.resolve_secrets(org_id, &bindings).await {
+        Ok(value) => value,
+        Err(error) => return bad_request(error),
+    };
+    if request.draft.transport == AdapterTransport::Polling {
+        return match host
+            .poll(
+                &request.draft.kind,
+                AdapterPollRequest {
+                    configuration: serde_json::to_value(&request.draft.configuration)
+                        .unwrap_or_default(),
+                    secrets,
+                    checkpoint: serde_json::Value::Null,
+                    initialize: false,
+                },
+            )
+            .await
+        {
+            Ok(response) => (
+                StatusCode::OK,
+                Json(ApiResponse::JsonValue(
+                    serde_json::json!({
+                        "verified": response.error.is_none(),
+                        "events": response.events,
+                        "errors": response.error.into_iter().collect::<Vec<_>>(),
+                        "checkpoint": response.checkpoint,
+                        "retry_after_seconds": response.retry_after_seconds,
+                        "dry_run": true,
+                    })
+                    .into(),
+                )),
+            ),
+            Err(error) => api_error(error.to_string()),
+        };
+    }
+    let adapter_request = AdapterRequest {
+        method: "POST".into(),
+        headers: request
+            .headers
+            .into_iter()
+            .map(|(name, value)| (name.to_ascii_lowercase(), value))
+            .collect(),
+        body_base64: request.body_base64,
+        configuration: serde_json::to_value(&request.draft.configuration).unwrap_or_default(),
+        secrets,
+    };
+    match host
+        .verify_normalize(&request.draft.kind, adapter_request)
+        .await
+    {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(
+                serde_json::json!({
+                    "verified": response.verified,
+                    "events": response.events,
+                    "errors": response.errors,
+                    "dry_run": true,
+                })
+                .into(),
+            )),
+        ),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
 fn identity_projection(
-    kind: &str,
+    kind: &AdapterKindMetadata,
     configuration: &runinator_models::value::Value,
 ) -> serde_json::Value {
     let configuration = serde_json::to_value(configuration).unwrap_or_default();
-    let fields: &[&str] = match kind {
-        "generic_webhook" => &[
-            "delivery_id_pointer",
-            "scope_pointer",
-            "correlation_pointer",
-        ],
-        "jira" => &["instance_id"],
-        "github" => &["repositories"],
-        _ => &[],
-    };
     serde_json::Value::Object(
-        fields
+        kind.identity_fields
             .iter()
             .filter_map(|field| {
                 configuration
-                    .get(*field)
+                    .get(field)
                     .cloned()
-                    .map(|value| ((*field).to_owned(), value))
+                    .map(|value| (field.to_owned(), value))
             })
             .collect(),
     )
@@ -485,6 +680,106 @@ pub async fn list<T: OrchestrationStore + AuthorizationStore>(
     }
 }
 
+pub async fn summaries<T: OrchestrationStore + AuthorizationStore>(
+    Extension(host): Extension<Arc<dyn AdapterHostClient>>,
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let org_id = match adapter_list_scope(&ctx, Action::View) {
+        Ok(value) => value,
+        Err(reply) => return reply.into_reply(),
+    };
+    let operations = AdapterOperations::new(db.clone());
+    let mut adapters = match operations.list(org_id).await {
+        Ok(values) => values,
+        Err(error) => return api_error(error.to_string()),
+    };
+    if let Some(visible) = match AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_resource_ids(ResourceType::OrchestrationAdapter)
+        .await
+    {
+        Ok(value) => value,
+        Err(reply) => return reply.into_reply(),
+    } {
+        adapters.retain(|adapter| visible.contains(&adapter.id));
+    }
+    let catalog = match catalog(host.as_ref()).await {
+        Ok(values) => values,
+        Err(error) => return api_error(error),
+    };
+    let mut result = Vec::with_capacity(adapters.len());
+    for adapter in adapters {
+        let revision = match operations.current_revision(&adapter).await {
+            Ok(value) => value,
+            Err(error) => return api_error(error.to_string()),
+        };
+        let deliveries = match operations.deliveries(adapter.id).await {
+            Ok(value) => value,
+            Err(error) => return api_error(error.to_string()),
+        };
+        let attempts = match operations.attempts(adapter.id).await {
+            Ok(value) => value,
+            Err(error) => return api_error(error.to_string()),
+        };
+        let inspection = match operations.inspection(adapter.id).await {
+            Ok(value) => value,
+            Err(error) => return api_error(error.to_string()),
+        };
+        let kind_entry = catalog
+            .iter()
+            .find(|entry| entry.metadata.kind == adapter.kind);
+        let kind_available = kind_entry.is_some_and(|entry| entry.healthy);
+        let latest_error = match (attempts.first(), deliveries.first()) {
+            (Some(attempt), Some(delivery)) if attempt.created_at >= delivery.received_at => {
+                attempt.error.clone()
+            }
+            (_, Some(delivery)) => delivery.error.clone(),
+            (Some(attempt), None) => attempt.error.clone(),
+            (None, None) => kind_entry.and_then(|entry| entry.error.clone()),
+        };
+        let state = if !kind_available {
+            "unavailable"
+        } else if !adapter.enabled {
+            "disabled"
+        } else if inspection.mode
+            == runinator_models::ingress_control::ExternalIngressGateMode::Paused
+        {
+            "paused"
+        } else if inspection.mode
+            == runinator_models::ingress_control::ExternalIngressGateMode::Review
+        {
+            "review"
+        } else if latest_error.is_some() {
+            "failing"
+        } else if deliveries.is_empty() && attempts.is_empty() {
+            "initializing"
+        } else {
+            "active"
+        };
+        let mut delivery_counts = BTreeMap::<String, usize>::new();
+        for delivery in &deliveries {
+            *delivery_counts.entry(delivery.state.clone()).or_default() += 1;
+        }
+        result.push(serde_json::json!({
+            "adapter": adapter,
+            "revision": revision,
+            "state": state,
+            "inspection_mode": inspection.mode,
+            "kind_available": kind_available,
+            "last_delivery_at": deliveries.first().map(|value| value.received_at),
+            "last_attempt_at": attempts.first().map(|value| value.created_at),
+            "latest_error": latest_error,
+            "delivery_counts": delivery_counts,
+        }));
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::JsonValue(
+            serde_json::Value::Array(result).into(),
+        )),
+    )
+}
+
 pub async fn get_one<T: OrchestrationStore + AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -562,6 +857,16 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
         return bad_request(format!("adapter kind '{}' is not loaded", request.kind));
     };
     if let Err(error) = validate_definition(&request, &kind) {
+        return bad_request(error);
+    }
+    let validation_request = AdapterValidationRequest {
+        transport: request.transport,
+        configuration: serde_json::to_value(&request.configuration).unwrap_or_default(),
+        authentication: authentication_for_kind(&request, &kind),
+    };
+    if let Err(error) =
+        validate_with_host(host.as_ref(), request.kind.clone(), validation_request).await
+    {
         return bad_request(error);
     }
     let authentication = authentication_for_kind(&request, &kind);
@@ -646,6 +951,16 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
     if let Err(error) = validate_definition(&request, &kind) {
         return bad_request(error);
     }
+    let validation_request = AdapterValidationRequest {
+        transport: request.transport,
+        configuration: serde_json::to_value(&request.configuration).unwrap_or_default(),
+        authentication: authentication_for_kind(&request, &kind),
+    };
+    if let Err(error) =
+        validate_with_host(host.as_ref(), request.kind.clone(), validation_request).await
+    {
+        return bad_request(error);
+    }
     let authentication = authentication_for_kind(&request, &kind);
     if let Err(reply) = validate_adapter_auth_access(
         &db,
@@ -669,8 +984,8 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
                 "adapter transport is immutable after its first admitted binding; clone the adapter instead",
             );
         }
-        if identity_projection(&adapter.kind, &current.configuration)
-            != identity_projection(&adapter.kind, &request.configuration)
+        if identity_projection(&kind, &current.configuration)
+            != identity_projection(&kind, &request.configuration)
         {
             return bad_request(
                 "adapter identity extraction is immutable after its first admitted binding; clone the adapter instead",
@@ -1179,7 +1494,13 @@ where
     axum::Router::new()
         .route("/orchestrations/adapters/kinds", get(kinds::<T>))
         .route("/orchestrations/adapters/health", get(health::<T>))
+        .route("/orchestrations/adapters/summaries", get(summaries::<T>))
         .route("/orchestrations/adapters/reload", post(reload::<T>))
+        .route(
+            "/orchestrations/adapters/validate",
+            post(validate_draft::<T>),
+        )
+        .route("/orchestrations/adapters/test", post(test_draft::<T>))
         .route("/orchestrations/adapters", get(list::<T>).post(create::<T>))
         .route(
             "/orchestrations/adapters/{id}",
@@ -1233,6 +1554,19 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::AdapterHealth,
     ),
     endpoint_with_policy!(
+        "get",
+        "/orchestrations/adapters/summaries",
+        "Orchestration Adapters",
+        "Summarize adapter fleet health",
+        "Combines adapter definitions, current revisions, host availability, inspection gates, and recent diagnostic outcomes.",
+        EndpointPolicy::ScopedAction(Action::View),
+        None,
+        &[],
+        200,
+        "adapter runtime summaries",
+        Example::AdapterDefinitionList,
+    ),
+    endpoint_with_policy!(
         "post",
         "/orchestrations/adapters/reload",
         "Orchestration Adapters",
@@ -1243,6 +1577,32 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "adapter host reload result",
+        Example::AdapterHealth,
+    ),
+    endpoint_with_policy!(
+        "post",
+        "/orchestrations/adapters/validate",
+        "Orchestration Adapters",
+        "Validate an adapter draft",
+        "Validates an unsaved typed adapter draft through the selected adapter implementation.",
+        EndpointPolicy::ScopedAction(Action::Edit),
+        json_body("Unsaved adapter draft.", Example::AdapterApply),
+        &[],
+        200,
+        "validation issues",
+        Example::AdapterHealth,
+    ),
+    endpoint_with_policy!(
+        "post",
+        "/orchestrations/adapters/test",
+        "Orchestration Adapters",
+        "Test an adapter draft",
+        "Runs an unsaved webhook or polling draft without persisting a checkpoint or definition.",
+        EndpointPolicy::ScopedAction(Action::Edit),
+        json_body("Draft and sample input.", Example::AdapterApply),
+        &[],
+        200,
+        "dry-run result",
         Example::AdapterHealth,
     ),
     endpoint_with_policy!(
@@ -1263,7 +1623,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/orchestrations/adapters",
         "Orchestration Adapters",
         "Create an adapter definition",
-        "Creates an org-scoped adapter and immutable revision after validating it against loaded kind metadata.",
+        "Creates an org-scoped adapter and immutable revision after validating it through the loaded adapter kind.",
         EndpointPolicy::ScopedAction(Action::Edit),
         json_body(
             "Typed configuration and stored Secret bindings for the adapter.",
@@ -1403,6 +1763,26 @@ mod tests {
     use runinator_ws_core::models::AdapterApplyRequest;
     use uuid::Uuid;
 
+    fn identity_metadata(fields: &[&str]) -> AdapterKindMetadata {
+        AdapterKindMetadata {
+            kind: "test".into(),
+            version: "1".into(),
+            display_name: "Test".into(),
+            description: None,
+            fields: vec![],
+            polling_fields: vec![],
+            event_names: vec![],
+            canonical_pointers: vec![],
+            capabilities: vec![],
+            polling_authentication: vec![],
+            polling_secret_fields: vec![],
+            execution_profile_scopes: vec![],
+            execution_profile_required_labels: BTreeMap::new(),
+            identity_fields: fields.iter().map(|value| (*value).into()).collect(),
+            setup_instructions: vec![],
+        }
+    }
+
     #[test]
     fn generic_identity_projection_ignores_non_identity_configuration() {
         let first = json!({
@@ -1418,17 +1798,27 @@ mod tests {
             "event_pointer": "/kind",
             "payload_pointer": "/payload"
         });
+        let metadata = identity_metadata(&[
+            "delivery_id_pointer",
+            "scope_pointer",
+            "correlation_pointer",
+        ]);
         assert_eq!(
-            identity_projection("generic_webhook", &first),
-            identity_projection("generic_webhook", &second)
+            identity_projection(&metadata, &first),
+            identity_projection(&metadata, &second)
         );
     }
 
     #[test]
     fn identity_projection_tracks_generic_pointers_and_jira_instance() {
+        let generic = identity_metadata(&[
+            "delivery_id_pointer",
+            "scope_pointer",
+            "correlation_pointer",
+        ]);
         assert_ne!(
             identity_projection(
-                "generic_webhook",
+                &generic,
                 &json!({
                     "delivery_id_pointer": "/delivery",
                     "scope_pointer": "/tenant",
@@ -1436,7 +1826,7 @@ mod tests {
                 })
             ),
             identity_projection(
-                "generic_webhook",
+                &generic,
                 &json!({
                     "delivery_id_pointer": "/delivery",
                     "scope_pointer": "/tenant",
@@ -1444,9 +1834,10 @@ mod tests {
                 })
             )
         );
+        let jira = identity_metadata(&["instance_id"]);
         assert_ne!(
-            identity_projection("jira", &json!({ "instance_id": "first" })),
-            identity_projection("jira", &json!({ "instance_id": "second" }))
+            identity_projection(&jira, &json!({ "instance_id": "first" })),
+            identity_projection(&jira, &json!({ "instance_id": "second" }))
         );
     }
 
@@ -1465,6 +1856,7 @@ mod tests {
                 description: None,
                 default: Value::Null,
             }],
+            polling_fields: vec![],
             event_names: vec![],
             canonical_pointers: vec![],
             capabilities: vec![],
@@ -1472,6 +1864,8 @@ mod tests {
             polling_authentication: vec![AdapterAuthenticationKind::Secrets],
             polling_secret_fields: vec![],
             execution_profile_scopes: vec![],
+            execution_profile_required_labels: BTreeMap::new(),
+            identity_fields: vec![],
         };
         let request = AdapterApplyRequest {
             name: "adapter".into(),
@@ -1499,6 +1893,24 @@ mod tests {
             display_name: "GitHub".into(),
             description: None,
             fields: vec![],
+            polling_fields: vec![
+                AdapterConfigurationField {
+                    name: "repositories".into(),
+                    value_type: RuninatorType::array(RuninatorType::String),
+                    required: true,
+                    secret: false,
+                    description: None,
+                    default: Value::Null,
+                },
+                AdapterConfigurationField {
+                    name: "poll_interval_seconds".into(),
+                    value_type: RuninatorType::Integer,
+                    required: false,
+                    secret: false,
+                    description: None,
+                    default: 60.into(),
+                },
+            ],
             event_names: vec![],
             canonical_pointers: vec![],
             capabilities: vec![],
@@ -1516,6 +1928,11 @@ mod tests {
                 default: Value::Null,
             }],
             execution_profile_scopes: vec!["github".into()],
+            execution_profile_required_labels: BTreeMap::from([(
+                "runner".into(),
+                "desktop".into(),
+            )]),
+            identity_fields: vec!["repositories".into()],
         };
         let github = AdapterApplyRequest {
             name: "GitHub poller".into(),
@@ -1555,7 +1972,7 @@ mod tests {
         assert!(
             validate_definition(&token_authenticated, &metadata)
                 .unwrap_err()
-                .contains("access-token secret")
+                .contains("access_token")
         );
 
         let unsupported = AdapterApplyRequest {
@@ -1569,10 +1986,11 @@ mod tests {
             identity_configuration: Value::Null,
             expected_revision: None,
         };
+        let unsupported_metadata = identity_metadata(&[]);
         assert!(
-            validate_definition(&unsupported, &metadata)
+            validate_definition(&unsupported, &unsupported_metadata)
                 .unwrap_err()
-                .contains("only GitHub and Jira")
+                .contains("does not support")
         );
     }
 }

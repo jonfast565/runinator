@@ -7,11 +7,13 @@ use std::time::Duration;
 
 mod client;
 pub use client::{
-    AdapterHostAdmin, AdapterHostClient, AdapterPoller, AdapterVerifier, HttpAdapterHostClient,
+    AdapterHostAdmin, AdapterHostClient, AdapterPoller, AdapterValidator, AdapterVerifier,
+    HttpAdapterHostClient,
 };
 
 use runinator_adapter_contract::{
     AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse,
+    AdapterValidationRequest, AdapterValidationResponse,
 };
 use runinator_models::orchestration::AdapterKindCatalogEntry;
 use serde::de::DeserializeOwned;

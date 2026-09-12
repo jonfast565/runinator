@@ -695,6 +695,10 @@ fn enrich_openapi_document(document: &mut Value) {
             "x-runinator-authorization".into(),
             endpoint_policy_json(*policy),
         );
+        operation.insert(
+            "x-runinator-control-surface".into(),
+            json!(endpoint_control_surface(path, *policy)),
+        );
         operation
             .entry("responses")
             .or_insert_with(|| json!({ "200": { "description": "successful response" } }));
@@ -715,6 +719,10 @@ fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
         "x-runinator-authorization".into(),
         endpoint_policy_json(doc.policy),
     );
+    operation.insert(
+        "x-runinator-control-surface".into(),
+        json!(endpoint_control_surface(doc.path, doc.policy)),
+    );
     operation.insert("parameters".into(), json!(parameters_for(doc)));
     if let Some(request) = doc.request {
         enrich_request_body(operation, request);
@@ -728,6 +736,23 @@ fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
             "source": curl_sample(doc),
         }]),
     );
+}
+
+fn endpoint_control_surface(path: &str, policy: docs::EndpointPolicy) -> &'static str {
+    if matches!(policy, docs::EndpointPolicy::SystemRole(_)) {
+        return "headless";
+    }
+    if policy.is_public() {
+        return if matches!(
+            path,
+            "/auth/config" | "/auth/login" | "/auth/refresh" | "/agents/enroll"
+        ) {
+            "bootstrap"
+        } else {
+            "data_plane"
+        };
+    }
+    "operator"
 }
 
 fn parameters_for(doc: &EndpointDoc) -> Vec<Value> {
@@ -1003,6 +1028,32 @@ mod policy_tests {
         assert!(
             missing.is_empty(),
             "missing authorization metadata: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_endpoint_is_classified_by_control_surface() {
+        let document = openapi_document();
+        let mut missing = Vec::new();
+        for (path, item) in document["paths"].as_object().expect("paths object") {
+            for method in ["get", "post", "put", "patch", "delete"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                let audience = operation
+                    .get("x-runinator-control-surface")
+                    .and_then(Value::as_str);
+                if !matches!(
+                    audience,
+                    Some("operator" | "headless" | "data_plane" | "bootstrap")
+                ) {
+                    missing.push(format!("{method} {path}"));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "unclassified control surfaces: {missing:?}"
         );
     }
 

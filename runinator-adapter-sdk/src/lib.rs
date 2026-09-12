@@ -2,14 +2,18 @@
 
 pub use runinator_adapter_contract as contract;
 
-use contract::{AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse};
+use contract::{
+    AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterResponse,
+    AdapterValidationRequest, AdapterValidationResponse,
+};
 use runinator_models::orchestration::AdapterKindMetadata;
 
 pub trait Adapter: Default {
     fn metadata(&self) -> AdapterKindMetadata;
+    fn validate(&self, request: AdapterValidationRequest) -> AdapterValidationResponse;
     fn handle(&self, request: AdapterRequest) -> AdapterResponse;
 
-    /// Polling is opt-in so existing webhook-only dynamic adapters remain source-compatible.
+    /// Polling is optional for webhook-only adapters; ABI v2 validation remains required.
     fn poll(&self, _request: AdapterPollRequest) -> AdapterPollResponse {
         AdapterPollResponse {
             events: Vec::new(),
@@ -51,6 +55,14 @@ macro_rules! export_adapter {
         }
 
         #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn runinator_adapter_validate(
+            request_path: *const ::std::ffi::c_char,
+            response_path: *const ::std::ffi::c_char,
+        ) -> i32 {
+            $crate::validate_files::<$adapter>(request_path, response_path)
+        }
+
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn runinator_adapter_poll(
             request_path: *const ::std::ffi::c_char,
             response_path: *const ::std::ffi::c_char,
@@ -58,6 +70,31 @@ macro_rules! export_adapter {
             $crate::poll_files::<$adapter>(request_path, response_path)
         }
     };
+}
+
+/// Called by the generated ABI wrapper for draft configuration validation.
+///
+/// # Safety
+///
+/// Both pointers must be non-null and point to valid, NUL-terminated filesystem paths for the
+/// duration of this call.
+pub unsafe fn validate_files<T: Adapter>(
+    request_path: *const std::ffi::c_char,
+    response_path: *const std::ffi::c_char,
+) -> i32 {
+    let result = (|| {
+        // SAFETY: the adapter host passes non-null, NUL-terminated paths for this invocation.
+        let request = unsafe { std::ffi::CStr::from_ptr(request_path) }.to_str()?;
+        // SAFETY: same contract as above.
+        let response = unsafe { std::ffi::CStr::from_ptr(response_path) }.to_str()?;
+        let request: AdapterValidationRequest = serde_json::from_slice(&std::fs::read(request)?)?;
+        std::fs::write(
+            response,
+            serde_json::to_vec(&T::default().validate(request))?,
+        )?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })();
+    if result.is_ok() { 0 } else { 1 }
 }
 
 /// Called by the generated ABI wrapper; plugins should use [`export_adapter!`] instead.

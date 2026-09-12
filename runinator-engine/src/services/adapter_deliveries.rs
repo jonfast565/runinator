@@ -46,6 +46,7 @@ impl<T: OrchestrationStore> AdapterOperations<T> {
                     "pending"
                 }
                 .into(),
+                hold_mode: None,
                 error,
                 preview: Value::Null,
                 outcome: Value::Null,
@@ -83,15 +84,14 @@ where
         AdapterRoutingError::Rejected("delivery has no verified event to retry".into())
     })?;
     record.preview = operations.preview_event(&adapter, &event).await?.into();
-    if !record.approved
-        && store
-            .adapter_inspection(adapter.id)
-            .await
-            .map_err(unavailable)?
-            .mode
-            != ExternalIngressGateMode::Disabled
-    {
+    let gate = store
+        .adapter_inspection(adapter.id)
+        .await
+        .map_err(unavailable)?
+        .mode;
+    if !record.approved && gate != ExternalIngressGateMode::Disabled {
         record.state = "held".into();
+        record.hold_mode = Some(gate);
         return Ok(());
     }
     let event = operations.prepare_event(adapter.org_id, event).await?;
