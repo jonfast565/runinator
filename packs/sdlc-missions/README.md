@@ -60,5 +60,5 @@ the publish phase records both GitHub pull-request database-id and number aliase
 
 Merge is guarded twice: the feedback mission must classify required review as approved, and the
 merge job requires completed successful checks for the binding's exact candidate SHA before
-calling GitHub's SHA-fenced merge API. Deployment is dispatched only when an independent impact
+calling GitHub's SHA-fenced squash-merge API. Deployment is dispatched only when an independent impact
 mission selects the configured named workflow, then polled until success or operator handoff.
