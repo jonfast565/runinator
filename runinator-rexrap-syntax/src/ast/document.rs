@@ -115,6 +115,10 @@ pub struct Workflow {
     pub correlation: Option<Expr>,
     /// provider-neutral correlation-key ingress policy.
     pub ingress: Option<IngressDecl>,
+    /// portable custom metadata not owned by a structured REXRAP header.
+    pub metadata: Option<Expr>,
+    /// portable graph-editor layout and presentation data.
+    pub ui: Option<Expr>,
     /// header `type <Name> ...` declarations: reusable named types.
     pub type_decls: Vec<TypeDecl>,
     /// the statements of the workflow's `do { … }` runtime block.

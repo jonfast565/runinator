@@ -169,6 +169,10 @@ pub async fn create_pipeline<
     // a create always mints a fresh id and is owned by the creator's active org (None = global).
     pipeline.id = Some(Uuid::now_v7());
     pipeline.org_id = ctx.org_id;
+    if let Some(metadata) = pipeline.metadata.as_object_mut() {
+        metadata.remove("managed_by");
+        metadata.remove("requires_reimport");
+    }
     match service.save(&pipeline).await {
         Ok(pipeline) => {
             if let Some(id) = pipeline.id

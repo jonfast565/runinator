@@ -35,6 +35,33 @@ pub struct WorkflowPublishOptions {
     pub contract_override_reason: Option<String>,
 }
 
+fn rexrap_boundary_error(workflow: &WorkflowDefinition) -> Option<String> {
+    if !workflow.definition.defs.is_empty() {
+        return Some(
+            "workflow $defs are not portable; expand them into REXRAP-authored nodes before saving"
+                .into(),
+        );
+    }
+    if let Some(key) = workflow
+        .definition
+        .extra
+        .keys()
+        .find(|key| key.as_str() != "ui")
+    {
+        return Some(format!(
+            "workflow definition field '{key}' is not representable in REXRAP"
+        ));
+    }
+    for reserved in ["managed_by", "namespace", "function"] {
+        if workflow.definition.metadata.get(reserved).is_some() {
+            return Some(format!(
+                "workflow metadata key '{reserved}' is reserved for generated state"
+            ));
+        }
+    }
+    None
+}
+
 fn publication_error(
     error: runinator_models::errors::SendableError,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -82,6 +109,13 @@ pub async fn upsert_workflow<
         // An HTTP create is not a pack reconciliation. Minting the id here prevents an id-less
         // stable key from resolving to (and silently updating) an existing workflow.
         workflow.id = Some(Uuid::now_v7());
+    }
+    if let Some(metadata) = workflow.definition.metadata.as_object_mut() {
+        // artifact pins are derived again during preparation; never accept a caller's cached ids.
+        metadata.remove("artifact_refs");
+    }
+    if let Some(error) = rexrap_boundary_error(&workflow) {
+        return bad_request(error);
     }
     let workflows = match authoring.list().await {
         Ok(workflows) => workflows,
@@ -170,6 +204,10 @@ pub async fn upsert_workflow<
         Err(err) => publication_error(err),
     }
 }
+
+#[cfg(test)]
+#[path = "workflows_tests.rs"]
+mod tests;
 
 pub(crate) fn workflow_identity_error(
     workflow: &WorkflowDefinition,

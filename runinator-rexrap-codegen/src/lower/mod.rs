@@ -390,7 +390,39 @@ fn lower_workflow(
         None => None,
     };
     let functions = lowerer.lowered_functions.clone();
-    let mut metadata = Map::new();
+    let mut metadata = match &workflow.metadata {
+        Some(expression) => lowerer
+            .lower_expr(expression)?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| {
+                RexRapError::semantic(expression.span, "workflow metadata must be an object")
+            })?,
+        None => Map::new(),
+    };
+    for reserved in [
+        "workspace",
+        "rexrap",
+        "triggers",
+        "notifications",
+        "concurrency",
+        "watches",
+        "interrupts",
+        "correlation",
+        "ingress",
+        "functions",
+        "artifact_refs",
+        "managed_by",
+        "namespace",
+        "function",
+    ] {
+        if metadata.contains_key(reserved) {
+            return Err(RexRapError::semantic(
+                workflow.span,
+                format!("workflow metadata key '{reserved}' is reserved"),
+            ));
+        }
+    }
     if let Some(workspace) = &workflow.workspace {
         metadata.insert("workspace".into(), lowerer.lower_expr(workspace)?);
     }
@@ -533,6 +565,16 @@ fn lower_workflow(
     }
     if !metadata.is_empty() {
         definition.insert("metadata".into(), Value::Object(metadata));
+    }
+    if let Some(expression) = &workflow.ui {
+        let ui = lowerer.lower_expr(expression)?;
+        if !ui.is_object() {
+            return Err(RexRapError::semantic(
+                expression.span,
+                "workflow ui must be an object",
+            ));
+        }
+        definition.insert("ui".into(), ui);
     }
     let graph = WorkflowGraph::from_value(Value::Object(definition)).map_err(RexRapError::lower)?;
 

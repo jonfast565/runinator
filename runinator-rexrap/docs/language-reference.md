@@ -518,6 +518,17 @@ overrides. Graphs authored without this sidecar (e.g. hand-written JSON, or comp
 sidecar existed) decompile to the equivalent fully-expanded form. A `secret.*` value spread through
 an alias is still a whole argument value, so the "no secret mid-string" rule holds.
 
+Custom portable workflow metadata and graph-editor presentation data are source too:
+
+```rexrap
+metadata { owner_note: "release automation", labels: { tier: "control" } }
+ui { layout: { nodes: { start: { x: 10, y: 20 } } } }
+```
+
+Structured header keys, generated ownership markers, and resolved artifact pins are reserved and
+cannot be smuggled through `metadata`. `$defs` and unknown flattened graph fields are rejected at
+the authored HTTP boundary because the REXRAP compiler cannot reproduce them.
+
 ## Compilation details
 
 Inferred edges and defaults, semantic analysis, diagnostics, explicit decompiler output, and
@@ -553,6 +564,17 @@ Standalone secret/config import requires an `.rrx` source containing a settings 
 likewise takes REXRAP `source` text, compiled client-side, rather than a JSON bundle.
 
 ## Pipelines and correlated orchestration
+
+Pipeline source is complete for portable pipeline authoring state. It includes canvas defaults
+(`links_enabled_by_default`, `default_parameters`, and `default_failure_mode`), a `disabled` suffix
+on individual links, generic portable `metadata { ... }`, and executable orchestration
+`defaults <value>`. Reserved importer metadata such as `managed_by` cannot be authored in that
+generic block.
+
+Admission state (`enabled`) and manually managed trigger or notification rows are operational
+resources, not definition metadata. They remain visible through their dedicated APIs and are not
+silently overwritten by a source edit. REXRAP-declared triggers and notifications remain part of
+the portable source and are reconciled as source-managed rows.
 
 A unified `.rrx` pack can also declare a pipeline. A pipeline names its member workflows and links,
 and can declare an `ingress` policy for correlation-scoped external events. Its optional

@@ -113,6 +113,39 @@ async fn save_persists_a_valid_pipeline_through_the_service() {
 }
 
 #[tokio::test]
+async fn authored_pipeline_updates_cannot_replace_system_metadata() {
+    let (db, path) = test_db().await;
+    let broker = Arc::new(InMemoryBroker::new());
+    let service = PipelineOperations::new(db, broker.clone(), UiEventPublisher::new(broker), None);
+    let mut initial = pipeline();
+    initial.metadata = json!({
+        "managed_by": "rexrap",
+        "requires_reimport": false,
+        "release": 1,
+    });
+    let saved = service.save(&initial).await.unwrap();
+    let id = saved.id.unwrap();
+    let mut authored = saved;
+    authored.metadata = json!({
+        "managed_by": "functions",
+        "requires_reimport": true,
+        "release": 2,
+    });
+
+    let updated = service.update(id, authored).await.unwrap().unwrap();
+    assert_eq!(
+        updated.metadata.get("managed_by"),
+        Some(&Value::from("rexrap"))
+    );
+    assert_eq!(
+        updated.metadata.get("requires_reimport"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(updated.metadata.get("release"), Some(&Value::from(2)));
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn disabled_pipeline_rejects_new_manual_runs() {
     let (db, path) = test_db().await;
     let broker = Arc::new(InMemoryBroker::new());
@@ -428,7 +461,7 @@ async fn a_pinned_pipeline_start_snapshots_the_requested_revision() {
 }
 
 #[tokio::test]
-async fn rexrap_source_replaces_the_pipeline_surface_without_losing_unrelated_metadata() {
+async fn rexrap_source_replaces_every_portable_pipeline_field() {
     let (db, path) = test_db().await;
     let workflow = db.upsert_workflow(&member_workflow()).await.unwrap();
     let broker = Arc::new(InMemoryBroker::new());
@@ -450,6 +483,10 @@ async fn rexrap_source_replaces_the_pipeline_surface_without_losing_unrelated_me
 pipeline "updated surface" {
     key service_boundary
     namespace runinator.tests
+    links_enabled_by_default false
+    default_parameters { release: "stable" }
+    default_failure_mode inquire
+    metadata { release: 2 }
 
     ingress scope "correlations" {
         on "created" when unbound
@@ -479,7 +516,7 @@ pipeline "updated surface" {
     );
     assert_eq!(
         saved.metadata.get("release").and_then(Value::as_i64),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         saved
@@ -492,5 +529,8 @@ pipeline "updated surface" {
     let rendered = service.rexrap_source(pipeline_id).await.unwrap().unwrap();
     assert!(rendered.contains("pipeline \"updated surface\""));
     assert!(rendered.contains("ingress scope \"correlations\""));
+    assert!(rendered.contains("links_enabled_by_default false"));
+    assert!(rendered.contains("default_failure_mode inquire"));
+    assert!(rendered.contains("release: 2"));
     let _ = std::fs::remove_file(path);
 }

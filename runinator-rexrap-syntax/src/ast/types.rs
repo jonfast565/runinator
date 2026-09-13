@@ -65,6 +65,7 @@ pub struct PipelineLinkDecl {
     pub from: String,
     pub to: String,
     pub on: Option<String>,
+    pub disabled: bool,
     pub parameters: Option<Expr>,
     pub span: Span,
 }
@@ -115,6 +116,10 @@ pub struct PipelineDecl {
     pub description: Option<String>,
     pub on_failure: Option<String>,
     pub max_depth: Option<u32>,
+    pub links_enabled_by_default: Option<bool>,
+    pub default_parameters: Option<Expr>,
+    pub default_failure_mode: Option<String>,
+    pub metadata: Option<Expr>,
     pub members: Vec<PipelineMemberDecl>,
     pub links: Vec<PipelineLinkDecl>,
     pub joins: Vec<PipelineJoinDecl>,
@@ -131,6 +136,7 @@ pub struct OrchestrationDecl {
     pub budgets: Vec<OrchestrationBudgetDecl>,
     pub entry_member: Option<String>,
     pub max_epochs: Option<u32>,
+    pub defaults: Option<Expr>,
     pub phases: Vec<OrchestrationPhaseDecl>,
     pub span: Span,
 }

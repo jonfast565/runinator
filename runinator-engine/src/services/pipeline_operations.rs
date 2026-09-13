@@ -133,6 +133,14 @@ impl<T: DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore> Pipeli
         };
         pipeline.id = Some(pipeline_id);
         pipeline.org_id = existing.org_id;
+        if let Some(metadata) = pipeline.metadata.as_object_mut() {
+            for key in ["managed_by", "requires_reimport"] {
+                metadata.remove(key);
+                if let Some(value) = existing.metadata.get(key) {
+                    metadata.insert(key.into(), value.clone());
+                }
+            }
+        }
         self.save(&pipeline).await.map(Some)
     }
 

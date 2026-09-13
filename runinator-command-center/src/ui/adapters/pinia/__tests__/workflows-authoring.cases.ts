@@ -67,13 +67,16 @@ export function registerWorkflowAuthoringTests() {
     await workflows.saveSelectedWorkflow();
 
     expect(decompileToRexRap).toHaveBeenCalledWith(
-      expect.objectContaining({ id: WORKFLOW_ID, name: "bundle draft" }),
+      expect.objectContaining({
+        id: WORKFLOW_ID,
+        name: "bundle draft",
+        definition: expect.objectContaining({ ui: draft.definition.ui }),
+      }),
     );
     expect(saveWorkflowRexRap).toHaveBeenCalledWith({
       source: "workflow bundle_draft { start -> end }",
       enabled: true,
       workflow_id: WORKFLOW_ID,
-      ui: draft.definition.ui,
       triggers: [
         expect.objectContaining({
           id: TRIGGER_ID,

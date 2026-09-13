@@ -100,6 +100,8 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                     interrupts: Vec::new(),
                     correlation: None,
                     ingress: None,
+                    metadata: None,
+                    ui: None,
                     type_decls: Vec::new(),
                     body: Vec::new(),
                     joins: Vec::new(),
@@ -171,6 +173,26 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                     ));
                 }
                 workflow.ingress = Some(parse_ingress_decl(inner)?);
+            }
+            Rule::metadata_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                if workflow.metadata.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare metadata once",
+                    ));
+                }
+                workflow.metadata = Some(parse_object(first_inner(inner)?)?);
+            }
+            Rule::ui_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                if workflow.ui.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare ui once",
+                    ));
+                }
+                workflow.ui = Some(parse_object(first_inner(inner)?)?);
             }
             Rule::alias_decl => {
                 let workflow = require_active(&mut active, &inner)?;
@@ -608,6 +630,10 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
     let mut description = None;
     let mut on_failure = None;
     let mut max_depth = None;
+    let mut links_enabled_by_default = None;
+    let mut default_parameters = None;
+    let mut default_failure_mode = None;
+    let mut metadata = None;
     let mut members = Vec::new();
     let mut links = Vec::new();
     let mut joins = Vec::new();
@@ -666,6 +692,71 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
                             })?);
                         }
                     }
+                    Rule::pipeline_links_enabled => {
+                        let value = item
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::boolean)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(
+                                    span,
+                                    "links_enabled_by_default is missing a value",
+                                )
+                            })?;
+                        if links_enabled_by_default
+                            .replace(value.as_str() == "true")
+                            .is_some()
+                        {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare links_enabled_by_default once",
+                            ));
+                        }
+                    }
+                    Rule::pipeline_default_parameters => {
+                        let value = item
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::expr)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "default_parameters is missing a value")
+                            })?;
+                        if default_parameters.replace(parse_expr(value)?).is_some() {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare default_parameters once",
+                            ));
+                        }
+                    }
+                    Rule::pipeline_default_failure_mode => {
+                        let value = item
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::pipeline_member_failure_mode)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "default_failure_mode is missing a value")
+                            })?;
+                        if default_failure_mode
+                            .replace(value.as_str().to_string())
+                            .is_some()
+                        {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare default_failure_mode once",
+                            ));
+                        }
+                    }
+                    Rule::pipeline_metadata => {
+                        let value = item
+                            .into_inner()
+                            .find(|part| part.as_rule() == Rule::object)
+                            .ok_or_else(|| {
+                                RexRapError::syntax(span, "metadata is missing an object")
+                            })?;
+                        if metadata.replace(parse_object(value)?).is_some() {
+                            return Err(RexRapError::syntax(
+                                span,
+                                "pipeline can only declare metadata once",
+                            ));
+                        }
+                    }
                     Rule::pipeline_member => members.push(parse_pipeline_member(item)?),
                     Rule::pipeline_link => links.push(parse_pipeline_link(item)?),
                     Rule::pipeline_join => joins.push(parse_pipeline_join(item)?),
@@ -703,6 +794,10 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, RexRapError> {
         description,
         on_failure,
         max_depth,
+        links_enabled_by_default,
+        default_parameters,
+        default_failure_mode,
+        metadata,
         members,
         links,
         joins,
@@ -818,6 +913,7 @@ fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRa
     let mut budgets = Vec::new();
     let mut entry_member = None;
     let mut max_epochs = None;
+    let mut defaults = None;
     let mut phases = Vec::new();
     for item in pair
         .into_inner()
@@ -854,6 +950,18 @@ fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRa
                     ));
                 }
             }
+            Rule::orchestration_defaults => {
+                let value = item
+                    .into_inner()
+                    .find(|part| part.as_rule() == Rule::expr)
+                    .ok_or_else(|| RexRapError::syntax(span, "defaults is missing a value"))?;
+                if defaults.replace(parse_expr(value)?).is_some() {
+                    return Err(RexRapError::syntax(
+                        span,
+                        "orchestration can only declare defaults once",
+                    ));
+                }
+            }
             Rule::orchestration_phase => phases.push(parse_orchestration_phase(item)?),
             _ => {}
         }
@@ -863,6 +971,7 @@ fn parse_orchestration_decl(pair: Pair<Rule>) -> Result<OrchestrationDecl, RexRa
         budgets,
         entry_member,
         max_epochs,
+        defaults,
         phases,
         span,
     })
@@ -1172,11 +1281,13 @@ fn parse_pipeline_link(pair: Pair<Rule>) -> Result<PipelineLinkDecl, RexRapError
     let span = span_of(&pair);
     let mut endpoints = Vec::with_capacity(2);
     let mut on = None;
+    let mut disabled = false;
     let mut parameters = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::string => endpoints.push(plain_string(inner)?),
             Rule::pipeline_link_selector => on = Some(inner.as_str().to_string()),
+            Rule::trigger_disabled => disabled = true,
             Rule::object => parameters = Some(parse_object(inner)?),
             _ => {}
         }
@@ -1193,6 +1304,7 @@ fn parse_pipeline_link(pair: Pair<Rule>) -> Result<PipelineLinkDecl, RexRapError
         from,
         to,
         on,
+        disabled,
         parameters,
         span,
     })
@@ -1251,6 +1363,8 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     let mut interrupts = Vec::new();
     let mut correlation = None;
     let mut ingress = None;
+    let mut metadata = None;
+    let mut ui = None;
     let mut type_decls = Vec::new();
     let mut body = Vec::new();
     let mut joins: Vec<JoinDecl> = Vec::new();
@@ -1317,6 +1431,24 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
                 }
                 ingress = Some(parse_ingress_decl(inner)?);
             }
+            Rule::metadata_decl => {
+                if metadata.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare metadata once",
+                    ));
+                }
+                metadata = Some(parse_object(first_inner(inner)?)?);
+            }
+            Rule::ui_decl => {
+                if ui.is_some() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare ui once",
+                    ));
+                }
+                ui = Some(parse_object(first_inner(inner)?)?);
+            }
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
@@ -1361,6 +1493,8 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         interrupts,
         correlation,
         ingress,
+        metadata,
+        ui,
         type_decls,
         body,
         joins,

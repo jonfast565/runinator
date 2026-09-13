@@ -455,13 +455,7 @@ pub async fn update_pipeline_from_rexrap<T: DefinitionStore + RuntimeStore + Sch
     };
     let workflows = db.fetch_workflows().await?;
     let mut pipeline = pipeline_from_spec(spec, existing.org_id, Some(&existing), &workflows)?;
-    // The current REXRAP pipeline grammar intentionally does not spell these canvas-only authoring
-    // defaults. Keep them when source is applied so a source round trip cannot silently reset a
-    // surface-editor choice.
-    pipeline.defaults.links_enabled_by_default = existing.defaults.links_enabled_by_default;
-    pipeline.defaults.default_parameters = existing.defaults.default_parameters.clone();
-    pipeline.defaults.default_failure_mode = existing.defaults.default_failure_mode;
-    pipeline.metadata = source_pipeline_metadata(&spec.metadata, Some(&existing.metadata))?;
+    pipeline.metadata = source_pipeline_metadata(&spec.metadata)?;
     validate_pipeline(&pipeline)?;
     let saved = upsert_pipeline(db, &pipeline).await?;
     let pipelines = db.fetch_pipelines().await?;
@@ -662,23 +656,8 @@ fn imported_pipeline_metadata(metadata: &Value) -> Result<Value, SendableError> 
     Ok(metadata)
 }
 
-fn source_pipeline_metadata(source: &Value, prior: Option<&Value>) -> Result<Value, SendableError> {
-    let source = source
-        .as_object()
-        .ok_or_else(|| invalid_pipeline("pipeline metadata must be an object"))?;
-    let mut metadata = prior
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    let object = metadata
-        .as_object_mut()
-        .ok_or_else(|| invalid_pipeline("pipeline metadata must be an object"))?;
-    // These are the metadata fields represented by the REXRAP pipeline surface. Replace them
-    // wholesale so deleting a block from source removes its corresponding policy, while unrelated
-    // metadata remains intact for other pipeline features.
-    object.remove("ingress");
-    object.remove("orchestration");
-    object.extend(source.clone());
-    imported_pipeline_metadata(&metadata)
+fn source_pipeline_metadata(source: &Value) -> Result<Value, SendableError> {
+    imported_pipeline_metadata(source)
 }
 
 // realize a pipeline's header triggers as managed `pipeline_triggers`. reconciles idempotently: drop

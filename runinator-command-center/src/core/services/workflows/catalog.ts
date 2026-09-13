@@ -2,8 +2,6 @@ import { defaultApi, type WorkflowsCatalogApi } from "../../api/ports/workflows-
 import type { WorkflowRexRapSaveRequest } from "../../api/commandCenterApi";
 import type {
   ArtifactIdentity,
-  JsonRecord,
-  JsonValue,
   RunSummary,
   WorkflowDefinition,
   WorkflowTrigger,
@@ -11,7 +9,6 @@ import type {
   ScheduleSpec,
 } from "../../domain/models";
 import { artifactIdentityError, artifactIdentityPath } from "../../domain/models";
-import { isJsonObject } from "../../domain/json";
 import { describeBulkResult, runBulk, type BulkResult } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
 import { cloneJson } from "../../utils/json";
@@ -467,10 +464,6 @@ export function createWorkflowCatalogService(
       workflow_id: workflowId,
       triggers,
     };
-
-    if (isJsonObject(workflow.definition.ui as JsonValue)) {
-      request.ui = cloneJson(workflow.definition.ui) as JsonRecord;
-    }
 
     return request;
   }

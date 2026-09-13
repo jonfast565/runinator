@@ -87,8 +87,6 @@ pub struct ImportRexRapRequest {
     pub workflow_id: Option<Uuid>,
     #[serde(default)]
     pub triggers: Vec<WorkflowTrigger>,
-    #[serde(default)]
-    pub ui: Option<Value>,
 }
 
 const MAX_REXRAP_SOURCE_BYTES: usize = 2 * 1024 * 1024;
@@ -251,11 +249,6 @@ pub async fn import_rexrap<
     };
     if let Some(error) = super::workflows::workflow_identity_error(&workflow, &workflows, true) {
         return bad_request(error);
-    }
-    if let Some(ui) = request.ui
-        && ui.is_object()
-    {
-        workflow.definition.extra.insert("ui".to_string(), ui);
     }
     let bundle = WorkflowBundle {
         workflows: vec![workflow],
@@ -764,7 +757,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "Compiles REXRAP source client-style on the web service path used by the command center, then imports the resulting workflow bundle.",
         false,
         json_body(
-            "REXRAP source, target workflow id, triggers, and UI metadata.",
+            "REXRAP source, target workflow id, and operational triggers.",
             Example::RexRapCompile,
         ),
         &[],

@@ -31,6 +31,35 @@ impl<'a> MetadataReader<'a> {
         Self { metadata }
     }
 
+    pub(super) fn portable(&self) -> Map {
+        const OWNED_KEYS: &[&str] = &[
+            "workspace",
+            "rexrap",
+            "triggers",
+            "notifications",
+            "concurrency",
+            "watches",
+            "interrupts",
+            "correlation",
+            "ingress",
+            "functions",
+            "artifact_refs",
+            "managed_by",
+            "namespace",
+            "function",
+        ];
+        self.metadata
+            .as_object()
+            .map(|metadata| {
+                metadata
+                    .iter()
+                    .filter(|(key, _)| !OWNED_KEYS.contains(&key.as_str()))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub(super) fn declared_types(&self) -> HashMap<String, String> {
         let mut types = HashMap::new();
         let Some(entries) = self.object("/rexrap/types") else {

@@ -72,6 +72,16 @@ pub fn decompile_definition(
     options: &DecompileOptions,
 ) -> Result<String, RexRapError> {
     let graph = &definition.definition;
+    if !graph.defs.is_empty() {
+        return Err(RexRapError::Decompile(
+            "workflow $defs must be expanded before decompiling to REXRAP".into(),
+        ));
+    }
+    if let Some(key) = graph.extra.keys().find(|key| key.as_str() != "ui") {
+        return Err(RexRapError::Decompile(format!(
+            "workflow definition field '{key}' is not representable in REXRAP"
+        )));
+    }
     let mut nodes = HashMap::new();
     let mut end_ids = HashSet::new();
     let mut fail_ids = HashSet::new();
@@ -150,6 +160,16 @@ pub fn decompile_definition(
     }
     if let Some(workspace) = graph.metadata.get("workspace") {
         decompiler.line(&format!("workspace {}", decompiler.expr(workspace)?));
+    }
+    let portable_metadata = metadata.portable();
+    if !portable_metadata.is_empty() {
+        decompiler.line(&format!(
+            "metadata {}",
+            decompiler.expr(&Value::Object(portable_metadata))?
+        ));
+    }
+    if let Some(ui) = graph.extra.get("ui") {
+        decompiler.line(&format!("ui {}", decompiler.expr(ui)?));
     }
     decompiler.emit_resource_imports();
     decompiler.emit_triggers(metadata.triggers())?;

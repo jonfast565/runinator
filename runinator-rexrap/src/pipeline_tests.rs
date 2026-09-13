@@ -2,6 +2,7 @@ use runinator_models::pipelines::{
     PipelineFailurePolicy, PipelineJoinMode, PipelineLinkSelector, PipelineMemberFailureMode,
 };
 use runinator_models::schedules::ConcurrencyPolicy;
+use runinator_models::value::Value;
 
 use super::{parse_pipeline_str, pipeline_to_rexrapp};
 
@@ -159,6 +160,59 @@ fn round_trips_through_rexrapp_render() {
     let rendered = pipeline_to_rexrapp(&bundle);
     let reparsed = parse_pipeline_str(&rendered).expect("reparse");
     assert_eq!(bundle, reparsed);
+}
+
+#[test]
+fn model_originated_pipeline_state_round_trips_through_source() {
+    let mut bundle = parse_pipeline_str(
+        r#"
+pipeline "Portable" {
+    ingress scope "portable" {
+        on "start" when unbound -> start
+    }
+    orchestration {
+        entry "acme.portable.first"
+    }
+    workflow "acme.portable.first"
+    workflow "acme.portable.second"
+    "acme.portable.first" -> "acme.portable.second" on complete
+}
+"#,
+    )
+    .expect("parse model seed");
+    let pipeline = &mut bundle.pipelines[0];
+    pipeline.defaults.links_enabled_by_default = false;
+    pipeline.defaults.default_parameters = runinator_models::json!({ "channel": "stable" });
+    pipeline.defaults.default_failure_mode = PipelineMemberFailureMode::Inquire;
+    pipeline.links[0].enabled = false;
+    pipeline
+        .metadata
+        .as_object_mut()
+        .expect("metadata object")
+        .insert(
+            "orchestration_authoring".into(),
+            runinator_models::json!({ "preset": "portable", "schema_version": 1 }),
+        );
+    pipeline
+        .metadata
+        .get_mut("orchestration")
+        .and_then(Value::as_object_mut)
+        .expect("orchestration object")
+        .insert(
+            "defaults".into(),
+            runinator_models::json!({ "repository": "runinator" }),
+        );
+
+    let rendered = pipeline_to_rexrapp(&bundle);
+    assert!(rendered.contains("links_enabled_by_default false"));
+    assert!(rendered.contains("default_failure_mode inquire"));
+    assert!(rendered.contains("disabled"));
+    assert!(rendered.contains("orchestration_authoring"));
+    assert!(rendered.contains("defaults"));
+    assert_eq!(
+        bundle,
+        parse_pipeline_str(&rendered).expect("reparse model")
+    );
 }
 
 const TRIGGERED: &str = r#"

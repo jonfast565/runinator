@@ -146,7 +146,6 @@ async fn rexrap_save_mints_new_ids_and_preserves_the_active_org() {
             enabled: true,
             workflow_id: None,
             triggers: Vec::new(),
-            ui: None,
         }),
     )
     .await;
@@ -169,7 +168,6 @@ async fn rexrap_save_mints_new_ids_and_preserves_the_active_org() {
             enabled: true,
             workflow_id: Some(workflow_id),
             triggers: Vec::new(),
-            ui: None,
         }),
     )
     .await;
@@ -189,7 +187,6 @@ async fn rexrap_save_mints_new_ids_and_preserves_the_active_org() {
             enabled: true,
             workflow_id: None,
             triggers: Vec::new(),
-            ui: None,
         }),
     )
     .await;

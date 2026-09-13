@@ -80,6 +80,15 @@ pub(crate) fn keyword_documentation(keyword: &str) -> Option<&'static str> {
         "current" => "Restarts orchestration processing from the current member or epoch position.",
         "d" => "The days suffix in a duration literal, such as `2d`.",
         "debounce" => "Delays work until a named key has stayed quiet for the configured duration.",
+        "default_failure_mode" => {
+            "Sets the failure behavior inherited by pipeline members without an explicit override."
+        }
+        "default_parameters" => {
+            "Supplies the pipeline input values inherited by members before member-specific parameters are applied."
+        }
+        "defaults" => {
+            "Supplies default orchestration state merged before a pipeline member's result mappings."
+        }
         "delay" => "Sets the trailing delay for a `debounce` statement.",
         "description" => "Supplies human-readable text for a pipeline declaration.",
         "detach" => "Drops a task handle without joining it.",
@@ -155,6 +164,9 @@ pub(crate) fn keyword_documentation(keyword: &str) -> Option<&'static str> {
         "lease" => "Sets the duration of a durable workspace lease.",
         "let" => "Binds a statement or compute result to a local name.",
         "limit" => "Caps the number of loop iterations or items processed.",
+        "links_enabled_by_default" => {
+            "Controls whether pipeline links without an explicit `disabled` marker are active."
+        }
         "m" => "The minutes suffix in a duration literal, such as `15m`.",
         "manual" => "Selects a gate that only a person or external control can resolve.",
         "map" => "Iterates a body over a collection with configurable concurrency.",
@@ -163,6 +175,9 @@ pub(crate) fn keyword_documentation(keyword: &str) -> Option<&'static str> {
         "max_depth" => "Caps recursive function calls or pipeline traversal depth.",
         "max_epochs" => "Caps the number of correlated orchestration epochs that may run.",
         "meta" => "Sets metadata on an input request or configuration statement.",
+        "metadata" => {
+            "Stores portable custom workflow or pipeline metadata not owned by a structured header."
+        }
         "mode" => "Selects the waiting or aggregation behavior of the enclosing construct.",
         "module" => "Declares a pack-local source module or selects a module import kind.",
         "mutex" => "Acquires, releases, or scopes a cross-run exclusive lock.",
@@ -285,6 +300,7 @@ pub(crate) fn keyword_documentation(keyword: &str) -> Option<&'static str> {
         "type" => "Declares a reusable named type or labels an approval or event type.",
         "unbound" => "Matches an ingress event whose correlation does not yet have a run.",
         "until" => "Waits or repeats until its condition becomes true.",
+        "ui" => "Stores portable editor layout and presentation data for a workflow graph.",
         "v" => "The prefix of a workflow version literal, such as `v1` or `v1.2.3`.",
         "via" => "Names the pipeline member through which a failure budget is evaluated.",
         "wait" => "Parks the workflow for a duration or until a condition becomes true.",

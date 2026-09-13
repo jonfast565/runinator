@@ -217,7 +217,6 @@ export interface WorkflowRexRapSaveRequest {
   enabled: boolean;
   workflow_id?: string | null;
   triggers?: WorkflowTrigger[];
-  ui?: JsonRecord | null;
 }
 
 export interface ForeignLanguageRuntimeConfig {

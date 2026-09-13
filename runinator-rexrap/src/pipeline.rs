@@ -60,8 +60,20 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
             .map(|expr| lower_mapping(Some(expr)))
             .transpose()?,
         on_step_failure,
+        links_enabled_by_default: decl.links_enabled_by_default.unwrap_or(true),
+        default_parameters: decl
+            .default_parameters
+            .as_ref()
+            .map(|value| lower_mapping(Some(value)))
+            .transpose()?
+            .unwrap_or_default(),
         max_chain_depth: decl.max_depth,
-        ..PipelineDefaults::default()
+        default_failure_mode: decl
+            .default_failure_mode
+            .as_deref()
+            .map(pipeline_member_failure_mode)
+            .transpose()?
+            .unwrap_or_default(),
     };
     let member_names: HashSet<&str> = decl.members.iter().map(|m| m.name.as_str()).collect();
     let mut links = Vec::with_capacity(decl.links.len());
@@ -100,7 +112,30 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, RexRapError> {
         .iter()
         .map(lower_member)
         .collect::<Result<Vec<_>, RexRapError>>()?;
-    let mut metadata = lower_ingress_metadata(decl.ingress.as_ref())?;
+    let mut metadata = lower_mapping(decl.metadata.as_ref())?;
+    let metadata_object = metadata
+        .as_object_mut()
+        .expect("lowered pipeline metadata is an object");
+    for reserved in [
+        "ingress",
+        "orchestration",
+        "managed_by",
+        "requires_reimport",
+    ] {
+        if metadata_object.contains_key(reserved) {
+            return Err(RexRapError::syntax(
+                decl.span,
+                format!("pipeline metadata key '{reserved}' is reserved"),
+            ));
+        }
+    }
+    let ingress_metadata = lower_ingress_metadata(decl.ingress.as_ref())?;
+    metadata_object.extend(
+        ingress_metadata
+            .as_object()
+            .expect("lowered ingress metadata is an object")
+            .clone(),
+    );
     let orchestration = decl
         .orchestration
         .as_ref()
@@ -166,6 +201,12 @@ fn lower_orchestration(
     let mut policy = OrchestrationPolicy {
         entry_member: decl.entry_member.clone(),
         max_epochs: decl.max_epochs,
+        defaults: decl
+            .defaults
+            .as_ref()
+            .map(|value| lower_mapping(Some(value)))
+            .transpose()?
+            .unwrap_or_default(),
         ..Default::default()
     };
     for intent in &decl.intents {
@@ -417,16 +458,7 @@ fn lower_member(decl: &PipelineMemberDecl) -> Result<PipelineMemberSpec, RexRapE
     require_canonical_path(&decl.name, decl.span, "pipeline member workflow")?;
     let failure_mode = match decl.on_failure.as_deref() {
         None => None,
-        Some("stop") => Some(PipelineMemberFailureMode::Stop),
-        Some("continue") => Some(PipelineMemberFailureMode::Continue),
-        Some("silently_continue") => Some(PipelineMemberFailureMode::SilentlyContinue),
-        Some("inquire") => Some(PipelineMemberFailureMode::Inquire),
-        Some(other) => {
-            return Err(RexRapError::syntax(
-                decl.span,
-                format!("unknown member failure mode \"{other}\""),
-            ));
-        }
+        Some(value) => Some(pipeline_member_failure_mode(value)?),
     };
     Ok(PipelineMemberSpec {
         workspace: decl
@@ -437,6 +469,18 @@ fn lower_member(decl: &PipelineMemberDecl) -> Result<PipelineMemberSpec, RexRapE
         name: decl.name.clone(),
         failure_mode,
     })
+}
+
+fn pipeline_member_failure_mode(value: &str) -> Result<PipelineMemberFailureMode, RexRapError> {
+    match value {
+        "stop" => Ok(PipelineMemberFailureMode::Stop),
+        "continue" => Ok(PipelineMemberFailureMode::Continue),
+        "silently_continue" => Ok(PipelineMemberFailureMode::SilentlyContinue),
+        "inquire" => Ok(PipelineMemberFailureMode::Inquire),
+        other => Err(RexRapError::lower(format!(
+            "unknown member failure mode \"{other}\""
+        ))),
+    }
 }
 
 /// lower a parsed pipeline trigger decl into a portable `PipelineTriggerSpec`. a cron trigger carries
@@ -566,7 +610,7 @@ fn lower_link(
         from: link.from.clone(),
         to: link.to.clone(),
         on,
-        enabled: true,
+        enabled: !link.disabled,
         parameters: lower_mapping(link.parameters.as_ref())?,
     })
 }
@@ -759,6 +803,41 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
         if let Some(max_depth) = spec.defaults.max_chain_depth {
             out.push_str(&format!("    max_depth {max_depth}\n"));
         }
+        if !spec.defaults.links_enabled_by_default {
+            out.push_str("    links_enabled_by_default false\n");
+        }
+        if !spec.defaults.default_parameters.is_null() {
+            out.push_str(&format!(
+                "    default_parameters {}\n",
+                runinator_rexrap_codegen::render_expression(&spec.defaults.default_parameters)
+                    .unwrap_or_else(|_| "{}".into())
+            ));
+        }
+        if spec.defaults.default_failure_mode != PipelineMemberFailureMode::default() {
+            out.push_str(&format!(
+                "    default_failure_mode {}\n",
+                spec.defaults.default_failure_mode.as_str()
+            ));
+        }
+        if let Some(values) = spec.metadata.as_object() {
+            let mut portable = values.clone();
+            for reserved in [
+                "ingress",
+                "orchestration",
+                "managed_by",
+                "requires_reimport",
+            ] {
+                portable.remove(reserved);
+            }
+            if !portable.is_empty() {
+                let value = Value::Object(portable);
+                out.push_str(&format!(
+                    "    metadata {}\n",
+                    runinator_rexrap_codegen::render_expression(&value)
+                        .unwrap_or_else(|_| "{}".into())
+                ));
+            }
+        }
         if spec.concurrency.max_concurrent_runs > 0 {
             out.push_str(&format!(
                 "    concurrency {} on_conflict {}\n",
@@ -859,12 +938,14 @@ pub fn pipeline_to_rexrapp(bundle: &PipelineBundle) -> String {
                 } else {
                     String::new()
                 };
+                let disabled = if link.enabled { "" } else { " disabled" };
                 out.push_str(&format!(
-                    "    {} -> {} on {}{}\n",
+                    "    {} -> {} on {}{}{}\n",
                     quote(&link.from),
                     quote(&link.to),
                     link.on.as_str(),
                     mapping,
+                    disabled,
                 ));
             }
         }
@@ -968,6 +1049,13 @@ fn render_orchestration_policy(out: &mut String, policy: &OrchestrationPolicy) {
     }
     if let Some(max_epochs) = policy.max_epochs {
         out.push_str(&format!("        max_epochs {max_epochs}\n"));
+    }
+    if !policy.defaults.is_null() {
+        out.push_str(&format!(
+            "        defaults {}\n",
+            runinator_rexrap_codegen::render_expression(&policy.defaults)
+                .unwrap_or_else(|_| "{}".into())
+        ));
     }
     for (member, phase) in &policy.phases {
         out.push_str(&format!("        phase {} {{\n", quote(member)));

@@ -22,6 +22,7 @@ mod functions;
 mod graph;
 mod includes;
 mod inputs;
+mod metadata;
 mod modifiers;
 mod namespaces;
 mod nodes;

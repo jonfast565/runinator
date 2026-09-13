@@ -191,6 +191,12 @@ impl Formatter {
                 self.out.push('\n');
             }
         }
+        if let Some(metadata) = &workflow.metadata {
+            self.line(&format!("metadata {}", format_expr(metadata)));
+        }
+        if let Some(ui) = &workflow.ui {
+            self.line(&format!("ui {}", format_expr(ui)));
+        }
         for import in &workflow.imports {
             self.emit_leading(&import.comments.leading);
             let kind = import
