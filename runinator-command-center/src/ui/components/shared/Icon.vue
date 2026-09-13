@@ -138,6 +138,15 @@
     <template v-else-if="name === 'folder'">
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     </template>
+    <template v-else-if="name === 'workspace'">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <circle cx="6" cy="6.5" r="0.6" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="6.5" r="0.6" fill="currentColor" stroke="none" />
+      <rect x="7" y="12" width="4" height="5" rx="0.5" />
+      <line x1="14" y1="13" x2="17" y2="13" />
+      <line x1="14" y1="16" x2="17" y2="16" />
+    </template>
     <template v-else-if="name === 'bell'">
       <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
       <path d="M10 21a2 2 0 0 0 4 0" />
@@ -197,6 +206,15 @@
       <circle cx="12" cy="18" r="3" />
       <line x1="8.5" y1="7.5" x2="11" y2="15" />
       <line x1="15.5" y1="7.5" x2="13" y2="15" />
+    </template>
+    <template v-else-if="name === 'orchestration'">
+      <circle cx="5" cy="6" r="2" />
+      <circle cx="5" cy="18" r="2" />
+      <circle cx="12" cy="12" r="2.25" />
+      <circle cx="19" cy="12" r="2" />
+      <path d="M7 6h1a4 4 0 0 1 4 4" />
+      <path d="M7 18h1a4 4 0 0 0 4-4" />
+      <line x1="14.25" y1="12" x2="17" y2="12" />
     </template>
     <template v-else-if="name === 'runs'">
       <polyline points="4,7 8,11 4,15" />

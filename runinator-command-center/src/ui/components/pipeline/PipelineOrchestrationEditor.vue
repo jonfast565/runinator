@@ -543,9 +543,28 @@
                       <small>{{ pointer.description }}</small>
                     </label>
                   </div>
+                  <div class="phase-copy-bar">
+                    <span>
+                      <strong>Reuse these mappings</strong>
+                      <small>Copy all five fields over the mappings in every other phase.</small>
+                    </span>
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      :disabled="phases.length < 2"
+                      @click="applyPhaseMappingsToAll(phase)"
+                    >
+                      <Icon name="copy" :size="14" />
+                      Apply to every phase
+                    </button>
+                  </div>
                 </details>
               </article>
             </section>
+            <p v-if="phaseMappingNotice" class="draft-change-notice" role="status">
+              <Icon name="check" :size="14" />
+              {{ phaseMappingNotice }}
+            </p>
           </div>
 
           <div v-else-if="tab === 'Workspaces'" class="grid gap-4">
@@ -653,9 +672,39 @@
                       <small>Advanced worker-selection labels expressed as a JSON object.</small>
                     </label>
                   </details>
+                  <div class="workspace-copy-bar">
+                    <span>
+                      <strong>Copy this workspace policy</strong>
+                      <small>Choose whether disabled phases should remain disabled.</small>
+                    </span>
+                    <div>
+                      <button
+                        type="button"
+                        class="btn btn-sm"
+                        :disabled="workspaceCount < 2"
+                        @click="applyWorkspacePolicy(phase, false)"
+                      >
+                        <Icon name="copy" :size="14" />
+                        To enabled phases
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm"
+                        :disabled="phases.length < 2"
+                        @click="applyWorkspacePolicy(phase, true)"
+                      >
+                        <Icon name="copy" :size="14" />
+                        To every phase
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </article>
             </section>
+            <p v-if="workspaceNotice" class="draft-change-notice" role="status">
+              <Icon name="check" :size="14" />
+              {{ workspaceNotice }}
+            </p>
           </div>
 
           <div v-else class="grid gap-4">
@@ -830,6 +879,8 @@ const existingPolicy = metadata.orchestration as OrchestrationPolicy | undefined
 const enabled = ref(Boolean(existingPolicy));
 const disableConfirmOpen = ref(false);
 const tab = ref<Tab>("Admission Routes");
+const phaseMappingNotice = ref("");
+const workspaceNotice = ref("");
 const scope = ref(existingIngress?.scope ?? "correlations");
 const members = props.pipeline.graph.members.map((member) => member.key);
 const effects: Effect[] = ["terminate", "suspend", "resume", "supersede", "observe", "signal"];
@@ -1074,6 +1125,20 @@ function phaseMappingCount(phase: PhaseDraft): number {
   return resultPointers.filter((pointer) => Boolean(phase[pointer.key])).length;
 }
 
+function applyPhaseMappingsToAll(source: PhaseDraft): void {
+  for (const phase of phases) {
+    if (phase.member === source.member) {
+      continue;
+    }
+
+    for (const pointer of resultPointers) {
+      phase[pointer.key] = source[pointer.key];
+    }
+  }
+
+  phaseMappingNotice.value = `Copied ${source.member}'s mappings to ${String(phases.length - 1)} other phase${phases.length === 2 ? "" : "s"}. These changes remain unsaved.`;
+}
+
 function workspaceSummary(phase: PhaseDraft): string {
   if (!phase.workspace_enabled) {
     return "No files retained for this phase";
@@ -1111,6 +1176,26 @@ function disableAllWorkspaces(): void {
   for (const phase of phases) {
     phase.workspace_enabled = false;
   }
+}
+
+function applyWorkspacePolicy(source: PhaseDraft, includeDisabled: boolean): void {
+  let copied = 0;
+
+  for (const phase of phases) {
+    if (phase.member === source.member || (!includeDisabled && !phase.workspace_enabled)) {
+      continue;
+    }
+
+    phase.workspace_enabled = true;
+    phase.workspace_scope = source.workspace_scope;
+    phase.lease_seconds = source.lease_seconds;
+    phase.reuse = source.reuse;
+    phase.recovery = source.recovery;
+    phase.requirementsText = source.requirementsText;
+    copied += 1;
+  }
+
+  workspaceNotice.value = `Copied ${source.member}'s workspace policy to ${String(copied)} other phase${copied === 1 ? "" : "s"}. These changes remain unsaved.`;
 }
 
 function normalizeRoute(route: RouteDraft): void {
@@ -2135,6 +2220,59 @@ function renderSource(): string {
   padding: var(--space-4);
 }
 
+.phase-copy-bar,
+.workspace-copy-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-top: 1px solid var(--border-faint);
+  background: var(--surface-subtle);
+  padding: var(--space-3) var(--space-4);
+}
+
+.phase-copy-bar > span,
+.workspace-copy-bar > span {
+  display: grid;
+  gap: 2px;
+}
+
+.phase-copy-bar strong,
+.workspace-copy-bar strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.phase-copy-bar small,
+.workspace-copy-bar small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.workspace-copy-bar {
+  grid-column: 1 / -1;
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+}
+
+.workspace-copy-bar > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.draft-change-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--success-bg) 58%, var(--surface));
+  padding: var(--space-2) var(--space-3);
+  color: var(--success-fg);
+  font-size: 11px;
+}
+
 .workspace-phase-list {
   display: grid;
   gap: var(--space-3);
@@ -2407,6 +2545,18 @@ function renderSource(): string {
 
   .workspace-card > header {
     align-items: flex-start;
+  }
+
+  .phase-copy-bar,
+  .workspace-copy-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .phase-copy-bar > button,
+  .workspace-copy-bar > div,
+  .workspace-copy-bar button {
+    width: 100%;
   }
 
   .workspace-card-identity small {

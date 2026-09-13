@@ -30,7 +30,7 @@ export const navSections: NavSection[] = [
       {
         tab: "Workspaces",
         label: "Workspaces",
-        icon: "folder",
+        icon: "workspace",
         description:
           "Inspect saved workspace versions, files, and results shared across workflows.",
         searchPlaceholder: "Search workspace keys",
@@ -63,7 +63,7 @@ export const navSections: NavSection[] = [
       {
         tab: "Orchestrations",
         label: "Orchestrations",
-        icon: "branch",
+        icon: "orchestration",
         description: "Inspect correlated work or configure the adapter that admits it.",
       },
       {

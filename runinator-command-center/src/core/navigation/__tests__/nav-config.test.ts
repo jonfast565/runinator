@@ -94,4 +94,11 @@ describe("visibleNavSections", () => {
     expect(navSectionForTab("Notifications")).toBe("Integrations");
     expect(navSectionForTab("Profile")).toBe("Account");
   });
+
+  it("uses distinct icons for workspaces and orchestrations", () => {
+    const items = navSections.flatMap((section) => section.items);
+
+    expect(items.find((item) => item.tab === "Workspaces")?.icon).toBe("workspace");
+    expect(items.find((item) => item.tab === "Orchestrations")?.icon).toBe("orchestration");
+  });
 });
