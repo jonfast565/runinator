@@ -55,7 +55,12 @@ export function summarizeProviderCatalog(providers: ProviderMetadata[]): Provide
 }
 
 function searchableProviderText(provider: ProviderMetadata): (string | null | undefined)[] {
-  return [provider.name, provider.metadata.contract, ...provider.metadata.credential_scopes];
+  return [
+    provider.name,
+    provider.metadata.contract,
+    provider.metadata.execution_profile,
+    ...provider.metadata.credential_scopes,
+  ];
 }
 
 function searchableActionText(action: ActionMetadata): (string | null | undefined)[] {
@@ -67,7 +72,9 @@ function searchableActionText(action: ActionMetadata): (string | null | undefine
       parameter.label,
       parameter.description,
       JSON.stringify(parameter.ty),
+      JSON.stringify(parameter.credential_injections ?? []),
     ]),
+    JSON.stringify(action.authentication ?? null),
     ...action.results.flatMap((result) => [
       result.name,
       result.label,

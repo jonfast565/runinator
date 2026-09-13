@@ -2,8 +2,12 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use runinator_models::execution_profiles::MaterializedExecutionProfile;
-use runinator_models::providers::ActionMetadata;
-use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
+use runinator_models::providers::{
+    ActionMetadata, CredentialInjection, validate_action_authentication,
+};
+use runinator_models::runs::{
+    MaterializedCredentialInjections, ProviderExecutionRequest, RunStatus, TaskExecutionResult,
+};
 use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowAction;
 use runinator_platform::app_data;
@@ -71,14 +75,6 @@ pub(crate) async fn execute_task(
     } = task;
     let started_at = Utc::now();
     let timeout = action.timeout_seconds.max(1) as u64;
-    let request = build_provider_request(
-        &action,
-        execution_id,
-        parameters,
-        idempotency_key,
-        execution_profile,
-    );
-
     if token.is_cancelled() {
         return canceled_outcome(started_at);
     }
@@ -93,11 +89,32 @@ pub(crate) async fn execute_task(
                 }
             };
             if let Err(message) =
-                validate_runtime_parameters(&action_metadata, &action, &request.parameters)
+                validate_runtime_parameters(&action_metadata, &action, &parameters)
             {
                 error!(provider = %action.provider, function = %action.function, "{}", message);
                 return failed_outcome(started_at, message);
             }
+            if let Err(message) = validate_action_authentication(
+                &action_metadata,
+                &parameters,
+                execution_profile.is_some(),
+            ) {
+                error!(provider = %action.provider, function = %action.function, "{}", message);
+                return failed_outcome(started_at, message);
+            }
+            let (parameters, credential_injections) =
+                match materialize_credential_injections(&action_metadata, parameters) {
+                    Ok(materialized) => materialized,
+                    Err(message) => return failed_outcome(started_at, message),
+                };
+            let request = build_provider_request(
+                &action,
+                execution_id,
+                parameters,
+                idempotency_key,
+                execution_profile,
+                credential_injections,
+            );
             let provider_token = token.clone();
             // the provider runs on a blocking thread, which does not inherit the ambient tracing
             // span automatically; enter it explicitly so provider-side log lines keep trace_id/run_id.
@@ -259,7 +276,28 @@ fn validate_runtime_parameters(
     action: &WorkflowAction,
     parameters: &Value,
 ) -> Result<(), String> {
-    let expected = action_metadata.parameters_type();
+    let mut effective = action_metadata.clone();
+    if effective.authentication.is_some() {
+        let secret_parameters = effective
+            .authentication
+            .iter()
+            .flat_map(|authentication| &authentication.alternatives)
+            .filter_map(|alternative| match alternative {
+                runinator_models::providers::ActionAuthenticationAlternative::Secrets {
+                    parameters,
+                } => Some(parameters),
+                _ => None,
+            })
+            .flatten()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        for parameter in &mut effective.parameters {
+            if secret_parameters.contains(&parameter.name) {
+                parameter.required = false;
+            }
+        }
+    }
+    let expected = effective.parameters_type();
     expected.validate_value(parameters).map_err(|violation| {
         violation.message_with_label(&format!(
             "resolved action configuration '{}.{}'",
@@ -298,6 +336,7 @@ fn build_provider_request(
     parameters: Value,
     idempotency_key: Option<String>,
     execution_profile: Option<MaterializedExecutionProfile>,
+    credential_injections: MaterializedCredentialInjections,
 ) -> ProviderExecutionRequest {
     let base_dir = run_work_dir(Some(execution_id));
     let artifact_dir = base_dir.join("artifacts");
@@ -320,7 +359,61 @@ fn build_provider_request(
         idempotency_key,
         workspace_path: resolved_workspace_path(action.workspace_affinity.as_ref()),
         execution_profile,
+        credential_injections,
     }
+}
+
+fn materialize_credential_injections(
+    metadata: &ActionMetadata,
+    mut parameters: Value,
+) -> Result<(Value, MaterializedCredentialInjections), String> {
+    let mut materialized = MaterializedCredentialInjections::default();
+    let Some(object) = parameters.as_object_mut() else {
+        return Ok((parameters, materialized));
+    };
+    for parameter in &metadata.parameters {
+        if parameter.credential_injections.is_empty() {
+            continue;
+        }
+        let Some(secret) = object
+            .get(&parameter.name)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        object.remove(&parameter.name);
+        for injection in &parameter.credential_injections {
+            match injection {
+                CredentialInjection::Parameter { name, template } => {
+                    object.insert(
+                        name.clone(),
+                        Value::String(render_secret(template, &secret)),
+                    );
+                }
+                CredentialInjection::Environment { name, template } => {
+                    materialized
+                        .environment
+                        .insert(name.clone(), render_secret(template, &secret));
+                }
+                CredentialInjection::Arguments { values } => {
+                    materialized
+                        .arguments
+                        .extend(values.iter().map(|value| render_secret(value, &secret)));
+                }
+                CredentialInjection::Header { name, template } => {
+                    materialized
+                        .headers
+                        .insert(name.clone(), render_secret(template, &secret));
+                }
+            }
+        }
+    }
+    Ok((parameters, materialized))
+}
+
+fn render_secret(template: &str, secret: &str) -> String {
+    template.replace("${secret}", secret)
 }
 
 fn resolved_workspace_path(affinity: Option<&Value>) -> Option<String> {
@@ -361,3 +454,7 @@ mod workspace_request_tests {
         assert_eq!(resolved_workspace_path(None), None);
     }
 }
+
+#[cfg(test)]
+#[path = "executor_tests.rs"]
+mod executor_tests;

@@ -5,8 +5,9 @@ use runinator_models::json;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ExecutionProfileSupport, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -38,7 +39,8 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             name: self.name(),
-            actions: vec![
+            actions: {
+                let mut actions = vec![
                 ActionMetadata::new("execute", "Run an AI command via shell")
                     .with_parameters(vec![
                         ParameterMetadata::required("command", RuninatorType::String),
@@ -79,7 +81,14 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                 ])
                 .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)])
                 .as_agent("prompt", "/response/result"),
-            ],
+                ];
+                for action in &mut actions {
+                    action.authentication = Some(ActionAuthenticationMetadata::optional(vec![
+                        ActionAuthenticationAlternative::ExecutionProfile,
+                    ]));
+                }
+                actions
+            },
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["claude".into()],
                 contract: Some("stdin/stdout JSON".into()),

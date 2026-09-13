@@ -16,8 +16,9 @@ use std::sync::Arc;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata, RuninatorType,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
+        RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
     types::RuninatorField,
@@ -240,15 +241,21 @@ impl Provider for DbProvider {
     }
 
     fn metadata(&self) -> ProviderMetadata {
+        let mut actions = vec![
+            query_action(),
+            execute_action(),
+            script_action(),
+            provision_action(),
+            inspect_action(),
+        ];
+        for action in &mut actions {
+            action.authentication = Some(ActionAuthenticationMetadata::required(vec![
+                ActionAuthenticationAlternative::secrets(["connection"]),
+            ]));
+        }
         ProviderMetadata {
             name: self.name(),
-            actions: vec![
-                query_action(),
-                execute_action(),
-                script_action(),
-                provision_action(),
-                inspect_action(),
-            ],
+            actions,
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["db".into()],
                 contract: None,

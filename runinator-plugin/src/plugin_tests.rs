@@ -82,6 +82,7 @@ fn cancel_signal_path_is_sibling_of_events() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
     assert_eq!(
         request.cancel_signal_path(),
@@ -92,6 +93,7 @@ fn cancel_signal_path_is_sibling_of_events() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
         ..request
     };
     assert_eq!(empty.cancel_signal_path(), None);

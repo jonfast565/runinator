@@ -163,6 +163,7 @@ fn request_for(
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     }
 }
 

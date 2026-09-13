@@ -9,7 +9,28 @@ pub use runinator_models::runs::ProviderExecutionRequest;
 pub use serde::de::DeserializeOwned;
 
 use runinator_models::errors::ErrorDescriptor;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+/// Apply worker-materialized environment and argument credentials at the provider's chosen point
+/// in command construction. Values are deliberately never formatted into diagnostics.
+pub fn apply_command_credentials(command: &mut Command, request: &ProviderExecutionRequest) {
+    command.envs(&request.credential_injections.environment);
+    command.args(&request.credential_injections.arguments);
+}
+
+/// Apply worker-materialized credential headers to a blocking HTTP request.
+pub fn apply_blocking_http_credentials(
+    mut builder: reqwest::blocking::RequestBuilder,
+    request: &ProviderExecutionRequest,
+) -> Result<reqwest::blocking::RequestBuilder, SendableError> {
+    for (name, value) in &request.credential_injections.headers {
+        builder = builder.header(name, value);
+    }
+    Ok(builder)
+}
 
 /// Resolve a subprocess working directory while enforcing the worker-provided workspace fence.
 /// Relative explicit paths are resolved below the workspace; absolute paths must already be below
@@ -60,3 +81,6 @@ macro_rules! provider_parse_params {
         }
     };
 }
+
+#[cfg(test)]
+mod lib_tests;

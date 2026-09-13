@@ -62,12 +62,23 @@
 
       <p v-if="action?.description" class="hint">{{ action.description }}</p>
 
+      <div v-if="action?.authentication" class="form-field">
+        <span class="form-field-label">Authentication</span>
+        <ActionAuthenticationEditor
+          :model-value="current"
+          :action="action"
+          :authentication="action.authentication"
+          :credential-scopes="provider?.metadata.credential_scopes ?? []"
+          @update:model-value="setActionDraft"
+        />
+      </div>
+
       <div class="form-field">
         <span class="form-field-label">Compensation Parameters</span>
         <TypedParameterEditor
-          v-if="action?.parameters?.length"
+          v-if="ordinaryParameters.length"
           :model-value="configuration"
-          :parameters="action.parameters"
+          :parameters="ordinaryParameters"
           :credential-scopes="provider?.metadata.credential_scopes ?? []"
           :expression-context="expressionContext"
           @update:model-value="setConfiguration"
@@ -97,6 +108,7 @@ import type { WorkflowExpressionEditorContext } from "../../adapters/codemirror/
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
+import ActionAuthenticationEditor from "./ActionAuthenticationEditor.vue";
 
 // lowering writes 60 when the author declares no `.timeout()`, so a new compensation starts there
 // rather than at a number the round trip would immediately change.
@@ -141,6 +153,20 @@ const providerMissing = computed(() => Boolean(providerName.value) && !provider.
 const functionMissing = computed(
   () => Boolean(functionName.value) && Boolean(provider.value) && !action.value,
 );
+const authenticationParameters = computed(
+  () =>
+    new Set(
+      action.value?.authentication?.alternatives.flatMap((alternative) =>
+        alternative.kind === "secrets" ? alternative.parameters : [],
+      ) ?? [],
+    ),
+);
+const ordinaryParameters = computed(
+  () =>
+    action.value?.parameters.filter(
+      (parameter) => !authenticationParameters.value.has(parameter.name),
+    ) ?? [],
+);
 
 function patch(changes: JsonRecord) {
   emit("update:modelValue", { ...current.value, ...changes });
@@ -180,6 +206,10 @@ function setTimeout(event: Event) {
 
 function setConfiguration(value: JsonRecord) {
   patch({ configuration: value });
+}
+
+function setActionDraft(value: JsonRecord) {
+  emit("update:modelValue", value);
 }
 </script>
 

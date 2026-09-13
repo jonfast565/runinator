@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn metadata_requires_a_github_execution_profile() {
+fn metadata_accepts_a_github_secret_or_execution_profile() {
     let metadata = GitHubCliProvider.metadata();
     assert_eq!(metadata.name, "github_cli");
     assert_eq!(metadata.metadata.credential_scopes, ["github"]);
@@ -9,6 +9,27 @@ fn metadata_requires_a_github_execution_profile() {
         metadata.metadata.execution_profile,
         ExecutionProfileSupport::Subprocess
     );
+    assert!(metadata.actions.iter().all(|action| {
+        action
+            .authentication
+            .as_ref()
+            .is_some_and(|authentication| {
+                authentication.required
+                    && authentication.alternatives.iter().any(|alternative| {
+                        matches!(
+                            alternative,
+                            ActionAuthenticationAlternative::Secrets { parameters }
+                                if parameters == &["token"]
+                        )
+                    })
+                    && authentication.alternatives.iter().any(|alternative| {
+                        matches!(
+                            alternative,
+                            ActionAuthenticationAlternative::ExecutionProfile
+                        )
+                    })
+            })
+    }));
     assert!(
         metadata
             .actions

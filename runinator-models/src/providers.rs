@@ -53,6 +53,52 @@ pub struct ActionMetadata {
     /// Optional authoring hints for actions that drive an autonomous mission phase.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentActionMetadata>,
+    /// Credential alternatives accepted by this action. Missing metadata preserves the legacy
+    /// behavior where secret parameters and execution profiles are validated independently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<ActionAuthenticationMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionAuthenticationMetadata {
+    #[serde(default = "default_true")]
+    pub required: bool,
+    pub alternatives: Vec<ActionAuthenticationAlternative>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActionAuthenticationAlternative {
+    Secrets { parameters: Vec<String> },
+    ExecutionProfile,
+}
+
+impl ActionAuthenticationMetadata {
+    pub fn required(alternatives: Vec<ActionAuthenticationAlternative>) -> Self {
+        Self {
+            required: true,
+            alternatives,
+        }
+    }
+
+    pub fn optional(alternatives: Vec<ActionAuthenticationAlternative>) -> Self {
+        Self {
+            required: false,
+            alternatives,
+        }
+    }
+}
+
+impl ActionAuthenticationAlternative {
+    pub fn secrets(parameters: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self::Secrets {
+            parameters: parameters.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// Catalog-declared semantics used by mission authoring without coupling clients to a provider.
@@ -72,6 +118,7 @@ impl ActionMetadata {
             pure: false,
             delivery_semantics: DeliverySemantics::AtLeastOnce,
             agent: None,
+            authentication: None,
         }
     }
 
@@ -94,6 +141,11 @@ impl ActionMetadata {
             prompt_parameter: prompt_parameter.into(),
             response_text_pointer: response_text_pointer.into(),
         });
+        self
+    }
+
+    pub fn with_authentication(mut self, authentication: ActionAuthenticationMetadata) -> Self {
+        self.authentication = Some(authentication);
         self
     }
 
@@ -175,6 +227,36 @@ pub struct ParameterMetadata {
     pub default_value: Option<Value>,
     #[serde(default)]
     pub secret: bool,
+    /// Worker-side destinations populated from this secret parameter after late resolution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_injections: Vec<CredentialInjection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CredentialInjection {
+    Parameter {
+        name: String,
+        #[serde(default = "default_secret_template")]
+        template: String,
+    },
+    Environment {
+        name: String,
+        #[serde(default = "default_secret_template")]
+        template: String,
+    },
+    Arguments {
+        values: Vec<String>,
+    },
+    Header {
+        name: String,
+        #[serde(default = "default_secret_template")]
+        template: String,
+    },
+}
+
+fn default_secret_template() -> String {
+    "${secret}".into()
 }
 
 impl ParameterMetadata {
@@ -187,6 +269,7 @@ impl ParameterMetadata {
             required: true,
             default_value: None,
             secret: false,
+            credential_injections: Vec::new(),
         }
     }
 
@@ -207,6 +290,11 @@ impl ParameterMetadata {
         self
     }
 
+    pub fn inject(mut self, injection: CredentialInjection) -> Self {
+        self.credential_injections.push(injection);
+        self
+    }
+
     pub fn with_default(mut self, default_value: impl Into<Value>) -> Self {
         self.default_value = Some(default_value.into());
         self
@@ -221,6 +309,55 @@ pub fn validate_provider_metadata(metadata: &ProviderMetadata) -> Result<(), Str
         validate_action_metadata(metadata, action)?;
     }
     Ok(())
+}
+
+/// Validate one action's selected credential alternative against its resolved or authored input.
+pub fn validate_action_authentication(
+    metadata: &ActionMetadata,
+    parameters: &Value,
+    has_execution_profile: bool,
+) -> Result<(), String> {
+    let Some(authentication) = &metadata.authentication else {
+        return Ok(());
+    };
+    let object = parameters.as_object();
+    let mut selected = 0usize;
+    for alternative in &authentication.alternatives {
+        let satisfied = match alternative {
+            ActionAuthenticationAlternative::Secrets { parameters } => {
+                let present = parameters
+                    .iter()
+                    .filter(|name| {
+                        object
+                            .and_then(|object| object.get(name))
+                            .is_some_and(|value| !blank_credential_value(value))
+                    })
+                    .count();
+                if present > 0 && present < parameters.len() {
+                    return Err(format!(
+                        "secret authentication is incomplete; provide {}",
+                        parameters.join(", ")
+                    ));
+                }
+                present == parameters.len()
+            }
+            ActionAuthenticationAlternative::ExecutionProfile => has_execution_profile,
+        };
+        selected += usize::from(satisfied);
+    }
+    if selected > 1 {
+        return Err("select exactly one authentication method; secrets and an execution profile cannot be combined".into());
+    }
+    if authentication.required && selected == 0 {
+        return Err(
+            "select a required stored-secret or execution-profile authentication method".into(),
+        );
+    }
+    Ok(())
+}
+
+fn blank_credential_value(value: &Value) -> bool {
+    value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
 }
 
 impl crate::validation::Validate for ProviderMetadata {
@@ -299,6 +436,7 @@ fn validate_action_metadata(
         ));
     }
     let mut names = std::collections::BTreeSet::new();
+    let mut injection_targets = std::collections::BTreeSet::new();
     for parameter in &action.parameters {
         if parameter.name.trim().is_empty() {
             return Err(format!(
@@ -311,6 +449,23 @@ fn validate_action_metadata(
                 "provider '{}.{}' has duplicate parameter '{}'",
                 provider.name, action.function_name, parameter.name
             ));
+        }
+        if !parameter.credential_injections.is_empty()
+            && (!parameter.secret || parameter.ty != RuninatorType::String)
+        {
+            return Err(format!(
+                "provider '{}.{}' parameter '{}' may inject credentials only when it is a secret string",
+                provider.name, action.function_name, parameter.name
+            ));
+        }
+        for injection in &parameter.credential_injections {
+            validate_credential_injection(
+                provider,
+                action,
+                parameter,
+                injection,
+                &mut injection_targets,
+            )?;
         }
         let Some(default_value) = &parameter.default_value else {
             continue;
@@ -326,7 +481,162 @@ fn validate_action_metadata(
                 ))
             })?;
     }
+    if let Some(authentication) = &action.authentication {
+        if authentication.alternatives.is_empty() {
+            return Err(format!(
+                "provider '{}.{}' authentication must declare at least one alternative",
+                provider.name, action.function_name
+            ));
+        }
+        let mut alternatives = std::collections::BTreeSet::new();
+        for alternative in &authentication.alternatives {
+            let key = serde_json::to_string(alternative).map_err(|error| error.to_string())?;
+            if !alternatives.insert(key) {
+                return Err(format!(
+                    "provider '{}.{}' has a duplicate authentication alternative",
+                    provider.name, action.function_name
+                ));
+            }
+            match alternative {
+                ActionAuthenticationAlternative::Secrets { parameters } => {
+                    if parameters.is_empty() {
+                        return Err(format!(
+                            "provider '{}.{}' has an empty secret authentication alternative",
+                            provider.name, action.function_name
+                        ));
+                    }
+                    let mut secret_names = std::collections::BTreeSet::new();
+                    for name in parameters {
+                        let parameter = action.parameters.iter().find(|item| item.name == *name);
+                        if !secret_names.insert(name) {
+                            return Err(format!(
+                                "provider '{}.{}' repeats secret parameter '{}' in one authentication alternative",
+                                provider.name, action.function_name, name
+                            ));
+                        }
+                        if !parameter
+                            .is_some_and(|item| item.secret && item.ty == RuninatorType::String)
+                        {
+                            return Err(format!(
+                                "provider '{}.{}' authentication references non-secret string parameter '{}'",
+                                provider.name, action.function_name, name
+                            ));
+                        }
+                    }
+                }
+                ActionAuthenticationAlternative::ExecutionProfile => {
+                    if provider.metadata.execution_profile == ExecutionProfileSupport::Unsupported {
+                        return Err(format!(
+                            "provider '{}.{}' requires an execution profile but the provider does not support one",
+                            provider.name, action.function_name
+                        ));
+                    }
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+fn validate_credential_injection(
+    provider: &ProviderMetadata,
+    action: &ActionMetadata,
+    parameter: &ParameterMetadata,
+    injection: &CredentialInjection,
+    targets: &mut std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    let (target, templates) = match injection {
+        CredentialInjection::Parameter { name, template } => {
+            if !action
+                .parameters
+                .iter()
+                .any(|candidate| candidate.name == *name && candidate.ty == RuninatorType::String)
+            {
+                return Err(format!(
+                    "provider '{}.{}' credential parameter target '{}' is not a declared string parameter",
+                    provider.name, action.function_name, name
+                ));
+            }
+            (format!("parameter:{name}"), vec![template.as_str()])
+        }
+        CredentialInjection::Environment { name, template } => {
+            if !crate::execution_profiles::is_portable_environment_name(name) {
+                return Err(format!(
+                    "provider '{}.{}' credential environment target '{}' is invalid",
+                    provider.name, action.function_name, name
+                ));
+            }
+            (
+                format!("environment:{}", name.to_ascii_uppercase()),
+                vec![template.as_str()],
+            )
+        }
+        CredentialInjection::Arguments { values } => {
+            if values.is_empty() || values.iter().any(|value| value.is_empty()) {
+                return Err(format!(
+                    "provider '{}.{}' credential arguments for '{}' must be nonempty",
+                    provider.name, action.function_name, parameter.name
+                ));
+            }
+            (
+                format!("arguments:{}", parameter.name),
+                values.iter().map(String::as_str).collect(),
+            )
+        }
+        CredentialInjection::Header { name, template } => {
+            if !valid_header_name(name) {
+                return Err(format!(
+                    "provider '{}.{}' credential header target '{}' is invalid",
+                    provider.name, action.function_name, name
+                ));
+            }
+            (
+                format!("header:{}", name.to_ascii_lowercase()),
+                vec![template.as_str()],
+            )
+        }
+    };
+    if !targets.insert(target) {
+        return Err(format!(
+            "provider '{}.{}' has duplicate credential injection targets",
+            provider.name, action.function_name
+        ));
+    }
+    let placeholder_count = templates
+        .iter()
+        .map(|template| template.matches("${secret}").count())
+        .sum::<usize>();
+    if placeholder_count != 1 {
+        return Err(format!(
+            "provider '{}.{}' credential injection for '{}' must contain exactly one '${{secret}}' placeholder",
+            provider.name, action.function_name, parameter.name
+        ));
+    }
+    Ok(())
+}
+
+fn valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -26,6 +26,7 @@ fn injectable_runner_keeps_credentials_private() {
         run_id: None, action_name: "github_cli".into(), action_function: "run".into(),
         parameters: json!({"args":["pr","list"]}), timeout_secs: 3, artifact_dir: String::new(), events_jsonl_path: String::new(), idempotency_key: None, workspace_path: None,
         execution_profile: Some(serde_json::from_value(serde_json::json!({"profile_id":"00000000-0000-0000-0000-000000000001","revision":1,"root":"/profile","home":"/profile/home"})).unwrap()),
+        credential_injections: Default::default(),
     };
     let error = GitHubCliProvider::with_runner(Runner)
         .execute_service(request, None, CancellationToken::new())

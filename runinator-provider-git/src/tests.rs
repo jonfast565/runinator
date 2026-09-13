@@ -30,6 +30,7 @@ fn test_git_provider_unsupported_action() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -74,6 +75,7 @@ fn push_requires_branch_before_execution() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -139,6 +141,7 @@ fn prepare_checkout_clones_a_pinned_revision_and_reconciles_dirty_work() {
         idempotency_key: Some("prepare-source".into()),
         workspace_path: Some(workspace.to_string_lossy().into_owned()),
         execution_profile: None,
+        credential_injections: Default::default(),
     };
     let provider = GitProvider;
     provider
@@ -213,6 +216,7 @@ fn guarded_promotion_is_atomic_and_reconcilable() {
         idempotency_key: Some("promote-ticket".into()),
         workspace_path: Some(repo.to_string_lossy().into_owned()),
         execution_profile: None,
+        credential_injections: Default::default(),
     };
     let provider = GitProvider;
     for _ in 0..2 {

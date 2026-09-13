@@ -77,6 +77,7 @@ function normalizeProvider(provider: ProviderMetadata): ProviderMetadata {
     metadata: {
       credential_scopes: provider.metadata.credential_scopes,
       contract: provider.metadata.contract ?? null,
+      execution_profile: provider.metadata.execution_profile ?? "unsupported",
     },
   };
 }

@@ -43,6 +43,7 @@ fn notification_action_posts_notification_record() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = runtime.block_on(send_notification(&request)).unwrap();

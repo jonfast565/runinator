@@ -74,6 +74,7 @@ fn test_jira_provider_missing_base_url() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -103,6 +104,7 @@ fn test_jira_search_placeholder_base_url_is_clear() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let err = provider
@@ -136,6 +138,7 @@ fn test_jira_search_empty_base_url_is_clear() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let err = provider

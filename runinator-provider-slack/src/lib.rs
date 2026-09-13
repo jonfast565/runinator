@@ -9,7 +9,8 @@ use runinator_models::value::{Map, Value};
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        CredentialInjection, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
@@ -22,7 +23,6 @@ use crate::errors::{API_ERROR, HTTP_ERROR, INVALID_JSON, INVALID_PARAMS, UNSUPPO
 
 #[derive(Deserialize)]
 struct SendMessageParams {
-    token: String,
     channel: String,
     text: String,
     attachments: Option<Value>,
@@ -99,6 +99,11 @@ impl Provider for SlackProvider {
                 .with_results(slack_results()),
         ];
         actions.extend(read::read_action_metadata());
+        for action in &mut actions {
+            action.authentication = Some(ActionAuthenticationMetadata::required(vec![
+                ActionAuthenticationAlternative::secrets(["token"]),
+            ]));
+        }
 
         ProviderMetadata {
             name: self.name(),
@@ -129,15 +134,14 @@ impl Provider for SlackProvider {
 
 fn send_message(request: ProviderExecutionRequest) -> Result<TaskExecutionResult, SendableError> {
     let params: SendMessageParams = parse_params(&request)?;
-    let token = params.token.clone();
     let payload = build_send_message_payload(params)?;
     let client = build_client(request.timeout_secs)?;
-    let response = client
+    let builder = client
         .post("https://slack.com/api/chat.postMessage")
-        .bearer_auth(token)
         .header("Accept", "application/json")
-        .json(&payload)
-        .send()?;
+        .json(&payload);
+    let response =
+        runinator_provider_support::apply_blocking_http_credentials(builder, &request)?.send()?;
     let output = parse_slack_ok(response)?;
     Ok(TaskExecutionResult {
         message: Some("slack message sent".into()),
@@ -225,7 +229,16 @@ pub(crate) fn parse_slack_ok(
 }
 
 pub(crate) fn token_param() -> ParameterMetadata {
-    ParameterMetadata::required("token", RuninatorType::String).secret()
+    ParameterMetadata::required("token", RuninatorType::String)
+        .secret()
+        .inject(CredentialInjection::Parameter {
+            name: "token".into(),
+            template: "${secret}".into(),
+        })
+        .inject(CredentialInjection::Header {
+            name: "Authorization".into(),
+            template: "Bearer ${secret}".into(),
+        })
 }
 
 // type-checks the attachments array against SlackAttachment, accepting unknown

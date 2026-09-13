@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use runinator_models::value::Value;
 use runinator_models::{
-    providers::{ParameterMetadata, ProviderMetadata, validate_provider_metadata},
+    providers::{
+        ParameterMetadata, ProviderMetadata, validate_action_authentication,
+        validate_provider_metadata,
+    },
     types::{RuninatorField, RuninatorType, TypeViolation},
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowWaitSeconds},
 };
@@ -367,8 +370,21 @@ impl TypeContext {
             .map(|param| (param.name.as_str(), param))
             .collect::<HashMap<_, _>>();
 
+        let authentication_parameters = metadata
+            .authentication
+            .iter()
+            .flat_map(|authentication| &authentication.alternatives)
+            .filter_map(|alternative| match alternative {
+                runinator_models::providers::ActionAuthenticationAlternative::Secrets {
+                    parameters,
+                } => Some(parameters),
+                _ => None,
+            })
+            .flatten()
+            .collect::<std::collections::BTreeSet<_>>();
         for param in &metadata.parameters {
             if param.required
+                && !authentication_parameters.contains(&param.name)
                 && configuration
                     .get(&param.name)
                     .is_none_or(is_blank_parameter_value)
@@ -388,6 +404,17 @@ impl TypeContext {
             };
             self.expect_parameter_value_type(value, &parameter_type(param), name)?;
         }
+        validate_action_authentication(
+            metadata,
+            action.configuration.as_value(),
+            action.execution_profile.is_some(),
+        )
+        .map_err(|message| {
+            WorkflowValidationError::TypeError(format!(
+                "node '{}' authentication is invalid: {message}",
+                node.id
+            ))
+        })?;
         Ok(())
     }
 

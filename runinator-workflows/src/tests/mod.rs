@@ -22,7 +22,8 @@ use crate::*;
 use runinator_models::{
     catalog_metadata::LocationBase,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ExecutionProfileSupport, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
     },
     types::RuninatorField,

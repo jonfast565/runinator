@@ -38,6 +38,7 @@ fn preserves_timeout_descriptor() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
     let error = run_claude_code(&request, None, CancellationToken::new(), &Runner).unwrap_err();
     assert!(error.to_string().contains(CLAUDE_TIMEOUT.code));
@@ -150,6 +151,7 @@ fn mission_mcp_rejects_a_caller_authored_server_config() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
     let error = run_claude_code(&request, None, CancellationToken::new(), &Runner).unwrap_err();
     assert!(error.to_string().contains(CLAUDE_INPUT.code));

@@ -245,6 +245,9 @@
               >
                 <Icon name="key" :size="11" />{{ scope }}
               </span>
+              <span v-if="currentAction.authentication" class="badge bg-info-bg text-info-fg">
+                <Icon name="lock" :size="11" />{{ authenticationLabel(currentAction) }}
+              </span>
             </div>
 
             <div class="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
@@ -301,6 +304,13 @@
                     </span>
                     <span v-if="param.secret" class="badge bg-danger-bg text-danger-fg">
                       <Icon name="lock" :size="11" />Secret
+                    </span>
+                    <span
+                      v-for="injection in param.credential_injections ?? []"
+                      :key="JSON.stringify(injection)"
+                      class="badge bg-info-bg text-info-fg"
+                    >
+                      {{ injection.kind }} injection
                     </span>
                   </div>
                   <p
@@ -415,6 +425,12 @@
               >
                 No credential scopes required.
               </span>
+              <span
+                v-if="currentProvider.metadata.execution_profile !== 'unsupported'"
+                class="badge bg-info-bg text-info-fg"
+              >
+                Execution profile · {{ currentProvider.metadata.execution_profile }}
+              </span>
             </div>
 
             <div class="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
@@ -515,7 +531,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { DeliverySemantics, ProviderMetadata, RuninatorType } from "../../core/domain/models";
+import type {
+  ActionMetadata,
+  DeliverySemantics,
+  ProviderMetadata,
+  RuninatorType,
+} from "../../core/domain/models";
 import { searchProviderCatalog, summarizeProviderCatalog } from "../../core/utils/provider-catalog";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";
@@ -591,6 +612,19 @@ function providerSubtitle(provider: ProviderMetadata): string {
   }
 
   return "No credentials required";
+}
+
+function authenticationLabel(action: ActionMetadata): string {
+  const authentication = action.authentication;
+
+  if (!authentication) {
+    return "Legacy credentials";
+  }
+
+  const modes = authentication.alternatives.map((alternative) =>
+    alternative.kind === "execution_profile" ? "profile" : "secret",
+  );
+  return `${authentication.required ? "Requires" : "Supports"} ${modes.join(" or ")}`;
 }
 
 // Apply a deep-linked focus, then keep selection valid as workers refresh the provider catalog.

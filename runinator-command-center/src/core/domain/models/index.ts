@@ -199,9 +199,12 @@ export type { RuninatorField, RuninatorType } from "./provider/runinator-type";
 export { asRuninatorType } from "./provider/runinator-type";
 export type {
   ActionMetadata,
+  ActionAuthenticationAlternative,
+  ActionAuthenticationMetadata,
   AgentActionMetadata,
   ActionParameterMetadata,
   ActionResultMetadata,
+  CredentialInjection,
 } from "./provider/action-metadata";
 export type { ProviderMetadata, ProviderRuntimeMetadata } from "./provider/provider-metadata";
 

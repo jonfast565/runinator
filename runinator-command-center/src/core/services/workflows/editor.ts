@@ -438,11 +438,10 @@ export function createWorkflowEditorService(
     // validate action provider parameters when a typed action is selected.
     if (next.kind === "action") {
       const actionDraft = asRecord(next.action);
-      const configuration = asRecord(actionDraft.configuration);
       const parameterError = validateStepParameters(
         displayValue(actionDraft.provider),
         displayValue(actionDraft.function),
-        configuration,
+        actionDraft,
       );
 
       if (parameterError) {
@@ -461,7 +460,7 @@ export function createWorkflowEditorService(
         const compensationError = validateStepParameters(
           displayValue(draft.provider),
           displayValue(draft.function),
-          asRecord(draft.configuration),
+          draft,
         );
 
         if (compensationError) {
@@ -1155,7 +1154,7 @@ export function createWorkflowEditorService(
   function validateStepParameters(
     providerName: string,
     actionFunction: string,
-    configuration: JsonRecord,
+    actionDraft: JsonRecord,
   ): string {
     const provider = host.getProviders().find((item) => item.name === providerName);
     const action = provider?.actions.find((item) => item.function_name === actionFunction);
@@ -1164,8 +1163,21 @@ export function createWorkflowEditorService(
       return "Select a valid task provider action";
     }
 
+    const configuration = asRecord(actionDraft.configuration);
+    const authentication = action.authentication;
+    const hasProfile = Object.keys(asRecord(actionDraft.execution_profile)).length > 0;
+    const profileAllowed =
+      authentication?.alternatives.some(
+        (alternative) => alternative.kind === "execution_profile",
+      ) ?? false;
+    const authenticationParameters = new Set(
+      authentication?.alternatives.flatMap((alternative) =>
+        alternative.kind === "secrets" ? alternative.parameters : [],
+      ) ?? [],
+    );
+
     for (const parameter of action.parameters) {
-      if (!parameter.required) {
+      if (!parameter.required || authenticationParameters.has(parameter.name)) {
         continue;
       }
 
@@ -1183,6 +1195,36 @@ export function createWorkflowEditorService(
 
       if (typeError) {
         return typeError;
+      }
+    }
+
+    if (authentication) {
+      let selected = hasProfile && profileAllowed ? 1 : 0;
+
+      for (const alternative of authentication.alternatives) {
+        if (alternative.kind !== "secrets") {
+          continue;
+        }
+
+        const present = alternative.parameters.filter(
+          (parameter) => !isBlankValue(configuration[parameter]),
+        ).length;
+
+        if (present > 0 && present < alternative.parameters.length) {
+          return `Provide every secret required by this authentication method: ${alternative.parameters.join(", ")}`;
+        }
+
+        if (present === alternative.parameters.length) {
+          selected += 1;
+        }
+      }
+
+      if (selected > 1) {
+        return "Choose either stored secrets or an execution profile, not both";
+      }
+
+      if (authentication.required && selected === 0) {
+        return "Choose a required authentication method";
       }
     }
 

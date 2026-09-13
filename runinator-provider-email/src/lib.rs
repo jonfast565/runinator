@@ -22,8 +22,9 @@ use std::sync::Arc;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata, RuninatorType,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
+        RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -53,7 +54,8 @@ impl Provider for EmailProvider {
                         ParameterMetadata::optional("smtp_host", RuninatorType::String),
                         ParameterMetadata::optional("smtp_port", RuninatorType::Integer),
                         ParameterMetadata::optional("smtp_user", RuninatorType::String),
-                        ParameterMetadata::optional("smtp_password", RuninatorType::String),
+                        ParameterMetadata::optional("smtp_password", RuninatorType::String)
+                            .secret(),
                     ])
                     .with_results(vec![
                         ResultMetadata::new("sent", RuninatorType::Boolean),
@@ -62,7 +64,10 @@ impl Provider for EmailProvider {
                             RuninatorType::Union(vec![RuninatorType::String, RuninatorType::Null]),
                         ),
                         ResultMetadata::new("recipient", RuninatorType::String),
-                    ]),
+                    ])
+                    .with_authentication(ActionAuthenticationMetadata::optional(vec![
+                        ActionAuthenticationAlternative::secrets(["smtp_password"]),
+                    ])),
                 ActionMetadata::new(
                     "notify",
                     "Post an in-app notification visible in Command Center",

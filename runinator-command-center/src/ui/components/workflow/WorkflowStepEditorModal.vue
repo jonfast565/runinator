@@ -240,6 +240,25 @@
 
         <!-- action configuration via TypedParameterEditor when a provider action is selected. -->
         <section
+          v-if="workflows.stepEditor.kind === 'action' && selectedAction?.authentication"
+          class="form-section step-editor-section"
+        >
+          <div class="step-editor-section-heading">
+            <div>
+              <p class="step-editor-eyebrow">Credentials</p>
+              <h3>Authentication</h3>
+              <p class="hint">Choose how this provider action receives its credentials.</p>
+            </div>
+          </div>
+          <ActionAuthenticationEditor
+            v-model="actionDraft"
+            :action="selectedAction"
+            :authentication="selectedAction.authentication"
+            :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
+          />
+        </section>
+
+        <section
           v-if="workflows.stepEditor.kind === 'action' && selectedAction"
           class="form-section step-editor-section"
         >
@@ -251,9 +270,9 @@
             </div>
           </div>
           <TypedParameterEditor
-            v-if="selectedAction.parameters?.length"
+            v-if="ordinaryActionParameters.length"
             v-model="actionConfiguration"
-            :parameters="selectedAction.parameters"
+            :parameters="ordinaryActionParameters"
             :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
             :expression-context="expressionContext"
           />
@@ -395,6 +414,7 @@ import HelpBubble from "../shared/HelpBubble.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import CatalogEdgeSlotEditor from "./CatalogEdgeSlotEditor.vue";
+import ActionAuthenticationEditor from "./ActionAuthenticationEditor.vue";
 import CompensationEditor from "./CompensationEditor.vue";
 import RetryPolicyEditor from "./RetryPolicyEditor.vue";
 import type { RetryPolicy } from "../../../core/workflow/retry";
@@ -588,6 +608,34 @@ const selectedAction = computed(() => {
   return (
     currentActions.value.find((action) => action.function_name === actionDraft?.function) ?? null
   );
+});
+
+const authenticationParameterNames = computed(
+  () =>
+    new Set(
+      selectedAction.value?.authentication?.alternatives.flatMap((alternative) =>
+        alternative.kind === "secrets" ? alternative.parameters : [],
+      ) ?? [],
+    ),
+);
+
+const ordinaryActionParameters = computed(
+  () =>
+    selectedAction.value?.parameters.filter(
+      (parameter) => !authenticationParameterNames.value.has(parameter.name),
+    ) ?? [],
+);
+
+const actionDraft = computed({
+  get: (): JsonRecord => {
+    const action = workflows.stepEditor.nodeDraft.action;
+    return action && typeof action === "object" && !Array.isArray(action)
+      ? (action as JsonRecord)
+      : {};
+  },
+  set: (value: JsonRecord) => {
+    workflows.stepEditor.nodeDraft = { ...workflows.stepEditor.nodeDraft, action: value };
+  },
 });
 
 // action.configuration is bound directly into nodeDraft for TypedParameterEditor.

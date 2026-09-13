@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useWorkflowsStore } from "../workflows";
+import { useProvidersStore } from "../providers";
 import { setWorkflowCatalogs } from "../../../../core/workflow/catalog-registry";
 import { getAtLocation } from "../../../../core/workflow/field-location";
-import type { WorkflowDefinition, WorkflowNodeKindMetadata } from "../../../../core/domain/models";
+import type {
+  JsonRecord,
+  WorkflowDefinition,
+  WorkflowNodeKindMetadata,
+} from "../../../../core/domain/models";
 
 vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../../core/api/commandCenterApi")>()),
@@ -13,6 +18,37 @@ vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
 import { decompileToRexRap } from "../../../../core/api/commandCenterApi";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000099";
+
+const authenticatedProvider = {
+  name: "github",
+  metadata: {
+    credential_scopes: ["github"],
+    contract: null,
+    execution_profile: "subprocess" as const,
+  },
+  actions: [
+    {
+      function_name: "request",
+      parameters: [
+        {
+          name: "token",
+          ty: { type: "string" as const },
+          required: true,
+          secret: true,
+          credential_injections: [{ kind: "header" as const, name: "authorization" }],
+        },
+      ],
+      results: [],
+      authentication: {
+        required: true,
+        alternatives: [
+          { kind: "secrets" as const, parameters: ["token"] },
+          { kind: "execution_profile" as const },
+        ],
+      },
+    },
+  ],
+};
 
 const waitMeta: WorkflowNodeKindMetadata = {
   kind: "wait",
@@ -111,9 +147,26 @@ function sampleWorkflow(): WorkflowDefinition {
   };
 }
 
+function authenticatedWorkflow(): WorkflowDefinition {
+  const workflow = sampleWorkflow();
+  (workflow.definition.nodes as JsonRecord[]).splice(1, 0, {
+    id: "github_1",
+    kind: "action",
+    action: { provider: "github", function: "request", configuration: {} },
+    retry: { max_attempts: 1 },
+    transitions: { next: { $node: "end" } },
+  });
+  return workflow;
+}
+
 describe("catalog-driven step editor round trips", () => {
   beforeEach(() => {
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+    });
     setActivePinia(createPinia());
+    useProvidersStore().providers = [authenticatedProvider];
     setWorkflowCatalogs({
       nodeKinds: [waitMeta, mutexMeta],
       triggerKinds: [],
@@ -123,6 +176,7 @@ describe("catalog-driven step editor round trips", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });
   });
 
@@ -168,5 +222,43 @@ describe("catalog-driven step editor round trips", () => {
       on_success: { $node: "end" },
       on_failure: { $node: "end" },
     });
+  });
+
+  it("requires one declared authentication alternative before applying an action", async () => {
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(authenticatedWorkflow());
+    workflows.populateStepEditor("github_1");
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("Choose a required authentication method");
+
+    workflows.stepEditor.nodeDraft = {
+      ...workflows.stepEditor.nodeDraft,
+      action: {
+        ...(workflows.stepEditor.nodeDraft.action ?? {}),
+        configuration: { token: "secret://github/default" },
+      },
+    };
+
+    expect(workflows.applyStepEditor()).toBe(true);
+  });
+
+  it("accepts an execution profile instead of required secret parameters", async () => {
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(authenticatedWorkflow());
+    workflows.populateStepEditor("github_1");
+    workflows.stepEditor.nodeDraft = {
+      ...workflows.stepEditor.nodeDraft,
+      action: {
+        ...(workflows.stepEditor.nodeDraft.action ?? {}),
+        configuration: {},
+        execution_profile: {
+          id: "00000000-0000-0000-0000-000000000001",
+          name: "github-default",
+        },
+      },
+    };
+
+    expect(workflows.applyStepEditor()).toBe(true);
   });
 });

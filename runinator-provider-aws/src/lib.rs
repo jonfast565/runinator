@@ -5,8 +5,9 @@ use log::info;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ExecutionProfileSupport, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -55,7 +56,10 @@ impl Provider for AwsProvider {
                         ResultMetadata::new("service", RuninatorType::String),
                         ResultMetadata::new("rows", RuninatorType::Integer),
                         ResultMetadata::new("artifact", artifact_type()),
-                    ]),
+                    ])
+                    .with_authentication(ActionAuthenticationMetadata::optional(vec![
+                        ActionAuthenticationAlternative::ExecutionProfile,
+                    ])),
             ],
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["aws".into()],

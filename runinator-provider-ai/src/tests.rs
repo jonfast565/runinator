@@ -35,6 +35,7 @@ fn test_ai_command_provider_execution() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider
@@ -65,6 +66,7 @@ fn test_ai_command_fails_on_nonzero_exit() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -97,6 +99,7 @@ fn test_claude_code_stub_binary_passes_argv() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider
@@ -167,6 +170,7 @@ fn test_claude_code_nonzero_exit() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -193,6 +197,7 @@ fn test_claude_code_invalid_params_missing_prompt() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let err = provider
@@ -229,6 +234,7 @@ fn test_claude_code_json_output_parsed() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider

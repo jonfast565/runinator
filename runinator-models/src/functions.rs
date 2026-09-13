@@ -169,6 +169,7 @@ impl FunctionCatalogEntry {
             pure: false,
             delivery_semantics: Default::default(),
             agent: None,
+            authentication: None,
         }
     }
 

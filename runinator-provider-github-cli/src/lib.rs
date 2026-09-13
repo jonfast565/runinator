@@ -14,7 +14,8 @@ use runinator_models::{
     json,
     orchestration::DeliverySemantics,
     providers::{
-        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        CredentialInjection, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
         ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
@@ -127,7 +128,10 @@ impl<R: ProcessRunner + Clone + 'static> Provider for GitHubCliProvider<R> {
                         ResultMetadata::new("stdout", RuninatorType::String),
                         ResultMetadata::new("stderr", RuninatorType::String),
                     ]),
-            ],
+            ]
+            .into_iter()
+            .map(with_github_cli_authentication)
+            .collect(),
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["github".into()],
                 contract: None,
@@ -142,10 +146,6 @@ impl<R: ProcessRunner + Clone + 'static> Provider for GitHubCliProvider<R> {
         _sink: Option<Arc<dyn ProviderEventSink>>,
         token: CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        let profile = request
-            .execution_profile
-            .as_ref()
-            .ok_or_else(|| errors::PROFILE_REQUIRED.bare())?;
         let mut stdin = None;
         let args = match request.action_function.as_str() {
             "api" => {
@@ -213,10 +213,13 @@ impl<R: ProcessRunner + Clone + 'static> Provider for GitHubCliProvider<R> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_workspace_dir(&mut command, request.workspace_path.as_deref())?;
-        if let Some(home) = &profile.home {
-            command.env("HOME", home);
+        if let Some(profile) = &request.execution_profile {
+            if let Some(home) = &profile.home {
+                command.env("HOME", home);
+            }
+            command.envs(&profile.environment);
         }
-        command.envs(&profile.environment);
+        runinator_provider_support::apply_command_credentials(&mut command, &request);
         let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
         let result = self
             .runner
@@ -254,6 +257,22 @@ impl<R: ProcessRunner + Clone + 'static> Provider for GitHubCliProvider<R> {
             artifacts: Vec::new(),
         })
     }
+}
+
+fn with_github_cli_authentication(mut action: ActionMetadata) -> ActionMetadata {
+    action.parameters.push(
+        ParameterMetadata::optional("token", RuninatorType::String)
+            .secret()
+            .inject(CredentialInjection::Environment {
+                name: "GH_TOKEN".into(),
+                template: "${secret}".into(),
+            }),
+    );
+    action.authentication = Some(ActionAuthenticationMetadata::required(vec![
+        ActionAuthenticationAlternative::secrets(["token"]),
+        ActionAuthenticationAlternative::ExecutionProfile,
+    ]));
+    action
 }
 
 fn apply_workspace_dir(

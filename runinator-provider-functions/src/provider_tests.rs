@@ -60,6 +60,7 @@ fn execution_request(package: &std::path::Path, parameters: Value) -> ProviderEx
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     }
 }
 

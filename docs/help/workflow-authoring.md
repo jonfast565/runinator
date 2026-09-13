@@ -442,6 +442,25 @@ The import file is a `{ "secrets": [...] }` document; each entry carries
 `schema`. Existing entries are only overwritten when an incoming `updated_at` is
 strictly newer.
 
+#### Provider authentication
+
+Provider actions declare the credential methods they accept. In the visual workflow editor, the
+**Authentication** section offers compatible stored secrets, execution profiles, or both according
+to that action's contract. A required action cannot be applied without one complete method, and
+selecting both a secret method and an execution profile is rejected.
+
+Secret values remain whole `secret://scope/name` references in the workflow and broker payload.
+The worker resolves the UUID-backed reference immediately before provider execution. Provider
+metadata may then inject the value into a typed parameter, an environment variable, command-line
+arguments, or an HTTP header. Injection templates are literal strings with one `${secret}` marker,
+such as `Bearer ${secret}`; they are not general expressions. Command-line injection should be used
+only when the target tool requires it because operating-system process listings may expose argv.
+
+The GitHub actions accept either a `github`-scoped token or compatible execution profile. The
+GitHub CLI provider also accepts a stored token, injected as `GH_TOKEN`, or an authenticated profile.
+Profile health is shown while authoring, but a temporarily unpublished profile may still be saved;
+the worker enforces availability when the action runs.
+
 ### Interactive terminal input
 
 REXRAP can request one line of input directly with the typed `console.input` function. It runs as

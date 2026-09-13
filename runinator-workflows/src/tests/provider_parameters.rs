@@ -49,6 +49,61 @@ fn typed_validation_accepts_non_blank_required_parameter() {
 }
 
 #[test]
+fn typed_validation_enforces_secret_or_profile_authentication() {
+    let provider = ProviderMetadata {
+        name: "typed".into(),
+        actions: vec![
+            ActionMetadata::new("check", "check")
+                .with_parameters(vec![
+                    ParameterMetadata::optional("token", RuninatorType::String).secret(),
+                ])
+                .with_authentication(ActionAuthenticationMetadata::required(vec![
+                    ActionAuthenticationAlternative::secrets(["token"]),
+                    ActionAuthenticationAlternative::ExecutionProfile,
+                ])),
+        ],
+        metadata: ProviderRuntimeMetadata {
+            credential_scopes: vec!["check".into()],
+            contract: None,
+            execution_profile: ExecutionProfileSupport::Subprocess,
+        },
+    };
+    let missing = action_workflow(runinator_models::json!({}));
+    assert!(
+        validate_workflow_with_providers(&missing, std::slice::from_ref(&provider))
+            .unwrap_err()
+            .to_string()
+            .contains("authentication is invalid")
+    );
+
+    let secret = action_workflow(runinator_models::json!({"token":"secret://check/token"}));
+    validate_workflow_with_providers(&secret, std::slice::from_ref(&provider)).unwrap();
+
+    let mut profile = action_workflow(runinator_models::json!({}));
+    profile.definition.nodes[1]
+        .action
+        .as_mut()
+        .unwrap()
+        .execution_profile =
+        Some(runinator_models::execution_profiles::ExecutionProfileBinding::unresolved("check"));
+    validate_workflow_with_providers(&profile, std::slice::from_ref(&provider)).unwrap();
+
+    let mut conflicting = secret;
+    conflicting.definition.nodes[1]
+        .action
+        .as_mut()
+        .unwrap()
+        .execution_profile =
+        Some(runinator_models::execution_profiles::ExecutionProfileBinding::unresolved("check"));
+    assert!(
+        validate_workflow_with_providers(&conflicting, &[provider])
+            .unwrap_err()
+            .to_string()
+            .contains("exactly one authentication method")
+    );
+}
+
+#[test]
 fn typed_validation_reports_missing_required_nested_literal_field() {
     let provider = check_provider(RuninatorType::typed_structure([(
         "env",

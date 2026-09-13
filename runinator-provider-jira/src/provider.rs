@@ -6,7 +6,8 @@ use runinator_models::{
     errors::SendableError,
     orchestration::DeliverySemantics,
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, RuninatorType,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -35,7 +36,9 @@ impl Provider for JiraProvider {
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             name: self.name(),
-            actions: vec![
+            actions: {
+                let mut actions =
+                    vec![
                 ActionMetadata::new("search", "Search Jira issues using JQL")
                     .with_parameters(vec![
                         base_param(),
@@ -147,7 +150,14 @@ impl Provider for JiraProvider {
                     ])
                     .with_results(jira_results())
                     .with_delivery_semantics(DeliverySemantics::Idempotent),
-            ],
+                ];
+                for action in &mut actions {
+                    action.authentication = Some(ActionAuthenticationMetadata::required(vec![
+                        ActionAuthenticationAlternative::secrets(["token"]),
+                    ]));
+                }
+                actions
+            },
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["jira".into()],
                 contract: None,

@@ -1,7 +1,9 @@
 use crate::{
     orgs::{OrgRole, slugify},
     providers::{
-        ActionMetadata, ParameterMetadata, ProviderMetadata, ResultMetadata,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        CredentialInjection, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata, validate_action_authentication,
         validate_provider_metadata,
     },
     types::{RuninatorField, RuninatorType},
@@ -295,6 +297,69 @@ fn provider_metadata_validation_rejects_bad_defaults_and_duplicates() {
     };
     let err = validate_provider_metadata(&duplicate).unwrap_err();
     assert!(err.contains("duplicate parameter 'name'"));
+}
+
+#[test]
+fn provider_authentication_accepts_exactly_one_declared_alternative() {
+    let action = ActionMetadata::new("call", "call")
+        .with_parameters(vec![
+            ParameterMetadata::optional("token", RuninatorType::String).secret(),
+        ])
+        .with_authentication(ActionAuthenticationMetadata::required(vec![
+            ActionAuthenticationAlternative::secrets(["token"]),
+            ActionAuthenticationAlternative::ExecutionProfile,
+        ]));
+
+    assert!(
+        validate_action_authentication(&action, &crate::json!({"token":"secret://api/key"}), false)
+            .is_ok()
+    );
+    assert!(validate_action_authentication(&action, &crate::json!({}), true).is_ok());
+    assert!(validate_action_authentication(&action, &crate::json!({}), false).is_err());
+    assert!(
+        validate_action_authentication(&action, &crate::json!({"token":"value"}), true).is_err()
+    );
+}
+
+#[test]
+fn provider_metadata_validates_credential_injection_contracts() {
+    let provider = ProviderMetadata {
+        name: "cli".into(),
+        actions: vec![
+            ActionMetadata::new("run", "run")
+                .with_parameters(vec![
+                    ParameterMetadata::optional("token", RuninatorType::String)
+                        .secret()
+                        .inject(CredentialInjection::Environment {
+                            name: "API_TOKEN".into(),
+                            template: "Bearer ${secret}".into(),
+                        })
+                        .inject(CredentialInjection::Arguments {
+                            values: vec!["--token".into(), "${secret}".into()],
+                        }),
+                ])
+                .with_authentication(ActionAuthenticationMetadata::required(vec![
+                    ActionAuthenticationAlternative::secrets(["token"]),
+                ])),
+        ],
+        metadata: ProviderRuntimeMetadata {
+            credential_scopes: vec!["api".into()],
+            contract: None,
+            execution_profile: ExecutionProfileSupport::Subprocess,
+        },
+    };
+
+    validate_provider_metadata(&provider).unwrap();
+    let mut invalid = provider;
+    invalid.actions[0].parameters[0].credential_injections[0] = CredentialInjection::Environment {
+        name: "BAD-NAME".into(),
+        template: "${secret}".into(),
+    };
+    assert!(
+        validate_provider_metadata(&invalid)
+            .unwrap_err()
+            .contains("environment target")
+    );
 }
 
 #[test]

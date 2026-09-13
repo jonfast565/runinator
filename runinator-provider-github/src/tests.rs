@@ -17,6 +17,7 @@ fn test_github_provider_missing_token() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -106,6 +107,7 @@ fn request_reviewers_requires_a_reviewer() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(

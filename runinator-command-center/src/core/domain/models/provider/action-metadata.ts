@@ -10,6 +10,21 @@ export interface ActionParameterMetadata {
   required: boolean;
   default_value?: JsonValue;
   secret: boolean;
+  credential_injections?: CredentialInjection[];
+}
+
+export type CredentialInjection =
+  | { kind: "parameter"; name: string; template?: string }
+  | { kind: "environment"; name: string; template?: string }
+  | { kind: "arguments"; values: string[] }
+  | { kind: "header"; name: string; template?: string };
+
+export type ActionAuthenticationAlternative =
+  { kind: "secrets"; parameters: string[] } | { kind: "execution_profile" };
+
+export interface ActionAuthenticationMetadata {
+  required: boolean;
+  alternatives: ActionAuthenticationAlternative[];
 }
 
 export interface ActionResultMetadata {
@@ -27,6 +42,7 @@ export interface ActionMetadata {
   pure?: boolean;
   delivery_semantics?: DeliverySemantics;
   agent?: AgentActionMetadata | null;
+  authentication?: ActionAuthenticationMetadata | null;
 }
 
 export interface AgentActionMetadata {

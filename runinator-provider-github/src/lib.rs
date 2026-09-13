@@ -9,8 +9,9 @@ use runinator_models::{
     errors::SendableError,
     orchestration::DeliverySemantics,
     providers::{
-        ActionMetadata, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
+        ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
+        ExecutionProfileSupport, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -255,7 +256,10 @@ impl Provider for GitHubProvider {
                     ParameterMetadata::required("check_run_id", RuninatorType::String),
                 ])
                 .with_results(json_results()),
-            ],
+            ]
+            .into_iter()
+            .map(with_github_authentication)
+            .collect(),
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["github".into()],
                 contract: None,
@@ -646,6 +650,14 @@ impl Provider for GitHubProvider {
         };
         json_response(response)
     }
+}
+
+fn with_github_authentication(mut action: ActionMetadata) -> ActionMetadata {
+    action.authentication = Some(ActionAuthenticationMetadata::required(vec![
+        ActionAuthenticationAlternative::secrets(["token"]),
+        ActionAuthenticationAlternative::ExecutionProfile,
+    ]));
+    action
 }
 
 #[cfg(test)]

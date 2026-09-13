@@ -18,6 +18,7 @@ fn missing_token_is_invalid() {
         idempotency_key: None,
         workspace_path: None,
         execution_profile: None,
+        credential_injections: Default::default(),
     };
 
     let result = provider.execute_service(
@@ -123,7 +124,6 @@ fn read_query_enforces_required_and_renders_scalars() {
 fn rejects_mistyped_attachment_field() {
     // `short` must be a boolean; a string should fail typed validation.
     let result = build_send_message_payload(SendMessageParams {
-        token: "xoxb-token".into(),
         channel: "C123".into(),
         text: "hello".into(),
         attachments: Some(json!([{ "fields": [{ "title": "k", "short": "yes" }] }])),
@@ -139,7 +139,6 @@ fn rejects_mistyped_attachment_field() {
 #[test]
 fn builds_payload_with_optional_fields() {
     let payload = build_send_message_payload(SendMessageParams {
-        token: "xoxb-token".into(),
         channel: "C123".into(),
         text: "hello".into(),
         attachments: Some(json!([{ "color": "#36a64f", "text": "details" }])),
@@ -161,7 +160,6 @@ fn builds_payload_with_optional_fields() {
 #[test]
 fn rejects_non_array_attachments() {
     let result = build_send_message_payload(SendMessageParams {
-        token: "xoxb-token".into(),
         channel: "C123".into(),
         text: "hello".into(),
         attachments: Some(json!({ "text": "details" })),
