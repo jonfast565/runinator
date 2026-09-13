@@ -1,5 +1,5 @@
 <template>
-  <div class="grid gap-4">
+  <div class="orchestration-editor">
     <section class="orchestration-status" :class="enabled ? 'is-enabled' : ''">
       <div class="flex min-w-0 items-start gap-3">
         <span class="orchestration-status-icon">
@@ -10,13 +10,26 @@
             {{ enabled ? "Orchestration enabled" : "Orchestration disabled" }}
           </p>
           <h3>Manage correlated executions</h3>
-          <p>
-            {{
-              enabled
-                ? `${routes.length} admission routes · ${intents.length} intents · ${budgets.length} retry budgets`
-                : "Provider events will not create or control correlated runs for this pipeline."
-            }}
+          <p v-if="enabled">
+            One durable execution per correlation key, controlled by incoming events.
           </p>
+          <p v-else>
+            Provider events will not create or control correlated runs for this pipeline.
+          </p>
+          <div v-if="enabled" class="orchestration-status-metrics" aria-label="Policy summary">
+            <span
+              ><strong>{{ routes.length }}</strong> routes</span
+            >
+            <span
+              ><strong>{{ intents.length }}</strong> intents</span
+            >
+            <span
+              ><strong>{{ budgets.length }}</strong> retry budgets</span
+            >
+            <span
+              ><strong>{{ workspaceCount }}</strong> workspaces</span
+            >
+          </div>
         </div>
       </div>
       <button
@@ -61,442 +74,639 @@
             class="btn btn-sm"
             @click="tab = item.tab"
           >
-            {{ item.tab }} · {{ item.count }}
+            {{ tabTitle(item.tab) }} · {{ item.count }}
           </button>
         </div>
       </section>
 
-      <nav class="orchestration-tabs" aria-label="Orchestration settings" role="tablist">
-        <button
-          v-for="item in tabs"
-          :key="item"
-          type="button"
-          role="tab"
-          :aria-selected="tab === item"
-          :class="{ 'is-active': tab === item, 'has-errors': tabIssueCount(item) > 0 }"
-          @click="tab = item"
-        >
-          <span>{{ item }}</span>
-          <span v-if="tabIssueCount(item)" class="orchestration-tab-count">
-            {{ tabIssueCount(item) }}
-          </span>
-        </button>
-      </nav>
-
-      <div v-if="tab === 'Admission Routes'" class="grid gap-3">
-        <header class="orchestration-section-heading">
-          <div>
-            <div class="flex items-center gap-1">
-              <h3>Admission Routes</h3>
-              <HelpBubble label="About admission routes">
-                <strong>Incoming events</strong>
-                <p>
-                  Routes decide which provider events start, record, or control correlated work.
-                  They are checked in order against the current lifecycle.
-                </p>
-              </HelpBubble>
-            </div>
-          </div>
-          <button type="button" class="btn btn-primary btn-sm" @click="addRoute">
-            <Icon name="plus" :size="15" />
-            Add route
+      <div class="orchestration-workbench">
+        <nav class="orchestration-steps" aria-label="Orchestration settings" role="tablist">
+          <button
+            v-for="(item, index) in tabs"
+            :id="tabDomId(item)"
+            :key="item"
+            type="button"
+            role="tab"
+            :aria-controls="`${tabDomId(item)}-panel`"
+            :aria-selected="tab === item"
+            :class="{ 'is-active': tab === item, 'has-errors': tabIssueCount(item) > 0 }"
+            @click="tab = item"
+          >
+            <span class="orchestration-step-number">{{ index + 1 }}</span>
+            <span class="orchestration-step-copy">
+              <strong>{{ tabTitle(item) }}</strong>
+              <small>{{ tabSummary(item) }}</small>
+            </span>
+            <span v-if="tabIssueCount(item)" class="orchestration-tab-count">
+              {{ tabIssueCount(item) }}
+            </span>
+            <Icon v-else-if="tabComplete(item)" name="check" :size="14" />
           </button>
-        </header>
-        <label class="grid gap-1 text-sm"
-          ><span>Correlation scope</span><input v-model="scope" required />
-          <small class="text-fg-muted"
-            >Events with the same scope and correlation key share an orchestration.</small
-          ></label
-        >
-        <section
-          v-if="routes.length === 0"
-          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
-        >
-          <strong class="block text-fg">No admission routes yet</strong>
-          Add a provider event that should start, record, or control a correlated pipeline run.
-        </section>
-        <article v-for="(route, routeIndex) in routes" :key="route.id" class="orchestration-card">
-          <div class="orchestration-card-heading">
-            <div>
-              <p class="orchestration-eyebrow">Route {{ routeIndex + 1 }}</p>
-              <strong>{{ route.event_type || "Unnamed provider event" }}</strong>
-            </div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm text-danger-fg"
-              @click="routes.splice(routeIndex, 1)"
-            >
-              Remove route
-            </button>
-          </div>
-          <div class="grid gap-2 md:grid-cols-5">
-            <label class="grid gap-1 text-xs"
-              ><span>Event</span
-              ><input v-model="route.event_type" list="orchestration-events" required
-            /></label>
-            <label class="grid gap-1 text-xs"
-              ><span>Lifecycle</span
-              ><select v-model="route.lifecycle" @change="normalizeRoute(route)">
-                <option value="unbound">Unbound</option>
-                <option value="active">Active</option>
-                <option value="terminal">Terminal</option>
-              </select></label
-            >
-            <label class="grid gap-1 text-xs"
-              ><span>Action</span
-              ><select v-model="route.action" @change="normalizeRoute(route)">
-                <option v-for="action in actionsFor(route.lifecycle)" :key="action" :value="action">
-                  {{ action }}
-                </option>
-              </select></label
-            >
-            <label class="grid gap-1 text-xs"
-              ><span>Intent</span
-              ><select v-model="route.intent" :disabled="route.action !== 'dispatch'">
-                <option value="">Select intent</option>
-                <option v-for="intent in intents" :key="intent.id" :value="intent.name">
-                  {{ intent.name }}
-                </option>
-              </select></label
-            >
-            <div class="self-end text-xs text-fg-muted">
-              {{ routeActionHint(route) }}
-            </div>
-          </div>
-          <div
-            v-for="(predicate, predicateIndex) in route.predicates"
-            :key="predicate.id"
-            class="grid gap-2 md:grid-cols-[1fr_10rem_1fr_auto]"
-          >
-            <input
-              v-model="predicate.pointer"
-              list="orchestration-pointers"
-              placeholder="/payload/path"
-            />
-            <select v-model="predicate.operator">
-              <option value="equal">equals</option>
-              <option value="not_equal">not equal</option>
-              <option value="in">in</option>
-              <option value="contains">contains</option>
-              <option value="exists">exists</option>
-            </select>
-            <input
-              v-model="predicate.valueText"
-              :disabled="predicate.operator === 'exists'"
-              placeholder='JSON value, e.g. "ready"'
-            />
-            <button
-              type="button"
-              class="btn btn-sm"
-              @click="route.predicates.splice(predicateIndex, 1)"
-            >
-              ×
-            </button>
-          </div>
-          <button type="button" class="btn btn-sm w-fit" @click="addPredicate(route)">
-            Add condition
-          </button>
-        </article>
-      </div>
+        </nav>
 
-      <div v-else-if="tab === 'Intents'" class="grid gap-3">
-        <header class="orchestration-section-heading">
-          <div>
-            <div class="flex items-center gap-1">
-              <h3>Intents</h3>
-              <HelpBubble label="About intents">
-                <strong>Responses</strong>
-                <p>
-                  Intents describe how active work responds to an event. Priority decides which
-                  response wins when several match.
-                </p>
-              </HelpBubble>
-            </div>
-          </div>
-          <button type="button" class="btn btn-primary btn-sm" @click="addIntent">
-            <Icon name="plus" :size="15" />
-            Add intent
-          </button>
-        </header>
         <section
-          v-if="intents.length === 0"
-          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+          :id="`${tabDomId(tab)}-panel`"
+          class="orchestration-stage"
+          role="tabpanel"
+          :aria-labelledby="tabDomId(tab)"
         >
-          <strong class="block text-fg">No intents yet</strong>
-          Add an intent before routing active events to dispatch, pause, restart, or signal a run.
-        </section>
-        <article
-          v-for="(intent, index) in intents"
-          :key="intent.id"
-          class="orchestration-card grid gap-2 md:grid-cols-4"
-        >
-          <div class="orchestration-card-heading md:col-span-4">
-            <div>
-              <p class="orchestration-eyebrow">Intent {{ index + 1 }}</p>
-              <strong>{{ intent.name || "Unnamed intent" }}</strong>
-            </div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm text-danger-fg"
-              :disabled="intentReferenceCount(intent.name) > 0"
-              :title="intentRemovalHint(intent.name)"
-              @click="removeIntent(index)"
-            >
-              Remove intent
-            </button>
-          </div>
-          <label class="grid gap-1 text-xs"><span>Name</span><input v-model="intent.name" /></label>
-          <label class="grid gap-1 text-xs"
-            ><span>Effect</span
-            ><select v-model="intent.effect">
-              <option v-for="effect in effects" :key="effect" :value="effect">{{ effect }}</option>
-            </select></label
-          >
-          <label class="grid gap-1 text-xs"
-            ><span>Unique priority</span><input v-model.number="intent.priority" type="number"
-          /></label>
-          <label class="grid gap-1 text-xs"
-            ><span>Coalesce seconds</span
-            ><input v-model.number="intent.coalesce_seconds" min="0" type="number"
-          /></label>
-          <label class="grid gap-1 text-xs"
-            ><span>Stop epoch</span
-            ><select v-model="intent.stop">
-              <option value="cancel">cancel</option>
-              <option value="pause">pause</option>
-              <option value="none">none</option>
-            </select></label
-          >
-          <label class="grid gap-1 text-xs"
-            ><span>Restart</span
-            ><select v-model="intent.restart_kind">
-              <option value="entry">entry</option>
-              <option value="current">current</option>
-              <option value="member">member</option>
-            </select></label
-          >
-          <label class="grid gap-1 text-xs"
-            ><span>Restart member</span
-            ><select v-model="intent.restart_member" :disabled="intent.restart_kind !== 'member'">
-              <option value="">Select member</option>
-              <option v-for="member in members" :key="member" :value="member">{{ member }}</option>
-            </select></label
-          >
-          <label class="grid gap-1 text-xs"
-            ><span>Subject revision pointer</span
-            ><input
-              v-model="intent.subject_revision_pointer"
-              list="orchestration-pointers"
-              placeholder="/subject_revision"
-          /></label>
-          <label class="grid gap-1 text-xs"
-            ><span>Workflow signal (defaults to intent)</span
-            ><input
-              v-model="intent.signal_name"
-              :disabled="intent.effect !== 'signal'"
-              placeholder="external_update"
-          /></label>
-          <label class="flex items-end gap-2 text-xs"
-            ><input v-model="intent.allow_self_originated" type="checkbox" />Allow
-            self-originated</label
-          >
-          <p v-if="intentReferenceCount(intent.name)" class="m-0 self-end text-xs text-fg-muted">
-            Used by {{ intentReferenceCount(intent.name) }} admission route{{
-              intentReferenceCount(intent.name) === 1 ? "" : "s"
-            }}.
-          </p>
-        </article>
-      </div>
+          <header class="orchestration-stage-header">
+            <p class="orchestration-eyebrow">
+              Step {{ tabs.indexOf(tab) + 1 }} of {{ tabs.length }}
+            </p>
+            <h2>{{ tabTitle(tab) }}</h2>
+            <p>{{ tabDescription(tab) }}</p>
+          </header>
 
-      <div v-else-if="tab === 'Budgets'" class="grid gap-3">
-        <header class="orchestration-section-heading">
-          <div>
-            <div class="flex items-center gap-1">
-              <h3>Budgets</h3>
-              <HelpBubble label="About budgets">
-                <strong>Failure handling</strong>
-                <p>
-                  Budgets limit retries for a named failure class and choose what happens when the
-                  limit is reached.
-                </p>
-              </HelpBubble>
-            </div>
-          </div>
-          <button type="button" class="btn btn-primary btn-sm" @click="addBudget">
-            <Icon name="plus" :size="15" />
-            Add budget
-          </button>
-        </header>
-        <section
-          v-if="budgets.length === 0"
-          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
-        >
-          <strong class="block text-fg">No retry budgets yet</strong>
-          Add a budget only when a failure class needs bounded retries or a recovery handoff.
-        </section>
-        <article v-for="(budget, index) in budgets" :key="budget.id" class="orchestration-card">
-          <div class="orchestration-card-heading">
-            <div>
-              <p class="orchestration-eyebrow">Retry budget {{ index + 1 }}</p>
-              <strong>{{ budget.name || "Unnamed failure class" }}</strong>
-            </div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm text-danger-fg"
-              @click="budgets.splice(index, 1)"
-            >
-              Remove budget
-            </button>
-          </div>
-          <div class="grid gap-2 md:grid-cols-[1fr_10rem_12rem_1fr]">
-            <label class="grid gap-1 text-xs"
-              ><span>Failure class</span><input v-model="budget.name" required
-            /></label>
-            <label class="grid gap-1 text-xs"
-              ><span>Maximum attempts</span
-              ><input v-model.number="budget.attempts" type="number" min="1" step="1"
-            /></label>
-            <label class="grid gap-1 text-xs"
-              ><span>When exhausted</span
-              ><select v-model="budget.exhausted">
-                <option value="fail">Fail orchestration</option>
-                <option value="pause">Pause for review</option>
-                <option value="terminate">Terminate</option>
-              </select></label
-            >
-            <label class="grid gap-1 text-xs"
-              ><span>Recovery handoff</span
-              ><select v-model="budget.handoff">
-                <option value="">No handoff</option>
-                <option v-for="member in members" :key="member" :value="member">
-                  Handoff to {{ member }}
-                </option>
-              </select></label
-            >
-          </div>
-        </article>
-      </div>
-
-      <div v-else-if="tab === 'Phase Mappings'" class="grid gap-3">
-        <header class="orchestration-section-heading">
-          <div>
-            <div class="flex items-center gap-1">
-              <h3>Phase Mappings</h3>
-              <HelpBubble label="About phase mappings">
-                <strong>Saved phase results</strong>
-                <p>
-                  Mappings copy selected workflow results into durable orchestration state. Leave a
-                  mapping blank when the phase does not produce that value.
-                </p>
-              </HelpBubble>
-            </div>
-          </div>
-        </header>
-        <section
-          v-if="phases.length === 0"
-          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
-        >
-          Add a workflow to this pipeline before configuring phase result mappings.
-        </section>
-        <article
-          v-for="phase in phases"
-          :key="phase.member"
-          class="grid gap-2 rounded border border-border p-3 md:grid-cols-2"
-        >
-          <strong class="md:col-span-2">{{ phase.member }}</strong>
-          <label v-for="pointer in resultPointers" :key="pointer.key" class="grid gap-1 text-xs"
-            ><span>{{ pointer.label }}</span
-            ><input
-              v-model="phase[pointer.key]"
-              list="orchestration-pointers"
-              placeholder="/result/path"
-          /></label>
-        </article>
-      </div>
-
-      <div v-else-if="tab === 'Workspaces'" class="grid gap-3">
-        <header class="orchestration-section-heading">
-          <div>
-            <div class="flex items-center gap-1">
-              <h3>Workspaces</h3>
-              <HelpBubble label="About orchestration workspaces">
-                <strong>Working files</strong>
-                <p>
-                  Workspace leases keep compatible machine-local files available across phases.
-                  Enable them only for phases that need that state.
-                </p>
-              </HelpBubble>
-            </div>
-          </div>
-        </header>
-        <section
-          v-if="phases.length === 0"
-          class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
-        >
-          Add a workflow to this pipeline before configuring phase workspace leases.
-        </section>
-        <article
-          v-for="phase in phases"
-          :key="phase.member"
-          class="grid gap-2 rounded border border-border p-3 md:grid-cols-3"
-        >
-          <label class="flex items-center gap-2 text-sm md:col-span-3"
-            ><input v-model="phase.workspace_enabled" type="checkbox" /><strong>{{
-              phase.member
-            }}</strong></label
+          <section
+            v-if="activeTabIssues.length"
+            class="orchestration-inline-errors"
+            aria-live="polite"
           >
-          <template v-if="phase.workspace_enabled">
-            <label class="grid gap-1 text-xs"
-              ><span>Opaque scope</span><input v-model="phase.workspace_scope"
-            /></label>
-            <label class="grid gap-1 text-xs"
-              ><span>Lease seconds</span
-              ><input v-model.number="phase.lease_seconds" type="number" min="1" step="1"
-            /></label>
-            <label class="grid gap-1 text-xs"
-              ><span>Recovery</span
-              ><select v-model="phase.recovery">
-                <option value="replace">replace</option>
-                <option value="wait">wait</option>
-                <option value="fail">fail</option>
-              </select></label
-            >
-            <label class="flex items-center gap-2 text-xs"
-              ><input v-model="phase.reuse" type="checkbox" />Reuse compatible workspace</label
-            >
-            <label class="grid gap-1 text-xs md:col-span-2"
-              ><span>Worker requirements JSON</span><input v-model="phase.requirementsText"
-            /></label>
-          </template>
-        </article>
-      </div>
+            <strong>Needs attention</strong>
+            <ul>
+              <li v-for="issue in activeTabIssues" :key="issue.message">{{ issue.message }}</li>
+            </ul>
+          </section>
 
-      <div v-else class="grid gap-3">
-        <header class="orchestration-section-heading">
-          <div class="flex items-center gap-1">
-            <h3>Preview</h3>
-            <HelpBubble label="About orchestration preview">
-              <strong>Advanced policy</strong>
-              <p>This is the generated REXRAP policy saved with the next pipeline revision.</p>
-            </HelpBubble>
+          <div v-if="tab === 'Admission Routes'" class="grid gap-4">
+            <header class="orchestration-section-heading">
+              <div>
+                <div class="flex items-center gap-1">
+                  <h3>Event admission</h3>
+                  <HelpBubble label="About admission routes">
+                    <strong>Incoming events</strong>
+                    <p>
+                      Routes decide which provider events start, record, or control correlated work.
+                      They are checked in order against the current lifecycle.
+                    </p>
+                  </HelpBubble>
+                </div>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" @click="addRoute">
+                <Icon name="plus" :size="15" />
+                Add route
+              </button>
+            </header>
+            <section class="orchestration-scope-card">
+              <div>
+                <strong>Correlation scope</strong>
+                <p>Every unique correlation key within this scope controls one execution.</p>
+              </div>
+              <label class="orchestration-field">
+                <span>Scope name</span>
+                <input v-model="scope" required placeholder="ticket.lifecycle" />
+              </label>
+            </section>
+            <section
+              v-if="routes.length === 0"
+              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+            >
+              <strong class="block text-fg">No admission routes yet</strong>
+              Add a provider event that should start, record, or control a correlated pipeline run.
+            </section>
+            <article
+              v-for="(route, routeIndex) in routes"
+              :key="route.id"
+              class="orchestration-card route-card"
+            >
+              <div class="orchestration-card-heading">
+                <div>
+                  <p class="orchestration-eyebrow">Rule {{ routeIndex + 1 }}</p>
+                  <strong>{{ routeSummary(route) }}</strong>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm text-danger-fg"
+                  @click="routes.splice(routeIndex, 1)"
+                >
+                  Remove route
+                </button>
+              </div>
+              <div class="route-builder">
+                <label class="orchestration-field route-event"
+                  ><span>When this event arrives</span
+                  ><input
+                    v-model="route.event_type"
+                    list="orchestration-events"
+                    required
+                    placeholder="issue.updated"
+                /></label>
+                <label class="orchestration-field"
+                  ><span>And the execution is</span
+                  ><select v-model="route.lifecycle" @change="normalizeRoute(route)">
+                    <option value="unbound">Not started</option>
+                    <option value="active">Running</option>
+                    <option value="terminal">Finished</option>
+                  </select></label
+                >
+                <label class="orchestration-field"
+                  ><span>Then</span
+                  ><select v-model="route.action" @change="normalizeRoute(route)">
+                    <option
+                      v-for="action in actionsFor(route.lifecycle)"
+                      :key="action"
+                      :value="action"
+                    >
+                      {{ actionLabel(action) }}
+                    </option>
+                  </select></label
+                >
+                <label v-if="route.action === 'dispatch'" class="orchestration-field"
+                  ><span>Using response</span
+                  ><select v-model="route.intent" :disabled="route.action !== 'dispatch'">
+                    <option value="">Choose a response…</option>
+                    <option v-for="intent in intents" :key="intent.id" :value="intent.name">
+                      {{ intent.name }}
+                    </option>
+                  </select></label
+                >
+                <div class="route-outcome">
+                  <Icon name="chevron-right" :size="14" />
+                  {{ routeActionHint(route) }}
+                </div>
+              </div>
+              <details class="orchestration-details" :open="route.predicates.length > 0">
+                <summary>
+                  <span>Conditions</span>
+                  <small>{{
+                    route.predicates.length
+                      ? `${route.predicates.length} configured`
+                      : "Always match this event"
+                  }}</small>
+                </summary>
+                <div class="grid gap-2">
+                  <div
+                    v-for="(predicate, predicateIndex) in route.predicates"
+                    :key="predicate.id"
+                    class="predicate-row"
+                  >
+                    <span class="predicate-prefix">Only if</span>
+                    <input
+                      v-model="predicate.pointer"
+                      list="orchestration-pointers"
+                      placeholder="/payload/path"
+                      aria-label="Payload field"
+                    />
+                    <select v-model="predicate.operator" aria-label="Comparison">
+                      <option value="equal">equals</option>
+                      <option value="not_equal">does not equal</option>
+                      <option value="in">is in</option>
+                      <option value="contains">contains</option>
+                      <option value="exists">exists</option>
+                    </select>
+                    <input
+                      v-if="predicate.operator !== 'exists'"
+                      v-model="predicate.valueText"
+                      placeholder='JSON value, e.g. "ready"'
+                      aria-label="Comparison value"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      aria-label="Remove condition"
+                      @click="route.predicates.splice(predicateIndex, 1)"
+                    >
+                      <Icon name="close" :size="14" />
+                    </button>
+                  </div>
+                  <button type="button" class="btn btn-sm w-fit" @click="addPredicate(route)">
+                    <Icon name="plus" :size="14" /> Add condition
+                  </button>
+                </div>
+              </details>
+            </article>
           </div>
-        </header>
-        <pre class="max-h-[32rem] overflow-auto rounded bg-surface-raised p-3 text-xs">{{
-          sourcePreview
-        }}</pre>
+
+          <div v-else-if="tab === 'Intents'" class="grid gap-4">
+            <header class="orchestration-section-heading">
+              <div>
+                <div class="flex items-center gap-1">
+                  <h3>Intents</h3>
+                  <HelpBubble label="About named responses">
+                    <strong>Responses</strong>
+                    <p>
+                      Intents describe how active work responds to an event. Priority decides which
+                      response wins when several match.
+                    </p>
+                  </HelpBubble>
+                </div>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" @click="addIntent">
+                <Icon name="plus" :size="15" />
+                Add intent
+              </button>
+            </header>
+            <section
+              v-if="intents.length === 0"
+              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+            >
+              <strong class="block text-fg">No intents yet</strong>
+              Add an intent before an admission route can pause, restart, or signal an active run.
+            </section>
+            <article
+              v-for="(intent, index) in intents"
+              :key="intent.id"
+              class="orchestration-card intent-card"
+            >
+              <div class="orchestration-card-heading">
+                <div>
+                  <p class="orchestration-eyebrow">Intent {{ index + 1 }}</p>
+                  <strong>{{ intent.name || "Unnamed intent" }}</strong>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm text-danger-fg"
+                  :disabled="intentReferenceCount(intent.name) > 0"
+                  :title="intentRemovalHint(intent.name)"
+                  @click="removeIntent(index)"
+                >
+                  Remove intent
+                </button>
+              </div>
+              <div class="intent-primary-grid">
+                <label class="orchestration-field"
+                  ><span>Response name</span><input v-model="intent.name" placeholder="refresh"
+                /></label>
+                <label class="orchestration-field">
+                  <span>What should happen?</span>
+                  <select v-model="intent.effect">
+                    <option v-for="effect in effects" :key="effect" :value="effect">
+                      {{ effectLabel(effect) }}
+                    </option>
+                  </select>
+                  <small>{{ effectDescription(intent.effect) }}</small>
+                </label>
+                <label class="orchestration-field priority-field">
+                  <span>Priority</span>
+                  <input v-model.number="intent.priority" type="number" />
+                  <small>Higher wins when responses arrive together.</small>
+                </label>
+              </div>
+              <div class="intent-usage">
+                <span :class="intentReferenceCount(intent.name) ? 'is-used' : ''">
+                  {{
+                    intentReferenceCount(intent.name)
+                      ? `Used by ${intentReferenceCount(intent.name)} admission rule${intentReferenceCount(intent.name) === 1 ? "" : "s"}`
+                      : "Not used by an admission rule"
+                  }}
+                </span>
+              </div>
+              <details class="orchestration-details">
+                <summary>
+                  <span>Timing, restart, and event options</span>
+                  <small>{{ intentAdvancedSummary(intent) }}</small>
+                </summary>
+                <div class="advanced-grid">
+                  <label class="orchestration-field">
+                    <span>Coalesce window</span>
+                    <div class="input-with-suffix">
+                      <input v-model.number="intent.coalesce_seconds" min="0" type="number" /><span
+                        >seconds</span
+                      >
+                    </div>
+                    <small
+                      >Wait this long to combine repeated responses. Use 0 for immediate.</small
+                    >
+                  </label>
+                  <label class="orchestration-field">
+                    <span>Stop current epoch</span>
+                    <select v-model="intent.stop">
+                      <option value="cancel">Cancel it</option>
+                      <option value="pause">Pause it</option>
+                      <option value="none">Leave it running</option>
+                    </select>
+                  </label>
+                  <label class="orchestration-field">
+                    <span>Restart from</span>
+                    <select v-model="intent.restart_kind">
+                      <option value="entry">Pipeline entry</option>
+                      <option value="current">Current phase</option>
+                      <option value="member">A specific phase</option>
+                    </select>
+                  </label>
+                  <label v-if="intent.restart_kind === 'member'" class="orchestration-field">
+                    <span>Restart phase</span>
+                    <select v-model="intent.restart_member">
+                      <option value="">Choose a phase…</option>
+                      <option v-for="member in members" :key="member" :value="member">
+                        {{ member }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="orchestration-field">
+                    <span>Subject revision field</span>
+                    <input
+                      v-model="intent.subject_revision_pointer"
+                      list="orchestration-pointers"
+                      placeholder="Optional, e.g. /subject_revision"
+                    />
+                  </label>
+                  <label v-if="intent.effect === 'signal'" class="orchestration-field">
+                    <span>Workflow signal name</span>
+                    <input v-model="intent.signal_name" placeholder="Defaults to response name" />
+                  </label>
+                  <label class="orchestration-check md:col-span-2">
+                    <input v-model="intent.allow_self_originated" type="checkbox" />
+                    <span
+                      ><strong>Accept self-originated events</strong
+                      ><small
+                        >Allow this response to react to an event created by the orchestration
+                        itself.</small
+                      ></span
+                    >
+                  </label>
+                </div>
+              </details>
+            </article>
+          </div>
+
+          <div v-else-if="tab === 'Budgets'" class="grid gap-4">
+            <header class="orchestration-section-heading">
+              <div>
+                <div class="flex items-center gap-1">
+                  <h3>Retry budgets</h3>
+                  <HelpBubble label="About failure policies">
+                    <strong>Failure handling</strong>
+                    <p>
+                      Budgets limit retries for a named failure class and choose what happens when
+                      the limit is reached.
+                    </p>
+                  </HelpBubble>
+                </div>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" @click="addBudget">
+                <Icon name="plus" :size="15" />
+                Add budget
+              </button>
+            </header>
+            <section
+              v-if="budgets.length === 0"
+              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+            >
+              <strong class="block text-fg">No retry budgets yet</strong>
+              Add a budget when a failure class needs bounded attempts or a recovery handoff.
+            </section>
+            <article v-for="(budget, index) in budgets" :key="budget.id" class="orchestration-card">
+              <div class="orchestration-card-heading">
+                <div>
+                  <p class="orchestration-eyebrow">Failure policy {{ index + 1 }}</p>
+                  <strong>{{ budget.name || "Unnamed failure class" }}</strong>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm text-danger-fg"
+                  @click="budgets.splice(index, 1)"
+                >
+                  Remove budget
+                </button>
+              </div>
+              <div class="budget-builder">
+                <span>For</span>
+                <label class="orchestration-field"
+                  ><span>Failure class</span
+                  ><input v-model="budget.name" required placeholder="transient"
+                /></label>
+                <span>allow</span>
+                <label class="orchestration-field budget-attempts"
+                  ><span>Maximum attempts</span
+                  ><input v-model.number="budget.attempts" type="number" min="1" step="1"
+                /></label>
+                <span>then</span>
+                <label class="orchestration-field"
+                  ><span>When attempts are used</span
+                  ><select v-model="budget.exhausted">
+                    <option value="fail">Fail the orchestration</option>
+                    <option value="pause">Pause for review</option>
+                    <option value="terminate">Terminate the orchestration</option>
+                  </select></label
+                >
+              </div>
+              <label class="orchestration-field budget-handoff">
+                <span>Optional recovery phase</span>
+                <select v-model="budget.handoff">
+                  <option value="">No handoff</option>
+                  <option v-for="member in members" :key="member" :value="member">
+                    Continue with {{ member }}
+                  </option>
+                </select>
+                <small>Hand off to a pipeline phase after this failure policy is exhausted.</small>
+              </label>
+            </article>
+          </div>
+
+          <div v-else-if="tab === 'Phase Mappings'" class="grid gap-4">
+            <header class="orchestration-section-heading">
+              <div>
+                <div class="flex items-center gap-1">
+                  <h3>Phase mappings</h3>
+                  <HelpBubble label="About phase mappings">
+                    <strong>Saved phase results</strong>
+                    <p>
+                      Mappings copy selected workflow results into durable orchestration state.
+                      Leave a mapping blank when the phase does not produce that value.
+                    </p>
+                  </HelpBubble>
+                </div>
+              </div>
+            </header>
+            <section
+              v-if="phases.length === 0"
+              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+            >
+              Add a workflow to this pipeline before configuring phase result mappings.
+            </section>
+            <section v-else class="phase-flow" aria-label="Pipeline phases">
+              <article v-for="(phase, index) in phases" :key="phase.member" class="phase-card">
+                <div class="phase-marker" aria-hidden="true">
+                  <span>{{ index + 1 }}</span>
+                </div>
+                <details class="phase-details" :open="phaseMappingCount(phase) > 0 || index === 0">
+                  <summary>
+                    <span>
+                      <strong>{{ phase.member }}</strong>
+                      <small>{{
+                        phaseMappingCount(phase)
+                          ? `${phaseMappingCount(phase)} result fields saved`
+                          : "No result data saved yet"
+                      }}</small>
+                    </span>
+                    <span class="phase-summary-badge"
+                      >{{ phaseMappingCount(phase) }}/{{ resultPointers.length }}</span
+                    >
+                  </summary>
+                  <div class="mapping-grid">
+                    <label
+                      v-for="pointer in resultPointers"
+                      :key="pointer.key"
+                      class="orchestration-field"
+                    >
+                      <span>{{ pointer.label }}</span>
+                      <input
+                        v-model="phase[pointer.key]"
+                        list="orchestration-pointers"
+                        :placeholder="pointer.placeholder"
+                      />
+                      <small>{{ pointer.description }}</small>
+                    </label>
+                  </div>
+                </details>
+              </article>
+            </section>
+          </div>
+
+          <div v-else-if="tab === 'Workspaces'" class="grid gap-4">
+            <header class="orchestration-section-heading">
+              <div>
+                <div class="flex items-center gap-1">
+                  <h3>Workspace continuity</h3>
+                  <HelpBubble label="About orchestration workspaces">
+                    <strong>Working files</strong>
+                    <p>
+                      Workspace leases keep compatible machine-local files available across phases.
+                      Enable them only for phases that need that state.
+                    </p>
+                  </HelpBubble>
+                </div>
+              </div>
+              <div v-if="phases.length" class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-sm" @click="enableAllWorkspaces">
+                  Enable all
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm" @click="disableAllWorkspaces">
+                  Disable all
+                </button>
+              </div>
+            </header>
+            <section
+              v-if="phases.length === 0"
+              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
+            >
+              Add a workflow to this pipeline before configuring phase workspace leases.
+            </section>
+            <section v-else class="workspace-phase-list">
+              <article
+                v-for="phase in phases"
+                :key="phase.member"
+                class="workspace-card"
+                :class="{ 'is-enabled': phase.workspace_enabled }"
+              >
+                <header>
+                  <div class="workspace-card-identity">
+                    <span class="workspace-icon"><Icon name="folder" :size="16" /></span>
+                    <span
+                      ><strong>{{ phase.member }}</strong
+                      ><small>{{ workspaceSummary(phase) }}</small></span
+                    >
+                  </div>
+                  <label class="switch-control">
+                    <input
+                      v-model="phase.workspace_enabled"
+                      type="checkbox"
+                      @change="normalizeWorkspace(phase)"
+                    />
+                    <span aria-hidden="true"></span>
+                    <em>{{ phase.workspace_enabled ? "Enabled" : "Off" }}</em>
+                  </label>
+                </header>
+                <div v-if="phase.workspace_enabled" class="workspace-settings">
+                  <label class="orchestration-field">
+                    <span>Workspace scope</span>
+                    <input v-model="phase.workspace_scope" placeholder="source" />
+                    <small>Phases with the same scope can reuse compatible files.</small>
+                  </label>
+                  <label class="orchestration-field">
+                    <span>Lease duration</span>
+                    <div class="input-with-suffix">
+                      <input
+                        v-model.number="phase.lease_seconds"
+                        type="number"
+                        min="1"
+                        step="1"
+                      /><span>seconds</span>
+                    </div>
+                    <small>How long a worker may retain the local materialization.</small>
+                  </label>
+                  <label class="orchestration-field">
+                    <span>If the workspace is unavailable</span>
+                    <select v-model="phase.recovery">
+                      <option value="replace">Create a replacement</option>
+                      <option value="wait">Wait for it to recover</option>
+                      <option value="fail">Fail this phase</option>
+                    </select>
+                  </label>
+                  <label class="orchestration-check">
+                    <input v-model="phase.reuse" type="checkbox" />
+                    <span
+                      ><strong>Reuse compatible workspace</strong
+                      ><small
+                        >Restore the same durable workspace when the scope and worker match.</small
+                      ></span
+                    >
+                  </label>
+                  <details class="orchestration-details workspace-requirements">
+                    <summary>
+                      <span>Worker requirements</span
+                      ><small>{{
+                        phase.requirementsText === "{}" ? "Any compatible worker" : "Custom labels"
+                      }}</small>
+                    </summary>
+                    <label class="orchestration-field">
+                      <span>Requirements JSON</span>
+                      <input
+                        v-model="phase.requirementsText"
+                        placeholder='{ "capability": "git" }'
+                      />
+                      <small>Advanced worker-selection labels expressed as a JSON object.</small>
+                    </label>
+                  </details>
+                </div>
+              </article>
+            </section>
+          </div>
+
+          <div v-else class="grid gap-4">
+            <header class="orchestration-section-heading">
+              <div class="flex items-center gap-1">
+                <h3>Generated policy</h3>
+                <HelpBubble label="About orchestration preview">
+                  <strong>Advanced policy</strong>
+                  <p>This is the generated REXRAP policy saved with the next pipeline revision.</p>
+                </HelpBubble>
+              </div>
+            </header>
+            <section class="review-summary">
+              <div>
+                <strong>{{ routes.length }}</strong
+                ><span>admission routes</span>
+              </div>
+              <div>
+                <strong>{{ intents.length }}</strong
+                ><span>intents</span>
+              </div>
+              <div>
+                <strong>{{ budgets.length }}</strong
+                ><span>retry budgets</span>
+              </div>
+              <div>
+                <strong>{{ phaseMappingTotal }}</strong
+                ><span>phase mappings</span>
+              </div>
+              <div>
+                <strong>{{ workspaceCount }}</strong
+                ><span>workspaces</span>
+              </div>
+            </section>
+            <pre class="policy-preview">{{ sourcePreview }}</pre>
+          </div>
+          <datalist id="orchestration-events">
+            <option v-for="event in canonicalEvents" :key="event" :value="event" />
+          </datalist>
+          <datalist id="orchestration-pointers">
+            <option v-for="pointer in canonicalPointers" :key="pointer" :value="pointer" />
+          </datalist>
+        </section>
       </div>
-      <datalist id="orchestration-events">
-        <option v-for="event in canonicalEvents" :key="event" :value="event" />
-      </datalist>
-      <datalist id="orchestration-pointers">
-        <option v-for="pointer in canonicalPointers" :key="pointer" :value="pointer" />
-      </datalist>
-      <section v-if="activeTabIssues.length" class="rounded border border-danger bg-danger-bg p-3">
-        <strong class="text-sm text-danger-fg">Fix before saving</strong>
-        <ul class="mt-2 grid gap-1 pl-5 text-sm text-danger-fg">
-          <li v-for="issue in activeTabIssues" :key="issue.message">{{ issue.message }}</li>
-        </ul>
-      </section>
     </template>
 
     <div class="orchestration-actions">
@@ -634,11 +844,36 @@ const scope = ref(existingIngress?.scope ?? "correlations");
 const members = props.pipeline.graph.members.map((member) => member.key);
 const effects: Effect[] = ["terminate", "suspend", "resume", "supersede", "observe", "signal"];
 const resultPointers = [
-  { key: "subject_revision", label: "Subject revision" },
-  { key: "resources", label: "Resources" },
-  { key: "evidence", label: "Evidence" },
-  { key: "failure_class", label: "Failure class" },
-  { key: "correlations", label: "Correlation aliases" },
+  {
+    key: "subject_revision",
+    label: "Subject revision",
+    placeholder: "/subject_revision",
+    description: "Reject stale results when the source object has moved on.",
+  },
+  {
+    key: "resources",
+    label: "Resources",
+    placeholder: "/resources",
+    description: "Keep the resources produced or changed by this phase.",
+  },
+  {
+    key: "evidence",
+    label: "Evidence",
+    placeholder: "/evidence",
+    description: "Retain verification or review evidence for the binding.",
+  },
+  {
+    key: "failure_class",
+    label: "Failure class",
+    placeholder: "/failure_class",
+    description: "Select the failure policy used when this phase fails.",
+  },
+  {
+    key: "correlations",
+    label: "Correlation aliases",
+    placeholder: "/correlations",
+    description: "Add other keys that should address this orchestration.",
+  },
 ] as const;
 
 const routes = reactive<RouteDraft[]>(
@@ -712,6 +947,68 @@ const issueTabs = computed(() =>
   tabs.map((item) => ({ tab: item, count: tabIssueCount(item) })).filter((item) => item.count > 0),
 );
 const sourcePreview = computed(() => renderSource());
+const workspaceCount = computed(() => phases.filter((phase) => phase.workspace_enabled).length);
+const phaseMappingTotal = computed(() =>
+  phases.reduce((total, phase) => total + phaseMappingCount(phase), 0),
+);
+
+function tabTitle(item: Tab): string {
+  const labels: Record<Tab, string> = {
+    "Admission Routes": "Admission routes",
+    Intents: "Intents",
+    Budgets: "Retry budgets",
+    "Phase Mappings": "Phase mappings",
+    Workspaces: "Workspaces",
+    Preview: "Review",
+  };
+  return labels[item];
+}
+
+function tabDomId(item: Tab): string {
+  return `orchestration-${item.toLowerCase().replaceAll(" ", "-")}`;
+}
+
+function tabDescription(item: Tab): string {
+  const descriptions: Record<Tab, string> = {
+    "Admission Routes":
+      "Decide which incoming events start, update, or record a correlated execution.",
+    Intents:
+      "Give active-run responses clear names, outcomes, and priorities so admission rules can reuse them.",
+    Budgets:
+      "Bound recovery attempts by failure class and choose a safe outcome when attempts run out.",
+    "Phase Mappings":
+      "Choose which workflow result fields become durable orchestration state after each phase.",
+    Workspaces:
+      "Keep working files available between selected phases and define what happens when a workspace is unavailable.",
+    Preview:
+      "Check the complete policy and generated REXRAP before saving a new pipeline revision.",
+  };
+  return descriptions[item];
+}
+
+function tabSummary(item: Tab): string {
+  const summaries: Record<Tab, string> = {
+    "Admission Routes": `${String(routes.length)} rule${routes.length === 1 ? "" : "s"}`,
+    Intents: `${String(intents.length)} intent${intents.length === 1 ? "" : "s"}`,
+    Budgets: `${String(budgets.length)} budget${budgets.length === 1 ? "" : "s"}`,
+    "Phase Mappings": `${String(phaseMappingTotal.value)} fields saved`,
+    Workspaces: `${String(workspaceCount.value)} of ${String(phases.length)} enabled`,
+    Preview: issues.value.length ? `${String(issues.value.length)} issues` : "Ready to save",
+  };
+  return summaries[item];
+}
+
+function tabComplete(item: Tab): boolean {
+  if (tabIssueCount(item) > 0) {
+    return false;
+  }
+
+  if (item === "Admission Routes") {
+    return Boolean(scope.value.trim() && routes.length);
+  }
+
+  return item === "Preview" ? issues.value.length === 0 : true;
+}
 
 function actionsFor(lifecycle: IngressLifecycle): IngressAction[] {
   return lifecycle === "unbound"
@@ -719,6 +1016,111 @@ function actionsFor(lifecycle: IngressLifecycle): IngressAction[] {
     : lifecycle === "terminal"
       ? ["requeue", "record"]
       : ["dispatch", "interrupt", "queue", "record"];
+}
+
+function actionLabel(action: IngressAction): string {
+  const labels: Record<IngressAction, string> = {
+    start: "Start a new execution",
+    interrupt: "Interrupt the active run",
+    queue: "Queue for later",
+    record: "Record only",
+    requeue: "Start the next generation",
+    dispatch: "Apply a named response",
+  };
+  return labels[action];
+}
+
+function routeSummary(route: RouteDraft): string {
+  const event = route.event_type || "Unnamed event";
+  const lifecycle = {
+    unbound: "not started",
+    active: "running",
+    terminal: "finished",
+  }[route.lifecycle];
+  return `${event} · ${lifecycle} → ${actionLabel(route.action)}`;
+}
+
+function effectLabel(effect: Effect): string {
+  const labels: Record<Effect, string> = {
+    terminate: "Terminate the execution",
+    suspend: "Suspend active work",
+    resume: "Resume suspended work",
+    supersede: "Replace with a new epoch",
+    observe: "Record without control",
+    signal: "Send a workflow signal",
+  };
+  return labels[effect];
+}
+
+function effectDescription(effect: Effect): string {
+  const descriptions: Record<Effect, string> = {
+    terminate: "Stop the correlated execution permanently.",
+    suspend: "Pause progress until another response resumes it.",
+    resume: "Continue a previously suspended execution.",
+    supersede: "Stop the current epoch and restart from the selected point.",
+    observe: "Save the event while leaving active work unchanged.",
+    signal: "Deliver a named signal to the active workflow.",
+  };
+  return descriptions[effect];
+}
+
+function intentAdvancedSummary(intent: IntentDraft): string {
+  const parts = [
+    intent.coalesce_seconds ? `${String(intent.coalesce_seconds)}s coalesce` : "immediate",
+  ];
+
+  if (intent.restart_kind !== "entry") {
+    parts.push(intent.restart_kind === "current" ? "restart current" : "restart a phase");
+  }
+
+  if (intent.allow_self_originated) {
+    parts.push("self-events allowed");
+  }
+
+  return parts.join(" · ");
+}
+
+function phaseMappingCount(phase: PhaseDraft): number {
+  return resultPointers.filter((pointer) => Boolean(phase[pointer.key])).length;
+}
+
+function workspaceSummary(phase: PhaseDraft): string {
+  if (!phase.workspace_enabled) {
+    return "No files retained for this phase";
+  }
+
+  return `${phase.workspace_scope || "Scope required"} · ${formatLease(phase.lease_seconds)} · ${phase.reuse ? "reuse" : "fresh materialization"}`;
+}
+
+function formatLease(seconds: number): string {
+  if (seconds >= 3600 && seconds % 3600 === 0) {
+    return `${String(seconds / 3600)}h lease`;
+  }
+
+  if (seconds >= 60 && seconds % 60 === 0) {
+    return `${String(seconds / 60)}m lease`;
+  }
+
+  return `${String(seconds)}s lease`;
+}
+
+function normalizeWorkspace(phase: PhaseDraft): void {
+  if (phase.workspace_enabled && !phase.workspace_scope.trim()) {
+    phase.workspace_scope = "orchestration-workspace";
+  }
+}
+
+function enableAllWorkspaces(): void {
+  for (const phase of phases) {
+    phase.workspace_enabled = true;
+    normalizeWorkspace(phase);
+  }
+}
+
+function disableAllWorkspaces(): void {
+  for (const phase of phases) {
+    phase.workspace_enabled = false;
+  }
 }
 
 function normalizeRoute(route: RouteDraft): void {
@@ -1185,6 +1587,12 @@ function renderSource(): string {
 </script>
 
 <style scoped>
+.orchestration-editor {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
 .orchestration-status,
 .orchestration-errors,
 .orchestration-disable-confirm {
@@ -1223,6 +1631,26 @@ function renderSource(): string {
   font-weight: 700;
 }
 
+.orchestration-status-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.orchestration-status-metrics span {
+  border: 1px solid color-mix(in srgb, var(--success-fg) 16%, var(--border-subtle));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  padding: 3px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.orchestration-status-metrics strong {
+  color: var(--text);
+}
+
 .orchestration-status p:not(.orchestration-eyebrow),
 .orchestration-section-heading p,
 .orchestration-errors p,
@@ -1254,35 +1682,133 @@ function renderSource(): string {
   font-size: 13px;
 }
 
-.orchestration-tabs {
+.orchestration-workbench {
+  display: grid;
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--surface);
+}
+
+.orchestration-steps {
   display: flex;
+  flex-direction: column;
   gap: 2px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  padding: var(--space-3);
 }
 
-.orchestration-tabs button {
-  display: inline-flex;
-  flex: 0 0 auto;
+.orchestration-steps button {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
   background: transparent;
-  padding: 9px var(--space-3);
+  padding: 10px;
   color: var(--text-muted);
-  font-size: 13px;
+  text-align: left;
 }
 
-.orchestration-tabs button.is-active {
-  border-bottom-color: var(--accent);
+.orchestration-steps button:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface);
+}
+
+.orchestration-steps button.is-active {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-subtle));
+  background: var(--surface);
+  box-shadow: inset 3px 0 0 var(--accent);
   color: var(--text);
+}
+
+.orchestration-steps button.has-errors {
+  color: var(--danger-fg);
+}
+
+.orchestration-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
   font-weight: 700;
 }
 
-.orchestration-tabs button.has-errors {
+.is-active .orchestration-step-number {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast, white);
+}
+
+.orchestration-step-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.orchestration-step-copy strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.orchestration-step-copy small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestration-stage {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: clamp(16px, 2.4vw, 28px);
+}
+
+.orchestration-stage-header {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-faint);
+}
+
+.orchestration-stage-header h2 {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.orchestration-stage-header > p:last-child {
+  max-width: 720px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.orchestration-inline-errors {
+  border: 1px solid color-mix(in srgb, var(--danger-fg) 32%, var(--border));
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  padding: var(--space-3);
   color: var(--danger-fg);
+  font-size: 12px;
+}
+
+.orchestration-inline-errors ul {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding-left: 18px;
 }
 
 .orchestration-tab-count {
@@ -1306,13 +1832,18 @@ function renderSource(): string {
   gap: var(--space-3);
 }
 
+.orchestration-section-heading {
+  align-items: center;
+}
+
 .orchestration-card {
   display: grid;
   gap: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: var(--space-3);
+  background: var(--surface);
+  padding: var(--space-4);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
 }
 
 .orchestration-card-heading {
@@ -1325,12 +1856,488 @@ function renderSource(): string {
   font-size: 13px;
 }
 
+.orchestration-scope-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.8fr);
+  align-items: center;
+  gap: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-subtle));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  padding: var(--space-4);
+}
+
+.orchestration-scope-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.orchestration-scope-card p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.orchestration-field {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.orchestration-field > small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.route-builder {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(120px, 0.8fr) minmax(180px, 1.25fr);
+  gap: var(--space-3);
+}
+
+.route-builder:has(> label:nth-of-type(4)) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.route-outcome {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 7px 9px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.orchestration-details {
+  overflow: hidden;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.orchestration-details > summary,
+.phase-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  list-style: none;
+}
+
+.orchestration-details > summary::-webkit-details-marker,
+.phase-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.orchestration-details > summary::before,
+.phase-details > summary::before {
+  content: "+";
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.orchestration-details[open] > summary::before,
+.phase-details[open] > summary::before {
+  content: "−";
+}
+
+.orchestration-details > summary > span:first-of-type,
+.phase-details > summary > span:first-of-type {
+  margin-right: auto;
+}
+
+.orchestration-details > summary small,
+.phase-details > summary small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.orchestration-details > div,
+.orchestration-details > label {
+  margin: 0 var(--space-3) var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-faint);
+}
+
+.predicate-row {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr) minmax(120px, 0.65fr) minmax(130px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.predicate-prefix,
+.budget-builder > span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.intent-primary-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(220px, 1.4fr) minmax(100px, 0.5fr);
+  gap: var(--space-3);
+}
+
+.intent-usage {
+  display: flex;
+}
+
+.intent-usage span {
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.intent-usage span.is-used {
+  background: color-mix(in srgb, var(--success-bg) 64%, var(--surface));
+  color: var(--success-fg);
+}
+
+.advanced-grid,
+.mapping-grid,
+.workspace-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.input-with-suffix {
+  display: flex;
+  min-width: 0;
+}
+
+.input-with-suffix input {
+  min-width: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.input-with-suffix span {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface-subtle);
+  padding: 0 9px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.orchestration-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.orchestration-check input {
+  margin-top: 2px;
+}
+
+.orchestration-check > span {
+  display: grid;
+  gap: 2px;
+}
+
+.orchestration-check small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.budget-builder {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr) auto 92px auto minmax(190px, 1.2fr);
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.budget-builder > span {
+  padding-bottom: 9px;
+}
+
+.budget-handoff {
+  max-width: 420px;
+}
+
+.phase-flow {
+  display: grid;
+}
+
+.phase-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.phase-marker {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.phase-marker::after {
+  position: absolute;
+  top: 30px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-subtle);
+  content: "";
+}
+
+.phase-card:last-child .phase-marker::after {
+  display: none;
+}
+
+.phase-marker span {
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.phase-details {
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.phase-details > summary > span:first-of-type {
+  display: grid;
+  min-width: 0;
+}
+
+.phase-details > summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-summary-badge {
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  padding: 3px 7px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.mapping-grid {
+  border-top: 1px solid var(--border-faint);
+  padding: var(--space-4);
+}
+
+.workspace-phase-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.workspace-card {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.workspace-card.is-enabled {
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border-subtle));
+  background: var(--surface);
+}
+
+.workspace-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.workspace-card-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-card-identity > span:last-child {
+  display: grid;
+  min-width: 0;
+}
+
+.workspace-card-identity strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-card-identity small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.workspace-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.workspace-card.is-enabled .workspace-icon {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent-text);
+}
+
+.workspace-settings {
+  border-top: 1px solid var(--border-faint);
+  padding: var(--space-4);
+}
+
+.workspace-requirements {
+  grid-column: 1 / -1;
+}
+
+.switch-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.switch-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.switch-control > span {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  transition: background 120ms ease;
+}
+
+.switch-control > span::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface);
+  content: "";
+  transition: transform 120ms ease;
+}
+
+.switch-control input:checked + span {
+  background: var(--accent);
+}
+
+.switch-control input:checked + span::after {
+  transform: translateX(14px);
+}
+
+.switch-control input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.switch-control em {
+  min-width: 40px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.review-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.review-summary > div {
+  display: grid;
+  gap: 2px;
+  border-right: 1px solid var(--border-faint);
+  padding: var(--space-3);
+}
+
+.review-summary > div:last-child {
+  border-right: 0;
+}
+
+.review-summary strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.review-summary span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.policy-preview {
+  max-height: 32rem;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: var(--space-4);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 .orchestration-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
   border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
   padding-top: var(--space-3);
 }
 
@@ -1338,7 +2345,40 @@ function renderSource(): string {
   margin-right: auto;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 920px) {
+  .orchestration-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .orchestration-steps {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .orchestration-steps button {
+    flex: 0 0 150px;
+  }
+
+  .orchestration-steps button.is-active {
+    box-shadow: inset 0 -3px 0 var(--accent);
+  }
+
+  .review-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .review-summary > div:nth-child(3) {
+    border-right: 0;
+  }
+
+  .review-summary > div:nth-child(n + 4) {
+    border-top: 1px solid var(--border-faint);
+  }
+}
+
+@media (max-width: 700px) {
   .orchestration-status,
   .orchestration-errors,
   .orchestration-disable-confirm,
@@ -1349,6 +2389,68 @@ function renderSource(): string {
   .orchestration-status > button,
   .orchestration-section-heading > button {
     width: 100%;
+  }
+
+  .orchestration-scope-card,
+  .route-builder,
+  .route-builder:has(> label:nth-of-type(4)),
+  .intent-primary-grid,
+  .advanced-grid,
+  .mapping-grid,
+  .workspace-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .predicate-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .predicate-prefix {
+    grid-column: 1 / -1;
+  }
+
+  .predicate-row > input,
+  .predicate-row > select {
+    grid-column: 1;
+  }
+
+  .predicate-row > button {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .budget-builder {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .budget-builder > span {
+    display: none;
+  }
+
+  .workspace-card > header {
+    align-items: flex-start;
+  }
+
+  .workspace-card-identity small {
+    white-space: normal;
+  }
+
+  .review-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-summary > div,
+  .review-summary > div:nth-child(3) {
+    border-right: 1px solid var(--border-faint);
+    border-top: 1px solid var(--border-faint);
+  }
+
+  .review-summary > div:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .review-summary > div:nth-child(-n + 2) {
+    border-top: 0;
   }
 
   .orchestration-actions {
