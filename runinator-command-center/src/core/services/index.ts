@@ -57,6 +57,7 @@ export {
   missionRecipeFromPipeline,
   missionRecipePreset,
   saveMissionRecipe,
+  switchMissionAgentRuntime,
   validateMissionRecipe,
 } from "./mission-recipes";
 export {

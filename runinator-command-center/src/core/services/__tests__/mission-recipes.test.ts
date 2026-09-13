@@ -3,6 +3,7 @@ import {
   missionPhaseSource,
   missionRecipeFromPipeline,
   missionRecipePreset,
+  switchMissionAgentRuntime,
   validateMissionRecipe,
 } from "../mission-recipes";
 
@@ -58,6 +59,30 @@ describe("mission recipe authoring", () => {
     expect(review.actionParameters.sandbox).toBe("read_only");
     expect(missionPhaseSource(draft, review)).toContain('session_slot: "review"');
     expect(missionPhaseSource(draft, review)).toContain("output_schema:");
+  });
+
+  it("switches agent runtimes without discarding recipe edits", () => {
+    const draft = missionRecipePreset("coding");
+    draft.name = "Release readiness";
+    draft.key = "release_readiness";
+    draft.inputs[0].description = "A carefully edited objective.";
+    draft.phases[1].prompt = "Use the customized implementation prompt.";
+
+    const codex = switchMissionAgentRuntime(draft, "codex");
+    const implement = codex.phases.find((phase) => phase.id === "implement")!;
+
+    expect(codex.name).toBe("Release readiness");
+    expect(codex.key).toBe("release_readiness");
+    expect(codex.inputs[0].description).toBe("A carefully edited objective.");
+    expect(implement.prompt).toBe("Use the customized implementation prompt.");
+    expect(implement.action).toBe("codex");
+    expect(implement.profile).toBe("codex");
+    expect(implement.actionParameters.sandbox).toBe("workspace_write");
+
+    const claude = switchMissionAgentRuntime(codex, "claude");
+    expect(claude.name).toBe("Release readiness");
+    expect(claude.phases[1].action).toBe("claude_code");
+    expect(claude.phases[1].profile).toBe("claude");
   });
 
   it("migrates version one mission drafts to Claude", () => {

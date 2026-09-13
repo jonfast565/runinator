@@ -1,6 +1,6 @@
 <template>
   <Modal
-    title="Start a mission"
+    title="New mission"
     description="Recipe inputs are recorded before work begins, so every phase can be audited and resumed safely."
     width="min(720px, 100%)"
     @close="emit('close')"
@@ -18,7 +18,7 @@
               {{ recipeDescription }}
             </HelpBubble></span
           >
-          <select v-model="pipelineId" class="input" required>
+          <select v-model="pipelineId" class="input" required autofocus>
             <option value="" disabled>Choose a mission recipe…</option>
             <option
               v-for="pipeline in pipelines"
@@ -29,6 +29,17 @@
             </option>
           </select>
         </label>
+        <div v-if="selectedPipeline" class="mission-recipe-summary">
+          <div>
+            <strong>{{ selectedPipeline.name }}</strong>
+            <p>{{ recipeDescription }}</p>
+          </div>
+          <span v-if="recipe"
+            >{{ recipe.phases.length }} phase{{ recipe.phases.length === 1 ? "" : "s" }} · up to
+            {{ recipe.maxEpochs }} epochs</span
+          >
+          <span v-else>Reusable mission recipe</span>
+        </div>
       </section>
 
       <section v-if="recipe" class="mission-start-section">
@@ -36,16 +47,32 @@
           <p class="mission-start-kicker">2 · Provide inputs</p>
           <h3>Complete this recipe's launch contract</h3>
         </div>
-        <label v-for="input in recipe.inputs" :key="input.path" class="field-label">
+        <label
+          v-for="input in recipe.inputs"
+          :key="input.path"
+          class="field-label"
+          :class="{ 'mission-boolean-field': input.kind === 'boolean' }"
+        >
           <span>{{ input.label }}</span>
           <input
-            v-if="input.kind !== 'boolean'"
+            v-if="input.kind !== 'boolean' && input.kind !== 'any'"
             v-model="fieldValues[input.path]"
             class="input"
             :type="input.kind === 'integer' || input.kind === 'number' ? 'number' : 'text'"
+            :step="input.kind === 'integer' ? 1 : input.kind === 'number' ? 'any' : undefined"
             :required="input.required"
             :placeholder="input.description"
+            :autocomplete="input.path.endsWith('.repository') ? 'url' : 'off'"
           />
+          <textarea
+            v-else-if="input.kind === 'any'"
+            class="input min-h-24 font-mono text-xs"
+            :value="fieldTextValue(input.path)"
+            :required="input.required"
+            :placeholder="input.description || 'Enter a JSON value'"
+            spellcheck="false"
+            @input="updateFieldText(input.path, $event)"
+          ></textarea>
           <input v-else v-model="fieldValues[input.path]" type="checkbox" />
           <small v-if="input.description" class="text-fg-muted">{{ input.description }}</small>
         </label>
@@ -128,12 +155,19 @@
         ></textarea>
       </details>
 
-      <p v-if="visibleError" class="error m-0 text-sm">{{ visibleError }}</p>
+      <p v-if="visibleError" class="error m-0 text-sm" role="alert">{{ visibleError }}</p>
     </form>
 
     <template #actions>
-      <Button variant="ghost" @click="emit('close')">Cancel</Button>
-      <Button variant="primary" form="start-mission" type="submit" icon="runs" :loading="starting">
+      <Button variant="ghost" :disabled="starting" @click="emit('close')">Cancel</Button>
+      <Button
+        variant="primary"
+        form="start-mission"
+        type="submit"
+        icon="runs"
+        :loading="starting"
+        :disabled="!canStart"
+      >
         Start mission
       </Button>
     </template>
@@ -186,6 +220,24 @@ const recipeDescription = computed(
   () => selectedPipeline.value?.description ?? "Run the selected reusable mission recipe.",
 );
 const visibleError = computed(() => advancedPayloadError.value ?? props.error);
+const canStart = computed(() => {
+  if (!selectedPipeline.value?.id) {
+    return false;
+  }
+
+  if (!recipe.value) {
+    return Boolean(goal.value && repository.value && revision.value);
+  }
+
+  return recipe.value.inputs.every((input) => {
+    if (!input.required) {
+      return true;
+    }
+
+    const value = fieldValues.value[input.path];
+    return typeof value !== "string" || value.trim().length > 0;
+  });
+});
 
 watch(
   () => props.pipelines,
@@ -256,6 +308,15 @@ function initializeFields(): void {
       return [input.path, value];
     }),
   );
+}
+
+function fieldTextValue(path: string): string {
+  const value = fieldValues.value[path];
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function updateFieldText(path: string, event: Event): void {
+  fieldValues.value[path] = (event.target as HTMLTextAreaElement).value;
 }
 
 function applyFieldValues(base: JsonRecord): JsonRecord {
@@ -334,6 +395,51 @@ function parseAdditionalParameters(): JsonRecord {
   padding: 0.85rem;
   background: var(--color-bg-subtle);
 }
+.mission-recipe-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 0.65rem;
+}
+.mission-recipe-summary div {
+  min-width: 0;
+}
+.mission-recipe-summary strong {
+  color: var(--color-fg);
+  font-size: 0.78rem;
+}
+.mission-recipe-summary p {
+  margin: 0.15rem 0 0;
+  color: var(--color-fg-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.mission-recipe-summary > span {
+  flex: none;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  color: var(--color-fg-muted);
+  background: var(--color-bg-subtle);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.mission-boolean-field {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+.mission-boolean-field > span {
+  grid-column: 2;
+  grid-row: 1;
+}
+.mission-boolean-field > input {
+  grid-column: 1;
+  grid-row: 1;
+}
+.mission-boolean-field > small {
+  grid-column: 2;
+}
 .mission-start-kicker {
   margin: 0;
   color: var(--color-accent-text);
@@ -378,6 +484,9 @@ function parseAdditionalParameters(): JsonRecord {
 @media (max-width: 600px) {
   .mission-source-grid {
     grid-template-columns: 1fr;
+  }
+  .mission-recipe-summary {
+    flex-direction: column;
   }
 }
 </style>

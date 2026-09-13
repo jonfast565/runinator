@@ -1,6 +1,7 @@
 <template>
   <Modal
-    title="Mission recipe builder"
+    :title="initial ? 'Edit recipe' : 'New recipe'"
+    description="Configure reusable inputs and bounded phases. Saving creates the recipe; it does not start a mission."
     width="min(980px, 100%)"
     :close-on-backdrop="false"
     @close="emit('close')"
@@ -10,11 +11,12 @@
         v-for="(label, index) in steps"
         :key="label"
         type="button"
-        :class="{ 'is-active': step === index }"
+        :class="{ 'is-active': step === index, 'is-complete': step > index }"
+        :aria-current="step === index ? 'step' : undefined"
         @click="step = index"
       >
-        <span>{{ index + 1 }}</span
-        >{{ label }}
+        <span aria-hidden="true">{{ step > index ? "✓" : index + 1 }}</span
+        ><span>{{ label }}</span>
       </button>
     </div>
 
@@ -28,6 +30,7 @@
             :key="preset.id"
             type="button"
             :class="{ selected: draft.preset === preset.id }"
+            :aria-pressed="draft.preset === preset.id"
             @click="selectPreset(preset.id)"
           >
             <strong>{{ preset.label }}</strong
@@ -43,7 +46,8 @@
         >
         <div class="grid gap-3 md:grid-cols-2">
           <label class="field-label"
-            ><span>Name</span><input v-model.trim="draft.name" class="input" required
+            ><span>Name</span
+            ><input v-model.trim="draft.name" class="input" :autofocus="!initial" required
           /></label>
           <label class="field-label"
             ><span>Key</span><input v-model.trim="draft.key" class="input" required
@@ -299,13 +303,22 @@
         </ul>
         <p v-else class="success-note">The recipe is ready to compile and save atomically.</p>
       </section>
+      <p v-if="currentStepIssue" class="recipe-step-issue" role="status">
+        {{ currentStepIssue }}
+      </p>
       <p v-if="error" class="error m-0">{{ error }}</p>
     </form>
 
     <template #actions>
-      <Button variant="ghost" @click="emit('close')">Cancel</Button>
-      <Button v-if="step > 0" @click="step -= 1">Back</Button>
-      <Button v-if="step < steps.length - 1" variant="primary" @click="step += 1">Next</Button>
+      <Button variant="ghost" :disabled="saving" @click="emit('close')">Cancel</Button>
+      <Button v-if="step > 0" :disabled="saving" @click="step -= 1">Back</Button>
+      <Button
+        v-if="step < steps.length - 1"
+        variant="primary"
+        :disabled="!canContinue || saving"
+        @click="step += 1"
+        >Next</Button
+      >
       <Button
         v-else
         form="mission-recipe-form"
@@ -329,7 +342,11 @@ import type {
   MissionPresetId,
   MissionRecipeDraft,
 } from "../../../core/services";
-import { missionRecipePreset, validateMissionRecipe } from "../../../core/services";
+import {
+  missionRecipePreset,
+  switchMissionAgentRuntime,
+  validateMissionRecipe,
+} from "../../../core/services";
 import Button from "../shared/Button.vue";
 import Modal from "../shared/Modal.vue";
 
@@ -418,6 +435,27 @@ const issues = computed(() => {
 const phaseProviders = computed(() =>
   props.providers.filter((provider) => provider.actions.some((action) => !action.pure)),
 );
+const currentStepIssue = computed(() => {
+  if (step.value === 0) {
+    if (!draft.value.name.trim() || !draft.value.key.trim() || !draft.value.namespace.trim()) {
+      return "Complete the required recipe details to continue.";
+    }
+
+    if (!Number.isInteger(draft.value.maxEpochs) || draft.value.maxEpochs < 1) {
+      return "Maximum epochs must be a positive whole number.";
+    }
+  }
+
+  if (
+    step.value === 1 &&
+    draft.value.inputs.some((input) => !input.path.trim() || !input.label.trim())
+  ) {
+    return "Every launch input needs a path and label.";
+  }
+
+  return null;
+});
+const canContinue = computed(() => currentStepIssue.value === null);
 
 function selectPreset(id: MissionPresetId): void {
   draft.value = missionRecipePreset(id, draft.value.agentRuntime);
@@ -425,7 +463,7 @@ function selectPreset(id: MissionPresetId): void {
 
 function selectAgentRuntime(event: Event): void {
   const runtime = (event.target as HTMLSelectElement).value as MissionAgentRuntime;
-  draft.value = missionRecipePreset(draft.value.preset, runtime);
+  draft.value = switchMissionAgentRuntime(draft.value, runtime);
 }
 
 function addInput(): void {
@@ -528,9 +566,14 @@ function submit(): void {
 
 <style scoped>
 .recipe-steps {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 0.35rem;
+  padding-bottom: 0.15rem;
+  background: var(--color-surface);
 }
 .recipe-steps button {
   display: flex;
@@ -541,6 +584,9 @@ function submit(): void {
   padding: 0.55rem;
   background: var(--color-bg-subtle);
   color: var(--color-fg-muted);
+}
+.recipe-steps button.is-complete {
+  color: var(--color-success-text);
 }
 .recipe-steps button.is-active {
   background: var(--color-accent-muted);
@@ -553,7 +599,7 @@ function submit(): void {
   gap: 0.85rem;
 }
 .recipe-section {
-  min-height: 30rem;
+  min-height: min(30rem, 60dvh);
 }
 .recipe-section h3,
 .recipe-section p {
@@ -639,11 +685,30 @@ function submit(): void {
 .success-note {
   color: var(--color-success-text);
 }
+.recipe-step-issue {
+  margin: 0;
+  color: var(--color-danger-text);
+  font-size: 0.75rem;
+}
 @media (max-width: 700px) {
-  .recipe-steps,
   .preset-grid,
   .review-grid {
     grid-template-columns: 1fr;
+  }
+  .recipe-steps button {
+    align-items: center;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding-inline: 0.25rem;
+    font-size: 0.7rem;
+  }
+  .recipe-section {
+    min-height: 0;
+  }
+  .section-heading,
+  .phase-card-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

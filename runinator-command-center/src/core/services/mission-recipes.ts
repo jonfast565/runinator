@@ -174,6 +174,40 @@ export function missionRecipePreset(
   );
 }
 
+export function switchMissionAgentRuntime(
+  draft: MissionRecipeDraft,
+  agentRuntime: MissionAgentRuntime,
+): MissionRecipeDraft {
+  const next = structuredClone(draft);
+
+  if (next.agentRuntime === agentRuntime) {
+    return next;
+  }
+
+  const previousAction = next.agentRuntime === "codex" ? "codex" : "claude_code";
+  next.agentRuntime = agentRuntime;
+
+  for (const phase of next.phases) {
+    if (phase.provider !== "ai-command" || phase.action !== previousAction) {
+      continue;
+    }
+
+    if (agentRuntime === "codex") {
+      phase.action = "codex";
+      phase.profile = "codex";
+      phase.actionParameters = {
+        sandbox: ["implement", "investigate"].includes(phase.id) ? "workspace_write" : "read_only",
+      };
+    } else {
+      phase.action = "claude_code";
+      phase.profile = "claude";
+      phase.actionParameters = { max_turns: 6, permission_mode: "dontAsk" };
+    }
+  }
+
+  return next;
+}
+
 export function missionRecipeFromPipeline(pipeline: Pipeline): MissionRecipeDraft | null {
   const value = pipeline.metadata.mission_authoring;
 
@@ -186,11 +220,14 @@ export function missionRecipeFromPipeline(pipeline: Pipeline): MissionRecipeDraf
   if (![1, 2].includes(Number(record.schemaVersion)) || !Array.isArray(record.phases)) {
     return null;
   }
+
   const draft = structuredClone(value) as unknown as MissionRecipeDraft;
+
   if (record.schemaVersion === 1) {
     draft.schemaVersion = 2;
     draft.agentRuntime = "claude";
   }
+
   return draft;
 }
 
@@ -361,6 +398,7 @@ export function missionPhaseSource(draft: MissionRecipeDraft, phase: MissionPhas
     parameters.role ??= phase.role;
     parameters.mission_mcp ??= true;
     parameters.mission_id ??= "=params.orchestration.binding_id";
+
     if (phase.action === "codex") {
       parameters.session_slot ??= phase.id;
       parameters.output_schema ??=
@@ -644,21 +682,26 @@ function withAgentRuntime(
   agentRuntime: MissionAgentRuntime,
 ): MissionRecipeDraft {
   draft.agentRuntime = agentRuntime;
+
   if (agentRuntime === "claude") {
     return draft;
   }
+
   draft.key = `codex_${draft.key}`;
   draft.name = `Codex ${draft.name.toLowerCase()}`;
+
   for (const phase of draft.phases) {
     if (phase.provider !== "ai-command" || phase.action !== "claude_code") {
       continue;
     }
+
     phase.action = "codex";
     phase.profile = "codex";
     phase.actionParameters = {
       sandbox: ["implement", "investigate"].includes(phase.id) ? "workspace_write" : "read_only",
     };
   }
+
   return draft;
 }
 
