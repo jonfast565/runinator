@@ -50,6 +50,16 @@ pub struct ActionMetadata {
     /// Delivery contract used when an effect is scoped to a correlated orchestration binding.
     #[serde(default)]
     pub delivery_semantics: DeliverySemantics,
+    /// Optional authoring hints for actions that drive an autonomous mission phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentActionMetadata>,
+}
+
+/// Catalog-declared semantics used by mission authoring without coupling clients to a provider.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentActionMetadata {
+    pub prompt_parameter: String,
+    pub response_text_pointer: String,
 }
 
 impl ActionMetadata {
@@ -61,6 +71,7 @@ impl ActionMetadata {
             results: Vec::new(),
             pure: false,
             delivery_semantics: DeliverySemantics::AtLeastOnce,
+            agent: None,
         }
     }
 
@@ -71,6 +82,18 @@ impl ActionMetadata {
 
     pub fn with_results(mut self, results: Vec<ResultMetadata>) -> Self {
         self.results = results;
+        self
+    }
+
+    pub fn as_agent(
+        mut self,
+        prompt_parameter: impl Into<String>,
+        response_text_pointer: impl Into<String>,
+    ) -> Self {
+        self.agent = Some(AgentActionMetadata {
+            prompt_parameter: prompt_parameter.into(),
+            response_text_pointer: response_text_pointer.into(),
+        });
         self
     }
 

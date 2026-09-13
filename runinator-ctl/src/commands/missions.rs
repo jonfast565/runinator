@@ -1,4 +1,4 @@
-//! Narrow, orchestration-backed controls intended for harnessed coding and research missions.
+//! Narrow, orchestration-backed controls for harnessed mission recipes.
 
 use super::*;
 
@@ -12,7 +12,6 @@ pub(super) async fn missions(
     match command {
         MissionCommands::Start {
             pipeline,
-            kind,
             correlation,
             json_file,
             event_id,
@@ -35,13 +34,6 @@ pub(super) async fn missions(
                     "missions start requires a pipeline whose ingress scope starts with 'mission.'",
                 ));
             }
-            let expected_scope = format!("mission.{}", kind.as_str());
-            if scope != expected_scope {
-                return Err(err(format!(
-                    "missions start kind '{}' requires ingress scope '{expected_scope}', found '{scope}'",
-                    kind.as_str(),
-                )));
-            }
             let mut payload = params::load_json_file(json_file)?;
             let Some(payload) = payload.as_object_mut() else {
                 return Err(err("mission input JSON must be an object"));
@@ -53,8 +45,13 @@ pub(super) async fn missions(
                     _ => None,
                 })
                 .unwrap_or_default();
-            validate_mission_input(payload, &mission)?;
-            mission.insert("kind".into(), Value::String(kind.as_str().into()));
+            // Older starter recipes required `mission.kind`. Derive it generically from their
+            // mission scope; builder-authored recipes carry their own versioned input contract.
+            if pipeline.metadata.get("mission_authoring").is_none() {
+                mission.entry("kind").or_insert_with(|| {
+                    Value::String(scope.trim_start_matches("mission.").to_string())
+                });
+            }
             mission.insert("correlation_key".into(), Value::String(correlation.clone()));
             mission.insert("requested_by".into(), Value::String("runinatorctl".into()));
             payload.insert("mission".into(), Value::Object(mission));
@@ -72,7 +69,7 @@ pub(super) async fn missions(
                         payload: Value::Object(payload.clone()),
                         provenance: json!({
                             "origin": "runinatorctl",
-                            "mission_kind": kind.as_str(),
+                            "mission_scope": scope,
                         }),
                     },
                 )
@@ -84,12 +81,7 @@ pub(super) async fn missions(
                 .orchestration_binding_id
                 .as_deref()
                 .unwrap_or("pending reducer admission");
-            println!(
-                "started {} mission {} [{}]",
-                kind.as_str(),
-                binding,
-                event_id
-            );
+            println!("started mission {binding} [{event_id}]");
             Ok(())
         }
         MissionCommands::List { status, limit } => {
@@ -199,36 +191,6 @@ pub(super) async fn missions(
             Ok(())
         }
     }
-}
-
-fn validate_mission_input(
-    payload: &runinator_models::value::Map,
-    mission: &runinator_models::value::Map,
-) -> Result<()> {
-    let goal = payload
-        .get("request")
-        .and_then(Value::as_object)
-        .and_then(|request| request.get("goal"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    if goal.is_empty() {
-        return Err(err("mission input requires a non-empty request.goal"));
-    }
-    let source = mission.get("source").and_then(Value::as_object);
-    for field in ["repository", "revision"] {
-        let value = source
-            .and_then(|source| source.get(field))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or_default();
-        if value.is_empty() {
-            return Err(err(format!(
-                "mission input requires a non-empty mission.source.{field}"
-            )));
-        }
-    }
-    Ok(())
 }
 
 async fn mission_binding(

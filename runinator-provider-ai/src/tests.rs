@@ -6,6 +6,19 @@ fn claude_code_defaults_to_opus_five() {
 }
 
 #[test]
+fn claude_code_advertises_agent_authoring_semantics() {
+    let metadata = AiCommandProvider.metadata();
+    let action = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "claude_code")
+        .unwrap();
+    let agent = action.agent.as_ref().unwrap();
+    assert_eq!(agent.prompt_parameter, "prompt");
+    assert_eq!(agent.response_text_pointer, "/response/result");
+}
+
+#[test]
 fn test_ai_command_provider_execution() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {

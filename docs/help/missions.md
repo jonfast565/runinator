@@ -1,6 +1,7 @@
 # AI missions
 
-Runinator ships two bounded Claude Code mission recipes:
+Runinator missions are reusable, builder-authored orchestration recipes. Command Center includes
+two editable starting presets:
 
 - `runinator.missions.coding_mission` implements, independently reviews, verifies, and summarizes
   a code change.
@@ -25,10 +26,10 @@ The setup helper validates both packs, creates the `claude` execution-profile de
 does not exist, and installs both mission pipelines. It does not deploy the cluster, sign in to
 Claude, approve credentials, or start billable model work.
 
-In Command Center, open **Missions** and choose **Install starter missions**. This explicitly
-installs the embedded coding and research/report recipes together with the `claude` profile
-definition. Existing definitions are preserved. The button remains available when any required
-starter item is missing.
+In Command Center, open **Missions** and choose **New recipe**. Start blank or seed the builder with
+the Coding or Research/report preset, then edit its typed inputs, phase graph, provider actions,
+prompts, workspace policy, routes, and execution bound. Saving compiles the generated workflows and
+ordinary `mission.*` pipeline in one transaction; it does not start billable work.
 
 For a local supervisor stack:
 
@@ -112,7 +113,6 @@ Start a coding mission:
 
 ```bash
 runinatorctl missions start runinator.missions.coding_mission \
-  --kind coding \
   --correlation coding-display-name-validation \
   --json-file mission.json
 ```
@@ -121,7 +121,6 @@ Or start a research/report mission from the same input shape:
 
 ```bash
 runinatorctl missions start runinator.missions.research_report_mission \
-  --kind research-report \
   --correlation research-display-name-validation \
   --json-file mission.json
 ```
@@ -175,9 +174,9 @@ only the current mission, read its evidence, and submit its declared lifecycle i
 
 ## Troubleshooting
 
-- **No mission recipes appear:** rerun `bash scripts/setup-ai-missions.sh` against the same API URL
-  used by Command Center, or choose **Install starter missions** on the Missions page. Packs are
-  installed explicitly and are not imported by Kubernetes deployment.
+- **No mission recipes appear:** choose **New recipe** in Command Center and save a preset, or rerun
+  `bash scripts/setup-ai-missions.sh` against the same API URL. Packs are installed explicitly and
+  are not imported by Kubernetes deployment.
 - **The profile is pending or unavailable:** keep the desktop agent running, approve the current
   profile digest, allow macOS Keychain access, and verify `claude` is logged in locally.
 - **Checkout fails:** use a reachable HTTPS or SSH URL and make its credentials available to the

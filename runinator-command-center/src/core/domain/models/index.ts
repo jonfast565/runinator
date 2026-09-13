@@ -199,6 +199,7 @@ export type { RuninatorField, RuninatorType } from "./provider/runinator-type";
 export { asRuninatorType } from "./provider/runinator-type";
 export type {
   ActionMetadata,
+  AgentActionMetadata,
   ActionParameterMetadata,
   ActionResultMetadata,
 } from "./provider/action-metadata";

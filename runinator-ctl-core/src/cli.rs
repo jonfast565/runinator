@@ -1160,30 +1160,12 @@ pub enum OrchestrationCommands {
     },
 }
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum CliMissionKind {
-    #[default]
-    Coding,
-    ResearchReport,
-}
-
-impl CliMissionKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Coding => "coding",
-            Self::ResearchReport => "research_report",
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum MissionCommands {
-    /// Start a coding or research/report mission through a managed pipeline's ingress policy.
+    /// Start any mission recipe through its managed pipeline ingress policy.
     Start {
         /// Mission pipeline UUID or canonical namespace.key.
         pipeline: String,
-        #[arg(long, value_enum, default_value_t = CliMissionKind::Coding)]
-        kind: CliMissionKind,
         /// Stable mission identity. It is the correlation key for lifecycle and recovery events.
         #[arg(long)]
         correlation: String,

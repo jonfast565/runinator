@@ -61,14 +61,14 @@ repair loops. The repository must be reachable from the selected worker.
 
 ```bash
 runinatorctl missions start runinator.missions.coding_mission \
-  --kind coding --correlation cc-123 --json-file mission.json
+  --correlation cc-123 --json-file mission.json
 
 runinatorctl missions start runinator.missions.research_report_mission \
-  --kind research-report --correlation research-123 --json-file mission.json
+  --correlation research-123 --json-file mission.json
 ```
 
-The Command Center **Missions** page offers the same recipe selection, correlation key, input,
-epochs, evidence, and declared intent controls.
+The Command Center **Missions** page can also create editable recipes from Coding and
+Research/report presets, then launch any saved `mission.*` pipeline through its typed input form.
 
 ## Claude Code and Codex interaction
 

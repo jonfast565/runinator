@@ -18,18 +18,11 @@ import {
   fetchPipelineRun,
   fetchWorkflowEffectOutput,
   fetchWorkflowEffects,
-  fetchStarterPacks,
-  installStarterPack,
   steerMission,
   sendOrchestrationIntent,
 } from "../api/commandCenterApi";
-import type { StarterPackSummary } from "../api/commandCenterApi";
-
-export type MissionKind = "coding" | "research_report";
-
 export interface StartMissionInput {
   pipelineId: string;
-  kind: MissionKind;
   correlationKey: string;
   parameters: JsonRecord;
 }
@@ -57,14 +50,6 @@ export async function fetchMissionPipelines(): Promise<Pipeline[]> {
   return (await fetchPipelines()).filter(isMissionPipeline);
 }
 
-export async function fetchMissionStarterPack(): Promise<StarterPackSummary | null> {
-  return (await fetchStarterPacks()).find((pack) => pack.key === "ai-missions") ?? null;
-}
-
-export async function installMissionStarterPack(): Promise<void> {
-  await installStarterPack("ai-missions");
-}
-
 export async function fetchMissions(
   filters: Record<string, unknown> = {},
 ): Promise<OrchestrationBinding[]> {
@@ -72,20 +57,40 @@ export async function fetchMissions(
 }
 
 export async function startMission(input: StartMissionInput): Promise<IngressResponse> {
-  validateMissionParameters(input.parameters);
-  const mission = {
+  const pipeline = (await fetchMissionPipelines()).find(
+    (candidate) => candidate.id === input.pipelineId,
+  );
+
+  if (!pipeline) {
+    throw new Error("The selected mission recipe is no longer available.");
+  }
+
+  const mission: JsonRecord = {
     ...asJsonRecord(input.parameters.mission),
-    kind: input.kind,
     correlation_key: input.correlationKey,
     requested_by: "command_center",
   };
+
+  if (
+    !pipeline.metadata.mission_authoring &&
+    typeof asJsonRecord(input.parameters.mission).kind !== "string"
+  ) {
+    mission.kind =
+      asJsonRecord(pipeline.metadata.ingress)
+        .scope?.toString()
+        .replace(/^mission\./, "") ?? "mission";
+  }
+
   return admitPipelineIngress(input.pipelineId, {
     source: "runinator.command_center",
     eventId: crypto.randomUUID(),
     eventType: "start",
     correlationKey: input.correlationKey,
     payload: { ...input.parameters, mission },
-    provenance: { origin: "command_center", mission_kind: input.kind },
+    provenance: {
+      origin: "command_center",
+      mission_scope: asJsonRecord(pipeline.metadata.ingress).scope,
+    },
   });
 }
 
@@ -119,22 +124,6 @@ export async function sendMissionSteering(missionId: string, message: string): P
   }
 
   await steerMission(missionId, message);
-}
-
-function validateMissionParameters(parameters: JsonRecord): void {
-  const request = asJsonRecord(parameters.request);
-  const mission = asJsonRecord(parameters.mission);
-  const source = asJsonRecord(mission.source);
-
-  for (const [name, value] of [
-    ["request.goal", request.goal],
-    ["mission.source.repository", source.repository],
-    ["mission.source.revision", source.revision],
-  ] as const) {
-    if (typeof value !== "string" || !value.trim()) {
-      throw new Error(`Mission input requires a non-empty ${name}.`);
-    }
-  }
 }
 
 async function fetchCurrentMissionEffects(

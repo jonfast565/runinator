@@ -1,34 +1,17 @@
-//! Mission inputs identify both the requested work and its immutable source checkout.
-
-use super::*;
+//! Mission creation is recipe-driven rather than restricted to a closed kind enum.
 
 #[test]
-fn mission_input_requires_goal_repository_and_revision() {
-    let valid = runinator_models::json!({
-        "request": { "goal": "fix the loop" },
-        "mission": {
-            "source": {
-                "repository": "https://example.invalid/repo.git",
-                "revision": "0123456789abcdef"
-            }
-        }
-    });
-    let payload = valid.as_object().unwrap();
-    let mission = payload.get("mission").and_then(Value::as_object).unwrap();
-    validate_mission_input(payload, mission).unwrap();
+fn mission_start_has_no_closed_kind_argument() {
+    use clap::CommandFactory;
 
-    for pointer in [
-        "/request/goal",
-        "/mission/source/repository",
-        "/mission/source/revision",
-    ] {
-        let mut invalid = valid.clone();
-        *invalid.pointer_mut(pointer).unwrap() = Value::String(String::new());
-        let payload = invalid.as_object().unwrap();
-        let mission = payload.get("mission").and_then(Value::as_object).unwrap();
-        assert!(
-            validate_mission_input(payload, mission).is_err(),
-            "{pointer}"
-        );
-    }
+    let command = runinator_ctl_core::cli::Cli::command();
+    let start = command
+        .find_subcommand("missions")
+        .and_then(|missions| missions.find_subcommand("start"))
+        .expect("missions start command");
+    assert!(
+        start
+            .get_arguments()
+            .all(|argument| argument.get_id() != "kind")
+    );
 }

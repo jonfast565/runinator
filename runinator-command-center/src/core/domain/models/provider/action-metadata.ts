@@ -26,4 +26,10 @@ export interface ActionMetadata {
   results: ActionResultMetadata[];
   pure?: boolean;
   delivery_semantics?: DeliverySemantics;
+  agent?: AgentActionMetadata | null;
+}
+
+export interface AgentActionMetadata {
+  prompt_parameter: string;
+  response_text_pointer: string;
 }

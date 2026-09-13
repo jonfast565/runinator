@@ -174,13 +174,6 @@
           </label>
         </div>
         <div v-if="draft.preset === 'mission'" class="grid gap-3">
-          <label class="field-label">
-            <span>Mission kind</span>
-            <select v-model="draft.missionKind" class="input" @change="applyMissionLimit">
-              <option value="coding">Coding</option>
-              <option value="research_report">Research/report</option>
-            </select>
-          </label>
           <div class="orchestration-phase-list">
             <article v-for="phase in draft.phases" :key="phase.member">
               <strong>{{ phase.member }}</strong>
@@ -414,10 +407,6 @@ function toggleWorkspace(): void {
   for (const phase of draft.value.phases) {
     phase.workspace = draft.value.sharedWorkspace;
   }
-}
-
-function applyMissionLimit(): void {
-  draft.value.maxEpochs = draft.value.missionKind === "research_report" ? 8 : 10;
 }
 
 function save(): void {

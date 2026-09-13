@@ -35,17 +35,29 @@ import { createExecutionProfilesService } from "./execution-profiles";
 
 export {
   fetchMissionPipelines,
-  fetchMissionStarterPack,
   fetchMissionDetail,
   fetchMissions,
   isMission,
   isMissionPipeline,
-  installMissionStarterPack,
   sendMissionIntent,
   sendMissionSteering,
   startMission,
 } from "./missions";
-export type { MissionEffectActivity, MissionKind, StartMissionInput } from "./missions";
+export type { MissionEffectActivity, StartMissionInput } from "./missions";
+export type {
+  MissionInputFieldDraft,
+  MissionInputKind,
+  MissionPhaseDraft,
+  MissionPresetId,
+  MissionRecipeDraft,
+  MissionRouteMode,
+} from "./mission-recipes";
+export {
+  missionRecipeFromPipeline,
+  missionRecipePreset,
+  saveMissionRecipe,
+  validateMissionRecipe,
+} from "./mission-recipes";
 export {
   applyPreset,
   classifyOrchestrationSetup,
@@ -58,7 +70,6 @@ export {
 export type {
   ActiveEventBehavior,
   CompiledOrchestrationSetup,
-  MissionRecipeKind,
   OrchestrationPhaseDraft,
   OrchestrationSetupDraft,
   OrchestrationSetupPreset,

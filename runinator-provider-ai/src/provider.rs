@@ -77,7 +77,8 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                     ),
                     ParameterMetadata::optional("env", RuninatorType::map(RuninatorType::String)),
                 ])
-                .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
+                .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)])
+                .as_agent("prompt", "/response/result"),
             ],
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["claude".into()],

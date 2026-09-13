@@ -18,6 +18,7 @@ vi.mock("../../api/commandCenterApi", () => ({
 import {
   admitPipelineIngress,
   fetchOrchestrations,
+  fetchPipelines,
   steerMission,
 } from "../../api/commandCenterApi";
 import { isMissionPipeline, sendMissionSteering, startMission } from "../missions";
@@ -43,7 +44,10 @@ const codingPipeline = {
 } as Pipeline;
 
 describe("missions", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchPipelines).mockResolvedValue([codingPipeline]);
+  });
 
   it("recognizes only mission-scoped recipes", () => {
     expect(isMissionPipeline(codingPipeline)).toBe(true);
@@ -55,7 +59,7 @@ describe("missions", () => {
     ).toBe(false);
   });
 
-  it("records kind and correlation in the durable start event", async () => {
+  it("derives a legacy kind from scope without a closed recipe enum", async () => {
     vi.mocked(admitPipelineIngress).mockResolvedValue({
       admission_id: "admission-id",
       generation: 1,
@@ -70,7 +74,6 @@ describe("missions", () => {
 
     await startMission({
       pipelineId: "pipeline-id",
-      kind: "coding",
       correlationKey: "feature-123",
       parameters: {
         request: { goal: "Add a mission dashboard" },

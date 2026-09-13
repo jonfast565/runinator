@@ -6,9 +6,10 @@
           title="Missions"
           icon="branch"
           eyebrow="AI orchestration"
-          description="Launch bounded coding and research work, then follow its durable phases, evidence, and operator controls."
+          description="Launch reusable agent recipes, then follow their durable phases, evidence, and operator controls."
         >
           <Button :loading="loading" icon="refresh" @click="refresh">Refresh</Button>
+          <Button icon="plus" @click="openRecipeBuilder()">New recipe</Button>
           <Button
             variant="primary"
             icon="runs"
@@ -19,27 +20,6 @@
           </Button>
         </PanelHeader>
         <p v-if="error" class="mission-page-error">{{ error }}</p>
-        <div
-          v-else-if="starterPack?.state !== 'installed' && !loading"
-          class="mission-page-notice flex items-center justify-between gap-3"
-        >
-          <span class="flex items-center gap-1"
-            >Mission setup is incomplete.
-            <HelpBubble label="About starter missions">
-              The starter pack installs bounded coding and research/report recipes plus the Claude
-              execution-profile definition. Existing items are preserved, and installation does not
-              start billable work.
-            </HelpBubble></span
-          >
-          <Button
-            variant="primary"
-            icon="download"
-            :loading="installingStarter"
-            @click="installStarter"
-          >
-            Install starter missions
-          </Button>
-        </div>
       </div>
 
       <section v-if="missions.length" class="mission-summary" aria-label="Mission summary">
@@ -93,13 +73,16 @@
               eyebrow="Mission detail"
               :description="missionStatusSummary(selected.status)"
             >
+              <Button v-if="selectedRecipe" icon="edit" @click="openRecipeBuilder(selectedRecipe)"
+                >Edit recipe</Button
+              >
               <span class="status-chip" :class="`is-${selected.status}`">{{
                 selected.status
               }}</span>
             </PanelHeader>
 
             <p class="mission-detail-description">
-              {{ missionKindLabel(selected.scope) }} mission · frozen pipeline revision
+              {{ missionRecipeLabel(selected.scope) }} mission · frozen pipeline revision
               {{ selected.pipeline_revision }} · {{ selected.policy.max_epochs ?? "—" }} epoch limit
             </p>
 
@@ -312,6 +295,16 @@
     @close="startOpen = false"
     @start="submitStart"
   />
+  <MissionRecipeBuilder
+    v-if="recipeOpen"
+    :providers="providers.providers"
+    :pipelines="missionPipelines"
+    :initial="recipeDraft"
+    :saving="recipeSaving"
+    :error="recipeError"
+    @close="recipeOpen = false"
+    @save="submitRecipe"
+  />
 </template>
 
 <script setup lang="ts">
@@ -323,11 +316,13 @@ import type {
   OrchestrationEvidence,
   WorkflowEffectOutputEvent,
 } from "../../core/domain/models";
-import type { StartMissionInput } from "../../core/services";
+import type { MissionRecipeDraft, StartMissionInput } from "../../core/services";
+import { missionRecipeFromPipeline, saveMissionRecipe } from "../../core/services";
 import { useMissionsStore } from "../adapters/pinia/missions";
+import { useProvidersStore } from "../adapters/pinia/providers";
 import MissionQueuePanel from "../components/missions/MissionQueuePanel.vue";
+import MissionRecipeBuilder from "../components/missions/MissionRecipeBuilder.vue";
 import MissionStartDialog from "../components/missions/MissionStartDialog.vue";
-import HelpBubble from "../components/shared/HelpBubble.vue";
 import Button from "../components/shared/Button.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
@@ -343,13 +338,16 @@ const {
   epochs,
   evidence,
   effects,
-  starterPack,
-  installingStarter,
   loading,
   detailLoading,
   error,
 } = storeToRefs(missionsStore);
+const providers = useProvidersStore();
 const startOpen = ref(false);
+const recipeOpen = ref(false);
+const recipeSaving = ref(false);
+const recipeError = ref<string | null>(null);
+const recipeDraft = ref<MissionRecipeDraft | null>(null);
 const starting = ref(false);
 const startError = ref<string | null>(null);
 const queueFilter = ref<MissionQueueFilter>("all");
@@ -380,6 +378,12 @@ const declaredIntents = computed(() =>
     .sort(([, left], [, right]) => right.priority - left.priority)
     .map(([name]) => name),
 );
+const selectedRecipe = computed(() => {
+  const pipeline = missionPipelines.value.find(
+    (candidate) => candidate.id === selected.value?.pipeline_id,
+  );
+  return pipeline ? missionRecipeFromPipeline(pipeline) : null;
+});
 
 watch(selectedId, () => {
   intentName.value = "";
@@ -391,11 +395,24 @@ async function refresh(): Promise<void> {
   await missionsStore.refresh();
 }
 
-async function installStarter(): Promise<void> {
+function openRecipeBuilder(initial: MissionRecipeDraft | null = null): void {
+  recipeDraft.value = initial ? structuredClone(initial) : null;
+  recipeError.value = null;
+  recipeOpen.value = true;
+}
+
+async function submitRecipe(draft: MissionRecipeDraft): Promise<void> {
+  recipeSaving.value = true;
+  recipeError.value = null;
+
   try {
-    await missionsStore.installStarter();
-  } catch {
-    // the store exposes the actionable server error in the existing page error region.
+    await saveMissionRecipe(draft);
+    recipeOpen.value = false;
+    await refresh();
+  } catch (cause) {
+    recipeError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    recipeSaving.value = false;
   }
 }
 
@@ -492,8 +509,12 @@ function searchableMissionText(mission: OrchestrationBinding): string {
   return `${mission.correlation_key} ${mission.scope} ${mission.current_phase ?? ""}`.toLocaleLowerCase();
 }
 
-function missionKindLabel(scope: string): string {
-  return scope === "mission.research_report" ? "Research/report" : "Coding";
+function missionRecipeLabel(scope: string): string {
+  return (
+    missionPipelines.value.find(
+      (pipeline) => asJsonRecord(pipeline.metadata.ingress).scope === scope,
+    )?.name ?? scope.replace(/^mission\./, "").replaceAll("_", " ")
+  );
 }
 
 function missionStatusSummary(status: string): string {
@@ -613,6 +634,7 @@ function formatDate(value: string): string {
 
 onMounted(() => {
   void refresh();
+  void providers.fetchProviders();
   refreshTimer = window.setInterval(() => void refresh(), 15_000);
 });
 

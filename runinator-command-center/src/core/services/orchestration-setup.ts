@@ -16,7 +16,6 @@ export type OrchestrationSetupPreset =
 
 export type ActiveEventBehavior = "record" | "queue" | "restart" | "signal";
 export type TerminalEventBehavior = "ignore" | "record" | "reopen";
-export type MissionRecipeKind = "coding" | "research_report";
 
 export interface OrchestrationPhaseDraft {
   member: string;
@@ -42,7 +41,6 @@ export interface OrchestrationSetupDraft {
   sharedWorkspace: boolean;
   workspaceScope: string;
   workspaceLeaseSeconds: number;
-  missionKind: MissionRecipeKind;
   phases: OrchestrationPhaseDraft[];
   adapterIds: string[];
 }
@@ -72,7 +70,6 @@ export function defaultSetupDraft(
   const mission = preset === "mission";
   const activeBehavior = activeBehaviorForPreset(preset);
   const pipelineKey = firstNonEmpty(pipeline.key?.trim(), slug(pipeline.name), "pipeline");
-  const missionKind: MissionRecipeKind = "coding";
   const scope = mission ? `mission.${pipelineKey}` : `orchestration.${pipelineKey}`;
 
   return {
@@ -92,7 +89,6 @@ export function defaultSetupDraft(
     sharedWorkspace: mission,
     workspaceScope: mission ? "mission-source" : "orchestration-workspace",
     workspaceLeaseSeconds: mission ? 7200 : 300,
-    missionKind,
     phases: memberKeys.map((member, index) => ({
       member,
       terminal: index === memberKeys.length - 1,
@@ -181,7 +177,6 @@ export function compileOrchestrationSetup(
       schema_version: 1,
       preset: draft.preset,
       adapter_ids: [...draft.adapterIds],
-      mission_kind: draft.preset === "mission" ? draft.missionKind : null,
     },
   };
 }
@@ -294,7 +289,6 @@ export function draftFromPipeline(
     sharedWorkspace: Boolean(workspace),
     workspaceScope: workspace?.scope ?? "orchestration-workspace",
     workspaceLeaseSeconds: workspace?.lease_seconds ?? 300,
-    missionKind: hint.mission_kind === "research_report" ? "research_report" : "coding",
     phases: pipeline.graph.members.map((member) => {
       const policy = Object.entries(orchestration.phases).find(
         ([name]) => name === member.key,

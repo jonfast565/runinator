@@ -1,7 +1,7 @@
 <template>
   <Modal
     title="Start a mission"
-    description="The source and objective are recorded before work begins, so every phase can be audited and resumed safely."
+    description="Recipe inputs are recorded before work begins, so every phase can be audited and resumed safely."
     width="min(720px, 100%)"
     @close="emit('close')"
   >
@@ -31,56 +31,77 @@
         </label>
       </section>
 
-      <section class="mission-start-section">
+      <section v-if="recipe" class="mission-start-section">
         <div>
-          <p class="mission-start-kicker">2 · Define the work</p>
-          <h3>Give the operator a clear brief</h3>
+          <p class="mission-start-kicker">2 · Provide inputs</p>
+          <h3>Complete this recipe's launch contract</h3>
         </div>
-        <label class="field-label">
-          <span>Objective</span>
-          <textarea
-            v-model.trim="goal"
-            class="input min-h-24"
-            placeholder="Describe the outcome, constraints, and checks that matter."
-            required
-          ></textarea>
+        <label v-for="input in recipe.inputs" :key="input.path" class="field-label">
+          <span>{{ input.label }}</span>
+          <input
+            v-if="input.kind !== 'boolean'"
+            v-model="fieldValues[input.path]"
+            class="input"
+            :type="input.kind === 'integer' || input.kind === 'number' ? 'number' : 'text'"
+            :required="input.required"
+            :placeholder="input.description"
+          />
+          <input v-else v-model="fieldValues[input.path]" type="checkbox" />
+          <small v-if="input.description" class="text-fg-muted">{{ input.description }}</small>
         </label>
       </section>
 
-      <section class="mission-start-section">
-        <div>
-          <p class="mission-start-kicker">3 · Pin the source</p>
-          <h3>Start from a known revision</h3>
-        </div>
-        <div class="mission-source-grid">
-          <label class="field-label mission-source-repository">
-            <span class="flex items-center gap-1"
-              >Repository URL
-              <HelpBubble label="About mission source">
-                The worker resolves the supplied revision once and records the resulting commit
-                before work begins.
-              </HelpBubble></span
-            >
-            <input
-              v-model.trim="repository"
-              class="input"
-              placeholder="https://github.com/org/repository.git"
-              autocomplete="url"
+      <template v-else>
+        <section class="mission-start-section">
+          <div>
+            <p class="mission-start-kicker">2 · Define the work</p>
+            <h3>Give the operator a clear brief</h3>
+          </div>
+          <label class="field-label"
+            ><span>Objective</span
+            ><textarea
+              v-model.trim="goal"
+              class="input min-h-24"
+              placeholder="Describe the outcome, constraints, and checks that matter."
               required
-            />
+            ></textarea>
           </label>
-          <label class="field-label">
-            <span>Revision</span>
-            <input
-              v-model.trim="revision"
-              class="input"
-              placeholder="Commit SHA, branch, or tag"
-              autocomplete="off"
-              required
-            />
-          </label>
-        </div>
-      </section>
+        </section>
+        <section class="mission-start-section">
+          <div>
+            <p class="mission-start-kicker">3 · Pin the source</p>
+            <h3>Start from a known revision</h3>
+          </div>
+          <div class="mission-source-grid">
+            <label class="field-label mission-source-repository">
+              <span class="flex items-center gap-1"
+                >Repository URL
+                <HelpBubble label="About mission source">
+                  The worker resolves the supplied revision once and records the resulting commit
+                  before work begins.
+                </HelpBubble></span
+              >
+              <input
+                v-model.trim="repository"
+                class="input"
+                placeholder="https://github.com/org/repository.git"
+                autocomplete="url"
+                required
+              />
+            </label>
+            <label class="field-label">
+              <span>Revision</span>
+              <input
+                v-model.trim="revision"
+                class="input"
+                placeholder="Commit SHA, branch, or tag"
+                autocomplete="off"
+                required
+              />
+            </label>
+          </div>
+        </section>
+      </template>
 
       <details class="mission-advanced">
         <summary>Advanced payload</summary>
@@ -113,7 +134,7 @@
     <template #actions>
       <Button variant="ghost" @click="emit('close')">Cancel</Button>
       <Button variant="primary" form="start-mission" type="submit" icon="runs" :loading="starting">
-        Start {{ recipeLabel }} mission
+        Start mission
       </Button>
     </template>
   </Modal>
@@ -121,9 +142,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { asJsonRecord, type JsonRecord } from "../../../core/domain/json";
+import { asJsonRecord, type JsonRecord, type JsonValue } from "../../../core/domain/json";
 import type { Pipeline } from "../../../core/domain/models";
-import type { MissionKind, StartMissionInput } from "../../../core/services";
+import type { MissionRecipeDraft, StartMissionInput } from "../../../core/services";
+import { missionRecipeFromPipeline } from "../../../core/services";
 import Button from "../shared/Button.vue";
 import HelpBubble from "../shared/HelpBubble.vue";
 import Modal from "../shared/Modal.vue";
@@ -152,21 +174,16 @@ const repository = ref("");
 const revision = ref("");
 const additionalParameters = ref("");
 const advancedPayloadError = ref<string | null>(null);
+const fieldValues = ref<Partial<Record<string, string | number | boolean>>>({});
 
 const selectedPipeline = computed(() =>
   props.pipelines.find((pipeline) => pipeline.id === pipelineId.value),
 );
-const kind = computed<MissionKind>(() => {
-  const scope = asJsonRecord(selectedPipeline.value?.metadata.ingress).scope;
-  return scope === "mission.research_report" ? "research_report" : "coding";
-});
-const recipeLabel = computed(() => (kind.value === "coding" ? "coding" : "research/report"));
+const recipe = computed<MissionRecipeDraft | null>(() =>
+  selectedPipeline.value ? missionRecipeFromPipeline(selectedPipeline.value) : null,
+);
 const recipeDescription = computed(
-  () =>
-    selectedPipeline.value?.description ??
-    (kind.value === "coding"
-      ? "Implement, independently review, verify, and hand off a bounded code change."
-      : "Investigate a question, independently critique the evidence, and produce a durable report."),
+  () => selectedPipeline.value?.description ?? "Run the selected reusable mission recipe.",
 );
 const visibleError = computed(() => advancedPayloadError.value ?? props.error);
 
@@ -176,9 +193,12 @@ watch(
     if (!pipelineId.value || !pipelines.some((pipeline) => pipeline.id === pipelineId.value)) {
       pipelineId.value = pipelines[0]?.id ?? "";
     }
+
+    initializeFields();
   },
   { immediate: true },
 );
+watch(pipelineId, initializeFields);
 
 function submit(): void {
   const pipeline = selectedPipeline.value;
@@ -201,23 +221,89 @@ function submit(): void {
   const extraRequest = asJsonRecord(additional.request);
   const extraMission = asJsonRecord(additional.mission);
   const extraSource = asJsonRecord(extraMission.source);
+  let parameters: JsonRecord;
+
+  try {
+    parameters = recipe.value
+      ? applyFieldValues(additional)
+      : {
+          ...additional,
+          request: { ...extraRequest, goal: goal.value },
+          mission: {
+            ...extraMission,
+            source: { ...extraSource, repository: repository.value, revision: revision.value },
+          },
+        };
+  } catch (cause) {
+    advancedPayloadError.value = cause instanceof Error ? cause.message : String(cause);
+    return;
+  }
+
   emit("start", {
     pipelineId: pipeline.id,
-    kind: kind.value,
     correlationKey: correlationKey.value || `mission-${crypto.randomUUID()}`,
-    parameters: {
-      ...additional,
-      request: { ...extraRequest, goal: goal.value },
-      mission: {
-        ...extraMission,
-        source: {
-          ...extraSource,
-          repository: repository.value,
-          revision: revision.value,
-        },
-      },
-    },
+    parameters,
   });
+}
+
+function initializeFields(): void {
+  fieldValues.value = Object.fromEntries(
+    (recipe.value?.inputs ?? []).map((input) => {
+      const fallback = input.kind === "boolean" ? false : "";
+      const value = ["string", "number", "boolean"].includes(typeof input.defaultValue)
+        ? (input.defaultValue as string | number | boolean)
+        : fallback;
+      return [input.path, value];
+    }),
+  );
+}
+
+function applyFieldValues(base: JsonRecord): JsonRecord {
+  const result = structuredClone(base);
+
+  for (const input of recipe.value?.inputs ?? []) {
+    const raw = fieldValues.value[input.path];
+
+    if (input.required && typeof raw === "string" && !raw.trim()) {
+      throw new Error(`${input.label} is required.`);
+    }
+
+    let value: JsonValue = raw ?? null;
+
+    if ((input.kind === "integer" || input.kind === "number") && raw !== "") {
+      value = Number(raw);
+
+      if (!Number.isFinite(value) || (input.kind === "integer" && !Number.isInteger(value))) {
+        throw new Error(`${input.label} must be a valid ${input.kind}.`);
+      }
+    } else if (input.kind === "any" && typeof raw === "string" && raw.trim()) {
+      try {
+        value = JSON.parse(raw) as JsonValue;
+      } catch {
+        throw new Error(`${input.label} must be valid JSON.`);
+      }
+    }
+
+    setPath(result, input.path, value);
+  }
+
+  return result;
+}
+
+function setPath(target: JsonRecord, path: string, value: JsonValue): void {
+  const parts = path.split(".").filter(Boolean);
+  let current = target;
+
+  for (const part of parts.slice(0, -1)) {
+    current[part] = asJsonRecord(current[part]);
+    current = current[part] as JsonRecord;
+  }
+
+  const leaf = parts.at(-1);
+
+  if (leaf) {
+    current[leaf] = value;
+  }
 }
 
 function parseAdditionalParameters(): JsonRecord {
