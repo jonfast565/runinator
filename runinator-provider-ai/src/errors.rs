@@ -55,6 +55,30 @@ pub(crate) const CLAUDE_INPUT: ErrorDescriptor = ErrorDescriptor::new(
     "ai_command.claude_code.input",
     "Claude Code session input failed",
 );
+pub(crate) const CODEX_CANCELED: ErrorDescriptor = ErrorDescriptor::new(
+    "AI013",
+    "ai_command.codex.canceled",
+    "Codex command canceled",
+);
+pub(crate) const CODEX_SPAWN: ErrorDescriptor =
+    ErrorDescriptor::new("AI014", "ai_command.codex.spawn", "Failed to spawn Codex");
+pub(crate) const CODEX_TIMEOUT: ErrorDescriptor = ErrorDescriptor::new(
+    "AI015",
+    "ai_command.codex.timeout",
+    "Codex command timed out",
+);
+pub(crate) const CODEX_EXIT_CODE: ErrorDescriptor = ErrorDescriptor::new(
+    "AI016",
+    "ai_command.codex.exit_code",
+    "Codex exited with a non-zero status",
+);
+pub(crate) const CODEX_PROTOCOL: ErrorDescriptor = ErrorDescriptor::new(
+    "AI017",
+    "ai_command.codex.protocol",
+    "Codex protocol failed",
+);
+pub(crate) const CODEX_INPUT: ErrorDescriptor =
+    ErrorDescriptor::new("AI018", "ai_command.codex.input", "Codex input is invalid");
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -69,6 +93,12 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CLAUDE_INVALID_JSON,
     CLAUDE_INTERACTIVE_NOT_PERMITTED,
     CLAUDE_INPUT,
+    CODEX_CANCELED,
+    CODEX_SPAWN,
+    CODEX_TIMEOUT,
+    CODEX_EXIT_CODE,
+    CODEX_PROTOCOL,
+    CODEX_INPUT,
 ];
 
 impl<R> ProviderErrors for AiCommandProvider<R> {

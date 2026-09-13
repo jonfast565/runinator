@@ -630,9 +630,7 @@ async fn process_provider_effect(
         let metadata =
             crate::executor::execution_profile_metadata(&providers, libraries.as_ref(), &action)
                 .map_err(std::io::Error::other)?;
-        if metadata.execution_profile
-            == runinator_models::providers::ExecutionProfileSupport::Unsupported
-        {
+        if metadata.support == runinator_models::providers::ExecutionProfileSupport::Unsupported {
             publish_terminal(
                 broker.as_ref(),
                 result_outbox.as_ref(),

@@ -20,14 +20,36 @@ use uuid::Uuid;
 
 use crate::provider_repository::{ProviderFactory, resolve_provider};
 
+pub(crate) struct ExecutionProfileMetadata {
+    pub support: runinator_models::providers::ExecutionProfileSupport,
+    pub credential_scopes: Vec<String>,
+}
+
 pub(crate) fn execution_profile_metadata(
     providers: &ProviderFactory,
     libraries: &HashMap<String, Plugin>,
     action: &WorkflowAction,
-) -> Result<runinator_models::providers::ProviderRuntimeMetadata, String> {
-    resolve_provider(providers, libraries, action)
-        .map(|provider| provider.metadata().metadata)
-        .map_err(|error| error.to_string())
+) -> Result<ExecutionProfileMetadata, String> {
+    let provider =
+        resolve_provider(providers, libraries, action).map_err(|error| error.to_string())?;
+    let metadata = provider.metadata();
+    let action_metadata = metadata
+        .actions
+        .iter()
+        .find(|candidate| candidate.function_name == action.function)
+        .ok_or_else(|| {
+            format!(
+                "provider action '{}.{}' was not found",
+                action.provider, action.function
+            )
+        })?;
+    Ok(ExecutionProfileMetadata {
+        support: metadata.metadata.execution_profile,
+        credential_scopes: action_metadata
+            .credential_scopes
+            .clone()
+            .unwrap_or(metadata.metadata.credential_scopes),
+    })
 }
 
 pub struct ExecutionOutcome {

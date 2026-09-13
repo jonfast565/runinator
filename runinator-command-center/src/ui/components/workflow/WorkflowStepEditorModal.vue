@@ -254,7 +254,9 @@
             v-model="actionDraft"
             :action="selectedAction"
             :authentication="selectedAction.authentication"
-            :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
+            :credential-scopes="
+              selectedAction.credential_scopes ?? currentProvider?.metadata.credential_scopes ?? []
+            "
           />
         </section>
 
@@ -273,7 +275,9 @@
             v-if="ordinaryActionParameters.length"
             v-model="actionConfiguration"
             :parameters="ordinaryActionParameters"
-            :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
+            :credential-scopes="
+              selectedAction.credential_scopes ?? currentProvider?.metadata.credential_scopes ?? []
+            "
             :expression-context="expressionContext"
           />
           <KeyValueObjectEditor

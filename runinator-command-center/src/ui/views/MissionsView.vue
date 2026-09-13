@@ -174,7 +174,7 @@
                 <div>
                   <h3>Live harness</h3>
                   <p v-if="effects.length" class="mission-section-description">
-                    Send context to the active Claude phase without leaving the mission.
+                    Send context to the active AI phase without leaving the mission.
                   </p>
                 </div>
                 <span>{{ effects.length ? "Active" : "Idle" }}</span>

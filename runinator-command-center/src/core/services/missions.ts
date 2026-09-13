@@ -151,7 +151,7 @@ async function fetchCurrentMissionEffects(
   const effects = await fetchWorkflowEffects(attempt.workflow_run_id).catch(() => []);
   return Promise.all(
     effects
-      .filter((effect) => !isTerminalEffect(effect.status) && isHarnessedClaudeEffect(effect))
+      .filter((effect) => !isTerminalEffect(effect.status) && isHarnessedAiEffect(effect))
       .map(async (effect) => ({
         effect,
         output: await fetchWorkflowEffectOutput(effect.id).catch(() => []),
@@ -163,13 +163,13 @@ function isTerminalEffect(status: string): boolean {
   return ["succeeded", "failed", "rejected", "timed_out", "canceled"].includes(status);
 }
 
-function isHarnessedClaudeEffect(effect: WorkflowEffect): boolean {
+function isHarnessedAiEffect(effect: WorkflowEffect): boolean {
   const request = asJsonRecord(effect.request);
   const input = asJsonRecord(request.input);
   return (
     request.type === "action" &&
     request.provider === "ai-command" &&
-    request.function === "claude_code" &&
+    ["claude_code", "codex"].includes(String(request.function)) &&
     input.harnessed === true
   );
 }

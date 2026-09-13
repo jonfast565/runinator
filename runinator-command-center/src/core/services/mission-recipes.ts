@@ -3,6 +3,7 @@ import type { JsonRecord, JsonValue, Pipeline, WorkflowDefinition } from "../dom
 import { createZip } from "../utils/zip";
 
 export type MissionPresetId = "blank" | "coding" | "research_report";
+export type MissionAgentRuntime = "claude" | "codex";
 export type MissionInputKind = "string" | "integer" | "number" | "boolean" | "any";
 export type MissionRouteMode = "fixed" | "result" | "terminal";
 
@@ -35,8 +36,9 @@ export interface MissionPhaseDraft {
 }
 
 export interface MissionRecipeDraft {
-  schemaVersion: 1;
+  schemaVersion: 2;
   preset: MissionPresetId;
+  agentRuntime: MissionAgentRuntime;
   name: string;
   key: string;
   namespace: string;
@@ -82,81 +84,93 @@ const SOURCE_INPUTS: MissionInputFieldDraft[] = [
   field("mission.source.revision", "Revision", "A commit SHA, branch, or tag.", "string"),
 ];
 
-export function missionRecipePreset(preset: MissionPresetId): MissionRecipeDraft {
+export function missionRecipePreset(
+  preset: MissionPresetId,
+  agentRuntime: MissionAgentRuntime = "claude",
+): MissionRecipeDraft {
   if (preset === "research_report") {
-    return recipe(
-      preset,
-      "Research and report mission",
-      "research_report_mission",
-      "Investigate, independently critique, and report with a bounded evidence loop.",
-      8,
-      [
-        preparePhase("prepare", "investigate"),
-        agentPhase(
-          "investigate",
-          "Investigator",
-          "Investigate ${params.request.goal}. Gather evidence, record unknowns, and return a structured research note.",
-          "critique",
-        ),
-        decisionPhase(
-          "critique",
-          "Independent critic",
-          "Critique the evidence for ${params.request.goal}. Return JSON with next_member set to either the investigate or report workflow and explain material gaps.",
-          ["investigate", "report"],
-        ),
-        terminalPhase(
-          "report",
-          "Reporter",
-          "Produce the final evidence-backed report for ${params.request.goal}.",
-        ),
-      ],
+    return withAgentRuntime(
+      recipe(
+        preset,
+        "Research and report mission",
+        "research_report_mission",
+        "Investigate, independently critique, and report with a bounded evidence loop.",
+        8,
+        [
+          preparePhase("prepare", "investigate"),
+          agentPhase(
+            "investigate",
+            "Investigator",
+            "Investigate ${params.request.goal}. Gather evidence, record unknowns, and return a structured research note.",
+            "critique",
+          ),
+          decisionPhase(
+            "critique",
+            "Independent critic",
+            "Critique the evidence for ${params.request.goal}. Return JSON with next_member set to either the investigate or report workflow and explain material gaps.",
+            ["investigate", "report"],
+          ),
+          terminalPhase(
+            "report",
+            "Reporter",
+            "Produce the final evidence-backed report for ${params.request.goal}.",
+          ),
+        ],
+      ),
+      agentRuntime,
     );
   }
 
   if (preset === "coding") {
-    return recipe(
-      preset,
-      "Coding mission",
-      "coding_mission",
-      "Implement, independently review, verify, and summarize a bounded code change.",
-      10,
-      [
-        preparePhase("prepare", "implement"),
-        agentPhase(
-          "implement",
-          "Implementer",
-          "Implement ${params.request.goal} in the assigned workspace. Read repository guidance, make the smallest complete change, and run relevant checks.",
-          "review",
-        ),
-        decisionPhase(
-          "review",
-          "Independent reviewer",
-          "Review the current diff for ${params.request.goal}. Return JSON with next_member set to either the implement or verify workflow.",
-          ["implement", "verify"],
-        ),
-        decisionPhase(
-          "verify",
-          "Verifier",
-          "Verify ${params.request.goal}. Run the narrowest relevant checks and return JSON with next_member set to either the implement or summary workflow.",
-          ["implement", "summary"],
-        ),
-        terminalPhase(
-          "summary",
-          "Reporter",
-          "Summarize the completed work, verification, review outcome, and remaining risks for ${params.request.goal}.",
-        ),
-      ],
+    return withAgentRuntime(
+      recipe(
+        preset,
+        "Coding mission",
+        "coding_mission",
+        "Implement, independently review, verify, and summarize a bounded code change.",
+        10,
+        [
+          preparePhase("prepare", "implement"),
+          agentPhase(
+            "implement",
+            "Implementer",
+            "Implement ${params.request.goal} in the assigned workspace. Read repository guidance, make the smallest complete change, and run relevant checks.",
+            "review",
+          ),
+          decisionPhase(
+            "review",
+            "Independent reviewer",
+            "Review the current diff for ${params.request.goal}. Return JSON with next_member set to either the implement or verify workflow.",
+            ["implement", "verify"],
+          ),
+          decisionPhase(
+            "verify",
+            "Verifier",
+            "Verify ${params.request.goal}. Run the narrowest relevant checks and return JSON with next_member set to either the implement or summary workflow.",
+            ["implement", "summary"],
+          ),
+          terminalPhase(
+            "summary",
+            "Reporter",
+            "Summarize the completed work, verification, review outcome, and remaining risks for ${params.request.goal}.",
+          ),
+        ],
+      ),
+      agentRuntime,
     );
   }
 
-  return recipe(
-    preset,
-    "Custom mission",
-    "custom_mission",
-    "A reusable bounded mission recipe.",
-    8,
-    [terminalPhase("work", "Agent", "Complete ${params.request.goal} and report the outcome.")],
-    [GOAL_INPUT],
+  return withAgentRuntime(
+    recipe(
+      preset,
+      "Custom mission",
+      "custom_mission",
+      "A reusable bounded mission recipe.",
+      8,
+      [terminalPhase("work", "Agent", "Complete ${params.request.goal} and report the outcome.")],
+      [GOAL_INPUT],
+    ),
+    agentRuntime,
   );
 }
 
@@ -169,11 +183,15 @@ export function missionRecipeFromPipeline(pipeline: Pipeline): MissionRecipeDraf
 
   const record = value as Record<string, unknown>;
 
-  if (record.schemaVersion !== 1 || !Array.isArray(record.phases)) {
+  if (![1, 2].includes(Number(record.schemaVersion)) || !Array.isArray(record.phases)) {
     return null;
   }
-
-  return structuredClone(value) as unknown as MissionRecipeDraft;
+  const draft = structuredClone(value) as unknown as MissionRecipeDraft;
+  if (record.schemaVersion === 1) {
+    draft.schemaVersion = 2;
+    draft.agentRuntime = "claude";
+  }
+  return draft;
 }
 
 export function validateMissionRecipe(draft: MissionRecipeDraft): string[] {
@@ -338,11 +356,28 @@ export function missionPhaseSource(draft: MissionRecipeDraft, phase: MissionPhas
         : phase.prompt;
   }
 
-  if (phase.provider === "ai-command" && phase.action === "claude_code") {
+  if (phase.provider === "ai-command" && ["claude_code", "codex"].includes(phase.action)) {
     parameters.harnessed ??= true;
     parameters.role ??= phase.role;
     parameters.mission_mcp ??= true;
     parameters.mission_id ??= "=params.orchestration.binding_id";
+    if (phase.action === "codex") {
+      parameters.session_slot ??= phase.id;
+      parameters.output_schema ??=
+        phase.routeMode === "result"
+          ? {
+              type: "object",
+              properties: {
+                next_member: {
+                  type: "string",
+                  enum: phase.allowedNextPhases.map((id) => phasePath(draft, id)),
+                },
+              },
+              required: ["next_member"],
+              additionalProperties: true,
+            }
+          : undefined;
+    }
   }
 
   const args = (Object.entries(parameters) as [string, JsonValue][])
@@ -589,8 +624,9 @@ function recipe(
   inputs: MissionInputFieldDraft[] = SOURCE_INPUTS,
 ): MissionRecipeDraft {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     preset,
+    agentRuntime: "claude",
     name,
     key,
     namespace: "runinator.missions",
@@ -601,6 +637,29 @@ function recipe(
     inputs: structuredClone(inputs),
     phases,
   };
+}
+
+function withAgentRuntime(
+  draft: MissionRecipeDraft,
+  agentRuntime: MissionAgentRuntime,
+): MissionRecipeDraft {
+  draft.agentRuntime = agentRuntime;
+  if (agentRuntime === "claude") {
+    return draft;
+  }
+  draft.key = `codex_${draft.key}`;
+  draft.name = `Codex ${draft.name.toLowerCase()}`;
+  for (const phase of draft.phases) {
+    if (phase.provider !== "ai-command" || phase.action !== "claude_code") {
+      continue;
+    }
+    phase.action = "codex";
+    phase.profile = "codex";
+    phase.actionParameters = {
+      sandbox: ["implement", "investigate"].includes(phase.id) ? "workspace_write" : "read_only",
+    };
+  }
+  return draft;
 }
 
 function basePhase(id: string, role: string, prompt: string): MissionPhaseDraft {

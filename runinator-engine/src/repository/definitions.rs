@@ -784,9 +784,13 @@ async fn resolve_execution_profile_bindings<T: DefinitionStore + ExecutionProfil
                             action.provider
                         )));
                     }
-                    let missing = provider
-                        .metadata
-                        .credential_scopes
+                    let required_scopes = provider
+                        .actions
+                        .iter()
+                        .find(|candidate| candidate.function_name == action.function)
+                        .and_then(|candidate| candidate.credential_scopes.as_ref())
+                        .unwrap_or(&provider.metadata.credential_scopes);
+                    let missing = required_scopes
                         .iter()
                         .filter(|scope| !profile.credential_scopes.contains(scope))
                         .cloned()

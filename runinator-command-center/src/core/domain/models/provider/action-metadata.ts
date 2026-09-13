@@ -25,6 +25,7 @@ export type ActionAuthenticationAlternative =
 export interface ActionAuthenticationMetadata {
   required: boolean;
   alternatives: ActionAuthenticationAlternative[];
+  allow_multiple?: boolean;
 }
 
 export interface ActionResultMetadata {
@@ -43,6 +44,7 @@ export interface ActionMetadata {
   delivery_semantics?: DeliverySemantics;
   agent?: AgentActionMetadata | null;
   authentication?: ActionAuthenticationMetadata | null;
+  credential_scopes?: string[] | null;
 }
 
 export interface AgentActionMetadata {

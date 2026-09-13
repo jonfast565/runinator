@@ -28,7 +28,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.98.1
-ARG RUNINATOR_VERSION=0.31.741
+ARG RUNINATOR_VERSION=0.32.742
 
 # ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -123,10 +123,18 @@ ENTRYPOINT ["/usr/local/bin/runinator-waker"]
 # ---- worker: built-in providers only; statically linked, so no dynamic plugin loading ----
 FROM runtime-base AS worker
 ARG CLAUDE_CODE_VERSION=2.1.236-r1
+ARG CODEX_CLI_VERSION=0.154.0
+ARG TARGETARCH
 RUN wget -O /etc/apk/keys/claude-code.rsa.pub https://downloads.claude.ai/keys/claude-code.rsa.pub \
     && echo "https://downloads.claude.ai/claude-code/apk/stable" >> /etc/apk/repositories \
     && apk add --no-cache bash git github-cli ripgrep "claude-code=${CLAUDE_CODE_VERSION}" \
+    && case "$TARGETARCH" in amd64) codex_target=x86_64-unknown-linux-musl ;; arm64) codex_target=aarch64-unknown-linux-musl ;; *) echo "unsupported Codex architecture: $TARGETARCH" >&2; exit 2 ;; esac \
+    && wget -O /tmp/codex.tar.gz "https://github.com/openai/codex/releases/download/rust-v${CODEX_CLI_VERSION}/codex-${codex_target}.tar.gz" \
+    && tar -xzf /tmp/codex.tar.gz -C /usr/local/bin \
+    && mv "/usr/local/bin/codex-${codex_target}" /usr/local/bin/codex \
+    && rm /tmp/codex.tar.gz \
     && claude --version \
+    && codex --version \
     && gh --version
 ENV USE_BUILTIN_RIPGREP=0 \
     DISABLE_AUTOUPDATER=1

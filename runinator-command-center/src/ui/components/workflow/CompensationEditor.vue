@@ -68,7 +68,9 @@
           :model-value="current"
           :action="action"
           :authentication="action.authentication"
-          :credential-scopes="provider?.metadata.credential_scopes ?? []"
+          :credential-scopes="
+            action.credential_scopes ?? provider?.metadata.credential_scopes ?? []
+          "
           @update:model-value="setActionDraft"
         />
       </div>
@@ -79,7 +81,9 @@
           v-if="ordinaryParameters.length"
           :model-value="configuration"
           :parameters="ordinaryParameters"
-          :credential-scopes="provider?.metadata.credential_scopes ?? []"
+          :credential-scopes="
+            action?.credential_scopes ?? provider?.metadata.credential_scopes ?? []
+          "
           :expression-context="expressionContext"
           @update:model-value="setConfiguration"
         />

@@ -53,6 +53,33 @@
       >
     </label>
 
+    <div
+      v-if="
+        authentication.allow_multiple && selectedMode === 'execution_profile' && combinableSecrets
+      "
+      class="grid gap-2"
+    >
+      <small
+        >Optional secret override; injected values take precedence over profile credentials.</small
+      >
+      <label v-for="parameter in combinableSecrets.parameters" :key="`combined-${parameter}`">
+        <span>{{ parameterLabel(parameter) }}</span>
+        <select :value="secretValue(parameter)" @change="setSecret(parameter, $event)">
+          <option value="">Use execution profile</option>
+          <option v-if="missingSecret(parameter)" :value="secretValue(parameter)">
+            Existing or unavailable secret
+          </option>
+          <option
+            v-for="secret in secretOptions"
+            :key="`combined-${secret.scope}/${secret.name}`"
+            :value="secretRef(secret.scope, secret.name)"
+          >
+            {{ secret.scope }}/{{ secret.name }}
+          </option>
+        </select>
+      </label>
+    </div>
+
     <p v-if="authentication.required && selectedMode === 'none'" class="error">
       Choose an authentication method.
     </p>
@@ -150,6 +177,10 @@ const selectedSecrets = computed(() => {
 
   return alternative?.kind === "secrets" ? alternative : null;
 });
+const combinableSecrets = computed(
+  () =>
+    props.authentication.alternatives.find((alternative) => alternative.kind === "secrets") ?? null,
+);
 
 function modeValue(alternative: ActionAuthenticationAlternative, index: number): string {
   return alternative.kind === "execution_profile"
@@ -199,9 +230,15 @@ function missingSecret(parameter: string): boolean {
 
 function setSecret(parameter: string, event: Event): void {
   const value = (event.target as HTMLSelectElement).value;
+  const nextConfiguration = { ...configuration.value };
+  if (value) {
+    nextConfiguration[parameter] = value;
+  } else {
+    delete nextConfiguration[parameter];
+  }
   emit("update:modelValue", {
     ...actionObject.value,
-    configuration: { ...configuration.value, [parameter]: value },
+    configuration: nextConfiguration,
   });
 }
 

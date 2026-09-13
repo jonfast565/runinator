@@ -1,0 +1,99 @@
+language rexrap-1
+
+package {
+  {
+    "name": "Codex Availability Test Pack",
+    "version": 1
+  }
+}
+
+settings {
+  profile "codex" = {
+    description: "Codex CLI file-backed login for isolated worker execution",
+    credential_scopes: ["codex"],
+    collection: {
+      version: 1,
+      probe: { argv: ["codex", "login", "status"] },
+      sources: [
+        {
+          type: "file",
+          path: "~/.codex/auth.json",
+          target: ".codex/auth.json"
+        }
+      ]
+    },
+    exposure: {
+      version: 1,
+      home_overlay: true,
+      environment: {}
+    },
+    enabled: true
+  }
+}
+
+namespace runinator.tests.codex {
+
+workflow "Codex Availability" v1 {
+    key codex_availability
+
+    do {
+        @id("codex_probe")
+        @timeout(90s)
+        @retry(1)
+        @runner("kubernetes")
+        @profile("codex")
+        ai-command.codex(
+            prompt: "Reply with exactly the lowercase word yes. Do not use tools, explain your answer, or add punctuation.",
+            sandbox: "read_only"
+        )
+            routes {
+                on success { continue answer }
+                on failure { continue unavailable }
+                on timeout { continue unavailable }
+            }
+
+        @id("answer")
+        if std.strings.lower(std.strings.trim(codex_probe.response.result)) == "yes" {
+            @id("available")
+            emit ("yes")
+        } else {
+            @id("reported_no")
+            emit ("no") routes { on next { continue fail } }
+        }
+    }
+
+    join unavailable {
+        @id("unavailable_no")
+        emit ("no") routes { on next { continue fail } }
+    }
+}
+
+}
+
+tests {
+  {
+    "workflow": "Codex Availability",
+    "tests": [
+      {
+        "name": "a yes response succeeds",
+        "mocks": { "codex_probe": { "output": { "response": { "result": "yes" } } } },
+        "expect": {
+          "status": "succeeded",
+          "reached": ["codex_probe", "answer", "available"],
+          "not_reached": ["reported_no", "fail"],
+          "output": "yes"
+        }
+      },
+      {
+        "name": "an unavailable Codex invocation fails",
+        "mocks": { "codex_probe": { "status": "failed" } },
+        "expect": {
+          "status": "failed",
+          "reached": ["codex_probe", "unavailable_no", "fail"],
+          "not_reached": ["answer", "available", "reported_no"],
+          "output": "no"
+        }
+      }
+    ]
+  }
+}

@@ -222,7 +222,7 @@ impl<T: OrchestrationStore> OrchestrationOperations<T> {
 }
 
 impl<T: OrchestrationStore + RuntimeStore + WorkflowVmStore> OrchestrationOperations<T> {
-    /// Resolve the one active harnessed Claude effect owned by the binding's current epoch.
+    /// Resolve the one active steerable AI effect owned by the binding's current epoch.
     pub async fn active_mission_harness_effect(
         &self,
         binding: &runinator_models::orchestration::OrchestrationBinding,
@@ -258,7 +258,7 @@ impl<T: OrchestrationStore + RuntimeStore + WorkflowVmStore> OrchestrationOperat
                 .fetch_workflow_effects(workflow_run_id)
                 .await?
                 .into_iter()
-                .find(is_active_harnessed_claude_effect);
+                .find(is_active_harnessed_ai_effect);
             if effect.is_some() {
                 return Ok(effect);
             }
@@ -267,9 +267,7 @@ impl<T: OrchestrationStore + RuntimeStore + WorkflowVmStore> OrchestrationOperat
     }
 }
 
-fn is_active_harnessed_claude_effect(
-    effect: &runinator_models::workflow_vm::WorkflowEffect,
-) -> bool {
+fn is_active_harnessed_ai_effect(effect: &runinator_models::workflow_vm::WorkflowEffect) -> bool {
     if !matches!(
         effect.status,
         runinator_models::workflow_vm::WorkflowEffectStatus::Running
@@ -285,7 +283,7 @@ fn is_active_harnessed_claude_effect(
             input,
             ..
         } if provider == "ai-command"
-            && function == "claude_code"
+            && matches!(function.as_str(), "claude_code" | "codex")
             && input.get("harnessed").and_then(Value::as_bool) == Some(true)
     )
 }
@@ -1193,7 +1191,7 @@ mod tests {
     }
 
     #[test]
-    fn mission_steering_targets_only_an_active_harnessed_claude_effect() {
+    fn mission_steering_targets_only_an_active_harnessed_ai_effect() {
         use runinator_models::workflow_vm::{
             WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffect, WorkflowEffectRequest,
             WorkflowEffectStatus,
@@ -1231,16 +1229,25 @@ mod tests {
             updated_at: now,
             finished_at: None,
         };
-        assert!(is_active_harnessed_claude_effect(&effect));
+        assert!(is_active_harnessed_ai_effect(&effect));
 
         effect.status = WorkflowEffectStatus::Succeeded;
-        assert!(!is_active_harnessed_claude_effect(&effect));
+        assert!(!is_active_harnessed_ai_effect(&effect));
         effect.status = WorkflowEffectStatus::Running;
         let WorkflowEffectRequest::Action { input, .. } = &mut effect.request else {
             unreachable!();
         };
         *input = runinator_models::json!({ "harnessed": false });
-        assert!(!is_active_harnessed_claude_effect(&effect));
+        assert!(!is_active_harnessed_ai_effect(&effect));
+        let WorkflowEffectRequest::Action {
+            function, input, ..
+        } = &mut effect.request
+        else {
+            unreachable!();
+        };
+        *function = "codex".into();
+        *input = runinator_models::json!({ "harnessed": true });
+        assert!(is_active_harnessed_ai_effect(&effect));
     }
 
     #[tokio::test]

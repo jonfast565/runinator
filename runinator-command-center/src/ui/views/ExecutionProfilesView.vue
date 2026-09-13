@@ -195,6 +195,7 @@
         <span>Start from</span
         ><button class="btn btn-sm" @click="applyTemplate('aws')">AWS SSO</button
         ><button class="btn btn-sm" @click="applyTemplate('claude')">Claude</button
+        ><button class="btn btn-sm" @click="applyTemplate('codex')">Codex</button
         ><button class="btn btn-sm" @click="applyTemplate('github')">GitHub / Copilot</button>
       </div>
       <nav class="tabs">
@@ -758,7 +759,7 @@ function closeEditor() {
   }
 }
 
-function applyTemplate(kind: "aws" | "claude" | "github") {
+function applyTemplate(kind: "aws" | "claude" | "codex" | "github") {
   const t: Record<typeof kind, ExecutionProfileInput> = {
     aws: {
       name: "aws-production",
@@ -802,6 +803,18 @@ function applyTemplate(kind: "aws" | "claude" | "github") {
             target: ".claude/.credentials.json",
           },
         ],
+      },
+      exposure: { version: 1, home_overlay: true, environment: {} },
+      enabled: true,
+    },
+    codex: {
+      name: "codex",
+      description: "Codex CLI file-backed login",
+      credential_scopes: ["codex"],
+      collection: {
+        version: 1,
+        probe: { argv: ["codex", "login", "status"] },
+        sources: [{ type: "file", path: "~/.codex/auth.json", target: ".codex/auth.json" }],
       },
       exposure: { version: 1, home_overlay: true, environment: {} },
       enabled: true,

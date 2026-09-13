@@ -47,6 +47,7 @@ export type { MissionEffectActivity, StartMissionInput } from "./missions";
 export type {
   MissionInputFieldDraft,
   MissionInputKind,
+  MissionAgentRuntime,
   MissionPhaseDraft,
   MissionPresetId,
   MissionRecipeDraft,

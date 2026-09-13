@@ -170,6 +170,7 @@ impl FunctionCatalogEntry {
             delivery_semantics: Default::default(),
             agent: None,
             authentication: None,
+            credential_scopes: None,
         }
     }
 

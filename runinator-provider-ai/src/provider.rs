@@ -6,15 +6,19 @@ use runinator_models::{
     errors::SendableError,
     providers::{
         ActionAuthenticationAlternative, ActionAuthenticationMetadata, ActionMetadata,
-        ExecutionProfileSupport, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata, RuninatorType,
+        CredentialInjection, ExecutionProfileSupport, ParameterMetadata, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
 use crate::claude_code::run_claude_code;
-use crate::params::{default_binary, default_model, default_output_format};
+use crate::codex::run_codex;
+use crate::params::{
+    default_binary, default_codex_binary, default_codex_sandbox, default_model,
+    default_output_format,
+};
 use crate::shell::run_shell_command;
 
 #[derive(Clone)]
@@ -39,8 +43,7 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             name: self.name(),
-            actions: {
-                let mut actions = vec![
+            actions: vec![
                 ActionMetadata::new("execute", "Run an AI command via shell")
                     .with_parameters(vec![
                         ParameterMetadata::required("command", RuninatorType::String),
@@ -80,17 +83,55 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                     ParameterMetadata::optional("env", RuninatorType::map(RuninatorType::String)),
                 ])
                 .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)])
-                .as_agent("prompt", "/response/result"),
-                ];
-                for action in &mut actions {
-                    action.authentication = Some(ActionAuthenticationMetadata::optional(vec![
-                        ActionAuthenticationAlternative::ExecutionProfile,
-                    ]));
-                }
-                actions
-            },
+                .as_agent("prompt", "/response/result")
+                .with_authentication(ActionAuthenticationMetadata::optional(vec![
+                    ActionAuthenticationAlternative::ExecutionProfile,
+                ]))
+                .with_credential_scopes(["claude"]),
+                ActionMetadata::new(
+                    "codex",
+                    "Invoke Codex CLI as a one-shot command or steerable app-server session",
+                )
+                .with_parameters(vec![
+                    ParameterMetadata::required("prompt", RuninatorType::String),
+                    ParameterMetadata::optional("api_key", RuninatorType::String)
+                        .secret()
+                        .inject(CredentialInjection::Environment {
+                            name: "CODEX_API_KEY".into(),
+                            template: "${secret}".into(),
+                        }),
+                    ParameterMetadata::optional("binary", RuninatorType::String)
+                        .with_default(json!(default_codex_binary())),
+                    ParameterMetadata::optional("model", RuninatorType::String),
+                    ParameterMetadata::optional("reasoning_effort", RuninatorType::String),
+                    ParameterMetadata::optional("working_dir", RuninatorType::String),
+                    ParameterMetadata::optional("harnessed", RuninatorType::Boolean)
+                        .with_default(json!(false)),
+                    ParameterMetadata::optional("role", RuninatorType::String),
+                    ParameterMetadata::optional("resume_thread", RuninatorType::String),
+                    ParameterMetadata::optional("session_slot", RuninatorType::String),
+                    ParameterMetadata::optional("mission_mcp", RuninatorType::Boolean)
+                        .with_default(json!(false)),
+                    ParameterMetadata::optional("mission_id", RuninatorType::String),
+                    ParameterMetadata::optional("sandbox", RuninatorType::String)
+                        .with_default(json!(default_codex_sandbox())),
+                    ParameterMetadata::optional("output_schema", RuninatorType::Any),
+                    ParameterMetadata::optional(
+                        "extra_args",
+                        RuninatorType::array(RuninatorType::String),
+                    ),
+                ])
+                .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)])
+                .as_agent("prompt", "/response/result")
+                .with_authentication(ActionAuthenticationMetadata::required(vec![
+                    ActionAuthenticationAlternative::secrets(["api_key"]),
+                    ActionAuthenticationAlternative::ExecutionProfile,
+                ])
+                .allow_multiple())
+                .with_credential_scopes(["codex"]),
+            ],
             metadata: ProviderRuntimeMetadata {
-                credential_scopes: vec!["claude".into()],
+                credential_scopes: vec!["claude".into(), "codex".into()],
                 contract: Some("stdin/stdout JSON".into()),
                 execution_profile: ExecutionProfileSupport::Subprocess,
             },
@@ -105,6 +146,7 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
     ) -> Result<TaskExecutionResult, SendableError> {
         match request.action_function.as_str() {
             "claude_code" => run_claude_code(&request, sink, token, &self.runner),
+            "codex" => run_codex(&request, sink, token, &self.runner),
             // legacy default: shell-command execution.
             _ => run_shell_command(&request, sink, token),
         }

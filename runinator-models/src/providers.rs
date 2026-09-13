@@ -57,6 +57,10 @@ pub struct ActionMetadata {
     /// behavior where secret parameters and execution profiles are validated independently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authentication: Option<ActionAuthenticationMetadata>,
+    /// Credential scopes required when this action uses an execution profile. Omission preserves
+    /// the legacy provider-level scope contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_scopes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,6 +68,10 @@ pub struct ActionAuthenticationMetadata {
     #[serde(default = "default_true")]
     pub required: bool,
     pub alternatives: Vec<ActionAuthenticationAlternative>,
+    /// Whether more than one satisfied alternative may be supplied. Later credential injection
+    /// takes precedence when two alternatives target the same subprocess setting.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_multiple: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +86,7 @@ impl ActionAuthenticationMetadata {
         Self {
             required: true,
             alternatives,
+            allow_multiple: false,
         }
     }
 
@@ -85,7 +94,13 @@ impl ActionAuthenticationMetadata {
         Self {
             required: false,
             alternatives,
+            allow_multiple: false,
         }
+    }
+
+    pub fn allow_multiple(mut self) -> Self {
+        self.allow_multiple = true;
+        self
     }
 }
 
@@ -99,6 +114,10 @@ impl ActionAuthenticationAlternative {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Catalog-declared semantics used by mission authoring without coupling clients to a provider.
@@ -119,6 +138,7 @@ impl ActionMetadata {
             delivery_semantics: DeliverySemantics::AtLeastOnce,
             agent: None,
             authentication: None,
+            credential_scopes: None,
         }
     }
 
@@ -146,6 +166,14 @@ impl ActionMetadata {
 
     pub fn with_authentication(mut self, authentication: ActionAuthenticationMetadata) -> Self {
         self.authentication = Some(authentication);
+        self
+    }
+
+    pub fn with_credential_scopes(
+        mut self,
+        scopes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.credential_scopes = Some(scopes.into_iter().map(Into::into).collect());
         self
     }
 
@@ -345,7 +373,7 @@ pub fn validate_action_authentication(
         };
         selected += usize::from(satisfied);
     }
-    if selected > 1 {
+    if selected > 1 && !authentication.allow_multiple {
         return Err("select exactly one authentication method; secrets and an execution profile cannot be combined".into());
     }
     if authentication.required && selected == 0 {
@@ -385,6 +413,14 @@ impl crate::validation::Validate for ProviderMetadata {
                 action.description.as_deref(),
                 LONG_TEXT_MAX,
             )?;
+            if let Some(scopes) = &action.credential_scopes {
+                for (scope_index, scope) in scopes.iter().enumerate() {
+                    identifier(
+                        &format!("actions[{action_index}].credential_scopes[{scope_index}]"),
+                        scope,
+                    )?;
+                }
+            }
             for (parameter_index, parameter) in action.parameters.iter().enumerate() {
                 identifier(
                     &format!("actions[{action_index}].parameters[{parameter_index}].name"),

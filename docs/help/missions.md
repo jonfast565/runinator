@@ -12,6 +12,10 @@ A mission is a durable orchestration, not one long subprocess. Each phase is rec
 the source revision and pipeline policy are frozen when the mission starts, and every retry or
 review loop remains visible in the Missions page and CLI.
 
+Each preset can use Claude Code or Codex CLI. The Codex variants are also available from the
+explicit `packs/codex-missions` pack as `runinator.missions.codex_coding_mission` and
+`runinator.missions.codex_research_report_mission`.
+
 Runinator also ships an opt-in `runinator.sdlc.sdlc_mission` pack for a complete label-driven
 software-delivery lifecycle. A Jira polling adapter admits an issue when it sees the `runinator`
 label; smaller mission phases then gather Jira and Slack context, plan, implement, review, verify,
@@ -30,6 +34,15 @@ In Command Center, open **Missions** and choose **New recipe**. Start blank or s
 the Coding or Research/report preset, then edit its typed inputs, phase graph, provider actions,
 prompts, workspace policy, routes, and execution bound. Saving compiles the generated workflows and
 ordinary `mission.*` pipeline in one transaction; it does not start billable work.
+
+For Codex, first install the auth profile and mission pack:
+
+```bash
+runinatorctl workflows apply packs/codex-availability
+runinatorctl workflows apply packs/codex-missions
+```
+
+`bash scripts/setup-codex-missions.sh` validates and applies both packs against the configured API.
 
 For a local supervisor stack:
 
@@ -89,6 +102,22 @@ runinatorctl workflows run runinator.tests.claude.claude_availability
 
 Its final output is `yes` on success. Pack installation itself never runs this probe.
 
+## Make the Codex profile ready
+
+Configure Codex with `cli_auth_credentials_store = "file"`, run `codex login`, and select the
+Codex template on the Execution Profiles page. The profile collects only `~/.codex/auth.json`; it
+does not copy personal configuration, plugins, skills, or MCP servers. Approve and publish the
+profile as above, then optionally run:
+
+```bash
+runinatorctl workflows run runinator.tests.codex.codex_availability
+```
+
+For unattended automation, a stored secret bound to the action's `api_key` parameter is preferred.
+It is injected as `CODEX_API_KEY` and never appears in the durable action parameters. When both an
+API key and profile are supplied, the API key is authoritative. Republish file-backed profiles
+after login credentials rotate.
+
 ## Start the first mission
 
 Create `mission.json`. Use a repository URL the selected worker can clone non-interactively and a
@@ -140,9 +169,9 @@ runinatorctl missions evidence <mission-id>
 runinatorctl missions steer <mission-id> "Focus on the failing parser regression test"
 ```
 
-Steering is accepted only while a harnessed Claude phase owns a steerable effect. It is delivered
-as a Claude user message, not shell input. If a mission is between phases or already terminal, wait
-for the next active Claude phase or inspect its final evidence instead.
+Steering is accepted only while a harnessed Claude or Codex phase owns a steerable effect. It is
+delivered through the provider's structured protocol, never as shell input. If a mission is between phases or already terminal, wait
+for the next active AI phase or inspect its final evidence instead.
 
 Lifecycle intents are policy-defined controls, not arbitrary graph jumps. Inspect the mission's
 frozen policy before submitting one:
@@ -168,7 +197,7 @@ scripts/install-mcp-codex.sh --local
 ```
 
 For a Kubernetes forward on port 8081, use `--k8s --port 8081` instead. These registrations expose
-the caller-authorized control surface. Claude Code processes launched *inside* mission phases do not
+the caller-authorized control surface. AI processes launched *inside* mission phases do not
 inherit that broad MCP registration: Runinator injects a fixed mission-only server that can inspect
 only the current mission, read its evidence, and submit its declared lifecycle intents.
 
@@ -178,10 +207,11 @@ only the current mission, read its evidence, and submit its declared lifecycle i
   `bash scripts/setup-ai-missions.sh` against the same API URL. Packs are installed explicitly and
   are not imported by Kubernetes deployment.
 - **The profile is pending or unavailable:** keep the desktop agent running, approve the current
-  profile digest, allow macOS Keychain access, and verify `claude` is logged in locally.
+  profile digest, allow the required credential-file or Keychain access, and verify the selected
+  CLI is logged in locally.
 - **Checkout fails:** use a reachable HTTPS or SSH URL and make its credentials available to the
   worker without an interactive prompt. Confirm the requested revision exists remotely.
-- **A mission does not accept steering:** inspect `missions show`; only an active harnessed Claude
+- **A mission does not accept steering:** inspect `missions show`; only an active harnessed AI
   effect is steerable.
 - **A loop stops:** inspect `missions evidence` and epoch history. Coding missions allow ten epochs
   and research/report missions allow eight; exhaustion fails explicitly instead of looping forever.

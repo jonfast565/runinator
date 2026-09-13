@@ -1,0 +1,320 @@
+language rexrap-1
+
+package {
+  {
+    "item_type": "rexrap_pack",
+    "name": "Bounded Codex Missions",
+    "version": 1
+  }
+}
+
+namespace runinator.missions.codex {
+
+workflow "Prepare Codex Coding Source" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key coding_prepare
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(900s)
+        let source = git.prepare_checkout(repository: params.mission.source.repository, revision: params.mission.source.revision)
+        compute {
+            return {
+                resources_patch: { source: source },
+                evidence: { role: "source", source: source },
+                next_member: "runinator.missions.codex.coding_implement"
+            }
+        }
+    }
+}
+
+workflow "Implement Codex Coding Mission" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key coding_implement
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(7200s)
+        @profile("codex")
+        let result = ai-command.codex(
+            prompt: "Implement ${params.request.goal} in the assigned workspace. Read repository guidance, make the smallest complete change, and run relevant checks. Use the mission MCP tools only for this mission. Do not commit, push, deploy, change credentials, or start another mission.",
+            harnessed: true,
+            role: "implementer",
+            session_slot: "implementer",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            sandbox: "workspace_write"
+        )
+        compute {
+            return {
+                resources_patch: { latest_implementation: result.response.result },
+                evidence: { role: "implementer", response: result.response },
+                next_member: "runinator.missions.codex.coding_review"
+            }
+        }
+    }
+}
+
+workflow "Review Codex Coding Mission" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key coding_review
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(3600s)
+        @profile("codex")
+        let result = ai-command.codex(
+            prompt: "Review the current diff for ${params.request.goal}. Do not edit files. Reply with only JSON: {\"next_member\":\"runinator.missions.codex.coding_implement\"|\"runinator.missions.codex.coding_summary\",\"summary\":\"...\",\"findings\":[\"...\"]}. Route to implement only for a concrete repair.",
+            harnessed: true,
+            role: "reviewer",
+            session_slot: "reviewer",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            sandbox: "read_only"
+        )
+        compute {
+            let decision: { next_member: string, summary: string, findings: string[] } = std.encoding.parse_json(result.response.result)
+            return {
+                resources_patch: { latest_review: decision },
+                evidence: { role: "reviewer", review: decision },
+                next_member: decision.next_member
+            }
+        }
+    }
+}
+
+workflow "Summarize Codex Coding Mission" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key coding_summary
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(1800s)
+        @profile("codex")
+        let result = ai-command.codex(
+            prompt: "Summarize the completed coding mission for ${params.request.goal}: changes, checks, review outcome, and remaining risks. Do not edit files.",
+            harnessed: true,
+            role: "reporter",
+            session_slot: "reporter",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            sandbox: "read_only"
+        )
+        compute {
+            return {
+                resources_patch: { final_summary: result.response.result },
+                evidence: { role: "reporter", summary: result.response }
+            }
+        }
+    }
+}
+
+workflow "Prepare Codex Research Source" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key research_prepare
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(900s)
+        let source = git.prepare_checkout(repository: params.mission.source.repository, revision: params.mission.source.revision)
+        compute {
+            return {
+                resources_patch: { source: source },
+                evidence: { role: "source", source: source },
+                next_member: "runinator.missions.codex.research_investigate"
+            }
+        }
+    }
+}
+
+workflow "Investigate Codex Research Mission" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key research_investigate
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(5400s)
+        @profile("codex")
+        let result = ai-command.codex(
+            prompt: "Investigate ${params.request.goal} using the assigned workspace. Gather evidence, distinguish facts from inference, and record unknowns. Do not modify files unless the request explicitly requires a report artifact.",
+            harnessed: true,
+            role: "investigator",
+            session_slot: "investigator",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            sandbox: "workspace_write"
+        )
+        compute {
+            return {
+                resources_patch: { latest_investigation: result.response.result },
+                evidence: { role: "investigator", response: result.response },
+                next_member: "runinator.missions.codex.research_critique"
+            }
+        }
+    }
+}
+
+workflow "Critique Codex Research Mission" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key research_critique
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(2700s)
+        @profile("codex")
+        let result = ai-command.codex(
+            prompt: "Critique the evidence for ${params.request.goal}. Do not edit files. Reply with only JSON: {\"next_member\":\"runinator.missions.codex.research_investigate\"|\"runinator.missions.codex.research_report\",\"summary\":\"...\",\"gaps\":[\"...\"]}. Route back only for a material evidence gap.",
+            harnessed: true,
+            role: "critic",
+            session_slot: "critic",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            sandbox: "read_only"
+        )
+        compute {
+            let decision: { next_member: string, summary: string, gaps: string[] } = std.encoding.parse_json(result.response.result)
+            return {
+                resources_patch: { latest_critique: decision },
+                evidence: { role: "critic", critique: decision },
+                next_member: decision.next_member
+            }
+        }
+    }
+}
+
+workflow "Report Codex Research Mission" v1 {
+    params {
+        request: { goal: string }
+        mission: { kind: string, correlation_key: string, requested_by: string, source: { repository: string, revision: string } }
+        orchestration: { binding_id: string, workspace_affinity: any, resources: any }
+    }
+    key research_report
+    do {
+        @workspace(params.orchestration.workspace_affinity)
+        @timeout(3600s)
+        @profile("codex")
+        let result = ai-command.codex(
+            prompt: "Produce the final evidence-backed report for ${params.request.goal}. State the answer first, distinguish facts from inference, cite local evidence, list unresolved questions, and give practical next steps. Do not edit files.",
+            harnessed: true,
+            role: "reporter",
+            session_slot: "research_reporter",
+            mission_mcp: true,
+            mission_id: params.orchestration.binding_id,
+            sandbox: "read_only"
+        )
+        compute {
+            return {
+                resources_patch: { final_report: result.response.result },
+                evidence: { role: "reporter", report: result.response }
+            }
+        }
+    }
+}
+
+}
+
+pipeline "Bounded Codex Coding Mission" {
+    key codex_coding_mission
+    namespace runinator.missions
+    description "A bounded coding mission using isolated, durable Codex role sessions."
+    ingress scope "mission.codex.coding" {
+        on "start" when unbound -> start
+        on "cancel" when active -> dispatch "cancel"
+        on "pause" when active -> dispatch "pause"
+        on "resume" when active -> dispatch "resume"
+        on "requeue" when terminal -> requeue
+    }
+    orchestration {
+        entry "runinator.missions.codex.coding_prepare"
+        max_epochs 8
+        intent "cancel" effect terminate priority 100
+        intent "pause" effect suspend priority 80 stop pause restart current
+        intent "resume" effect resume priority 70 restart current
+        phase "runinator.missions.codex.coding_prepare" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.missions.codex.coding_implement" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.missions.codex.coding_review" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.missions.codex.coding_summary" { resources_patch from "/resources_patch" evidence from "/evidence" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+    }
+    workflow "runinator.missions.codex.coding_prepare"
+    workflow "runinator.missions.codex.coding_implement"
+    workflow "runinator.missions.codex.coding_review"
+    workflow "runinator.missions.codex.coding_summary"
+}
+
+pipeline "Bounded Codex Research Mission" {
+    key codex_research_report_mission
+    namespace runinator.missions
+    description "A bounded research mission using isolated, durable Codex role sessions."
+    ingress scope "mission.codex.research" {
+        on "start" when unbound -> start
+        on "cancel" when active -> dispatch "cancel"
+        on "pause" when active -> dispatch "pause"
+        on "resume" when active -> dispatch "resume"
+        on "requeue" when terminal -> requeue
+    }
+    orchestration {
+        entry "runinator.missions.codex.research_prepare"
+        max_epochs 8
+        intent "cancel" effect terminate priority 100
+        intent "pause" effect suspend priority 80 stop pause restart current
+        intent "resume" effect resume priority 70 restart current
+        phase "runinator.missions.codex.research_prepare" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.missions.codex.research_investigate" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.missions.codex.research_critique" { resources_patch from "/resources_patch" evidence from "/evidence" next_member from "/next_member" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+        phase "runinator.missions.codex.research_report" { resources_patch from "/resources_patch" evidence from "/evidence" workspace scope "mission-source" reuse lease 2h recovery wait labels { "capability": "git" } }
+    }
+    workflow "runinator.missions.codex.research_prepare"
+    workflow "runinator.missions.codex.research_investigate"
+    workflow "runinator.missions.codex.research_critique"
+    workflow "runinator.missions.codex.research_report"
+}
+
+tests {
+  {
+    "tests": [
+      {
+        "name": "parses a declared Codex coding review route",
+        "workflow": "Review Codex Coding Mission",
+        "input": {
+          "request": { "goal": "review a change" },
+          "mission": { "kind": "coding", "correlation_key": "coding-test", "requested_by": "test", "source": { "repository": "https://example.invalid/repo.git", "revision": "abc123" } },
+          "orchestration": { "binding_id": "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111", "workspace_affinity": {}, "resources": {} }
+        },
+        "mocks": { "result": { "output": { "response": { "result": "{\"next_member\":\"runinator.missions.codex.coding_summary\",\"summary\":\"ready\",\"findings\":[]}" } } } },
+        "expect": { "status": "succeeded" }
+      },
+      {
+        "name": "parses a declared Codex research route",
+        "workflow": "Critique Codex Research Mission",
+        "input": {
+          "request": { "goal": "critique research" },
+          "mission": { "kind": "research_report", "correlation_key": "research-test", "requested_by": "test", "source": { "repository": "https://example.invalid/repo.git", "revision": "abc123" } },
+          "orchestration": { "binding_id": "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111", "workspace_affinity": {}, "resources": {} }
+        },
+        "mocks": { "result": { "output": { "response": { "result": "{\"next_member\":\"runinator.missions.codex.research_report\",\"summary\":\"ready\",\"gaps\":[]}" } } } },
+        "expect": { "status": "succeeded" }
+      }
+    ]
+  }
+}

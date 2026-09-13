@@ -1187,7 +1187,7 @@ pub enum MissionCommands {
     Show { id: Uuid },
     /// Show durable evidence produced across mission epochs.
     Evidence { id: Uuid },
-    /// Send a bounded steering message to this mission's current harnessed Claude Code phase.
+    /// Send a bounded steering message to this mission's current steerable AI phase.
     Steer { id: Uuid, message: String },
     /// Submit a mission-specific, policy-authored lifecycle intent with an auditable reason.
     Intent {

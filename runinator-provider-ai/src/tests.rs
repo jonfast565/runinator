@@ -19,6 +19,36 @@ fn claude_code_advertises_agent_authoring_semantics() {
 }
 
 #[test]
+fn codex_advertises_isolated_authentication_and_agent_semantics() {
+    let metadata = AiCommandProvider.metadata();
+    let action = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "codex")
+        .unwrap();
+    assert_eq!(
+        action
+            .credential_scopes
+            .as_ref()
+            .map(|scopes| scopes.iter().map(String::as_str).collect::<Vec<_>>()),
+        Some(vec!["codex"])
+    );
+    assert_eq!(
+        action.agent.as_ref().unwrap().response_text_pointer,
+        "/response/result"
+    );
+    assert!(action.authentication.as_ref().unwrap().required);
+    assert!(action.authentication.as_ref().unwrap().allow_multiple);
+    let api_key = action
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "api_key")
+        .unwrap();
+    assert!(api_key.secret);
+    assert_eq!(api_key.credential_injections.len(), 1);
+}
+
+#[test]
 fn test_ai_command_provider_execution() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {

@@ -510,7 +510,7 @@ pub async fn resolve_operation<T: AuthorizationStore + OrchestrationStore + Work
 }
 
 /// Fence steering through the mission binding so callers never need to discover or race a raw
-/// effect id. The worker remains the sole owner of Claude stdin.
+/// effect id. The worker remains the sole owner of the active AI harness protocol.
 pub async fn steer_mission<
     T: AuthorizationStore + OrchestrationStore + WorkflowVmStore + runinator_store::RuntimeStore,
 >(
@@ -537,7 +537,7 @@ pub async fn steer_mission<
     }
     let effect = match operations.active_mission_harness_effect(&binding).await {
         Ok(Some(effect)) => effect,
-        Ok(None) => return bad_request("mission has no active harnessed Claude Code phase"),
+        Ok(None) => return bad_request("mission has no active steerable AI phase"),
         Err(error) => return api_error(error.to_string()),
     };
     let Some(replica_id) = effect.current_executor_replica_id else {
@@ -1021,7 +1021,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/orchestrations/{id}/steer",
         "Orchestrations",
         "Steer the current mission phase",
-        "Resolves and fences the current harnessed Claude Code effect through its mission binding.",
+        "Resolves and fences the current steerable AI effect through its mission binding.",
         EndpointPolicy::ResourceAction(ResourceType::Pipeline, Action::Run),
         json_body("A structured mission input message.", Example::None),
         &[],

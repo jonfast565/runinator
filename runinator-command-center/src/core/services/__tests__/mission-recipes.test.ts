@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { missionPhaseSource, missionRecipePreset, validateMissionRecipe } from "../mission-recipes";
+import {
+  missionPhaseSource,
+  missionRecipeFromPipeline,
+  missionRecipePreset,
+  validateMissionRecipe,
+} from "../mission-recipes";
 
 describe("mission recipe authoring", () => {
   it("treats coding and research as editable preset drafts", () => {
@@ -38,6 +43,32 @@ describe("mission recipe authoring", () => {
     expect(source).toContain("std.encoding.parse_json(phase_result.response.result)");
     expect(source).toContain("runinator.missions.coding_mission_implement");
     expect(source).toContain("runinator.missions.coding_mission_verify");
+  });
+
+  it("generates isolated Codex phases with durable role slots", () => {
+    const draft = missionRecipePreset("coding", "codex");
+    const implement = draft.phases.find((phase) => phase.id === "implement")!;
+    const review = draft.phases.find((phase) => phase.id === "review")!;
+
+    expect(draft.schemaVersion).toBe(2);
+    expect(draft.agentRuntime).toBe("codex");
+    expect(implement.action).toBe("codex");
+    expect(implement.profile).toBe("codex");
+    expect(implement.actionParameters.sandbox).toBe("workspace_write");
+    expect(review.actionParameters.sandbox).toBe("read_only");
+    expect(missionPhaseSource(draft, review)).toContain('session_slot: "review"');
+    expect(missionPhaseSource(draft, review)).toContain("output_schema:");
+  });
+
+  it("migrates version one mission drafts to Claude", () => {
+    const legacy = missionRecipePreset("blank") as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 1;
+    delete legacy.agentRuntime;
+    const migrated = missionRecipeFromPipeline({
+      metadata: { mission_authoring: legacy },
+    } as never)!;
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.agentRuntime).toBe("claude");
   });
 
   it("rejects reserved inputs and routes outside the recipe", () => {

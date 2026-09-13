@@ -34,6 +34,13 @@
             ><span>{{ preset.description }}</span>
           </button>
         </div>
+        <label class="field-label"
+          ><span>AI runtime</span
+          ><select :value="draft.agentRuntime" class="input" @change="selectAgentRuntime">
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex CLI</option>
+          </select></label
+        >
         <div class="grid gap-3 md:grid-cols-2">
           <label class="field-label"
             ><span>Name</span><input v-model.trim="draft.name" class="input" required
@@ -317,6 +324,7 @@ import { computed, ref } from "vue";
 import type { ActionMetadata, Pipeline, ProviderMetadata } from "../../../core/domain/models";
 import type {
   MissionInputKind,
+  MissionAgentRuntime,
   MissionPhaseDraft,
   MissionPresetId,
   MissionRecipeDraft,
@@ -412,7 +420,12 @@ const phaseProviders = computed(() =>
 );
 
 function selectPreset(id: MissionPresetId): void {
-  draft.value = missionRecipePreset(id);
+  draft.value = missionRecipePreset(id, draft.value.agentRuntime);
+}
+
+function selectAgentRuntime(event: Event): void {
+  const runtime = (event.target as HTMLSelectElement).value as MissionAgentRuntime;
+  draft.value = missionRecipePreset(draft.value.preset, runtime);
 }
 
 function addInput(): void {
@@ -432,9 +445,9 @@ function addPhase(): void {
     name: "New phase",
     role: "Agent",
     provider: "ai-command",
-    action: "claude_code",
+    action: draft.value.agentRuntime === "codex" ? "codex" : "claude_code",
     promptParameter: "prompt",
-    profile: "claude",
+    profile: draft.value.agentRuntime,
     prompt: "",
     timeoutSeconds: 3600,
     actionParameters: {},

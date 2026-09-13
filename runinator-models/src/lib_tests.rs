@@ -363,6 +363,20 @@ fn provider_metadata_validates_credential_injection_contracts() {
 }
 
 #[test]
+fn action_authentication_can_explicitly_allow_a_profile_and_secret_together() {
+    let action = ActionMetadata::new("run", "run").with_authentication(
+        ActionAuthenticationMetadata::required(vec![
+            ActionAuthenticationAlternative::secrets(["token"]),
+            ActionAuthenticationAlternative::ExecutionProfile,
+        ])
+        .allow_multiple(),
+    );
+    assert!(
+        validate_action_authentication(&action, &crate::json!({"token":"value"}), true).is_ok()
+    );
+}
+
+#[test]
 fn action_metadata_exposes_typed_parameter_and_result_environments() {
     let action = ActionMetadata::new("run", "run")
         .with_parameters(vec![

@@ -317,7 +317,8 @@ const isInteractiveEffect = computed(() => {
   return (
     action.type === "action" &&
     ((action.provider === "console" && action.function === "run") ||
-      (action.provider === "ai-command" && action.function === "claude_code")) &&
+      (action.provider === "ai-command" &&
+        ["claude_code", "codex"].includes(String(action.function)))) &&
     input?.interactive === true
   );
 });
