@@ -52,6 +52,8 @@ describe("PipelineOrchestrationEditor", () => {
     expect(html).toContain("Admission routes");
     expect(html).toContain("Correlation scope");
     expect(html).toContain("When this event arrives");
+    expect(html).not.toContain('list="orchestration-events"');
+    expect(html).not.toContain("route-outcome");
     expect(html).toContain("not started → Start a new execution");
     expect(html).toContain("Always match this event");
     expect(html).toContain("ready");

@@ -187,7 +187,7 @@
           :key="definitionEditorKey"
           :pipeline="definitionPipeline"
           :adapter-kinds="store.adapterKinds"
-          @cancel="mode = 'Instances'"
+          @cancel="cancelDefinitionEdit"
           @save="saveDefinition"
         />
 
@@ -1854,6 +1854,7 @@ const definitionLoading = ref(false);
 const definitionError = ref<string | null>(null);
 const setupWizardOpen = ref(false);
 const setupWizardSaving = ref(false);
+const definitionEditorReset = ref(0);
 const definitionEditorKey = computed(() => {
   const pipeline = definitionPipeline.value;
 
@@ -1863,11 +1864,18 @@ const definitionEditorKey = computed(() => {
 
   // The visual editor owns reactive working copies. Remount it after a source apply so the
   // metadata and member surface immediately reflects the durable pipeline revision.
-  return `${pipeline.id ?? pipeline.name}:${JSON.stringify({
+  return `${pipeline.id ?? pipeline.name}:${String(definitionEditorReset.value)}:${JSON.stringify({
     metadata: pipeline.metadata,
     members: pipeline.graph.members,
   })}`;
 });
+
+function cancelDefinitionEdit(): void {
+  definitionError.value = null;
+  definitionEditorReset.value += 1;
+  app.setStatus("Discarded unsaved orchestration definition changes");
+}
+
 const statuses = [
   "pending",
   "running",

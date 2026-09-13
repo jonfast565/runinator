@@ -186,11 +186,7 @@
               <div class="route-builder">
                 <label class="orchestration-field route-event"
                   ><span>When this event arrives</span
-                  ><input
-                    v-model="route.event_type"
-                    list="orchestration-events"
-                    required
-                    placeholder="issue.updated"
+                  ><input v-model="route.event_type" required placeholder="issue.updated"
                 /></label>
                 <label class="orchestration-field"
                   ><span>And the execution is</span
@@ -210,7 +206,8 @@
                     >
                       {{ actionLabel(action) }}
                     </option>
-                  </select></label
+                  </select>
+                  <small>{{ routeActionHint(route) }}</small></label
                 >
                 <label v-if="route.action === 'dispatch'" class="orchestration-field"
                   ><span>Using response</span
@@ -221,10 +218,6 @@
                     </option>
                   </select></label
                 >
-                <div class="route-outcome">
-                  <Icon name="chevron-right" :size="14" />
-                  {{ routeActionHint(route) }}
-                </div>
               </div>
               <details class="orchestration-details" :open="route.predicates.length > 0">
                 <summary>
@@ -699,9 +692,6 @@
             </section>
             <pre class="policy-preview">{{ sourcePreview }}</pre>
           </div>
-          <datalist id="orchestration-events">
-            <option v-for="event in canonicalEvents" :key="event" :value="event" />
-          </datalist>
           <datalist id="orchestration-pointers">
             <option v-for="pointer in canonicalPointers" :key="pointer" :value="pointer" />
           </datalist>
@@ -1903,18 +1893,6 @@ function renderSource(): string {
 
 .route-builder:has(> label:nth-of-type(4)) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.route-outcome {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  gap: 5px;
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 7px 9px;
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 .orchestration-details {
