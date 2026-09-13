@@ -10,6 +10,10 @@ import type {
   Pipeline,
   WorkspacePolicy,
 } from "../domain/models";
+import {
+  derivePhasePolicyProfiles,
+  phasePolicyProfilesMetadata,
+} from "./orchestration-phase-profiles";
 
 export type OrchestrationSetupPreset =
   "run_once" | "queue_per_key" | "latest_wins" | "live_update" | "pause_for_review" | "mission";
@@ -152,6 +156,11 @@ export function compileOrchestrationSetup(
   const phases = Object.fromEntries(
     draft.phases.map((phase) => [phase.member, compilePhase(draft, phase)]),
   );
+  const phaseProfiles = derivePhasePolicyProfiles(
+    draft.phases.map((phase) => phase.member),
+    phases,
+  );
+  nameSetupProfiles(phaseProfiles);
   const budgets: Record<string, BudgetPolicy> =
     draft.retryAttempts > 0
       ? {
@@ -174,11 +183,22 @@ export function compileOrchestrationSetup(
       defaults: {},
     },
     authoring: {
-      schema_version: 1,
+      schema_version: 2,
       preset: draft.preset,
       adapter_ids: [...draft.adapterIds],
+      phase_profiles: phasePolicyProfilesMetadata(phaseProfiles),
     },
   };
+}
+
+function nameSetupProfiles(profiles: ReturnType<typeof derivePhasePolicyProfiles>): void {
+  for (const profile of profiles.result_mappings) {
+    profile.name = profile.mapping.next_member ? "Progress results" : "Saved results";
+  }
+
+  for (const profile of profiles.workspace_policies) {
+    profile.name = "Shared workspace";
+  }
 }
 
 export function mergeSetupMetadata(

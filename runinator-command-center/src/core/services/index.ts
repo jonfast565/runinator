@@ -67,6 +67,20 @@ export {
   mergeSetupMetadata,
   setupBehaviorSummary,
 } from "./orchestration-setup";
+export {
+  derivePhasePolicyProfiles,
+  expandPhasePolicyProfiles,
+  loadPhasePolicyProfiles,
+  phasePolicyProfilesMetadata,
+  resultMappingKeys,
+} from "./orchestration-phase-profiles";
+export type {
+  PhasePolicyProfiles,
+  PhaseProfileAssignment,
+  ResultMappingKey,
+  ResultMappingProfile,
+  WorkspacePolicyProfile,
+} from "./orchestration-phase-profiles";
 export type {
   ActiveEventBehavior,
   CompiledOrchestrationSetup,

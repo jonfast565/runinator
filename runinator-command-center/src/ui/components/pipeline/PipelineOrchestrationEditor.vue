@@ -167,6 +167,7 @@
             </section>
             <article
               v-for="(route, routeIndex) in routes"
+              :id="routeDomId(route.id)"
               :key="route.id"
               class="orchestration-card route-card"
             >
@@ -337,13 +338,21 @@
                 </label>
               </div>
               <div class="intent-usage">
-                <span :class="intentReferenceCount(intent.name) ? 'is-used' : ''">
-                  {{
-                    intentReferenceCount(intent.name)
-                      ? `Used by ${intentReferenceCount(intent.name)} admission rule${intentReferenceCount(intent.name) === 1 ? "" : "s"}`
-                      : "Not used by an admission rule"
-                  }}
-                </span>
+                <span v-if="intentRoutes(intent.name).length === 0"
+                  >Not used by an admission rule</span
+                >
+                <template v-else>
+                  <button
+                    v-for="route in intentRoutes(intent.name)"
+                    :key="route.id"
+                    type="button"
+                    class="policy-tag is-used"
+                    @click="focusRoute(route.id)"
+                  >
+                    {{ route.event_type || "Unnamed event" }} ·
+                    {{ lifecycleLabel(route.lifecycle) }}
+                  </button>
+                </template>
               </div>
               <details class="orchestration-details">
                 <summary>
@@ -488,150 +497,147 @@
             </article>
           </div>
 
-          <div v-else-if="tab === 'Phase Mappings'" class="grid gap-4">
+          <div v-else-if="tab === 'Phase Policies'" class="grid gap-5">
             <header class="orchestration-section-heading">
               <div>
                 <div class="flex items-center gap-1">
-                  <h3>Phase mappings</h3>
-                  <HelpBubble label="About phase mappings">
-                    <strong>Saved phase results</strong>
+                  <h3>Reusable phase policies</h3>
+                  <HelpBubble label="About phase policies">
+                    <strong>Define once, assign later</strong>
                     <p>
-                      Mappings copy selected workflow results into durable orchestration state.
-                      Leave a mapping blank when the phase does not produce that value.
+                      Result mappings and workspace policies are reusable within this pipeline.
+                      Assign them to phases in the next section.
                     </p>
                   </HelpBubble>
                 </div>
               </div>
             </header>
-            <section
-              v-if="phases.length === 0"
-              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
-            >
-              Add a workflow to this pipeline before configuring phase result mappings.
-            </section>
-            <section v-else class="phase-flow" aria-label="Pipeline phases">
-              <article v-for="(phase, index) in phases" :key="phase.member" class="phase-card">
-                <div class="phase-marker" aria-hidden="true">
-                  <span>{{ index + 1 }}</span>
+            <section class="policy-library" aria-labelledby="result-profile-heading">
+              <header>
+                <div>
+                  <h4 id="result-profile-heading">Result mappings</h4>
+                  <p>Choose which workflow output fields become durable orchestration state.</p>
                 </div>
-                <details class="phase-details" :open="phaseMappingCount(phase) > 0 || index === 0">
-                  <summary>
-                    <span>
-                      <strong>{{ phase.member }}</strong>
-                      <small>{{
-                        phaseMappingCount(phase)
-                          ? `${phaseMappingCount(phase)} result fields saved`
-                          : "No result data saved yet"
-                      }}</small>
-                    </span>
-                    <span class="phase-summary-badge"
-                      >{{ phaseMappingCount(phase) }}/{{ resultPointers.length }}</span
+                <button type="button" class="btn btn-primary btn-sm" @click="addResultProfile">
+                  <Icon name="plus" :size="14" /> Add mapping
+                </button>
+              </header>
+              <p v-if="resultProfiles.length === 0" class="policy-empty">
+                No result mappings. Phases without one do not retain mapped result fields.
+              </p>
+              <article v-for="profile in resultProfiles" :key="profile.id" class="profile-card">
+                <header>
+                  <label class="orchestration-field profile-name">
+                    <span>Mapping name</span>
+                    <input v-model="profile.name" required placeholder="Core results" />
+                  </label>
+                  <span class="profile-usage">{{ profileUsageLabel("result", profile.id) }}</span>
+                  <div class="profile-actions">
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      @click="duplicateResultProfile(profile)"
                     >
+                      <Icon name="copy" :size="14" /> Duplicate
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm text-danger-fg"
+                      @click="requestProfileRemoval('result', profile.id)"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </header>
+                <div class="mapping-grid">
+                  <label
+                    v-for="pointer in commonResultPointers"
+                    :key="pointer.key"
+                    class="orchestration-field"
+                  >
+                    <span>{{ pointer.label }}</span>
+                    <input
+                      v-model="profile.mapping[pointer.key]"
+                      list="orchestration-pointers"
+                      :placeholder="pointer.placeholder"
+                    />
+                    <small>{{ pointer.description }}</small>
+                  </label>
+                </div>
+                <details class="orchestration-details profile-advanced">
+                  <summary>
+                    <span>Advanced result routing</span>
+                    <small>{{ advancedMappingSummary(profile) }}</small>
                   </summary>
                   <div class="mapping-grid">
                     <label
-                      v-for="pointer in resultPointers"
+                      v-for="pointer in advancedResultPointers"
                       :key="pointer.key"
                       class="orchestration-field"
                     >
                       <span>{{ pointer.label }}</span>
                       <input
-                        v-model="phase[pointer.key]"
+                        v-model="profile.mapping[pointer.key]"
                         list="orchestration-pointers"
                         :placeholder="pointer.placeholder"
                       />
                       <small>{{ pointer.description }}</small>
                     </label>
                   </div>
-                  <div class="phase-copy-bar">
-                    <span>
-                      <strong>Reuse these mappings</strong>
-                      <small>Copy all five fields over the mappings in every other phase.</small>
-                    </span>
-                    <button
-                      type="button"
-                      class="btn btn-sm"
-                      :disabled="phases.length < 2"
-                      @click="applyPhaseMappingsToAll(phase)"
-                    >
-                      <Icon name="copy" :size="14" />
-                      Apply to every phase
-                    </button>
-                  </div>
                 </details>
               </article>
             </section>
-            <p v-if="phaseMappingNotice" class="draft-change-notice" role="status">
-              <Icon name="check" :size="14" />
-              {{ phaseMappingNotice }}
-            </p>
-          </div>
 
-          <div v-else-if="tab === 'Workspaces'" class="grid gap-4">
-            <header class="orchestration-section-heading">
-              <div>
-                <div class="flex items-center gap-1">
-                  <h3>Workspace continuity</h3>
-                  <HelpBubble label="About orchestration workspaces">
-                    <strong>Working files</strong>
-                    <p>
-                      Workspace leases keep compatible machine-local files available across phases.
-                      Enable them only for phases that need that state.
-                    </p>
-                  </HelpBubble>
+            <section class="policy-library" aria-labelledby="workspace-profile-heading">
+              <header>
+                <div>
+                  <h4 id="workspace-profile-heading">Workspace policies</h4>
+                  <p>Define how compatible working files are retained and recovered.</p>
                 </div>
-              </div>
-              <div v-if="phases.length" class="flex flex-wrap gap-2">
-                <button type="button" class="btn btn-sm" @click="enableAllWorkspaces">
-                  Enable all
+                <button type="button" class="btn btn-primary btn-sm" @click="addWorkspaceProfile">
+                  <Icon name="plus" :size="14" /> Add workspace policy
                 </button>
-                <button type="button" class="btn btn-ghost btn-sm" @click="disableAllWorkspaces">
-                  Disable all
-                </button>
-              </div>
-            </header>
-            <section
-              v-if="phases.length === 0"
-              class="rounded border border-dashed border-border p-4 text-sm text-fg-muted"
-            >
-              Add a workflow to this pipeline before configuring phase workspace leases.
-            </section>
-            <section v-else class="workspace-phase-list">
-              <article
-                v-for="phase in phases"
-                :key="phase.member"
-                class="workspace-card"
-                :class="{ 'is-enabled': phase.workspace_enabled }"
-              >
+              </header>
+              <p v-if="workspaceProfiles.length === 0" class="policy-empty">
+                No workspace policies. Phases without one use a fresh working environment.
+              </p>
+              <article v-for="profile in workspaceProfiles" :key="profile.id" class="profile-card">
                 <header>
-                  <div class="workspace-card-identity">
-                    <span class="workspace-icon"><Icon name="folder" :size="16" /></span>
-                    <span
-                      ><strong>{{ phase.member }}</strong
-                      ><small>{{ workspaceSummary(phase) }}</small></span
-                    >
-                  </div>
-                  <label class="switch-control">
-                    <input
-                      v-model="phase.workspace_enabled"
-                      type="checkbox"
-                      @change="normalizeWorkspace(phase)"
-                    />
-                    <span aria-hidden="true"></span>
-                    <em>{{ phase.workspace_enabled ? "Enabled" : "Off" }}</em>
+                  <label class="orchestration-field profile-name">
+                    <span>Policy name</span>
+                    <input v-model="profile.name" required placeholder="Shared source" />
                   </label>
+                  <span class="profile-usage">{{
+                    profileUsageLabel("workspace", profile.id)
+                  }}</span>
+                  <div class="profile-actions">
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      @click="duplicateWorkspaceProfile(profile)"
+                    >
+                      <Icon name="copy" :size="14" /> Duplicate
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm text-danger-fg"
+                      @click="requestProfileRemoval('workspace', profile.id)"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </header>
-                <div v-if="phase.workspace_enabled" class="workspace-settings">
+                <div class="workspace-settings">
                   <label class="orchestration-field">
                     <span>Workspace scope</span>
-                    <input v-model="phase.workspace_scope" placeholder="source" />
+                    <input v-model="profile.scope" placeholder="source" />
                     <small>Phases with the same scope can reuse compatible files.</small>
                   </label>
                   <label class="orchestration-field">
                     <span>Lease duration</span>
                     <div class="input-with-suffix">
                       <input
-                        v-model.number="phase.lease_seconds"
+                        v-model.number="profile.lease_seconds"
                         type="number"
                         min="1"
                         step="1"
@@ -641,14 +647,14 @@
                   </label>
                   <label class="orchestration-field">
                     <span>If the workspace is unavailable</span>
-                    <select v-model="phase.recovery">
+                    <select v-model="profile.recovery">
                       <option value="replace">Create a replacement</option>
                       <option value="wait">Wait for it to recover</option>
                       <option value="fail">Fail this phase</option>
                     </select>
                   </label>
                   <label class="orchestration-check">
-                    <input v-model="phase.reuse" type="checkbox" />
+                    <input v-model="profile.reuse" type="checkbox" />
                     <span
                       ><strong>Reuse compatible workspace</strong
                       ><small
@@ -660,60 +666,188 @@
                     <summary>
                       <span>Worker requirements</span
                       ><small>{{
-                        phase.requirementsText === "{}" ? "Any compatible worker" : "Custom labels"
+                        profile.requirementsText === "{}"
+                          ? "Any compatible worker"
+                          : "Custom labels"
                       }}</small>
                     </summary>
                     <label class="orchestration-field">
                       <span>Requirements JSON</span>
                       <input
-                        v-model="phase.requirementsText"
+                        v-model="profile.requirementsText"
                         placeholder='{ "capability": "git" }'
                       />
                       <small>Advanced worker-selection labels expressed as a JSON object.</small>
                     </label>
                   </details>
-                  <div class="workspace-copy-bar">
-                    <span>
-                      <strong>Copy this workspace policy</strong>
-                      <small>Choose whether disabled phases should remain disabled.</small>
-                    </span>
-                    <div>
-                      <button
-                        type="button"
-                        class="btn btn-sm"
-                        :disabled="workspaceCount < 2"
-                        @click="applyWorkspacePolicy(phase, false)"
-                      >
-                        <Icon name="copy" :size="14" />
-                        To enabled phases
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm"
-                        :disabled="phases.length < 2"
-                        @click="applyWorkspacePolicy(phase, true)"
-                      >
-                        <Icon name="copy" :size="14" />
-                        To every phase
-                      </button>
-                    </div>
-                  </div>
                 </div>
               </article>
             </section>
-            <p v-if="workspaceNotice" class="draft-change-notice" role="status">
+          </div>
+
+          <div v-else-if="tab === 'Assignments'" class="grid gap-5">
+            <header class="orchestration-section-heading">
+              <div>
+                <div class="flex items-center gap-1">
+                  <h3>Apply policies to phases</h3>
+                  <HelpBubble label="About phase assignments">
+                    <strong>One tag of each type</strong>
+                    <p>
+                      A phase may use one result mapping and one workspace policy. Reassigning a
+                      phase moves it from the previous profile.
+                    </p>
+                  </HelpBubble>
+                </div>
+              </div>
+            </header>
+            <p v-if="members.length === 0" class="policy-empty">
+              Add a workflow to this pipeline before assigning phase policies.
+            </p>
+            <section v-else class="assignment-library" aria-labelledby="result-assignment-heading">
+              <header>
+                <div>
+                  <h4 id="result-assignment-heading">Result mappings</h4>
+                  <p>{{ unassignedResultMembers.length }} phases currently have no mapping.</p>
+                </div>
+                <button type="button" class="btn btn-sm" @click="tab = 'Phase Policies'">
+                  Edit mappings
+                </button>
+              </header>
+              <p v-if="resultProfiles.length === 0" class="policy-empty">
+                Create a result mapping before assigning one.
+              </p>
+              <article
+                v-for="profile in resultProfiles"
+                :key="profile.id"
+                class="assignment-profile"
+              >
+                <div class="assignment-profile-heading">
+                  <div>
+                    <strong>{{ profile.name || "Unnamed mapping" }}</strong>
+                    <small>{{ assignedResultMembers(profile.id).length }} assigned</small>
+                  </div>
+                  <div class="policy-tag-list">
+                    <button
+                      v-for="member in assignedResultMembers(profile.id)"
+                      :key="member"
+                      type="button"
+                      class="policy-tag"
+                      :aria-label="`Remove ${profile.name} from ${member}`"
+                      @click="clearResultAssignment(member)"
+                    >
+                      {{ member }} <span aria-hidden="true">×</span>
+                    </button>
+                    <span v-if="assignedResultMembers(profile.id).length === 0">Not assigned</span>
+                  </div>
+                </div>
+                <details class="assignment-picker">
+                  <summary>Choose phases</summary>
+                  <div>
+                    <label v-for="member in members" :key="member">
+                      <input
+                        type="checkbox"
+                        :checked="assignmentFor(member).result_mapping_id === profile.id"
+                        @change="toggleResultAssignment(member, profile.id)"
+                      />
+                      <span>{{ member }}</span>
+                      <small>{{ resultAssignmentOwner(member, profile.id) }}</small>
+                    </label>
+                  </div>
+                </details>
+              </article>
+              <div v-if="unassignedResultMembers.length" class="unassigned-row">
+                <strong>No result mapping</strong>
+                <div class="policy-tag-list">
+                  <span v-for="member in unassignedResultMembers" :key="member" class="policy-tag">
+                    {{ member }}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <section class="assignment-library" aria-labelledby="workspace-assignment-heading">
+              <header>
+                <div>
+                  <h4 id="workspace-assignment-heading">Workspace policies</h4>
+                  <p>{{ unassignedWorkspaceMembers.length }} phases use no retained workspace.</p>
+                </div>
+                <button type="button" class="btn btn-sm" @click="tab = 'Phase Policies'">
+                  Edit workspace policies
+                </button>
+              </header>
+              <p v-if="workspaceProfiles.length === 0" class="policy-empty">
+                Create a workspace policy before assigning one.
+              </p>
+              <article
+                v-for="profile in workspaceProfiles"
+                :key="profile.id"
+                class="assignment-profile"
+              >
+                <div class="assignment-profile-heading">
+                  <div>
+                    <strong>{{ profile.name || "Unnamed workspace policy" }}</strong>
+                    <small>{{ assignedWorkspaceMembers(profile.id).length }} assigned</small>
+                  </div>
+                  <div class="policy-tag-list">
+                    <button
+                      v-for="member in assignedWorkspaceMembers(profile.id)"
+                      :key="member"
+                      type="button"
+                      class="policy-tag"
+                      :aria-label="`Remove ${profile.name} from ${member}`"
+                      @click="clearWorkspaceAssignment(member)"
+                    >
+                      {{ member }} <span aria-hidden="true">×</span>
+                    </button>
+                    <span v-if="assignedWorkspaceMembers(profile.id).length === 0"
+                      >Not assigned</span
+                    >
+                  </div>
+                </div>
+                <details class="assignment-picker">
+                  <summary>Choose phases</summary>
+                  <div>
+                    <label v-for="member in members" :key="member">
+                      <input
+                        type="checkbox"
+                        :checked="assignmentFor(member).workspace_policy_id === profile.id"
+                        @change="toggleWorkspaceAssignment(member, profile.id)"
+                      />
+                      <span>{{ member }}</span>
+                      <small>{{ workspaceAssignmentOwner(member, profile.id) }}</small>
+                    </label>
+                  </div>
+                </details>
+              </article>
+              <div v-if="unassignedWorkspaceMembers.length" class="unassigned-row">
+                <strong>No workspace policy</strong>
+                <div class="policy-tag-list">
+                  <span
+                    v-for="member in unassignedWorkspaceMembers"
+                    :key="member"
+                    class="policy-tag"
+                  >
+                    {{ member }}
+                  </span>
+                </div>
+              </div>
+            </section>
+            <p v-if="assignmentNotice" class="draft-change-notice" role="status">
               <Icon name="check" :size="14" />
-              {{ workspaceNotice }}
+              {{ assignmentNotice }}
             </p>
           </div>
 
           <div v-else class="grid gap-4">
             <header class="orchestration-section-heading">
               <div class="flex items-center gap-1">
-                <h3>Generated policy</h3>
+                <h3>Compiled runtime policy</h3>
                 <HelpBubble label="About orchestration preview">
-                  <strong>Advanced policy</strong>
-                  <p>This is the generated REXRAP policy saved with the next pipeline revision.</p>
+                  <strong>Expanded runtime view</strong>
+                  <p>
+                    This is the compiled REXRAP policy saved with the next pipeline revision.
+                    Profile assignments are expanded back into each phase.
+                  </p>
                 </HelpBubble>
               </div>
             </header>
@@ -731,12 +865,16 @@
                 ><span>retry budgets</span>
               </div>
               <div>
-                <strong>{{ phaseMappingTotal }}</strong
-                ><span>phase mappings</span>
+                <strong>{{ resultProfiles.length }}</strong
+                ><span>mapping profiles</span>
               </div>
               <div>
-                <strong>{{ workspaceCount }}</strong
-                ><span>workspaces</span>
+                <strong>{{ workspaceProfiles.length }}</strong
+                ><span>workspace profiles</span>
+              </div>
+              <div>
+                <strong>{{ assignmentCount }}</strong
+                ><span>phase assignments</span>
               </div>
             </section>
             <pre class="policy-preview">{{ sourcePreview }}</pre>
@@ -765,6 +903,25 @@
       </button>
     </div>
 
+    <section v-if="pendingProfileRemoval" class="orchestration-disable-confirm" role="alert">
+      <div>
+        <strong>Remove {{ pendingProfileRemoval.name }}?</strong>
+        <p>
+          This profile is assigned to {{ pendingProfileRemoval.count }} phase{{
+            pendingProfileRemoval.count === 1 ? "" : "s"
+          }}. Removing it will clear those draft assignments.
+        </p>
+      </div>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button type="button" class="btn" @click="pendingProfileRemoval = null">
+          Keep profile
+        </button>
+        <button type="button" class="btn btn-danger" @click="confirmProfileRemoval">
+          Remove and unassign
+        </button>
+      </div>
+    </section>
+
     <section v-if="disableConfirmOpen" class="orchestration-disable-confirm" role="alert">
       <div>
         <strong>Remove orchestration from this pipeline?</strong>
@@ -784,7 +941,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, nextTick, reactive, ref } from "vue";
+import { asJsonRecord } from "../../../core/domain/json";
+import {
+  expandPhasePolicyProfiles,
+  loadPhasePolicyProfiles,
+  phasePolicyProfilesMetadata,
+  resultMappingKeys,
+  type PhaseProfileAssignment,
+  type PhasePolicyProfiles,
+  type ResultMappingKey,
+} from "../../../core/services";
 import { createUuid } from "../../../core/utils/uuid";
 import HelpBubble from "../shared/HelpBubble.vue";
 import Icon from "../shared/Icon.vue";
@@ -798,6 +965,7 @@ import type {
   JsonValue,
   OrchestrationPolicy,
   Pipeline,
+  ResultMapping,
 } from "../../../core/domain/models";
 
 const props = defineProps<{ pipeline: Pipeline; adapterKinds: AdapterKindMetadata[] }>();
@@ -806,8 +974,8 @@ const tabs = [
   "Admission Routes",
   "Intents",
   "Budgets",
-  "Phase Mappings",
-  "Workspaces",
+  "Phase Policies",
+  "Assignments",
   "Preview",
 ] as const;
 type Tab = (typeof tabs)[number];
@@ -857,19 +1025,26 @@ interface BudgetDraft {
   exhausted: Exhaustion;
   handoff: string;
 }
-interface PhaseDraft {
-  member: string;
-  subject_revision: string;
-  resources: string;
-  evidence: string;
-  failure_class: string;
-  correlations: string;
-  workspace_enabled: boolean;
-  workspace_scope: string;
+type ResultMappingDraft = Record<ResultMappingKey, string>;
+interface ResultProfileDraft {
+  id: string;
+  name: string;
+  mapping: ResultMappingDraft;
+}
+interface WorkspaceProfileDraft {
+  id: string;
+  name: string;
+  scope: string;
   lease_seconds: number;
   reuse: boolean;
   recovery: Recovery;
   requirementsText: string;
+}
+interface PendingProfileRemoval {
+  kind: "result" | "workspace";
+  id: string;
+  name: string;
+  count: number;
 }
 
 const metadata = props.pipeline.metadata;
@@ -879,12 +1054,17 @@ const existingPolicy = metadata.orchestration as OrchestrationPolicy | undefined
 const enabled = ref(Boolean(existingPolicy));
 const disableConfirmOpen = ref(false);
 const tab = ref<Tab>("Admission Routes");
-const phaseMappingNotice = ref("");
-const workspaceNotice = ref("");
+const assignmentNotice = ref("");
+const pendingProfileRemoval = ref<PendingProfileRemoval | null>(null);
 const scope = ref(existingIngress?.scope ?? "correlations");
 const members = props.pipeline.graph.members.map((member) => member.key);
 const effects: Effect[] = ["terminate", "suspend", "resume", "supersede", "observe", "signal"];
-const resultPointers = [
+const resultPointers: {
+  key: ResultMappingKey;
+  label: string;
+  placeholder: string;
+  description: string;
+}[] = [
   {
     key: "subject_revision",
     label: "Subject revision",
@@ -915,7 +1095,21 @@ const resultPointers = [
     placeholder: "/correlations",
     description: "Add other keys that should address this orchestration.",
   },
-] as const;
+  {
+    key: "resources_patch",
+    label: "Resources patch",
+    placeholder: "/resources_patch",
+    description: "Merge selected fields into retained resources without replacing other context.",
+  },
+  {
+    key: "next_member",
+    label: "Next phase",
+    placeholder: "/next_member",
+    description: "Read the next declared pipeline phase from the workflow result.",
+  },
+];
+const commonResultPointers = resultPointers.slice(0, 5);
+const advancedResultPointers = resultPointers.slice(5);
 
 const routes = reactive<RouteDraft[]>(
   (existingIngress?.routes ?? []).map((route) => ({
@@ -956,24 +1150,31 @@ const budgets = reactive<BudgetDraft[]>(
     handoff: budget.handoff ?? "",
   })),
 );
-const phases = reactive<PhaseDraft[]>(
-  members.map((member) => {
-    const phase = existingPolicy?.phases[member];
-    return {
-      member,
-      subject_revision: phase?.result.subject_revision ?? "",
-      resources: phase?.result.resources ?? "",
-      evidence: phase?.result.evidence ?? "",
-      failure_class: phase?.result.failure_class ?? "",
-      correlations: phase?.result.correlations ?? "",
-      workspace_enabled: Boolean(phase?.workspace),
-      workspace_scope: phase?.workspace?.scope ?? "",
-      lease_seconds: phase?.workspace?.lease_seconds ?? 300,
-      reuse: phase?.workspace?.reuse ?? false,
-      recovery: phase?.workspace?.recovery ?? "replace",
-      requirementsText: JSON.stringify(phase?.workspace?.requirements ?? {}, null, 0),
-    };
-  }),
+const loadedProfiles = loadPhasePolicyProfiles(
+  members,
+  existingPolicy?.phases ?? {},
+  metadata.orchestration_authoring,
+);
+const resultProfiles = reactive<ResultProfileDraft[]>(
+  loadedProfiles.result_mappings.map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    mapping: mappingDraft(profile.mapping),
+  })),
+);
+const workspaceProfiles = reactive<WorkspaceProfileDraft[]>(
+  loadedProfiles.workspace_policies.map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    scope: profile.policy.scope,
+    lease_seconds: profile.policy.lease_seconds,
+    reuse: profile.policy.reuse,
+    recovery: profile.policy.recovery,
+    requirementsText: JSON.stringify(profile.policy.requirements ?? {}),
+  })),
+);
+const assignments = reactive<Record<string, PhaseProfileAssignment>>(
+  Object.fromEntries(members.map((member) => [member, { ...loadedProfiles.assignments[member] }])),
 );
 
 const canonicalEvents = computed(() =>
@@ -988,9 +1189,17 @@ const issueTabs = computed(() =>
   tabs.map((item) => ({ tab: item, count: tabIssueCount(item) })).filter((item) => item.count > 0),
 );
 const sourcePreview = computed(() => renderSource());
-const workspaceCount = computed(() => phases.filter((phase) => phase.workspace_enabled).length);
-const phaseMappingTotal = computed(() =>
-  phases.reduce((total, phase) => total + phaseMappingCount(phase), 0),
+const unassignedResultMembers = computed(() =>
+  members.filter((member) => !assignments[member].result_mapping_id),
+);
+const unassignedWorkspaceMembers = computed(() =>
+  members.filter((member) => !assignments[member].workspace_policy_id),
+);
+const workspaceCount = computed(() => members.length - unassignedWorkspaceMembers.value.length);
+const assignmentCount = computed(
+  () =>
+    members.filter((member) => assignments[member].result_mapping_id).length +
+    members.filter((member) => assignments[member].workspace_policy_id).length,
 );
 
 function tabTitle(item: Tab): string {
@@ -998,9 +1207,9 @@ function tabTitle(item: Tab): string {
     "Admission Routes": "Admission routes",
     Intents: "Intents",
     Budgets: "Retry budgets",
-    "Phase Mappings": "Phase mappings",
-    Workspaces: "Workspaces",
-    Preview: "Review",
+    "Phase Policies": "Phase policies",
+    Assignments: "Assignments",
+    Preview: "Preview",
   };
   return labels[item];
 }
@@ -1017,12 +1226,11 @@ function tabDescription(item: Tab): string {
       "Give active-run responses clear names, outcomes, and priorities so admission rules can reuse them.",
     Budgets:
       "Bound recovery attempts by failure class and choose a safe outcome when attempts run out.",
-    "Phase Mappings":
-      "Choose which workflow result fields become durable orchestration state after each phase.",
-    Workspaces:
-      "Keep working files available between selected phases and define what happens when a workspace is unavailable.",
+    "Phase Policies":
+      "Define reusable result mappings and workspace behavior once for this pipeline.",
+    Assignments: "Apply mapping and workspace policy tags to one or more pipeline phases.",
     Preview:
-      "Check the complete policy and generated REXRAP before saving a new pipeline revision.",
+      "Check the compiled runtime policy and expanded phase assignments before saving a new pipeline revision.",
   };
   return descriptions[item];
 }
@@ -1032,8 +1240,8 @@ function tabSummary(item: Tab): string {
     "Admission Routes": `${String(routes.length)} rule${routes.length === 1 ? "" : "s"}`,
     Intents: `${String(intents.length)} intent${intents.length === 1 ? "" : "s"}`,
     Budgets: `${String(budgets.length)} budget${budgets.length === 1 ? "" : "s"}`,
-    "Phase Mappings": `${String(phaseMappingTotal.value)} fields saved`,
-    Workspaces: `${String(workspaceCount.value)} of ${String(phases.length)} enabled`,
+    "Phase Policies": `${String(resultProfiles.length + workspaceProfiles.length)} profiles`,
+    Assignments: `${String(assignmentCount.value)} applied tags`,
     Preview: issues.value.length ? `${String(issues.value.length)} issues` : "Ready to save",
   };
   return summaries[item];
@@ -1121,81 +1329,220 @@ function intentAdvancedSummary(intent: IntentDraft): string {
   return parts.join(" · ");
 }
 
-function phaseMappingCount(phase: PhaseDraft): number {
-  return resultPointers.filter((pointer) => Boolean(phase[pointer.key])).length;
+function mappingDraft(mapping: ResultMapping): ResultMappingDraft {
+  return Object.fromEntries(
+    resultMappingKeys.map((key) => [key, typeof mapping[key] === "string" ? mapping[key] : ""]),
+  ) as ResultMappingDraft;
 }
 
-function applyPhaseMappingsToAll(source: PhaseDraft): void {
-  for (const phase of phases) {
-    if (phase.member === source.member) {
-      continue;
+function assignmentFor(member: string): PhaseProfileAssignment {
+  assignments[member] ??= {};
+  return assignments[member];
+}
+
+function assignedResultMembers(profileId: string): string[] {
+  return members.filter((member) => assignments[member].result_mapping_id === profileId);
+}
+
+function assignedWorkspaceMembers(profileId: string): string[] {
+  return members.filter((member) => assignments[member].workspace_policy_id === profileId);
+}
+
+function profileUsageLabel(kind: PendingProfileRemoval["kind"], profileId: string): string {
+  const count =
+    kind === "result"
+      ? assignedResultMembers(profileId).length
+      : assignedWorkspaceMembers(profileId).length;
+  return count ? `Affects ${String(count)} phase${count === 1 ? "" : "s"}` : "Not assigned";
+}
+
+function advancedMappingSummary(profile: ResultProfileDraft): string {
+  const count = advancedResultPointers.filter((pointer) => profile.mapping[pointer.key]).length;
+  return count ? `${String(count)} configured` : "Optional";
+}
+
+function addResultProfile(): void {
+  resultProfiles.push({
+    id: createUuid(),
+    name: nextProfileName(
+      "Mapping",
+      resultProfiles.map((profile) => profile.name),
+    ),
+    mapping: mappingDraft({}),
+  });
+}
+
+function duplicateResultProfile(source: ResultProfileDraft): void {
+  resultProfiles.push({
+    id: createUuid(),
+    name: nextProfileName(
+      `${source.name || "Mapping"} copy`,
+      resultProfiles.map((profile) => profile.name),
+    ),
+    mapping: { ...source.mapping },
+  });
+  assignmentNotice.value = "Duplicated the mapping as an unassigned draft profile.";
+}
+
+function addWorkspaceProfile(): void {
+  workspaceProfiles.push({
+    id: createUuid(),
+    name: nextProfileName(
+      "Workspace",
+      workspaceProfiles.map((profile) => profile.name),
+    ),
+    scope: "orchestration-workspace",
+    lease_seconds: 300,
+    reuse: false,
+    recovery: "replace",
+    requirementsText: "{}",
+  });
+}
+
+function duplicateWorkspaceProfile(source: WorkspaceProfileDraft): void {
+  workspaceProfiles.push({
+    ...source,
+    id: createUuid(),
+    name: nextProfileName(
+      `${source.name || "Workspace"} copy`,
+      workspaceProfiles.map((profile) => profile.name),
+    ),
+  });
+  assignmentNotice.value = "Duplicated the workspace policy as an unassigned draft profile.";
+}
+
+function nextProfileName(base: string, existingNames: string[]): string {
+  const names = new Set(existingNames);
+
+  if (!names.has(base)) {
+    return base;
+  }
+
+  let suffix = 2;
+
+  while (names.has(`${base} ${String(suffix)}`)) {
+    suffix += 1;
+  }
+
+  return `${base} ${String(suffix)}`;
+}
+
+function toggleResultAssignment(member: string, profileId: string): void {
+  const assignment = assignmentFor(member);
+  const previousId = assignment.result_mapping_id;
+
+  if (previousId === profileId) {
+    clearResultAssignment(member);
+    return;
+  }
+
+  assignment.result_mapping_id = profileId;
+  assignmentNotice.value = previousId
+    ? `Moved ${member} to ${profileName("result", profileId)}. These changes remain unsaved.`
+    : `Assigned ${profileName("result", profileId)} to ${member}. These changes remain unsaved.`;
+}
+
+function toggleWorkspaceAssignment(member: string, profileId: string): void {
+  const assignment = assignmentFor(member);
+  const previousId = assignment.workspace_policy_id;
+
+  if (previousId === profileId) {
+    clearWorkspaceAssignment(member);
+    return;
+  }
+
+  assignment.workspace_policy_id = profileId;
+  assignmentNotice.value = previousId
+    ? `Moved ${member} to ${profileName("workspace", profileId)}. These changes remain unsaved.`
+    : `Assigned ${profileName("workspace", profileId)} to ${member}. These changes remain unsaved.`;
+}
+
+function clearResultAssignment(member: string): void {
+  delete assignmentFor(member).result_mapping_id;
+  assignmentNotice.value = `Removed the result mapping from ${member}. These changes remain unsaved.`;
+}
+
+function clearWorkspaceAssignment(member: string): void {
+  delete assignmentFor(member).workspace_policy_id;
+  assignmentNotice.value = `Removed the workspace policy from ${member}. These changes remain unsaved.`;
+}
+
+function resultAssignmentOwner(member: string, profileId: string): string {
+  const assignedId = assignments[member].result_mapping_id;
+  return assignmentOwnerLabel("result", assignedId, profileId);
+}
+
+function workspaceAssignmentOwner(member: string, profileId: string): string {
+  const assignedId = assignments[member].workspace_policy_id;
+  return assignmentOwnerLabel("workspace", assignedId, profileId);
+}
+
+function assignmentOwnerLabel(
+  kind: PendingProfileRemoval["kind"],
+  assignedId: string | undefined,
+  profileId: string,
+): string {
+  if (assignedId === profileId) {
+    return "Assigned here";
+  }
+
+  return assignedId ? `Currently: ${profileName(kind, assignedId)}` : "Not assigned";
+}
+
+function profileName(kind: PendingProfileRemoval["kind"], profileId: string): string {
+  const profiles = kind === "result" ? resultProfiles : workspaceProfiles;
+  return profiles.find((profile) => profile.id === profileId)?.name ?? "Unnamed profile";
+}
+
+function requestProfileRemoval(kind: PendingProfileRemoval["kind"], profileId: string): void {
+  const count =
+    kind === "result"
+      ? assignedResultMembers(profileId).length
+      : assignedWorkspaceMembers(profileId).length;
+
+  if (count === 0) {
+    removeProfile(kind, profileId);
+    return;
+  }
+
+  pendingProfileRemoval.value = {
+    kind,
+    id: profileId,
+    name: profileName(kind, profileId),
+    count,
+  };
+}
+
+function confirmProfileRemoval(): void {
+  const pending = pendingProfileRemoval.value;
+
+  if (!pending) {
+    return;
+  }
+
+  removeProfile(pending.kind, pending.id);
+  pendingProfileRemoval.value = null;
+}
+
+function removeProfile(kind: PendingProfileRemoval["kind"], profileId: string): void {
+  const profiles = kind === "result" ? resultProfiles : workspaceProfiles;
+  const index = profiles.findIndex((profile) => profile.id === profileId);
+
+  if (index >= 0) {
+    profiles.splice(index, 1);
+  }
+
+  for (const member of members) {
+    if (kind === "result" && assignments[member].result_mapping_id === profileId) {
+      delete assignments[member].result_mapping_id;
     }
 
-    for (const pointer of resultPointers) {
-      phase[pointer.key] = source[pointer.key];
+    if (kind === "workspace" && assignments[member].workspace_policy_id === profileId) {
+      delete assignments[member].workspace_policy_id;
     }
   }
 
-  phaseMappingNotice.value = `Copied ${source.member}'s mappings to ${String(phases.length - 1)} other phase${phases.length === 2 ? "" : "s"}. These changes remain unsaved.`;
-}
-
-function workspaceSummary(phase: PhaseDraft): string {
-  if (!phase.workspace_enabled) {
-    return "No files retained for this phase";
-  }
-
-  return `${phase.workspace_scope || "Scope required"} · ${formatLease(phase.lease_seconds)} · ${phase.reuse ? "reuse" : "fresh materialization"}`;
-}
-
-function formatLease(seconds: number): string {
-  if (seconds >= 3600 && seconds % 3600 === 0) {
-    return `${String(seconds / 3600)}h lease`;
-  }
-
-  if (seconds >= 60 && seconds % 60 === 0) {
-    return `${String(seconds / 60)}m lease`;
-  }
-
-  return `${String(seconds)}s lease`;
-}
-
-function normalizeWorkspace(phase: PhaseDraft): void {
-  if (phase.workspace_enabled && !phase.workspace_scope.trim()) {
-    phase.workspace_scope = "orchestration-workspace";
-  }
-}
-
-function enableAllWorkspaces(): void {
-  for (const phase of phases) {
-    phase.workspace_enabled = true;
-    normalizeWorkspace(phase);
-  }
-}
-
-function disableAllWorkspaces(): void {
-  for (const phase of phases) {
-    phase.workspace_enabled = false;
-  }
-}
-
-function applyWorkspacePolicy(source: PhaseDraft, includeDisabled: boolean): void {
-  let copied = 0;
-
-  for (const phase of phases) {
-    if (phase.member === source.member || (!includeDisabled && !phase.workspace_enabled)) {
-      continue;
-    }
-
-    phase.workspace_enabled = true;
-    phase.workspace_scope = source.workspace_scope;
-    phase.lease_seconds = source.lease_seconds;
-    phase.reuse = source.reuse;
-    phase.recovery = source.recovery;
-    phase.requirementsText = source.requirementsText;
-    copied += 1;
-  }
-
-  workspaceNotice.value = `Copied ${source.member}'s workspace policy to ${String(copied)} other phase${copied === 1 ? "" : "s"}. These changes remain unsaved.`;
+  assignmentNotice.value = "Removed the profile and cleared its draft assignments.";
 }
 
 function normalizeRoute(route: RouteDraft): void {
@@ -1270,7 +1617,29 @@ function tabIssueCount(item: Tab): number {
 }
 
 function intentReferenceCount(name: string): number {
-  return routes.filter((route) => route.action === "dispatch" && route.intent === name).length;
+  return intentRoutes(name).length;
+}
+
+function intentRoutes(name: string): RouteDraft[] {
+  return routes.filter((route) => route.action === "dispatch" && route.intent === name);
+}
+
+function lifecycleLabel(lifecycle: IngressLifecycle): string {
+  return {
+    unbound: "not started",
+    active: "running",
+    terminal: "finished",
+  }[lifecycle];
+}
+
+function routeDomId(id: string): string {
+  return `orchestration-route-${id}`;
+}
+
+async function focusRoute(id: string): Promise<void> {
+  tab.value = "Admission Routes";
+  await nextTick();
+  document.getElementById(routeDomId(id))?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function intentRemovalHint(name: string): string {
@@ -1424,29 +1793,67 @@ function validate(): ValidationIssue[] {
     }
   }
 
-  for (const phase of phases) {
+  for (const duplicate of duplicateNames(resultProfiles.map((profile) => profile.name))) {
+    add("Phase Policies", `Result mapping name “${duplicate}” is duplicated.`);
+  }
+
+  for (const profile of resultProfiles) {
+    if (!profile.name.trim()) {
+      add("Phase Policies", "Every result mapping needs a name.");
+    }
+
     for (const pointer of resultPointers) {
-      if (phase[pointer.key] && !pointerValid(phase[pointer.key])) {
-        add("Phase Mappings", `${phase.member} ${pointer.label} pointer is invalid.`);
+      if (profile.mapping[pointer.key] && !pointerValid(profile.mapping[pointer.key])) {
+        add(
+          "Phase Policies",
+          `${profile.name || "Unnamed mapping"} has an invalid ${pointer.label.toLowerCase()} pointer.`,
+        );
       }
     }
+  }
 
-    if (!phase.workspace_enabled) {
-      continue;
+  for (const duplicate of duplicateNames(workspaceProfiles.map((profile) => profile.name))) {
+    add("Phase Policies", `Workspace policy name “${duplicate}” is duplicated.`);
+  }
+
+  for (const profile of workspaceProfiles) {
+    if (!profile.name.trim()) {
+      add("Phase Policies", "Every workspace policy needs a name.");
     }
 
-    if (!phase.workspace_scope.trim()) {
-      add("Workspaces", `${phase.member} workspace scope is required.`);
+    if (!profile.scope.trim()) {
+      add("Phase Policies", `${profile.name || "Unnamed workspace policy"} needs a scope.`);
     }
 
-    if (!Number.isInteger(phase.lease_seconds) || phase.lease_seconds < 1) {
-      add("Workspaces", `${phase.member} lease must be at least one whole second.`);
+    if (!Number.isInteger(profile.lease_seconds) || profile.lease_seconds < 1) {
+      add(
+        "Phase Policies",
+        `${profile.name || "Unnamed workspace policy"} needs a positive whole-number lease.`,
+      );
     }
 
     try {
-      parseJson(phase.requirementsText);
+      parseJson(profile.requirementsText);
     } catch {
-      add("Workspaces", `${phase.member} workspace requirements are invalid JSON.`);
+      add(
+        "Phase Policies",
+        `${profile.name || "Unnamed workspace policy"} has invalid requirements JSON.`,
+      );
+    }
+  }
+
+  const resultIds = new Set(resultProfiles.map((profile) => profile.id));
+  const workspaceIds = new Set(workspaceProfiles.map((profile) => profile.id));
+
+  for (const member of members) {
+    const assignment = assignments[member];
+
+    if (assignment.result_mapping_id && !resultIds.has(assignment.result_mapping_id)) {
+      add("Assignments", `${member} references a missing result mapping.`);
+    }
+
+    if (assignment.workspace_policy_id && !workspaceIds.has(assignment.workspace_policy_id)) {
+      add("Assignments", `${member} references a missing workspace policy.`);
     }
   }
 
@@ -1474,7 +1881,47 @@ function buildIngress(): IngressPolicy {
   };
 }
 
+function currentPhaseProfiles(allowInvalidRequirements = false): PhasePolicyProfiles {
+  return {
+    result_mappings: resultProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name.trim(),
+      mapping: Object.fromEntries(
+        resultMappingKeys.flatMap((key) => {
+          const value = profile.mapping[key].trim();
+          return value ? [[key, value]] : [];
+        }),
+      ),
+    })),
+    workspace_policies: workspaceProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name.trim(),
+      policy: {
+        scope: profile.scope.trim(),
+        requirements: allowInvalidRequirements
+          ? parseJsonOrEmpty(profile.requirementsText)
+          : parseJson(profile.requirementsText),
+        lease_seconds: profile.lease_seconds,
+        reuse: profile.reuse,
+        recovery: profile.recovery,
+      },
+    })),
+    assignments: Object.fromEntries(
+      members.map((member) => [member, { ...assignmentFor(member) }]),
+    ),
+  };
+}
+
+function parseJsonOrEmpty(value: string): JsonValue {
+  try {
+    return parseJson(value);
+  } catch {
+    return {};
+  }
+}
+
 function buildPolicy(): OrchestrationPolicy {
+  const profiles = currentPhaseProfiles();
   return {
     intents: Object.fromEntries(
       intents.map((intent) => [
@@ -1508,31 +1955,11 @@ function buildPolicy(): OrchestrationPolicy {
         },
       ]),
     ),
-    phases: Object.fromEntries(
-      phases.map((phase) => [
-        phase.member,
-        {
-          result: {
-            ...(phase.subject_revision ? { subject_revision: phase.subject_revision } : {}),
-            ...(phase.resources ? { resources: phase.resources } : {}),
-            ...(phase.evidence ? { evidence: phase.evidence } : {}),
-            ...(phase.failure_class ? { failure_class: phase.failure_class } : {}),
-            ...(phase.correlations ? { correlations: phase.correlations } : {}),
-          },
-          ...(phase.workspace_enabled
-            ? {
-                workspace: {
-                  scope: phase.workspace_scope,
-                  requirements: parseJson(phase.requirementsText),
-                  lease_seconds: phase.lease_seconds,
-                  reuse: phase.reuse,
-                  recovery: phase.recovery,
-                },
-              }
-            : {}),
-        },
-      ]),
-    ),
+    phases: expandPhasePolicyProfiles(members, profiles),
+    ...(existingPolicy?.entry_member ? { entry_member: existingPolicy.entry_member } : {}),
+    ...(existingPolicy?.max_epochs !== undefined && existingPolicy.max_epochs !== null
+      ? { max_epochs: existingPolicy.max_epochs }
+      : {}),
     defaults: existingPolicy?.defaults ?? null,
   };
 }
@@ -1546,11 +1973,18 @@ function save(): void {
   const next: JsonRecord = { ...metadata };
 
   if (enabled.value) {
+    const authoring = asJsonRecord(metadata.orchestration_authoring);
     next.ingress = buildIngress();
     next.orchestration = buildPolicy();
+    next.orchestration_authoring = {
+      ...authoring,
+      schema_version: 2,
+      phase_profiles: phasePolicyProfilesMetadata(currentPhaseProfiles()),
+    };
   } else {
     delete next.ingress;
     delete next.orchestration;
+    delete next.orchestration_authoring;
   }
 
   emit("save", next);
@@ -1622,32 +2056,38 @@ function renderSource(): string {
     );
   }
 
-  for (const phase of phases) {
-    lines.push("", `  phase ${quote(phase.member)} {`);
+  const previewPhases = expandPhasePolicyProfiles(members, currentPhaseProfiles(true));
+
+  for (const [member, phase] of Object.entries(previewPhases)) {
+    lines.push("", `  phase ${quote(member)} {`);
 
     for (const pointer of resultPointers) {
-      if (phase[pointer.key]) {
-        lines.push(`    ${pointer.key} from ${quote(phase[pointer.key])}`);
+      const value = phase.result[pointer.key];
+
+      if (value) {
+        lines.push(`    ${pointer.key} from ${quote(value)}`);
       }
     }
 
-    if (phase.workspace_enabled) {
-      let workspace = `    workspace scope ${quote(phase.workspace_scope)}`;
+    if (phase.workspace) {
+      let workspace = `    workspace scope ${quote(phase.workspace.scope)}`;
 
-      if (phase.reuse) {
+      if (phase.workspace.reuse) {
         workspace += " reuse";
       }
 
-      if (phase.lease_seconds !== 300) {
-        workspace += ` lease ${String(phase.lease_seconds)}s`;
+      if (phase.workspace.lease_seconds !== 300) {
+        workspace += ` lease ${String(phase.workspace.lease_seconds)}s`;
       }
 
-      if (phase.recovery !== "replace") {
-        workspace += ` recovery ${phase.recovery}`;
+      if (phase.workspace.recovery !== "replace") {
+        workspace += ` recovery ${phase.workspace.recovery}`;
       }
 
-      if (phase.requirementsText.trim() && phase.requirementsText.trim() !== "{}") {
-        workspace += ` labels ${phase.requirementsText}`;
+      const requirements = JSON.stringify(phase.workspace.requirements);
+
+      if (requirements !== "{}") {
+        workspace += ` labels ${requirements}`;
       }
 
       lines.push(workspace);
@@ -1987,8 +2427,7 @@ function renderSource(): string {
   background: var(--surface-subtle);
 }
 
-.orchestration-details > summary,
-.phase-details > summary {
+.orchestration-details > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2001,31 +2440,26 @@ function renderSource(): string {
   list-style: none;
 }
 
-.orchestration-details > summary::-webkit-details-marker,
-.phase-details > summary::-webkit-details-marker {
+.orchestration-details > summary::-webkit-details-marker {
   display: none;
 }
 
-.orchestration-details > summary::before,
-.phase-details > summary::before {
+.orchestration-details > summary::before {
   content: "+";
   color: var(--text-muted);
   font-size: 15px;
   line-height: 1;
 }
 
-.orchestration-details[open] > summary::before,
-.phase-details[open] > summary::before {
+.orchestration-details[open] > summary::before {
   content: "−";
 }
 
-.orchestration-details > summary > span:first-of-type,
-.phase-details > summary > span:first-of-type {
+.orchestration-details > summary > span:first-of-type {
   margin-right: auto;
 }
 
-.orchestration-details > summary small,
-.phase-details > summary small {
+.orchestration-details > summary small {
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 400;
@@ -2060,6 +2494,8 @@ function renderSource(): string {
 
 .intent-usage {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .intent-usage span {
@@ -2144,121 +2580,9 @@ function renderSource(): string {
   max-width: 420px;
 }
 
-.phase-flow {
-  display: grid;
-}
-
-.phase-card {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: var(--space-3);
-}
-
-.phase-marker {
-  position: relative;
-  display: flex;
-  justify-content: center;
-}
-
-.phase-marker::after {
-  position: absolute;
-  top: 30px;
-  bottom: 0;
-  width: 1px;
-  background: var(--border-subtle);
-  content: "";
-}
-
-.phase-card:last-child .phase-marker::after {
-  display: none;
-}
-
-.phase-marker span {
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.phase-details {
-  overflow: hidden;
-  margin-bottom: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.phase-details > summary > span:first-of-type {
-  display: grid;
-  min-width: 0;
-}
-
-.phase-details > summary strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.phase-summary-badge {
-  border-radius: var(--radius-pill);
-  background: var(--surface-subtle);
-  padding: 3px 7px;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
 .mapping-grid {
   border-top: 1px solid var(--border-faint);
   padding: var(--space-4);
-}
-
-.phase-copy-bar,
-.workspace-copy-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  border-top: 1px solid var(--border-faint);
-  background: var(--surface-subtle);
-  padding: var(--space-3) var(--space-4);
-}
-
-.phase-copy-bar > span,
-.workspace-copy-bar > span {
-  display: grid;
-  gap: 2px;
-}
-
-.phase-copy-bar strong,
-.workspace-copy-bar strong {
-  color: var(--text);
-  font-size: 11px;
-}
-
-.phase-copy-bar small,
-.workspace-copy-bar small {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.workspace-copy-bar {
-  grid-column: 1 / -1;
-  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
-}
-
-.workspace-copy-bar > div {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
 }
 
 .draft-change-notice {
@@ -2273,70 +2597,207 @@ function renderSource(): string {
   font-size: 11px;
 }
 
-.workspace-phase-list {
+.policy-library,
+.assignment-library {
   display: grid;
-  gap: var(--space-3);
-}
-
-.workspace-card {
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
-  background: var(--surface-subtle);
-}
-
-.workspace-card.is-enabled {
-  border-color: color-mix(in srgb, var(--accent) 25%, var(--border-subtle));
   background: var(--surface);
 }
 
-.workspace-card > header {
+.policy-library > header,
+.assignment-library > header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  background: var(--surface-subtle);
+  padding: var(--space-4);
 }
 
-.workspace-card-identity {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.workspace-card-identity > span:last-child {
-  display: grid;
-  min-width: 0;
-}
-
-.workspace-card-identity strong {
-  overflow: hidden;
+.policy-library h4,
+.assignment-library h4 {
+  margin: 0;
   color: var(--text);
-  font-size: 12px;
-  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.policy-library > header p,
+.assignment-library > header p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.policy-empty {
+  margin: 0;
+  border-top: 1px dashed var(--border-subtle);
+  padding: var(--space-4);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.profile-card,
+.assignment-profile,
+.unassigned-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.profile-card > header {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: end;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.profile-name {
+  max-width: 420px;
+}
+
+.profile-usage {
+  align-self: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: 10px;
   white-space: nowrap;
 }
 
-.workspace-card-identity small {
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.profile-card .mapping-grid,
+.profile-card .workspace-settings {
+  background: color-mix(in srgb, var(--surface-subtle) 45%, var(--surface));
+}
+
+.profile-advanced {
+  margin: 0 var(--space-4) var(--space-4);
+}
+
+.profile-advanced .mapping-grid {
+  margin: 0 var(--space-3) var(--space-3);
+  padding: var(--space-3) 0 0;
+}
+
+.assignment-profile {
+  padding: var(--space-4);
+}
+
+.assignment-profile-heading,
+.unassigned-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.assignment-profile-heading > div:first-child {
+  display: grid;
+  min-width: 150px;
+}
+
+.assignment-profile-heading strong,
+.unassigned-row > strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.assignment-profile-heading small {
   color: var(--text-muted);
   font-size: 10px;
 }
 
-.workspace-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius);
-  background: var(--surface);
+.policy-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
   color: var(--text-muted);
+  font-size: 10px;
 }
 
-.workspace-card.is-enabled .workspace-icon {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+.policy-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  padding: 4px 7px;
   color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+button.policy-tag {
+  cursor: pointer;
+}
+
+button.policy-tag:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.assignment-picker {
+  margin-top: var(--space-3);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.assignment-picker > summary {
+  padding: 8px 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.assignment-picker > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-top: 1px solid var(--border-faint);
+  padding: var(--space-3);
+}
+
+.assignment-picker label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 8px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.assignment-picker label input {
+  grid-row: 1 / 3;
+  margin-top: 2px;
+}
+
+.assignment-picker label small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unassigned-row {
+  align-items: center;
+  background: var(--surface-subtle);
+  padding: var(--space-3) var(--space-4);
 }
 
 .workspace-settings {
@@ -2348,66 +2809,9 @@ function renderSource(): string {
   grid-column: 1 / -1;
 }
 
-.switch-control {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
-}
-
-.switch-control input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.switch-control > span {
-  position: relative;
-  width: 32px;
-  height: 18px;
-  border-radius: var(--radius-pill);
-  background: var(--border);
-  transition: background 120ms ease;
-}
-
-.switch-control > span::after {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--surface);
-  content: "";
-  transition: transform 120ms ease;
-}
-
-.switch-control input:checked + span {
-  background: var(--accent);
-}
-
-.switch-control input:checked + span::after {
-  transform: translateX(14px);
-}
-
-.switch-control input:focus-visible + span {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.switch-control em {
-  min-width: 40px;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 650;
-}
-
 .review-summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
@@ -2517,6 +2921,27 @@ function renderSource(): string {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .profile-card > header,
+  .assignment-picker > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-actions {
+    justify-content: flex-start;
+  }
+
+  .assignment-profile-heading,
+  .unassigned-row,
+  .policy-library > header,
+  .assignment-library > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .policy-tag-list {
+    justify-content: flex-start;
+  }
+
   .predicate-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -2541,26 +2966,6 @@ function renderSource(): string {
 
   .budget-builder > span {
     display: none;
-  }
-
-  .workspace-card > header {
-    align-items: flex-start;
-  }
-
-  .phase-copy-bar,
-  .workspace-copy-bar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .phase-copy-bar > button,
-  .workspace-copy-bar > div,
-  .workspace-copy-bar button {
-    width: 100%;
-  }
-
-  .workspace-card-identity small {
-    white-space: normal;
   }
 
   .review-summary {

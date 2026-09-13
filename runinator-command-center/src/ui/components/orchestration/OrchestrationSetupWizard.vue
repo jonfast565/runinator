@@ -174,14 +174,60 @@
           </label>
         </div>
         <div v-if="draft.preset === 'mission'" class="grid gap-3">
-          <div class="orchestration-phase-list">
-            <article v-for="phase in draft.phases" :key="phase.member">
-              <strong>{{ phase.member }}</strong>
-              <label><input v-model="phase.terminal" type="checkbox" /> Terminal</label>
-              <label><input v-model="phase.retainResults" type="checkbox" /> Save results</label>
-              <label><input v-model="phase.workspace" type="checkbox" /> Workspace</label>
-            </article>
-          </div>
+          <section class="phase-tag-group">
+            <div>
+              <strong>Terminal phases</strong>
+              <small>Phases that may finish the mission instead of choosing a next phase.</small>
+            </div>
+            <div class="phase-tag-options">
+              <button
+                v-for="phase in draft.phases"
+                :key="phase.member"
+                type="button"
+                :class="{ 'is-selected': phase.terminal }"
+                :aria-pressed="phase.terminal"
+                @click="togglePhaseFlag(phase, 'terminal')"
+              >
+                {{ phase.member }}
+              </button>
+            </div>
+          </section>
+          <section class="phase-tag-group">
+            <div>
+              <strong>Save results</strong>
+              <small>Phases whose result and evidence should remain on the orchestration.</small>
+            </div>
+            <div class="phase-tag-options">
+              <button
+                v-for="phase in draft.phases"
+                :key="phase.member"
+                type="button"
+                :class="{ 'is-selected': phase.retainResults }"
+                :aria-pressed="phase.retainResults"
+                @click="togglePhaseFlag(phase, 'retainResults')"
+              >
+                {{ phase.member }}
+              </button>
+            </div>
+          </section>
+          <section v-if="draft.sharedWorkspace" class="phase-tag-group">
+            <div>
+              <strong>Use shared workspace</strong>
+              <small>Phases that receive the workspace policy configured above.</small>
+            </div>
+            <div class="phase-tag-options">
+              <button
+                v-for="phase in draft.phases"
+                :key="phase.member"
+                type="button"
+                :class="{ 'is-selected': phase.workspace }"
+                :aria-pressed="phase.workspace"
+                @click="togglePhaseFlag(phase, 'workspace')"
+              >
+                {{ phase.member }}
+              </button>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -409,6 +455,13 @@ function toggleWorkspace(): void {
   }
 }
 
+function togglePhaseFlag(
+  phase: OrchestrationSetupDraft["phases"][number],
+  flag: "terminal" | "retainResults" | "workspace",
+): void {
+  phase[flag] = !phase[flag];
+}
+
 function save(): void {
   if (validationIssues.value.length) {
     return;
@@ -491,24 +544,42 @@ function save(): void {
   border-color: var(--color-accent);
   background: var(--color-accent-muted);
 }
-.orchestration-phase-list {
+.phase-tag-group {
   display: grid;
+  gap: 0.65rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.55rem;
+  padding: 0.75rem;
+}
+.phase-tag-group > div:first-child {
+  display: grid;
+  gap: 0.15rem;
+}
+.phase-tag-group strong {
+  font-size: 0.78rem;
+}
+.phase-tag-group small {
+  color: var(--color-fg-muted);
+  font-size: 0.68rem;
+}
+.phase-tag-options {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
 }
-.orchestration-phase-list article {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
-  gap: 0.7rem;
-  align-items: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 0.45rem;
-  padding: 0.55rem 0.65rem;
-  font-size: 0.75rem;
+.phase-tag-options button {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg);
+  padding: 0.35rem 0.6rem;
+  color: var(--color-fg-muted);
+  font-size: 0.7rem;
 }
-.orchestration-phase-list label {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
+.phase-tag-options button.is-selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent-muted);
+  color: var(--color-accent);
+  font-weight: 650;
 }
 .orchestration-review-grid {
   display: grid;
@@ -548,9 +619,6 @@ function save(): void {
   }
   .orchestration-wizard-progress button:not(.is-active) {
     display: none;
-  }
-  .orchestration-phase-list article {
-    grid-template-columns: 1fr;
   }
 }
 </style>

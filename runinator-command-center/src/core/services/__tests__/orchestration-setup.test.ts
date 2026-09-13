@@ -66,6 +66,13 @@ describe("orchestration setup", () => {
       },
     });
     expect(compiled.orchestration.phases["acme.finish"].result.next_member).toBeUndefined();
+    expect(compiled.authoring.schema_version).toBe(2);
+    expect(compiled.authoring.phase_profiles).toEqual(
+      expect.objectContaining({
+        result_mappings: expect.any(Array),
+        workspace_policies: [expect.objectContaining({ name: "Shared workspace" })],
+      }),
+    );
   });
 
   it("preserves unrelated metadata and recognizes an unchanged guided policy", () => {
