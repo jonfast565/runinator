@@ -117,10 +117,12 @@ fn dry_run_does_not_refresh_after_a_failed_probe() {
             probe: Some(ExecutionProfileCommand {
                 argv: vec!["false".into()],
                 interactive: false,
+                environment: BTreeMap::new(),
             }),
             refresh: Some(ExecutionProfileCommand {
                 argv: vec!["true".into()],
                 interactive: false,
+                environment: BTreeMap::new(),
             }),
             sources: vec![ExecutionProfileSource::File {
                 path: "/dev/null".into(),
@@ -316,12 +318,14 @@ fn explicit_refresh_runs_command_sources_and_probes_without_a_refresh_command() 
         command: ExecutionProfileCommand {
             argv: vec!["printf".into(), "collected".into()],
             interactive: false,
+            environment: BTreeMap::new(),
         },
         target: "credentials".into(),
     }]);
     profile.collection.probe = Some(ExecutionProfileCommand {
         argv: vec!["true".into()],
         interactive: false,
+        environment: BTreeMap::new(),
     });
     let (_, bytes, _) = collect(&profile, true, false).unwrap();
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -345,6 +349,7 @@ fn configured_refresh_failure_is_preserved_but_dry_runs_never_execute_it() {
     profile.collection.refresh = Some(ExecutionProfileCommand {
         argv: vec!["false".into()],
         interactive: false,
+        environment: BTreeMap::new(),
     });
     assert!(
         collect(&profile, true, false)
@@ -353,6 +358,26 @@ fn configured_refresh_failure_is_preserved_but_dry_runs_never_execute_it() {
             .contains("profile refresh command 'false'")
     );
     assert!(collect(&profile, true, true).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn command_environment_expands_a_leading_home_directory() {
+    let command = ExecutionProfileCommand {
+        argv: vec!["printenv".into(), "RUNINATOR_PROFILE_TEST_HOME".into()],
+        interactive: false,
+        environment: BTreeMap::from([(
+            "RUNINATOR_PROFILE_TEST_HOME".into(),
+            "~/.runinator/execution-profiles/fixture".into(),
+        )]),
+    };
+
+    let output = run_command(&command, false).unwrap();
+    let expected = expand_path("~/.runinator/execution-profiles/fixture");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        expected.to_string_lossy()
+    );
 }
 
 #[test]

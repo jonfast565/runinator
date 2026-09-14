@@ -1,12 +1,14 @@
 # Codex availability
 
 This pack defines the supported `codex` execution profile and a small availability workflow.
-Configure Codex to store credentials in a file, run `codex login`, approve and publish the profile
-from a desktop agent, then apply the pack explicitly:
+Approve the profile on a desktop agent, use **Refresh** to complete the ordinary Codex browser
+login, then apply the pack explicitly:
 
 ```bash
 runinatorctl workflows apply packs/codex-availability
 ```
 
-Only `~/.codex/auth.json` is collected. Personal configuration, plugins, skills, and MCP servers are
-not included. Prefer a stored `CODEX_API_KEY` secret for unattended automation.
+The login uses `~/.runinator/execution-profiles/codex` as its private `CODEX_HOME`, so refreshing the
+profile does not replace the credentials used by the Codex desktop app. Only the isolated
+`auth.json` is collected; personal configuration, plugins, skills, and MCP servers are not
+included. Prefer a stored `CODEX_API_KEY` secret for unattended automation.

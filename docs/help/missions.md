@@ -104,10 +104,11 @@ Its final output is `yes` on success. Pack installation itself never runs this p
 
 ## Make the Codex profile ready
 
-Configure Codex with `cli_auth_credentials_store = "file"`, run `codex login`, and select the
-Codex template on the Execution Profiles page. The profile collects only `~/.codex/auth.json`; it
-does not copy personal configuration, plugins, skills, or MCP servers. Approve and publish the
-profile as above, then optionally run:
+Select the Codex template on the Execution Profiles page, approve it on the desktop agent, and use
+**Refresh** to complete the browser login. The profile gives that login a private `CODEX_HOME` at
+`~/.runinator/execution-profiles/codex`, so credential rotation does not sign the Codex desktop app
+out or restart its app sessions. It collects only the isolated `auth.json`; personal configuration,
+plugins, skills, and MCP servers are not copied. Once published, optionally run:
 
 ```bash
 runinatorctl workflows run runinator.tests.codex.codex_availability
@@ -115,8 +116,8 @@ runinatorctl workflows run runinator.tests.codex.codex_availability
 
 For unattended automation, a stored secret bound to the action's `api_key` parameter is preferred.
 It is injected as `CODEX_API_KEY` and never appears in the durable action parameters. When both an
-API key and profile are supplied, the API key is authoritative. Republish file-backed profiles
-after login credentials rotate.
+API key and profile are supplied, the API key is authoritative. Use **Refresh** to rotate and
+republish the isolated file-backed login.
 
 ## Start the first mission
 

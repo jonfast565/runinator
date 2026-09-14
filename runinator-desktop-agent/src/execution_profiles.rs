@@ -691,7 +691,15 @@ fn run_command(
         return Err("interactive commands are allowed only for refresh".into());
     }
     let mut child = Command::new(resolve_command_program(program));
-    child.args(args).stdin(Stdio::null());
+    child
+        .args(args)
+        .envs(
+            command
+                .environment
+                .iter()
+                .map(|(name, value)| (name, expand_command_environment_value(value))),
+        )
+        .stdin(Stdio::null());
     if !(command.interactive) {
         return Ok(child.output()?);
     }
@@ -703,6 +711,13 @@ fn run_command(
         stdout: Vec::new(),
         stderr: Vec::new(),
     })
+}
+
+fn expand_command_environment_value(raw: &str) -> std::ffi::OsString {
+    if raw == "~" || raw.starts_with("~/") {
+        return expand_path(raw).into_os_string();
+    }
+    raw.into()
 }
 
 /// locate the bundled macOS Keychain collector when a profile uses its portable command name.

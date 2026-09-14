@@ -32,6 +32,7 @@ fn request_reads_collection_and_exposure_json() {
         Some(ExecutionProfileCommand {
             argv: vec!["credential-tool".into(), "status".into()],
             interactive: false,
+            environment: BTreeMap::new(),
         })
     );
     assert_eq!(

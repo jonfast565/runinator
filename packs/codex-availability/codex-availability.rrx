@@ -9,15 +9,22 @@ package {
 
 settings {
   profile "codex" = {
-    description: "Codex CLI file-backed login for isolated worker execution",
+    description: "Codex CLI isolated file-backed login for worker execution",
     credential_scopes: ["codex"],
     collection: {
       version: 1,
-      probe: { argv: ["codex", "login", "status"] },
+      probe: {
+        argv: ["codex", "login", "status"],
+        environment: { CODEX_HOME: "~/.runinator/execution-profiles/codex" }
+      },
+      refresh: {
+        argv: ["codex", "login"],
+        environment: { CODEX_HOME: "~/.runinator/execution-profiles/codex" }
+      },
       sources: [
         {
           type: "file",
-          path: "~/.codex/auth.json",
+          path: "~/.runinator/execution-profiles/codex/auth.json",
           target: ".codex/auth.json"
         }
       ]

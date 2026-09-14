@@ -31,6 +31,20 @@ describe("execution profile validation", () => {
     });
   });
 
+  it("validates command environment names", () => {
+    const profile = validProfile();
+    profile.collection.probe = {
+      argv: ["codex", "login", "status"],
+      environment: { "NOT-PORTABLE": "~/.runinator/execution-profiles/codex" },
+    };
+
+    expect(validateExecutionProfile(profile).fields["probe.environment.NOT-PORTABLE"]).toBeTruthy();
+    profile.collection.probe.environment = {
+      CODEX_HOME: "~/.runinator/execution-profiles/codex",
+    };
+    expect(validateExecutionProfile(profile).valid).toBe(true);
+  });
+
   it("reports source errors at the source field", () => {
     const profile = validProfile();
     profile.collection.sources = [

@@ -52,6 +52,48 @@
           Interactive desktop session
         </label>
       </div>
+      <div class="mt-3 border-t border-border-subtle pt-3">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-xs font-medium">Command environment</div>
+            <div class="mt-0.5 text-xs text-fg-muted">
+              A leading <code>~/</code> is expanded on the collecting desktop.
+            </div>
+          </div>
+          <button class="btn btn-sm" type="button" @click="addEnvironment">
+            <Icon name="plus" :size="13" /> Add variable
+          </button>
+        </div>
+        <div
+          v-for="([name, value], index) in environmentEntries()"
+          :key="`${name}-${index}`"
+          class="mt-2 grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]"
+        >
+          <input
+            class="input min-w-0 font-mono"
+            :aria-invalid="!portableEnvironmentName(name)"
+            aria-label="Environment variable name"
+            placeholder="PROVIDER_HOME"
+            :value="name"
+            @input="updateEnvironmentName(index, ($event.target as HTMLInputElement).value)"
+          />
+          <input
+            class="input min-w-0 font-mono"
+            aria-label="Environment variable value"
+            placeholder="~/.runinator/execution-profiles/provider"
+            :value="value"
+            @input="updateEnvironmentValue(index, ($event.target as HTMLInputElement).value)"
+          />
+          <button
+            class="btn btn-sm"
+            type="button"
+            aria-label="Remove environment variable"
+            @click="removeEnvironment(index)"
+          >
+            <Icon name="trash" :size="13" />
+          </button>
+        </div>
+      </div>
       <small v-if="error" class="field-error mt-2" role="alert">{{ error }}</small>
       <p class="mt-2 text-xs text-fg-muted">
         Arguments are executed directly as argv. Shell expansion, pipes, and redirects are not
@@ -119,6 +161,45 @@ function updateInteractive(interactive: boolean) {
   if (props.modelValue) {
     emit("update:modelValue", { ...props.modelValue, interactive });
   }
+}
+
+function environmentEntries(): [string, string][] {
+  return Object.entries(props.modelValue?.environment ?? {});
+}
+
+function emitEnvironment(entries: [string, string][]) {
+  if (!props.modelValue) {
+    return;
+  }
+
+  emit("update:modelValue", {
+    ...props.modelValue,
+    environment: Object.fromEntries(entries),
+  });
+}
+
+function addEnvironment() {
+  emitEnvironment([...environmentEntries(), ["", ""]]);
+}
+
+function updateEnvironmentName(index: number, name: string) {
+  const entries = environmentEntries();
+  entries[index] = [name, entries[index]?.[1] ?? ""];
+  emitEnvironment(entries);
+}
+
+function updateEnvironmentValue(index: number, value: string) {
+  const entries = environmentEntries();
+  entries[index] = [entries[index]?.[0] ?? "", value];
+  emitEnvironment(entries);
+}
+
+function removeEnvironment(index: number) {
+  emitEnvironment(environmentEntries().filter((_, position) => position !== index));
+}
+
+function portableEnvironmentName(name: string) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
 }
 </script>
 

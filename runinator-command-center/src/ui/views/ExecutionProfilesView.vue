@@ -809,12 +809,25 @@ function applyTemplate(kind: "aws" | "claude" | "codex" | "github") {
     },
     codex: {
       name: "codex",
-      description: "Codex CLI file-backed login",
+      description: "Codex CLI isolated file-backed login",
       credential_scopes: ["codex"],
       collection: {
         version: 1,
-        probe: { argv: ["codex", "login", "status"] },
-        sources: [{ type: "file", path: "~/.codex/auth.json", target: ".codex/auth.json" }],
+        probe: {
+          argv: ["codex", "login", "status"],
+          environment: { CODEX_HOME: "~/.runinator/execution-profiles/codex" },
+        },
+        refresh: {
+          argv: ["codex", "login"],
+          environment: { CODEX_HOME: "~/.runinator/execution-profiles/codex" },
+        },
+        sources: [
+          {
+            type: "file",
+            path: "~/.runinator/execution-profiles/codex/auth.json",
+            target: ".codex/auth.json",
+          },
+        ],
       },
       exposure: { version: 1, home_overlay: true, environment: {} },
       enabled: true,

@@ -35,6 +35,12 @@ function validateCommand(
   if (command.interactive && !options.interactive) {
     fields[`${path}.interactive`] = "This command cannot be interactive.";
   }
+
+  for (const name of Object.keys(command.environment ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      fields[`${path}.environment.${name}`] = "Use a portable environment-variable name.";
+    }
+  }
 }
 
 function validateSource(

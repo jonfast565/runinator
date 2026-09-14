@@ -1,6 +1,7 @@
 export interface ExecutionProfileCommand {
   argv: string[];
   interactive?: boolean;
+  environment?: Record<string, string>;
 }
 
 export type ExecutionProfileSource =

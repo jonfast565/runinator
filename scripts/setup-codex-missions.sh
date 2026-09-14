@@ -67,5 +67,5 @@ echo "Installing Codex execution-profile definition and mission recipes..."
 "${ctl[@]}" workflows apply "${ROOT_DIR}/packs/codex-availability"
 "${ctl[@]}" workflows apply "${ROOT_DIR}/packs/codex-missions"
 
-echo "Codex mission setup is installed. Approve and publish the codex profile before starting work."
+echo "Codex mission setup is installed. Approve and refresh the codex profile before starting work."
 echo "See docs/help/missions.md for login, profile, and mission commands."

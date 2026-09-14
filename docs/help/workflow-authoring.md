@@ -30,8 +30,10 @@ runinatorctl execution-profiles add \
 ```
 
 The command accepts provider-neutral scopes and profile specifications; `--collection` is required,
-while `--exposure` defaults to an empty specification. Approve the newly configured profile in the
-desktop agent and use `execution-profiles status [profile-id]` to inspect its approval, desktop
+while `--exposure` defaults to an empty specification. Probe, refresh, and command-output sources
+may include an `environment` object. A leading `~/` in a command environment value resolves against
+the collecting desktop's home directory without invoking a shell. Approve the newly configured
+profile in the desktop agent and use `execution-profiles status [profile-id]` to inspect its approval, desktop
 collection, publication, and most recent sanitized error. Use `execution-profiles rotate
 <profile-id>` to request a collection.
 

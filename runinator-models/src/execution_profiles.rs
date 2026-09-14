@@ -21,6 +21,8 @@ pub struct ExecutionProfileCommand {
     pub argv: Vec<String>,
     #[serde(default)]
     pub interactive: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub environment: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -555,6 +557,27 @@ fn validate_profile_command(
             "must contain only non-blank arguments",
         ));
     }
+    let mut environment_names = HashSet::new();
+    for (name, value) in &command.environment {
+        if !is_portable_environment_name(name.trim()) {
+            return Err(ValidationError::new(
+                format!("{path}.environment.{name}"),
+                "is not a portable environment variable name",
+            ));
+        }
+        if !environment_names.insert(name.trim().to_ascii_lowercase()) {
+            return Err(ValidationError::new(
+                format!("{path}.environment.{name}"),
+                "duplicates another name ignoring case",
+            ));
+        }
+        if value.contains('\0') {
+            return Err(ValidationError::new(
+                format!("{path}.environment.{name}"),
+                "cannot contain a null byte",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -650,6 +673,10 @@ mod tests {
                 probe: Some(ExecutionProfileCommand {
                     argv: vec!["gh".into(), "auth".into(), "status".into()],
                     interactive: false,
+                    environment: BTreeMap::from([(
+                        "GH_CONFIG_DIR".into(),
+                        "~/.runinator/execution-profiles/github".into(),
+                    )]),
                 }),
                 refresh: None,
                 sources: vec![ExecutionProfileSource::Directory {
@@ -673,6 +700,35 @@ mod tests {
             serde_json::from_value::<ExecutionProfilePutRequest>(encoded).unwrap(),
             request
         );
+    }
+
+    #[test]
+    fn collection_command_environment_names_are_portable() {
+        let mut request = ExecutionProfilePutRequest {
+            name: "fixture".into(),
+            description: String::new(),
+            credential_scopes: vec!["fixture".into()],
+            collection: ExecutionProfileCollectionSpec {
+                version: 1,
+                probe: Some(ExecutionProfileCommand {
+                    argv: vec!["fixture".into()],
+                    interactive: false,
+                    environment: BTreeMap::from([("NOT-PORTABLE".into(), "value".into())]),
+                }),
+                refresh: None,
+                sources: vec![ExecutionProfileSource::File {
+                    path: "~/.fixture".into(),
+                    target: ".fixture".into(),
+                }],
+            },
+            exposure: ExecutionProfileExposureSpec::default(),
+            enabled: true,
+        };
+
+        assert!(request.validate().is_err());
+        request.collection.probe.as_mut().unwrap().environment =
+            BTreeMap::from([("FIXTURE_HOME".into(), "~/.fixture".into())]);
+        assert!(request.validate().is_ok());
     }
 
     #[test]
