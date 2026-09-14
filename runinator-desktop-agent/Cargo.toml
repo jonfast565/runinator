@@ -41,3 +41,8 @@ runinator-provider-local-files = { path = "../runinator-provider-local-files" }
 runinator-observability = { path = "../runinator-observability" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-worker = { path = "../runinator-worker", features = ["ws"] }
+
+# keep gpu-allocator on the same windows-rs line as wgpu-hal. its broad compatibility range can
+# otherwise resolve to tauri's 0.61 line and produce incompatible Direct3D COM traits.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", default-features = false }
