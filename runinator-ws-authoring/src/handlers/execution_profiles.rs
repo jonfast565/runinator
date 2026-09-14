@@ -536,9 +536,10 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
     if let Err(error) = ensure_execution_profile_bucket(blobs.as_ref()).await {
         return api_error(error.to_string());
     }
-    let revision_number = profile.current_revision.unwrap_or(0) + 1;
     let ciphertext = SecretCipher::from_env().encrypt(&body);
-    let key = match ObjectKey::parse(&format!("{id}/{revision_number}.bundle")) {
+    // content-addressed keys keep concurrent publications from overwriting different bundles
+    // before the database assigns their durable revision numbers.
+    let key = match ObjectKey::parse(&format!("{id}/{digest}.bundle")) {
         Ok(key) => key,
         Err(error) => return bad_request(error.to_string()),
     };
@@ -558,7 +559,7 @@ pub async fn publish<T: AuthorizationStore + ExecutionProfileStore>(
     }
     let revision = ExecutionProfileRevision {
         profile_id: id,
-        revision: revision_number,
+        revision: 0,
         digest,
         size_bytes: body.len() as i64,
         publisher_id: ctx.principal_id,

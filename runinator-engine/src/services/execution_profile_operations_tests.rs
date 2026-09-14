@@ -122,6 +122,21 @@ async fn unchanged_configuration_preserves_publication_and_changes_invalidate_it
     assert_eq!(changed.current_revision, None);
     assert_eq!(changed.current_digest, None);
 
+    let republished = service
+        .publish_revision(&ExecutionProfileRevision {
+            profile_id: id,
+            revision: 0,
+            digest: "changed-archive".into(),
+            size_bytes: 15,
+            publisher_id: None,
+            expires_at: None,
+            created_at: changed.updated_at,
+            uri: "blob://changed-profile".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(republished.revision, 2);
+
     let _ = std::fs::remove_file(path);
 }
 

@@ -29,6 +29,7 @@ pub trait ExecutionProfileStore: Send + Sync + 'static {
         org_id: Option<Uuid>,
         name: &str,
     ) -> impl Future<Output = Result<Option<ExecutionProfile>, SendableError>> + Send;
+    /// atomically append a publication, assigning its revision from immutable profile history.
     fn insert_execution_profile_revision(
         &self,
         revision: &ExecutionProfileRevision,

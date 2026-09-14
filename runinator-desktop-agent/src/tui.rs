@@ -171,6 +171,7 @@ fn spawn_execution_profile_sync(
         let mut profiles = Vec::new();
         let mut selected = 0;
         let mut refresh = true;
+        let mut next_full_sync = tokio::time::Instant::now();
 
         loop {
             if !crate::execution_profiles::wait_until_running(&mut agent).await {
@@ -197,6 +198,8 @@ fn spawn_execution_profile_sync(
                         tui::log_line(format!("Execution profile synchronization failed: {error}"));
                     }
                 }
+                next_full_sync =
+                    tokio::time::Instant::now() + crate::execution_profiles::PROFILE_SYNC_INTERVAL;
             }
 
             refresh = tokio::select! {
@@ -213,8 +216,11 @@ fn spawn_execution_profile_sync(
                     }
                     true
                 }
-                _ = tokio::time::sleep(crate::execution_profiles::PROFILE_SYNC_INTERVAL) => {
+                _ = tokio::time::sleep_until(next_full_sync) => {
                     true
+                }
+                _ = tokio::time::sleep(crate::execution_profiles::PROFILE_OPERATION_POLL_INTERVAL) => {
+                    crate::execution_profiles::pending_operation_available(&client, &profiles).await
                 }
             };
         }

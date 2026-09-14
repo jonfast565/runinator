@@ -111,16 +111,67 @@ where
         revision: &ExecutionProfileRevision,
     ) -> Result<ExecutionProfileRevision, SendableError> {
         let mut tx = self.pool().begin().await?;
+        // serialize publication through the profile row. current_revision is deliberately cleared
+        // when configuration changes, so the immutable history—not the current pointer—owns the
+        // next sequence number.
+        sqlx::query(
+            &self.render("UPDATE execution_profiles SET updated_at = updated_at WHERE id = ?"),
+        )
+        .bind(revision.profile_id)
+        .execute(&mut *tx)
+        .await?;
+        let profile = sqlx::query(&self.render(
+            "SELECT current_revision, current_digest FROM execution_profiles WHERE id = ?",
+        ))
+        .bind(revision.profile_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            Box::new(std::io::Error::other(
+                "execution profile disappeared before publication",
+            )) as SendableError
+        })?;
+        let current_revision = profile.get::<Option<i64>, _>("current_revision");
+        let current_digest = profile.get::<Option<String>, _>("current_digest");
+        if current_digest
+            .as_deref()
+            .is_some_and(|digest| digest.eq_ignore_ascii_case(&revision.digest))
+            && let Some(current_revision) = current_revision
+        {
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {REVISION_COLUMNS} FROM execution_profile_revisions WHERE profile_id = ? AND revision = ?"
+            )))
+            .bind(revision.profile_id)
+            .bind(current_revision)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if let Some(row) = row {
+                let published = mappers::row_to_execution_profile_revision(&row);
+                tx.commit().await?;
+                return Ok(published);
+            }
+        }
+        let latest = sqlx::query(&self.render(
+            "SELECT COALESCE(MAX(revision), 0) AS latest_revision FROM execution_profile_revisions WHERE profile_id = ?",
+        ))
+        .bind(revision.profile_id)
+        .fetch_one(&mut *tx)
+        .await?
+        .get::<i64, _>("latest_revision");
+        let published = ExecutionProfileRevision {
+            revision: latest + 1,
+            ..revision.clone()
+        };
         sqlx::query(&self.render(&format!("INSERT INTO execution_profile_revisions ({REVISION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")))
-            .bind(revision.profile_id).bind(revision.revision).bind(&revision.digest).bind(revision.size_bytes)
-            .bind(revision.publisher_id).bind(revision.expires_at.map(|v| v.timestamp()))
-            .bind(revision.created_at.timestamp()).bind(&revision.uri).execute(&mut *tx).await?;
+            .bind(published.profile_id).bind(published.revision).bind(&published.digest).bind(published.size_bytes)
+            .bind(published.publisher_id).bind(published.expires_at.map(|v| v.timestamp()))
+            .bind(published.created_at.timestamp()).bind(&published.uri).execute(&mut *tx).await?;
         sqlx::query(&self.render("UPDATE execution_profiles SET current_revision = ?, current_digest = ?, current_publisher_id = ?, published_at = ?, expires_at = ?, health = 'ready', last_error = NULL, updated_at = ? WHERE id = ?"))
-            .bind(revision.revision).bind(&revision.digest).bind(revision.publisher_id).bind(revision.created_at.timestamp())
-            .bind(revision.expires_at.map(|v| v.timestamp())).bind(revision.created_at.timestamp())
-            .bind(revision.profile_id).execute(&mut *tx).await?;
+            .bind(published.revision).bind(&published.digest).bind(published.publisher_id).bind(published.created_at.timestamp())
+            .bind(published.expires_at.map(|v| v.timestamp())).bind(published.created_at.timestamp())
+            .bind(published.profile_id).execute(&mut *tx).await?;
         tx.commit().await?;
-        Ok(revision.clone())
+        Ok(published)
     }
 
     async fn fetch_execution_profile_revision(

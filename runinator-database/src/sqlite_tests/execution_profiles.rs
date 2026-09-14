@@ -50,18 +50,20 @@ async fn execution_profile_publications_are_atomic_and_org_scoped() {
     );
 
     let publisher_id = Uuid::new_v4();
-    db.insert_execution_profile_revision(&ExecutionProfileRevision {
-        profile_id: id,
-        revision: 1,
-        digest: "bundle".into(),
-        size_bytes: 42,
-        publisher_id: Some(publisher_id),
-        expires_at: Some(now + Duration::hours(1)),
-        created_at: now,
-        uri: "blob://execution-profiles/profile/1.bundle".into(),
-    })
-    .await
-    .unwrap();
+    let first = db
+        .insert_execution_profile_revision(&ExecutionProfileRevision {
+            profile_id: id,
+            revision: 0,
+            digest: "bundle".into(),
+            size_bytes: 42,
+            publisher_id: Some(publisher_id),
+            expires_at: Some(now + Duration::hours(1)),
+            created_at: now,
+            uri: "blob://execution-profiles/profile/1.bundle".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(first.revision, 1);
 
     let published = db.fetch_execution_profile(id).await.unwrap().unwrap();
     assert_eq!(published.current_revision, Some(1));

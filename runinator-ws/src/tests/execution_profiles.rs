@@ -73,6 +73,7 @@ async fn profile_download_honors_worker_authority_and_run_admission() {
         ..user_ctx(Uuid::new_v4())
     };
     let bundle = b"test execution profile bundle";
+    let bundle_digest = sha256_hex(bundle);
     let (status, _) = crate::handlers::execution_profiles::publish(
         Extension(db.clone()),
         Extension(service.clone()),
@@ -80,13 +81,23 @@ async fn profile_download_honors_worker_authority_and_run_admission() {
         Extension(context.clone()),
         Path(profile_id),
         Query(ExecutionProfilePublishRequest {
-            digest: sha256_hex(bundle),
+            digest: bundle_digest.clone(),
             expires_at: None,
         }),
         bundle.as_slice().into(),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    let stored = service
+        .fetch_revision(profile_id, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stored
+            .uri
+            .ends_with(&format!("/{profile_id}/{bundle_digest}.bundle"))
+    );
     for provider in runinator_provider_catalog::metadata() {
         crate::repository::upsert_catalog_item(
             db.as_ref(),

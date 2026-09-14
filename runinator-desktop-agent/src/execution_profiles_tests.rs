@@ -6,6 +6,42 @@ use runinator_models::execution_profiles::{
 };
 
 #[test]
+fn queued_operations_are_polled_without_waiting_for_a_full_sync() {
+    assert_eq!(PROFILE_OPERATION_POLL_INTERVAL, Duration::from_secs(2));
+    assert!(PROFILE_OPERATION_POLL_INTERVAL < PROFILE_SYNC_INTERVAL);
+
+    let profile_id = uuid::Uuid::new_v4();
+    let operation = ExecutionProfileOperation {
+        id: uuid::Uuid::new_v4(),
+        profile_id,
+        config_digest: "approved-digest".into(),
+        kind: ExecutionProfileOperationKind::Refresh,
+        state: ExecutionProfileOperationState::Queued,
+        requested_at: chrono::Utc::now(),
+        requested_by: None,
+        claimed_by: None,
+        started_at: None,
+        lease_expires_at: None,
+        completed_at: None,
+        error: None,
+    };
+    let mut profile = LocalProfileStatus {
+        id: profile_id,
+        name: "fixture".into(),
+        config_digest: "approved-digest".into(),
+        enabled: true,
+        approved: false,
+        message: String::new(),
+    };
+    assert!(!operation_is_locally_actionable(
+        &operation,
+        &[profile.clone()]
+    ));
+    profile.approved = true;
+    assert!(operation_is_locally_actionable(&operation, &[profile]));
+}
+
+#[test]
 fn collection_maps_files_and_directories_into_one_deterministic_archive() {
     let root =
         std::env::temp_dir().join(format!("runinator-profile-test-{}", uuid::Uuid::new_v4()));

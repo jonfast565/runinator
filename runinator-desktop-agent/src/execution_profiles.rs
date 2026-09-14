@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use crate::agent::{ConnectionState, SharedHandle, log_line};
 
 pub const PROFILE_SYNC_INTERVAL: Duration = Duration::from_secs(30);
+pub const PROFILE_OPERATION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MANIFEST_PATH: &str = ".runinator-profile.json";
 const MAX_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: usize = 32 * 1024 * 1024;
@@ -88,6 +89,7 @@ pub fn spawn(
     mut agent: tokio::sync::watch::Receiver<runinator_worker::AgentStatus>,
 ) {
     runtime.spawn(async move {
+        let mut profiles = Vec::new();
         loop {
             // collection may invoke an interactive desktop command (for example, a Keychain
             // access prompt). do not start it while the worker is still registering or connecting:
@@ -103,7 +105,7 @@ pub fn spawn(
             )
             .await
             {
-                Ok(_) => {}
+                Ok(next) => profiles = next,
                 Err(error) => {
                     log_line(
                         &shared,
@@ -111,17 +113,53 @@ pub fn spawn(
                     );
                 }
             }
-            tokio::select! {
-                changed = agent.changed() => {
-                    if changed.is_err() || agent.borrow().connection == ConnectionState::Stopped {
-                        return;
+            let sync_deadline = tokio::time::Instant::now() + PROFILE_SYNC_INTERVAL;
+            loop {
+                tokio::select! {
+                    changed = agent.changed() => {
+                        if changed.is_err() || agent.borrow().connection == ConnectionState::Stopped {
+                            return;
+                        }
+                        // A reconnect triggers an immediate definition/source refresh.
+                        break;
                     }
-                    // A reconnect triggers an immediate definition/source refresh.
+                    _ = tokio::time::sleep_until(sync_deadline) => break,
+                    _ = tokio::time::sleep(PROFILE_OPERATION_POLL_INTERVAL) => {
+                        if pending_operation_available(&client, &profiles).await {
+                            break;
+                        }
+                    }
                 }
-                _ = tokio::time::sleep(PROFILE_SYNC_INTERVAL) => {}
             }
         }
     });
+}
+
+/// check only the lightweight operation queue between full definition/source synchronizations.
+pub(crate) async fn pending_operation_available(
+    client: &AsyncApiClient<StaticLocator>,
+    profiles: &[LocalProfileStatus],
+) -> bool {
+    client
+        .list_pending_execution_profile_operations()
+        .await
+        .is_ok_and(|operations| {
+            operations
+                .iter()
+                .any(|operation| operation_is_locally_actionable(operation, profiles))
+        })
+}
+
+fn operation_is_locally_actionable(
+    operation: &ExecutionProfileOperation,
+    profiles: &[LocalProfileStatus],
+) -> bool {
+    profiles.iter().any(|profile| {
+        profile.id == operation.profile_id
+            && profile.config_digest == operation.config_digest
+            && profile.enabled
+            && profile.approved
+    })
 }
 
 /// wait until the worker has registered and begun serving work before touching profile sources.

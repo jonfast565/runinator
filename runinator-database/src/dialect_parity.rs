@@ -22,6 +22,7 @@ use runinator_models::{
         ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileApprovalState,
         ExecutionProfileCollectionSpec, ExecutionProfileExposureSpec, ExecutionProfileHealth,
         ExecutionProfileOperation, ExecutionProfileOperationKind, ExecutionProfileOperationState,
+        ExecutionProfileRevision,
     },
     json,
     orchestration::{
@@ -491,6 +492,67 @@ async fn assert_execution_profile_collection_lifecycle<T: DatabaseImpl + Workflo
         )
         .await
         .unwrap()
+    );
+
+    let first = db
+        .insert_execution_profile_revision(&ExecutionProfileRevision {
+            profile_id,
+            revision: 0,
+            digest: "profile-bundle-a".into(),
+            size_bytes: 16,
+            publisher_id: Some(agent_id),
+            expires_at: None,
+            created_at: now,
+            uri: "blob://execution-profiles/profile-bundle-a".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(first.revision, 1);
+
+    // a configuration change clears the current pointer but retains immutable history. the next
+    // publication must continue that history rather than attempting revision one again.
+    let mut changed = db
+        .fetch_execution_profile(profile_id)
+        .await
+        .unwrap()
+        .unwrap();
+    changed.config_version += 1;
+    changed.config_digest = "profile-config-b".into();
+    changed.current_revision = None;
+    changed.current_digest = None;
+    changed.current_publisher_id = None;
+    changed.published_at = None;
+    changed.health = ExecutionProfileHealth::Unpublished;
+    changed.updated_at = now + Duration::seconds(2);
+    db.upsert_execution_profile(&changed).await.unwrap();
+
+    let publication = ExecutionProfileRevision {
+        profile_id,
+        revision: 0,
+        digest: "profile-bundle-b".into(),
+        size_bytes: 17,
+        publisher_id: Some(agent_id),
+        expires_at: None,
+        created_at: now + Duration::seconds(3),
+        uri: "blob://execution-profiles/profile-bundle-b".into(),
+    };
+    let second = db
+        .insert_execution_profile_revision(&publication)
+        .await
+        .unwrap();
+    assert_eq!(second.revision, 2);
+    assert_eq!(
+        db.insert_execution_profile_revision(&publication)
+            .await
+            .unwrap()
+            .revision,
+        2
+    );
+    assert!(
+        db.fetch_execution_profile_revision(profile_id, 3)
+            .await
+            .unwrap()
+            .is_none()
     );
 }
 
