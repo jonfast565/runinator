@@ -42,8 +42,8 @@ use crate::{
     compile_str as compile_str_strict,
     compile_str_with_diagnostics as compile_str_with_diagnostics_strict, decompile, decompile_with,
     decompile_with_spans, evaluate_fragment, evaluate_fragment_with_functions, format_str,
-    parse_document, validate_fragment, validate_fragment_with_functions,
-    workflow_signature_from_source,
+    lower_fragment, parse_document, render_compute_program, validate_fragment,
+    validate_fragment_with_functions, workflow_signature_from_source,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,

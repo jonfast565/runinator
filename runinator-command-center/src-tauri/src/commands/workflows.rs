@@ -271,6 +271,12 @@ pub fn decompile_to_rexrap(workflow: WorkflowDefinition) -> CommandResult<String
 }
 
 #[tauri::command]
+pub fn render_rexrap_program(program: Value) -> CommandResult<String> {
+    runinator_rexrap::render_compute_program(&program.into())
+        .map_err(|err| CommandError::Unexpected(err.to_string()))
+}
+
+#[tauri::command]
 pub async fn delete_workflow(
     state: State<'_, CommandCenterState>,
     workflow_id: Uuid,

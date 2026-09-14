@@ -265,6 +265,18 @@ pub fn decompile_definition(
 
 /// Render one lowered pure expression using the same inverse mapping as workflow decompilation.
 pub fn render_expression(value: &Value) -> Result<String, RexRapError> {
+    empty_decompiler().expr(value)
+}
+
+/// Render one lowered compute program using the same inverse mapping as workflow decompilation.
+///
+/// Invocation nodes retain this statement tree beside their compiled module so authoring clients
+/// can show the program people wrote instead of exposing VM bytecode as JSON.
+pub fn render_compute_program(program: &[Value]) -> Result<String, RexRapError> {
+    empty_decompiler().compute_text(program)
+}
+
+fn empty_decompiler() -> Decompiler<'static> {
     Decompiler {
         nodes: HashMap::new(),
         end_ids: HashSet::new(),
@@ -285,7 +297,6 @@ pub fn render_expression(value: &Value) -> Result<String, RexRapError> {
         out: String::new(),
         indent: 0,
     }
-    .expr(value)
 }
 
 /// collect every node id referenced as a target anywhere in the graph: typed transitions, branch
@@ -1207,7 +1218,7 @@ impl<'a> Decompiler<'a> {
             WorkflowNodeKind::Action => {
                 // a std provider node carrying a `program` is a compute block, not a plain call.
                 if let Some(program) = compute_program(node) {
-                    return Ok((self.compute_text(node, program)?, true));
+                    return Ok((self.compute_text(program)?, true));
                 }
                 if foreign_compute_config(node).is_some() {
                     return Ok((self.foreign_compute_text(node)?, true));
@@ -1227,7 +1238,7 @@ impl<'a> Decompiler<'a> {
                         node.id
                     ))
                 })?;
-                Ok((self.compute_text(node, &program)?, true))
+                Ok((self.compute_text(&program)?, true))
             }
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
             WorkflowNodeKind::Resume => Ok((self.resume_text(node), false)),
@@ -1258,7 +1269,7 @@ impl<'a> Decompiler<'a> {
     // render a compute block. inner lines carry their absolute indentation so the caller's
     // `self.line` (which only indents the first line) yields correctly nested output, and the
     // trailing success arrow appends cleanly after the closing brace.
-    fn compute_text(&self, _node: &WorkflowNode, program: &[Value]) -> Result<String, RexRapError> {
+    fn compute_text(&self, program: &[Value]) -> Result<String, RexRapError> {
         let base = self.indent;
         let mut out = String::from("compute {\n");
         self.render_compute_lines(&mut out, program, base + 1)?;

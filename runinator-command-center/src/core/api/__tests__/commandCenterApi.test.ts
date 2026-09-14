@@ -25,6 +25,7 @@ import {
   listCurrentSessions,
   revokeOtherSessions,
   requestRunInterrupt,
+  renderRexRapProgram,
   rotateApiKey,
   saveWorkflowBundle,
   updateApiKey,
@@ -63,6 +64,15 @@ describe("command center catalog metadata API", () => {
   it("requests enum catalogs", async () => {
     await fetchEnumCatalogs();
     expect(invoke).toHaveBeenCalledWith("fetch_enum_catalogs", undefined);
+  });
+
+  it("renders retained invocation source through the shared REXRAP command", async () => {
+    vi.mocked(invoke).mockResolvedValue("compute {\n    return 1\n}");
+    const program = [{ $return: 1 }];
+
+    await renderRexRapProgram(program);
+
+    expect(invoke).toHaveBeenCalledWith("render_rexrap_program", { program });
   });
 
   it("passes managed-run override audit fields through the shared command runtime", async () => {

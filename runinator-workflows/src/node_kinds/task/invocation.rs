@@ -44,9 +44,9 @@ impl NodeKindSpec for Invocation {
         WorkflowNodeKindMetadata {
             fields: vec![
                 field(
-                    opt("module", RuninatorType::Any),
-                    FieldLocation::parameters(&["module"]),
-                    None,
+                    opt("program", RuninatorType::Any),
+                    FieldLocation::parameters(&["source"]),
+                    Some("rexrap_program"),
                 ),
                 field(
                     opt("timeout_seconds", positive_duration()),
@@ -56,7 +56,10 @@ impl NodeKindSpec for Invocation {
             ],
             default_template: json!({
                 "kind": "invocation",
-                "parameters": { "module": { "version": 1, "entry": { "instructions": [] } } },
+                "parameters": {
+                    "module": { "version": 1, "entry": { "instructions": [] } },
+                    "source": []
+                },
                 "retry": { "max_attempts": 1 },
                 "transitions": {},
             }),

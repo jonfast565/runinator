@@ -1052,6 +1052,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "rexrap/decompile",
     body: (args) => ({ workflow: arg(args, "workflow") }),
   },
+  render_rexrap_program: {
+    method: "POST",
+    path: () => "rexrap/render-program",
+    body: (args) => ({ program: arg(args, "program") }),
+  },
   evaluate_expression: {
     method: "POST",
     path: () => "rexrap/evaluate",

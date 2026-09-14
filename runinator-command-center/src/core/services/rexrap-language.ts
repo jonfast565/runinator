@@ -36,6 +36,9 @@ export function createRexRapLanguageService(app: AppService, api: RexrapLanguage
     formatSilent(source: string, document: RexRapDocumentKind = "workflow"): Promise<string> {
       return api.formatRexRap(source, document);
     },
+    renderProgram(program: unknown): Promise<string> {
+      return api.renderRexRapProgram(program);
+    },
   };
 }
 

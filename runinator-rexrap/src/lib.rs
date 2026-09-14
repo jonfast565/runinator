@@ -543,6 +543,14 @@ pub fn decompile(definition: &WorkflowDefinition) -> Result<String, RexRapError>
     Ok(format_str(&source).unwrap_or(source))
 }
 
+/// Render the retained statement tree from an invocation node as REXRAP compute source.
+pub fn render_compute_program(program: &Value) -> Result<String, RexRapError> {
+    let statements = program
+        .as_array()
+        .ok_or_else(|| RexRapError::Decompile("invocation source must be an array".into()))?;
+    runinator_rexrap_codegen::render_compute_program(statements)
+}
+
 /// decompile a definition and return the rexrap text together with the span of each graph node
 /// *within that text*.
 ///

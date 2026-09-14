@@ -38,6 +38,23 @@ async fn rexrap_evaluate_accepts_source_fragments() {
 }
 
 #[tokio::test]
+async fn rexrap_render_program_returns_authored_compute_source() {
+    let request = crate::handlers::rexrap::RenderRexRapProgramRequest {
+        program: json!([
+            { "$let": "message", "value": { "$concat": ["hello ", { "$ref": { "params": ["name"] } }] } },
+            { "$return": { "$ref": { "let": ["message"] } } }
+        ]),
+    };
+
+    let Json(source) = crate::handlers::rexrap::render_rexrap_program(ValidatedJson(request))
+        .await
+        .expect("render program");
+
+    assert!(source.contains("let message = \"hello \" ++ params.name"));
+    assert!(source.contains("return message"));
+}
+
+#[tokio::test]
 async fn get_node_kinds_returns_catalog_json() {
     let (status, Json(response)) = crate::handlers::catalog_metadata::get_node_kinds().await;
 

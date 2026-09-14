@@ -709,6 +709,10 @@ export async function decompileToRexRap(workflow: WorkflowDefinition) {
   return command<string>("decompile_to_rexrap", { workflow });
 }
 
+export async function renderRexRapProgram(program: unknown) {
+  return command<string>("render_rexrap_program", { program });
+}
+
 export async function evaluateExpression(expression: unknown, context: unknown) {
   return command<unknown>("evaluate_expression", { expression, context });
 }

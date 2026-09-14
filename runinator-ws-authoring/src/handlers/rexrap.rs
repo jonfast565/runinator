@@ -4,7 +4,7 @@ use uuid::Uuid;
 use axum::{Extension, Json, http::StatusCode};
 use runinator_models::{
     auth::{AuthContext, Permission},
-    validation::{Validate, ValidationError, bounded_text, required_text},
+    validation::{Validate, ValidationError, bounded_text, dynamic_value, required_text},
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
@@ -67,6 +67,11 @@ pub struct DecompileRexRapRequest {
 }
 
 #[derive(Deserialize)]
+pub struct RenderRexRapProgramRequest {
+    pub program: Value,
+}
+
+#[derive(Deserialize)]
 pub struct EvaluateExpressionRequest {
     #[serde(default)]
     pub expression: Option<Value>,
@@ -111,6 +116,16 @@ impl Validate for RexRapSourceRequest {
 impl Validate for DecompileRexRapRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         self.workflow.validate()
+    }
+}
+
+impl Validate for RenderRexRapProgramRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        dynamic_value("program", &self.program)?;
+        if !self.program.is_array() {
+            return Err(ValidationError::new("program", "must be an array"));
+        }
+        Ok(())
     }
 }
 
@@ -458,6 +473,15 @@ pub async fn decompile_to_rexrap_with_spans(
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
 }
 
+/// Render the authored statement tree retained by an invocation as readable REXRAP.
+pub async fn render_rexrap_program(
+    ValidatedJson(request): ValidatedJson<RenderRexRapProgramRequest>,
+) -> Result<Json<String>, (StatusCode, String)> {
+    runinator_rexrap::render_compute_program(&request.program)
+        .map(Json)
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
+}
+
 /// resolve a lowered expression against a sample context for the editor's preview. mirrors the
 /// desktop `evaluate_expression` command so the web client has the same behavior. evaluates the pure
 /// compute tier (stdlib + higher-order intrinsics) but not effectful ops, so a preview never runs
@@ -613,6 +637,10 @@ pub fn routes<
             post(decompile_to_rexrap_with_spans),
         )
         .route(
+            runinator_models::api_routes::API_REXRAP_RENDER_PROGRAM,
+            post(render_rexrap_program),
+        )
+        .route(
             runinator_models::api_routes::API_REXRAP_EVALUATE,
             post(evaluate_expression),
         )
@@ -731,6 +759,22 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "REXRAP source and node spans",
+        Example::RexRapSource,
+    ),
+    endpoint!(
+        "post",
+        "/rexrap/render-program",
+        "REXRAP",
+        "Render an invocation program as REXRAP",
+        "Converts the retained statement tree from an invocation node into readable REXRAP compute source.",
+        false,
+        json_body(
+            "Lowered invocation source program.",
+            Example::RexRapEvaluate,
+        ),
+        &[],
+        200,
+        "REXRAP compute source",
         Example::RexRapSource,
     ),
     endpoint!(

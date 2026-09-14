@@ -24,6 +24,7 @@ pub const API_REXRAP_ANALYZE: &str = "/rexrap/analyze";
 pub const API_REXRAP_FORMAT: &str = "/rexrap/format";
 pub const API_REXRAP_DECOMPILE: &str = "/rexrap/decompile";
 pub const API_REXRAP_DECOMPILE_SPANS: &str = "/rexrap/decompile/spans";
+pub const API_REXRAP_RENDER_PROGRAM: &str = "/rexrap/render-program";
 pub const API_REXRAP_EVALUATE: &str = "/rexrap/evaluate";
 pub const API_REXRAP_IMPORT: &str = "/rexrap/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";

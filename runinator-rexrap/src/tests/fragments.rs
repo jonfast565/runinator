@@ -42,6 +42,26 @@ fn validates_and_evaluates_compute_fragment() {
     assert_eq!(value.get("outcome").and_then(Value::as_str), Some("return"));
     assert_eq!(value.get("value"), Some(&Value::from(7)));
 }
+
+#[test]
+fn renders_lowered_invocation_source_as_rexrap_program() {
+    let lowered = lower_fragment(
+        r#"{ let doubled = params.count * 2 return doubled + 1 }"#,
+        RexRapFragmentKind::Do,
+        &CompileOptions::default(),
+    )
+    .expect("lower compute program");
+
+    let rendered = render_compute_program(&lowered).expect("render compute program");
+
+    assert!(rendered.starts_with("compute {\n"), "{rendered}");
+    assert!(
+        rendered.contains("let doubled = params.count * 2"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("return doubled + 1"), "{rendered}");
+    assert!(rendered.ends_with('}'), "{rendered}");
+}
 #[test]
 fn fragment_validation_rejects_wrong_surface() {
     let err = validate_fragment(

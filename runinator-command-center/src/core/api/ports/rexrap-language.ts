@@ -3,5 +3,5 @@ export { defaultApi } from "./default";
 
 export type RexrapLanguageApi = Pick<
   typeof Api,
-  "analyzeRexRap" | "completeRexRap" | "formatRexRap" | "hoverRexRap"
+  "analyzeRexRap" | "completeRexRap" | "formatRexRap" | "hoverRexRap" | "renderRexRapProgram"
 >;

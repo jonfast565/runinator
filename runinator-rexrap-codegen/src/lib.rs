@@ -10,5 +10,7 @@
 pub mod decompile;
 pub mod lower;
 
-pub use decompile::{DecompileOptions, decompile_definition, render_expression};
+pub use decompile::{
+    DecompileOptions, decompile_definition, render_compute_program, render_expression,
+};
 pub use lower::lower_document;

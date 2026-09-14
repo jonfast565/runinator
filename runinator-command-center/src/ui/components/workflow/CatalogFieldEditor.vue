@@ -7,12 +7,12 @@
 
     <!-- provider select: shows all registered providers. -->
     <template v-if="widget === 'provider'">
-      <select :value="stringModelValue" @change="emitString(($event.target as HTMLSelectElement).value)">
+      <select
+        :value="stringModelValue"
+        @change="emitString(($event.target as HTMLSelectElement).value)"
+      >
         <option value="" disabled>Select provider</option>
-        <option
-          v-if="providerMissing"
-          :value="stringModelValue"
-        >
+        <option v-if="providerMissing" :value="stringModelValue">
           {{ stringModelValue }} (unavailable)
         </option>
         <option
@@ -50,7 +50,10 @@
 
     <!-- subflow select: shows available workflows, stored by id. -->
     <template v-else-if="widget === 'subflow'">
-      <select :value="stringModelValue" @change="emitString(($event.target as HTMLSelectElement).value)">
+      <select
+        :value="stringModelValue"
+        @change="emitString(($event.target as HTMLSelectElement).value)"
+      >
         <option value="">(none)</option>
         <option v-for="wf in workflows" :key="String(wf.id)" :value="String(wf.id)">
           {{ wf.name }}
@@ -60,7 +63,10 @@
 
     <!-- workflow_name select: shows available workflows, stored by name (chaining targets resolve by name). -->
     <template v-else-if="widget === 'workflow_name'">
-      <select :value="stringModelValue" @change="emitString(($event.target as HTMLSelectElement).value)">
+      <select
+        :value="stringModelValue"
+        @change="emitString(($event.target as HTMLSelectElement).value)"
+      >
         <option value="">(none)</option>
         <option v-for="wf in workflows" :key="String(wf.id)" :value="wf.name">
           {{ wf.name }}
@@ -83,6 +89,12 @@
       />
     </template>
 
+    <!-- invocation source is retained as a lowered statement tree; render it through the shared
+         REXRAP decompiler instead of exposing that tree or the compiled module as JSON. -->
+    <template v-else-if="widget === 'rexrap_program'">
+      <RexRapProgramPreview :program="modelValue" />
+    </template>
+
     <!-- expression / json: use the expression-aware json editor. -->
     <template v-else-if="widget === 'expression' || widget === 'json'">
       <ExpressionJsonEditor
@@ -101,7 +113,9 @@
         class="mb-2 flex flex-col gap-2 rounded-lg border border-border p-3"
       >
         <div class="flex items-end justify-between gap-2">
-          <label class="flex-1">Name <input v-model="assertion.name" @change="emitAssertions" /></label>
+          <label class="flex-1"
+            >Name <input v-model="assertion.name" @change="emitAssertions"
+          /></label>
           <button type="button" @click="removeAssertion(index)">Remove</button>
         </div>
         <div class="form-field">
@@ -120,7 +134,10 @@
 
     <!-- node_ref: single node select. -->
     <template v-else-if="widget === 'node_ref'">
-      <select :value="stringModelValue" @change="emitNodeRef(($event.target as HTMLSelectElement).value)">
+      <select
+        :value="stringModelValue"
+        @change="emitNodeRef(($event.target as HTMLSelectElement).value)"
+      >
         <option value="">(none)</option>
         <option v-for="nodeId in nodeOptions" :key="nodeId" :value="nodeId">{{ nodeId }}</option>
       </select>
@@ -149,21 +166,25 @@ import type { WorkflowDefinition } from "../../../core/domain/models";
 import CronEditor from "../shared/CronEditor.vue";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
+import RexRapProgramPreview from "./RexRapProgramPreview.vue";
 
-const props = withDefaults(defineProps<{
-  field: NodeFieldMetadata;
-  modelValue: unknown;
-  expressionContext?: object | null;
-  nodeOptions?: string[];
-  workflows?: WorkflowDefinition[];
-  // optional: sibling values from the same node (used to look up the active provider for action_function).
-  siblingValues?: Record<string, unknown>;
-}>(), {
-  expressionContext: null,
-  nodeOptions: () => [],
-  workflows: () => [],
-  siblingValues: () => ({}),
-});
+const props = withDefaults(
+  defineProps<{
+    field: NodeFieldMetadata;
+    modelValue: unknown;
+    expressionContext?: object | null;
+    nodeOptions?: string[];
+    workflows?: WorkflowDefinition[];
+    // optional: sibling values from the same node (used to look up the active provider for action_function).
+    siblingValues?: Record<string, unknown>;
+  }>(),
+  {
+    expressionContext: null,
+    nodeOptions: () => [],
+    workflows: () => [],
+    siblingValues: () => ({}),
+  },
+);
 
 const emit = defineEmits<(e: "update:modelValue", value: unknown) => void>();
 
@@ -174,7 +195,9 @@ const widget = computed(() => props.field.widget ?? "");
 // resolve the current provider from sibling values (for action_function widget).
 const currentProvider = computed(() => {
   const providerName = props.siblingValues.provider as string | undefined;
-  if (!providerName) {return null;}
+  if (!providerName) {
+    return null;
+  }
   return providersStore.providers.find((p) => p.name === providerName) ?? null;
 });
 
@@ -188,9 +211,7 @@ const numberModelValue = computed(() =>
 
 // derive a pretty-printed json string from the raw model value for expression editors.
 const jsonModelValue = computed(() =>
-  props.modelValue === undefined || props.modelValue === null
-    ? "null"
-    : pretty(props.modelValue),
+  props.modelValue === undefined || props.modelValue === null ? "null" : pretty(props.modelValue),
 );
 
 const providerMissing = computed(() =>
@@ -225,9 +246,14 @@ watch(
 );
 
 function buildAssertionList(value: unknown): AssertionDraft[] {
-  if (!Array.isArray(value)) {return [];}
+  if (!Array.isArray(value)) {
+    return [];
+  }
   return value.map((item) => {
-    const rec = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+    const rec =
+      item && typeof item === "object" && !Array.isArray(item)
+        ? (item as Record<string, unknown>)
+        : {};
     return {
       name: typeof rec.name === "string" ? rec.name : "",
       condition_json: pretty(rec.condition ?? true),
@@ -240,8 +266,12 @@ function emitAssertions() {
   const serialized = assertionList.value.map((a) => {
     const condition = parseRequiredJson(a.condition_json) ?? true;
     const result: Record<string, unknown> = { condition };
-    if (a.name.trim()) {result.name = a.name.trim();}
-    if (a.message.trim()) {result.message = a.message.trim();}
+    if (a.name.trim()) {
+      result.name = a.name.trim();
+    }
+    if (a.message.trim()) {
+      result.message = a.message.trim();
+    }
     return result;
   });
   emit("update:modelValue", serialized);
@@ -269,7 +299,10 @@ function emitNumber(raw: string) {
 function emitJson(jsonText: string) {
   const parsed = parseRequiredJson(jsonText);
   // keep the raw string form if the json is invalid so the editor stays editable.
-  emit("update:modelValue", parsed !== null || jsonText.trim() === "null" ? parsed : props.modelValue);
+  emit(
+    "update:modelValue",
+    parsed !== null || jsonText.trim() === "null" ? parsed : props.modelValue,
+  );
 }
 
 function emitNodeRef(nodeId: string) {

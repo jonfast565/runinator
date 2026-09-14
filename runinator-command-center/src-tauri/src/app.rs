@@ -71,6 +71,7 @@ pub fn run() {
             crate::commands::format_rexrap,
             crate::commands::evaluate_expression,
             crate::commands::decompile_to_rexrap,
+            crate::commands::render_rexrap_program,
             crate::pack_dev::inspect_dev_pack,
             crate::pack_dev::read_dev_pack_file,
             crate::pack_dev::write_dev_pack_file,

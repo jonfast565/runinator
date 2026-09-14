@@ -2,6 +2,7 @@
 //! and field/edge locations that actually exist in those templates.
 
 use super::*;
+use runinator_models::catalog_metadata::FieldLocation;
 use runinator_models::interrupt::{InterruptMode, InterruptSource};
 use runinator_models::schedules::ConcurrencyPolicy;
 
@@ -72,6 +73,29 @@ fn loop_and_map_items_field_is_typed_array() {
         // the expression widget is kept: loops iterate an upstream reference, not a literal array.
         assert_eq!(items.field.widget.as_deref(), Some("expression"));
     }
+}
+
+#[test]
+fn invocation_catalog_exposes_rexrap_source_instead_of_compiled_module() {
+    let entry = node_kind_catalog()
+        .into_iter()
+        .find(|entry| entry.kind == WorkflowNodeKind::Invocation)
+        .expect("invocation catalog entry");
+
+    let program = entry
+        .fields
+        .iter()
+        .find(|field| field.field.param.name == "program")
+        .expect("invocation program field");
+    assert_eq!(program.field.widget.as_deref(), Some("rexrap_program"));
+    assert_eq!(program.location, FieldLocation::parameters(&["source"]));
+    assert!(
+        entry
+            .fields
+            .iter()
+            .all(|field| field.field.param.name != "module"),
+        "compiled bytecode is not an author-facing field"
+    );
 }
 
 #[test]
