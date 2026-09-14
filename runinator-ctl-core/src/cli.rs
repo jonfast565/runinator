@@ -86,6 +86,7 @@ impl CliTyping {
 /// CLI-facing provisioning backend, mapped to the shared `ProvisionBackend`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliProvisionBackend {
+    Standalone,
     Supervisor,
     Kubernetes,
 }
@@ -93,6 +94,7 @@ pub enum CliProvisionBackend {
 impl From<CliProvisionBackend> for ProvisionBackend {
     fn from(backend: CliProvisionBackend) -> Self {
         match backend {
+            CliProvisionBackend::Standalone => ProvisionBackend::Standalone,
             CliProvisionBackend::Supervisor => ProvisionBackend::Supervisor,
             CliProvisionBackend::Kubernetes => ProvisionBackend::Kubernetes,
         }

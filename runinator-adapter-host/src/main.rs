@@ -112,43 +112,12 @@ struct ValidateInvokeRequest {
     request: AdapterValidationRequest,
 }
 
+#[allow(dead_code)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().collect::<Vec<_>>();
-    if args.get(1).map(String::as_str) == Some("--child-metadata") {
-        return child_metadata(
-            Path::new(required_arg(&args, 2)?),
-            Path::new(required_arg(&args, 3)?),
-        );
-    }
-    if args.get(1).map(String::as_str) == Some("--child-handle") {
-        return child_handle(
-            Path::new(required_arg(&args, 2)?),
-            Path::new(required_arg(&args, 3)?),
-            Path::new(required_arg(&args, 4)?),
-        );
-    }
-    if args.get(1).map(String::as_str) == Some("--child-poll") {
-        return child_poll(
-            Path::new(required_arg(&args, 2)?),
-            Path::new(required_arg(&args, 3)?),
-            Path::new(required_arg(&args, 4)?),
-        );
-    }
-    if args.get(1).map(String::as_str) == Some("--child-validate") {
-        return child_validate(
-            Path::new(required_arg(&args, 2)?),
-            Path::new(required_arg(&args, 3)?),
-            Path::new(required_arg(&args, 4)?),
-        );
-    }
-    if args.get(1).map(String::as_str) == Some("--poll-once") {
-        return poll_once(
-            required_arg(&args, 2)?,
-            Path::new(required_arg(&args, 3)?),
-            Path::new(required_arg(&args, 4)?),
-        )
-        .await;
+    if run_child_command(&args).await? {
+        return Ok(());
     }
 
     let token = std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN")
@@ -156,6 +125,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths = std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
         .map(|value| std::env::split_paths(&value).collect())
         .unwrap_or_default();
+    let port = std::env::var("RUNINATOR_ADAPTER_HOST_PORT")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(8790);
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    serve(listener, token, paths, std::future::pending()).await
+}
+
+pub async fn run_child_command(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
+    if args.get(1).map(String::as_str) == Some("--child-metadata") {
+        child_metadata(
+            Path::new(required_arg(args, 2)?),
+            Path::new(required_arg(args, 3)?),
+        )?;
+        return Ok(true);
+    }
+    if args.get(1).map(String::as_str) == Some("--child-handle") {
+        child_handle(
+            Path::new(required_arg(args, 2)?),
+            Path::new(required_arg(args, 3)?),
+            Path::new(required_arg(args, 4)?),
+        )?;
+        return Ok(true);
+    }
+    if args.get(1).map(String::as_str) == Some("--child-poll") {
+        child_poll(
+            Path::new(required_arg(args, 2)?),
+            Path::new(required_arg(args, 3)?),
+            Path::new(required_arg(args, 4)?),
+        )?;
+        return Ok(true);
+    }
+    if args.get(1).map(String::as_str) == Some("--child-validate") {
+        child_validate(
+            Path::new(required_arg(args, 2)?),
+            Path::new(required_arg(args, 3)?),
+            Path::new(required_arg(args, 4)?),
+        )?;
+        return Ok(true);
+    }
+    if args.get(1).map(String::as_str) == Some("--poll-once") {
+        poll_once(
+            required_arg(args, 2)?,
+            Path::new(required_arg(args, 3)?),
+            Path::new(required_arg(args, 4)?),
+        )
+        .await?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    token: String,
+    paths: Vec<PathBuf>,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
     let state = HostState {
         token: Arc::new(token),
         paths: Arc::new(paths),
@@ -168,12 +196,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .body_bytes
         .saturating_mul(2)
         .saturating_add(64 * 1024);
-    let port = std::env::var("RUNINATOR_ADAPTER_HOST_PORT")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(8790);
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    let listener = tokio::net::TcpListener::bind(address).await?;
     let router = Router::new()
         .route("/live", get(live))
         .route("/health", get(health))
@@ -184,7 +206,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/poll", post(poll))
         .layer(DefaultBodyLimit::max(host_request_limit))
         .with_state(state);
-    axum::serve(listener, router).await?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown)
+        .await?;
     Ok(())
 }
 
@@ -500,7 +524,7 @@ async fn dynamic_metadata(path: &Path, limits: HostLimits) -> Result<AdapterKind
     let temp = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
     let output = timeout(
         limits.timeout,
-        Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        Command::new(adapter_child_executable()?)
             .arg("--child-metadata")
             .arg(path)
             .arg(temp.path())
@@ -544,7 +568,7 @@ async fn invoke_dynamic(
         return Err("adapter request exceeds limit".into());
     }
     std::fs::write(request_file.path(), request_bytes).map_err(|error| error.to_string())?;
-    let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+    let mut child = Command::new(adapter_child_executable()?)
         .arg("--child-handle")
         .arg(path)
         .arg(request_file.path())
@@ -578,7 +602,7 @@ async fn invoke_dynamic_poll(
         return Err("adapter poll request exceeds limit".into());
     }
     std::fs::write(request_file.path(), request_bytes).map_err(|error| error.to_string())?;
-    let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+    let mut child = Command::new(adapter_child_executable()?)
         .arg("--child-poll")
         .arg(path)
         .arg(request_file.path())
@@ -612,7 +636,7 @@ async fn invoke_dynamic_validation(
         return Err("adapter validation request exceeds limit".into());
     }
     std::fs::write(request_file.path(), request_bytes).map_err(|error| error.to_string())?;
-    let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+    let mut child = Command::new(adapter_child_executable()?)
         .arg("--child-validate")
         .arg(path)
         .arg(request_file.path())
@@ -632,6 +656,13 @@ async fn invoke_dynamic_validation(
         return Err("adapter validation output exceeds limit".into());
     }
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
+fn adapter_child_executable() -> Result<PathBuf, String> {
+    match std::env::var_os("RUNINATOR_ADAPTER_CHILD_EXE") {
+        Some(path) if !path.is_empty() => Ok(PathBuf::from(path)),
+        _ => std::env::current_exe().map_err(|error| error.to_string()),
+    }
 }
 
 fn child_metadata(

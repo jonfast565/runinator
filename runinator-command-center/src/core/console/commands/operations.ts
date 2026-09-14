@@ -26,7 +26,7 @@ export function createOperationsCommands(api: ConsoleOperationsApi = defaultApi)
     {
       path: ["status"],
       usage: "status",
-      summary: "show api, supervisor, and active-run health",
+      summary: "show api, local runtime, and active-run health",
       run: async ({ json: raw, print }) => {
         const workflows = await api.fetchWorkflows();
         const runs = await api.fetchWorkflowRuns();
@@ -40,7 +40,7 @@ export function createOperationsCommands(api: ConsoleOperationsApi = defaultApi)
           print(
             json({
               api: { reachable: true, workflow_count: workflows.length },
-              supervisor: supervisor as unknown as JsonRecord,
+              local_runtime: supervisor as unknown as JsonRecord,
               workflow_runs: Object.fromEntries(counts.map(({ status, runs }) => [status, runs])),
             }),
           );
@@ -52,8 +52,8 @@ export function createOperationsCommands(api: ConsoleOperationsApi = defaultApi)
         print(
           text(
             supervisor?.configured
-              ? `supervisor: configured, stale_seconds=${cell(supervisor.stale_seconds)}`
-              : "supervisor: unavailable",
+              ? `local runtime: ${cell(supervisor.host_kind)}, stale_seconds=${cell(supervisor.stale_seconds)}`
+              : "local runtime: unavailable",
           ),
         );
         print(

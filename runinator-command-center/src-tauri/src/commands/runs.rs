@@ -318,7 +318,7 @@ pub async fn resume_workflow_run(
 
 #[tauri::command]
 pub async fn fetch_supervisor_status(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
-    let url = build_state_url(&state, "supervisor/status").await?;
+    let url = build_state_url(&state, "local-runtime/status").await?;
     let response = state.client.read().await.get(url.clone()).send().await?;
     // accept both 200 (with snapshot) and 404 (configured: false) — both return JSON.
     if response.status().as_u16() == 404 {

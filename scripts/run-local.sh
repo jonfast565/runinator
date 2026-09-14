@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUPERVISOR_ARGS=(-p runinator-supervisor --)
+STANDALONE_ARGS=(-p runinator-standalone --)
+TOPOLOGY="${RUNINATOR_LOCAL_TOPOLOGY:-standalone}"
 COMMAND="${1:-start}"
 WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$ROOT_DIR/packs/hello-world}"
 SMOKE_WORKFLOWS_FILE="${RUNINATOR_SMOKE_WORKFLOWS_FILE:-$ROOT_DIR/packs/hello-world}"
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       LOG_LINES="${2:?--lines requires a value}"
       shift 2
       ;;
+    --topology)
+      TOPOLOGY="${2:?--topology requires standalone or supervisor}"
+      shift 2
+      ;;
     *)
       if [[ "$COMMAND" == "dev" ]]; then
         DEV_ARGS+=("$1")
@@ -48,13 +54,23 @@ while [[ $# -gt 0 ]]; do
         continue
       fi
       echo "unknown option: $1" >&2
-      echo "usage: bash scripts/run-local.sh [start|foreground|observe|observe-foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart|observability-start|observability-stop|observability-status|observability-logs] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
+      echo "usage: bash scripts/run-local.sh [COMMAND] [--topology standalone|supervisor] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
       exit 2
       ;;
   esac
 done
 
 cd "$ROOT_DIR"
+
+if [[ "$TOPOLOGY" != "standalone" && "$TOPOLOGY" != "supervisor" ]]; then
+  echo "invalid topology '$TOPOLOGY'; expected standalone or supervisor" >&2
+  exit 2
+fi
+
+runtime_args=("${STANDALONE_ARGS[@]}")
+if [[ "$TOPOLOGY" == "supervisor" ]]; then
+  runtime_args=("${SUPERVISOR_ARGS[@]}")
+fi
 
 compose_command=()
 
@@ -112,17 +128,17 @@ start_observability() {
   print_observability_urls
 }
 
-start_supervisor_stack() {
+start_local_stack() {
   ensure_workflow_dir
   cargo build --workspace
-  cargo run "${SUPERVISOR_ARGS[@]}" start
-  cargo run "${SUPERVISOR_ARGS[@]}" status
+  cargo run "${runtime_args[@]}" start
+  cargo run "${runtime_args[@]}" status
 }
 
-start_supervisor_foreground() {
+start_local_foreground() {
   ensure_workflow_dir
   cargo build --workspace
-  cargo run "${SUPERVISOR_ARGS[@]}" start --foreground
+  cargo run "${runtime_args[@]}" start --foreground
 }
 
 ensure_workflow_dir() {
@@ -188,12 +204,12 @@ show_logs() {
   if [[ "$watch_flag" == "watch" ]]; then
     args+=(--watch)
   fi
-  cargo run "${SUPERVISOR_ARGS[@]}" "${args[@]}"
+  cargo run "${runtime_args[@]}" "${args[@]}"
 }
 
 case "$COMMAND" in
   start)
-    start_supervisor_stack
+    start_local_stack
     cat <<MSG
 
 Runinator local stack is starting.
@@ -214,16 +230,16 @@ Useful commands:
 
 Command-center:
   Run the Tauri UI with bash scripts/run-local.sh ui.
-  The supervisor runs runinatorctl once on startup to import the workflow pack configured in runinator-supervisor.json.
+  The standalone runtime imports packs/hello-world on startup. Use --topology supervisor for the legacy multi-process stack.
   Use smoke-sync to import and run the tiny hello-world pack against an already running stack.
 MSG
     ;;
   foreground)
-    start_supervisor_foreground
+    start_local_foreground
     ;;
   observe)
     start_observability
-    start_supervisor_stack
+    start_local_stack
     cat <<MSG
 
 Runinator local stack is starting with OTLP export enabled.
@@ -234,7 +250,7 @@ MSG
     ;;
   observe-foreground)
     start_observability
-    start_supervisor_foreground
+    start_local_foreground
     ;;
   observability-start)
     start_observability
@@ -249,10 +265,10 @@ MSG
     observability_compose logs --tail "$LOG_LINES"
     ;;
   status)
-    cargo run "${SUPERVISOR_ARGS[@]}" status
+    cargo run "${runtime_args[@]}" status
     ;;
   watch)
-    cargo run "${SUPERVISOR_ARGS[@]}" status --watch
+    cargo run "${runtime_args[@]}" status --watch
     ;;
   logs)
     show_logs
@@ -281,16 +297,16 @@ MSG
     pnpm --dir runinator-command-center tauri dev
     ;;
   stop)
-    cargo run "${SUPERVISOR_ARGS[@]}" stop
+    cargo run "${runtime_args[@]}" stop
     ;;
   restart)
     ensure_workflow_dir
     cargo build --workspace
-    cargo run "${SUPERVISOR_ARGS[@]}" restart
-    cargo run "${SUPERVISOR_ARGS[@]}" status
+    cargo run "${runtime_args[@]}" restart
+    cargo run "${runtime_args[@]}" status
     ;;
   *)
-    echo "usage: bash scripts/run-local.sh [start|foreground|observe|observe-foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart|observability-start|observability-stop|observability-status|observability-logs] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
+    echo "usage: bash scripts/run-local.sh [COMMAND] [--topology standalone|supervisor] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
     exit 2
     ;;
 esac

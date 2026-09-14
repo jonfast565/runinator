@@ -229,7 +229,13 @@ Keep dependency direction from service and execution crates toward shared contra
 - Add a provider as a dedicated `runinator-provider-<name>` crate, resolved by `runinator-worker`; providers do not schedule work or write directly to the database.
 - Keep reusable container execution in `runinator-sandbox`, provider loading in `runinator-plugin`, and binary startup/configuration in the platform and bootstrap crates.
 
-This separation lets the default local supervisor stack use one embedded engine with SQLite and the built-in broker, while production can independently scale web-service, engine, worker, waker, broker, database, and object-store replicas without changing workflow semantics.
+This separation lets `runinator-standalone` compose the same web service, engine, worker, waker,
+broker, adapter, and blob implementations as tasks in one OS process. Its in-process provisioner
+scales engine, worker, and waker runtimes by task count while preserving the ordinary TCP broker and
+HTTP adapter/blob boundaries, so local execution exercises the deployed contracts. Dynamic adapter
+libraries remain isolated through child invocations of the standalone executable. Production can
+still independently scale every service, and `runinator-supervisor` remains an explicit
+process-isolated local topology, without changing workflow semantics.
 
 ### Durable workspace storage
 

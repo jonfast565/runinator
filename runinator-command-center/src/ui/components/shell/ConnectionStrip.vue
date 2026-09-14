@@ -52,13 +52,13 @@
         class="flex min-w-0 items-center gap-1 overflow-hidden"
       >
         <span
-          v-for="proc in supervisor.status.value?.processes ?? []"
-          :key="proc.name"
+          v-for="proc in supervisor.status.value?.components ?? []"
+          :key="proc.id"
           class="shrink-0 rounded-[10px] border border-transparent px-[7px] py-px text-[10px] font-medium"
           :class="pillClass(proc.status, supervisor.status.value?.stale_seconds)"
           :title="processTooltip(proc)"
         >
-          {{ proc.name }}
+          {{ proc.id }}
         </span>
         <span v-if="staleHint" class="ml-1 shrink-0 text-[10px] text-fg-faint">{{
           staleHint
@@ -73,7 +73,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useBreakpoint } from "../../composables/useBreakpoint";
 import { useSupervisorStatus } from "../../composables/useSupervisorStatus";
-import type { SupervisorProcessSnapshot } from "../../../core/api/commandCenterApi";
+import type { LocalRuntimeComponentSnapshot } from "../../../core/api/commandCenterApi";
 
 const app = useAppStore();
 const supervisor = useSupervisorStatus();
@@ -177,13 +177,9 @@ function pillClass(status: string, staleSeconds: number | null | undefined) {
   return "bg-surface-muted text-fg-subtle border-border";
 }
 
-function processTooltip(proc: SupervisorProcessSnapshot): string {
+function processTooltip(proc: LocalRuntimeComponentSnapshot): string {
   const parts: string[] = [];
   parts.push(`status: ${proc.status}`);
-
-  if (proc.pid != null) {
-    parts.push(`pid ${String(proc.pid)}`);
-  }
 
   if (proc.uptime_seconds != null) {
     parts.push(`uptime ${formatUptime(proc.uptime_seconds)}`);
@@ -191,10 +187,6 @@ function processTooltip(proc: SupervisorProcessSnapshot): string {
 
   if (proc.restarts > 0) {
     parts.push(`${String(proc.restarts)} restarts`);
-  }
-
-  if (proc.last_exit_code != null) {
-    parts.push(`last exit ${String(proc.last_exit_code)}`);
   }
 
   if (proc.last_error) {

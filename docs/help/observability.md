@@ -51,10 +51,10 @@ service, also on Prometheus `/metrics`):
 ```bash
 # point all binaries at a local OpenTelemetry Collector (OTLP/HTTP on :4318)
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-cargo run -p runinator-supervisor -- start
+cargo run -p runinator-standalone -- start
 ```
 
-For the checked-in local supervisor flow, prefer the one-command helper:
+For the default local standalone flow, prefer the one-command helper:
 
 ```bash
 bash scripts/run-local.sh observe

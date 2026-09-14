@@ -1,0 +1,42 @@
+[package]
+name = "runinator-standalone"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1"
+axum = "0.8.9"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1.18", features = ["v4", "v5", "v7", "serde"] }
+
+runinator-adapter-client = { path = "../runinator-adapter-client" }
+runinator-adapter-host = { path = "../runinator-adapter-host" }
+runinator-blob = { path = "../runinator-blob", features = ["client", "server"] }
+runinator-broker = { path = "../runinator-broker", features = ["tcp"] }
+runinator-comm = { path = "../runinator-comm" }
+runinator-database = { path = "../runinator-database", default-features = false }
+runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
+runinator-engine = { path = "../runinator-engine" }
+runinator-models = { path = "../runinator-models" }
+runinator-observability = { path = "../runinator-observability" }
+runinator-platform = { path = "../runinator-platform" }
+runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
+runinator-provider-local-files = { path = "../runinator-provider-local-files" }
+runinator-provisioner = { path = "../runinator-provisioner" }
+runinator-supervisor = { path = "../runinator-supervisor" }
+runinator-store = { path = "../runinator-store" }
+runinator-worker = { path = "../runinator-worker", default-features = false, features = ["tcp", "db-sqlite", "db-postgres", "db-mariadb"] }
+runinator-waker = { path = "../runinator-waker", default-features = false, features = ["tcp"] }
+runinator-ws = { path = "../runinator-ws", default-features = false, features = ["http", "tcp", "ws"] }
+
+[features]
+default = ["sqlite", "postgres", "mariadb"]
+sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite", "runinator-ws/sqlite", "runinator-provider-catalog/db-sqlite"]
+postgres = ["runinator-database/postgres", "runinator-db-cli/postgres", "runinator-ws/postgres", "runinator-provider-catalog/db-postgres"]
+mariadb = ["runinator-database/mariadb", "runinator-db-cli/mariadb", "runinator-ws/mariadb", "runinator-provider-catalog/db-mariadb"]

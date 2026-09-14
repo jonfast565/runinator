@@ -38,6 +38,7 @@ pub struct WebserverRuntime<T> {
     pub pool: Arc<T>,
     pub notify: Arc<Notify>,
     pub port: u16,
+    pub listener: Option<TcpListener>,
     pub broker: Arc<dyn Broker>,
     pub blobs: Arc<dyn runinator_blob::BlobStore>,
     pub advertisement: ReplicaAdvertisement,
@@ -46,6 +47,7 @@ pub struct WebserverRuntime<T> {
     pub rate_limit: crate::rate_limit::RateLimitConfig,
     pub circuit_breaker: crate::circuit_breaker::CircuitBreakerConfig,
     pub overload: crate::overload::OverloadConfig,
+    pub provisioner: Option<Arc<runinator_provisioner::ProvisionerRegistry>>,
     pub run_engine: bool,
     pub max_concurrent_ingress: usize,
     pub workspace_limits: runinator_models::workspaces::WorkspaceLimits,
@@ -58,6 +60,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         pool,
         notify,
         port,
+        listener,
         broker,
         blobs,
         advertisement,
@@ -66,6 +69,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         rate_limit,
         circuit_breaker,
         overload,
+        provisioner,
         run_engine,
         max_concurrent_ingress,
         workspace_limits,
@@ -251,9 +255,11 @@ pub async fn run_webserver<T: DatabaseImpl>(
             "HTTP API overload protection is ENABLED"
         );
     }
-    let provisioner = Arc::new(runinator_provisioner::build_registry(
-        crate::provisioner_config::from_env(),
-    ));
+    let provisioner = provisioner.unwrap_or_else(|| {
+        Arc::new(runinator_provisioner::build_registry(
+            crate::provisioner_config::from_env(),
+        ))
+    });
     if !provisioner.is_empty() {
         info!("on-demand node provisioning is ENABLED");
     }
@@ -271,7 +277,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
         overload,
     });
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
-    let listener = TcpListener::bind(addr).await?;
+    let listener = match listener {
+        Some(listener) => listener,
+        None => TcpListener::bind(addr).await?,
+    };
     let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

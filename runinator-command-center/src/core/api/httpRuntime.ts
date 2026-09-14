@@ -775,7 +775,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   fetch_supervisor_status: {
     method: "GET",
-    path: () => "supervisor/status",
+    path: () => "local-runtime/status",
     accept404: true,
   },
   replay_workflow_run: {

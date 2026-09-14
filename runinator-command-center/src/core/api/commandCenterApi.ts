@@ -2018,31 +2018,28 @@ export async function setWorkflowOwner(workflowId: string, orgId: string | null)
   return workflow;
 }
 
-export interface SupervisorProcessSnapshot {
-  name: string;
+export interface LocalRuntimeComponentSnapshot {
+  id: string;
+  kind: string;
   status: string;
-  pid?: number | null;
   restarts: number;
   uptime_seconds?: number | null;
-  last_exit_code?: number | null;
   last_error?: string | null;
-  started_at?: string | null;
-  command: string;
-  cwd: string;
-  log_file: string;
 }
 
-export interface SupervisorStatus {
+export interface LocalRuntimeStatus {
   configured: boolean;
   path?: string;
-  supervisor_pid?: number;
-  config_path?: string;
+  host_kind?: "standalone" | "supervisor";
+  pid?: number;
   started_at?: string;
   updated_at?: string;
-  processes?: SupervisorProcessSnapshot[];
+  components?: LocalRuntimeComponentSnapshot[];
   stale_seconds?: number | null;
   error?: string;
 }
+
+export type SupervisorStatus = LocalRuntimeStatus;
 
 export async function fetchSupervisorStatus() {
   return command<SupervisorStatus>("fetch_supervisor_status");
@@ -2104,7 +2101,7 @@ export async function kickReplica(replicaId: string) {
   return command<ReplicaRecord>("kick_replica", { replicaId });
 }
 
-// --- on-demand node provisioning (supervisor / kubernetes backends) ---
+// --- on-demand node provisioning (standalone / supervisor / kubernetes backends) ---
 
 export interface NodeBackendInfo {
   backend: string;

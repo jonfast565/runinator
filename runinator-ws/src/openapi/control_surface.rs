@@ -26,6 +26,7 @@ const CAPABILITY_PATHS: &[(&str, &str)] = &[
     ("/replicas", "runtime-fleet"),
     ("/agents", "runtime-fleet"),
     ("/nodes", "runtime-fleet"),
+    ("/local-runtime", "runtime-fleet"),
     ("/supervisor", "runtime-fleet"),
     ("/workflow_runs", "workflow-runtime"),
     ("/workflow_effects", "workflow-runtime"),

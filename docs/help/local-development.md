@@ -1,6 +1,8 @@
 # Local development and runtime
 
-Use this guide to start, operate, and inspect a local Runinator stack. It covers the supervisor-based workflow, authentication, runtime topology, transport choices, and the cross-platform `xtask` alternative.
+Use this guide to start, operate, and inspect a local Runinator stack. The default topology is the
+single-process `runinator-standalone` modular monolith; the process supervisor remains available as
+an explicit compatibility mode.
 
 ## Prerequisites
 
@@ -17,7 +19,7 @@ The quickest path on macOS/Linux is:
 bash scripts/run-local.sh start
 ```
 
-To start the same supervisor stack with local OTLP export, Jaeger, and
+To start the same standalone stack with local OTLP export, Jaeger, and
 Prometheus already wired up:
 
 ```bash
@@ -25,10 +27,10 @@ bash scripts/run-local.sh observe
 ```
 
 That command starts the checked-in Docker Compose observability stack, sets
-`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` for the supervisor daemon
-and its child services, then starts the normal local Runinator processes.
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` for the standalone daemon,
+then starts the normal local runtime components.
 
-That checked-in supervisor config defaults to SQLite, but the same local loop can
+The standalone host defaults to SQLite, but the same local loop can
 target a server database without editing JSON:
 
 ```bash
@@ -40,17 +42,16 @@ bash scripts/run-local.sh start
 Use `RUNINATOR_DATABASE=postgres` with a `postgres://` or `postgresql://` URL to
 point the same loop at Postgres instead.
 
-That script runs `cargo build --workspace`, starts the supervisor in daemon mode, and prints process status. The web API listens at:
+That script runs `cargo build --workspace`, starts `runinator-standalone` in daemon mode, and prints
+logical component status. The web API listens at:
 
 ```text
 http://127.0.0.1:8080/
 ```
 
-The supervisor also starts `runinator-adapter-host` on `127.0.0.1:8790`, which
-verifies orchestration webhook deliveries and performs adapter polling. It binds
-loopback only, deliberately, because it is the process that loads adapter code.
-The web service reaches it through `RUNINATOR_ADAPTER_HOST_URL` and shares its
-`RUNINATOR_ADAPTER_HOST_TOKEN`; both are set in `runinator-supervisor.json`. Point
+The standalone host embeds the adapter HTTP surface on `127.0.0.1:8790`, which
+verifies orchestration webhook deliveries and performs adapter polling. Dynamic adapter libraries
+remain isolated in child invocations of the same executable. Point
 `RUNINATOR_ADAPTER_PLUGIN_PATHS` at a directory of built adapter libraries to load
 dynamic adapter kinds alongside the built-in GitHub, Jira, and generic-webhook
 ones. Without this process running, every orchestration adapter surface fails.
@@ -93,13 +94,16 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports `packs/hello-world`, compiling its `.rrx` source before sending it to the API. File/session authentication uses Command Center execution profiles and an explicitly approved desktop agent; it no longer requires a repository checkout or kubeconfig on that machine. The stack also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want to re-apply the default hello-world pack, run:
+The standalone host waits for API readiness and applies `packs/hello-world` on startup, compiling its
+`.rrx` source before sending it to the API. Add repeatable `--pack PATH` options when invoking the
+binary directly, or use `--no-default-pack`. If the stack is already running and you want to re-apply
+the default pack, run:
 
 ```bash
 bash scripts/run-local.sh sync
 ```
 
-The checked-in local supervisor config also seeds a bootstrap admin user into an empty database on first start:
+The local host seeds a bootstrap admin user into an empty database on first start:
 
 ```text
 username: admin
@@ -114,11 +118,11 @@ deployments must supply their own `RUNINATOR_AUTH_BOOTSTRAP_ADMIN` credentials; 
 is for local development only. Additional platform administrators can be provisioned for recovery.
 
 The same bootstrap step also seeds a dev-only service API key and feeds it to
-the supervisor-managed development worker, desktop agent, and one-shot `runinatorctl workflows apply`,
+the embedded development worker, desktop worker, and one-shot `runinatorctl workflows apply`,
 and the `bash scripts/run-local.sh sync|dev|smoke-sync` helpers. That means the
 default local stack continues to work unchanged with auth off, and starts
-working against an auth-enabled local web service without hand-editing
-`runinator-supervisor.json` or exporting extra env vars.
+working against an auth-enabled local web service without hand-editing configuration or exporting
+extra environment variables.
 
 When auth is enabled, store a local CLI session with:
 
@@ -144,9 +148,8 @@ An enabled organization membership is required to log in or refresh a session. L
 runinatorctl logout
 ```
 
-The local supervisor path runs `runinator-bootstrap` before `runinator-ws`, so
-schema/auth bootstrap stays outside the web-service binary even in local
-development.
+The standalone composition root invokes the same database bootstrap library before starting the web
+service, keeping bootstrap behavior shared with the multi-process deployment.
 
 Once authenticated, requests are authorized on two axes, both enforced
 backend-side: named **capabilities** (a documented catalog of platform/org
@@ -176,14 +179,26 @@ and one console action, use the hello-world smoke pack:
 bash scripts/run-local.sh smoke-sync
 ```
 
-You can also run the supervisor directly:
+You can also run the standalone host directly:
 
 ```bash
 cargo build --workspace
-cargo run -p runinator-supervisor -- start
-cargo run -p runinator-supervisor -- status
-cargo run -p runinator-supervisor -- restart
-cargo run -p runinator-supervisor -- stop
+cargo run -p runinator-standalone -- start
+cargo run -p runinator-standalone -- status
+cargo run -p runinator-standalone -- restart
+cargo run -p runinator-standalone -- stop
+```
+
+The web service, broker, blob service, adapter host, engines, wakers, and ordinary workers run as
+tasks inside one OS process. `--workers`, `--wakers`, and `--engines` set startup scale; the existing
+node-pool API can change those counts live through the `standalone` provisioning backend. The
+exclusive desktop-style worker is included by default and can be omitted with `--no-desktop-agent`.
+
+For process-isolation debugging, select the legacy supervisor explicitly:
+
+```bash
+bash scripts/run-local.sh start --topology supervisor
+# or: cargo run -p xtask -- local up --topology supervisor
 ```
 
 This uses `runinator-supervisor.json` to start:
@@ -205,7 +220,8 @@ Settings → Server → Workers values supersede these standalone-worker process
 ### On-demand nodes
 
 Provisionable node kinds can be spun up and scaled down on demand through the web
-service's pluggable provisioner. Two backends are available: `supervisor` (adds
+service's pluggable provisioner. Three backends are available: `standalone` (adds
+in-process runtime tasks), `supervisor` (adds
 dynamic local processes through the running `runinator-supervisor` control queue)
 and `kubernetes` (scales the backing Deployments via kube-rs; the ws image
 must be built with `--features kubernetes` and the `runinator-ws-provisioner`
@@ -311,11 +327,14 @@ Local runtime files are written under `~/.runinator/` by default. When using
 SQLite, this includes the database at `~/.runinator/runinator.db` (which also
 holds config and secrets in the `settings` table, with each value encrypted at rest by
 `RUNINATOR_CREDENTIAL_KEY`), application logs under `~/.runinator/logs/`, and
-supervisor state under `~/.runinator/supervisor/`.
+standalone state and its combined log under `~/.runinator/standalone/`. The compatibility
+supervisor uses `~/.runinator/supervisor/` instead.
 `bash scripts/run-local.sh sync` and `dev` re-apply `packs/hello-world` by
 default; use `--workflows-file` or `RUNINATOR_WORKFLOWS_FILE` to target another
 `.rrx` source or pack directory.
-Child process stdout and stderr are collected under
+`runinator-standalone logs` tails its combined daemon log and accepts `--component` (or the
+compatibility alias `--process`) to filter lines. In supervisor mode, child process stdout and
+stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 
 ```text
@@ -331,9 +350,11 @@ the log files of running processes are never deleted. Configure these bounds wit
 
 `watch` refreshes the status table. Use `logs-watch` or `logs --watch` to refresh log tails.
 
-Use the supervisor log tail command to inspect the latest active log files:
+Use the selected host's log tail command to inspect the latest output:
 
 ```bash
+cargo run -p runinator-standalone -- logs
+cargo run -p runinator-standalone -- logs --component web-service --lines 100
 cargo run -p runinator-supervisor -- logs
 cargo run -p runinator-supervisor -- logs --process web-service --lines 100
 cargo run -p runinator-supervisor -- logs --watch --lines 40
@@ -367,9 +388,8 @@ the display. Press `q`, `Esc`, or `Ctrl-C` to request the process's usual gracef
 ## Cross-platform Local Run (xtask)
 
 `xtask` is a plain Rust binary (`cargo run -p xtask -- <subcommand>`) that builds the
-workspace and starts the local stack against the same checked-in
-`runinator-supervisor.json` that `bash scripts/run-local.sh` uses, identically on Windows,
-macOS, or Linux, with no PowerShell or Bash dependency:
+workspace and starts `runinator-standalone`, identically on Windows, macOS, or Linux, with no
+PowerShell or Bash dependency:
 
 ```bash
 cargo run -p xtask -- local up
@@ -377,9 +397,8 @@ cargo run -p xtask -- local up
 
 This builds the workspace (unless `--skip-build`), makes sure the console plugin is
 copied into `~/.runinator/plugins/` where the worker looks for it by default, then runs
-`runinator-supervisor --config runinator-supervisor.json start --foreground` against the
-`target/debug` binaries in place. There is only one local supervisor config either way you
-start it. Stop it with `Ctrl+C`.
+`runinator-standalone start --foreground` against the `target/debug` binaries in place. Stop it
+with `Ctrl+C`; pass `--topology supervisor` to select the old process topology.
 
 To run that same local stack against MariaDB, select the backend and pass a
 MariaDB's `mysql://` wire-protocol URL (these become `RUNINATOR_DATABASE`/`RUNINATOR_DATABASE_URL`

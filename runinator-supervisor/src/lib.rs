@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod control;
+pub mod os;
 pub mod snapshot;
 pub mod types;
 

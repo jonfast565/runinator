@@ -165,6 +165,7 @@
             <label class="grid gap-1 text-xs text-fg-muted">
               <span>Backend</span>
               <select v-model="scaleBackend" class="w-auto min-w-36">
+                <option value="standalone">standalone</option>
                 <option value="supervisor">supervisor</option>
                 <option value="kubernetes">kubernetes</option>
               </select>
@@ -236,7 +237,7 @@ const quota = ref<OrgQuota | null>(null);
 const usage = ref<OrgUsage | null>(null);
 const rateCard = ref<RateCard>({ entries: [] });
 
-const scaleBackend = ref("supervisor");
+const scaleBackend = ref("standalone");
 const scaleKind = ref("worker");
 const scaleDesired = ref(1);
 

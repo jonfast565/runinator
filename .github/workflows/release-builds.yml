@@ -111,6 +111,7 @@ jobs:
             "runinatorctl",
             "runinator-ws",
             "runinator-broker",
+            "runinator-standalone",
             "runinator-supervisor"
           )
 

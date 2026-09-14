@@ -122,6 +122,30 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
     config: EngineConfig,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
+    run_background_engine_with_adapter(
+        pool,
+        broker,
+        publisher,
+        local_signals,
+        Arc::new(runinator_adapter_client::HttpAdapterHostClient::from_env()),
+        instance,
+        config,
+        shutdown,
+    )
+    .await
+}
+
+/// Run the durable engine with an explicitly supplied adapter-polling boundary.
+pub async fn run_background_engine_with_adapter<T: BackgroundEngineStore>(
+    pool: Arc<T>,
+    broker: Arc<dyn Broker>,
+    publisher: EventSender,
+    local_signals: Option<EmbeddedEngineSignals>,
+    adapter_poller: Arc<dyn runinator_adapter_client::AdapterPoller>,
+    instance: String,
+    config: EngineConfig,
+    shutdown: Arc<Notify>,
+) -> Result<(), SendableError> {
     crate::stability::init_metrics();
     let config = config.normalized();
     runinator_observability::tui::register(
@@ -193,7 +217,7 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         broker.clone(),
         publisher.clone(),
         local_signals.clone(),
-        Arc::new(runinator_adapter_client::HttpAdapterHostClient::from_env()),
+        adapter_poller,
         shutdown.clone(),
     ));
     loops.spawn(run_agent_directive_publisher(

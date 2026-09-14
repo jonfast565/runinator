@@ -58,13 +58,21 @@ struct BuildArgs {
 
 #[derive(Subcommand)]
 enum LocalCommand {
-    /// Build (unless --skip-build) and start the supervisor stack in the foreground, against the
-    /// checked-in `runinator-supervisor.json` (the same config `scripts/run-local.sh` uses).
+    /// Build (unless --skip-build) and start the local stack in the foreground.
     Up(LocalUpArgs),
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum LocalTopology {
+    Standalone,
+    Supervisor,
 }
 
 #[derive(clap::Args)]
 struct LocalUpArgs {
+    /// local process topology.
+    #[arg(long, value_enum, default_value = "standalone")]
+    topology: LocalTopology,
     /// cargo build profile (`dev` maps to the `target/debug` directory).
     #[arg(long, default_value = "dev")]
     profile: String,
@@ -358,6 +366,10 @@ fn run_local_up(workspace_root: &std::path::Path, args: &LocalUpArgs) -> anyhow:
 
     println!("==> Starting local Runinator stack");
     let options = local::LocalStackOptions {
+        topology: match args.topology {
+            LocalTopology::Standalone => local::LocalTopology::Standalone,
+            LocalTopology::Supervisor => local::LocalTopology::Supervisor,
+        },
         database_backend: &database_backend,
         database_path: &database_path,
         database_url: args.database_url.as_deref(),

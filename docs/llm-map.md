@@ -36,7 +36,8 @@ does not load it automatically. This file is a routing index, not a second rule 
 - Add a provider: create a new `runinator-provider-<name>` crate and expose metadata through `Provider::metadata()`.
 - Change command-line import or pack behavior: `runinator-ctl/src/` and `runinator-pack/AGENTS.md`, plus REXRAP and docs if syntax changes.
 - Change desktop UI workflow editing: `runinator-command-center/src/core/services/workflows/`, `runinator-command-center/src/core/workflow/`, `runinator-command-center/src/ui/adapters/pinia/workflows/`, and `runinator-command-center/src/ui/components/workflow/`.
-- Change supervisor/local stack behavior: `runinator-supervisor/src/`, `runinator-supervisor.json`, `scripts/run-local.sh`, and README examples.
+- Change local composition behavior: `runinator-standalone/src/`, `runinator-supervisor/src/`,
+  `runinator-supervisor.json`, `scripts/run-local.sh`, and README examples.
 
 ## Contract Checklist
 

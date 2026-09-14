@@ -1,7 +1,5 @@
-//! starts the local dev stack against the checked-in `runinator-supervisor.json` (the same one
-//! `scripts/run-local.sh` uses), so there is exactly one supervisor config for local development
-//! instead of a second one generated from a separate `target/artifacts` layout. `xtask` only adds
-//! cross-platform build orchestration and optional database overrides on top of it.
+//! starts the local dev stack as a modular monolith by default, with the process supervisor kept
+//! as an explicit compatibility topology.
 
 use std::path::Path;
 
@@ -12,9 +10,16 @@ use crate::paths::ensure_dir;
 use crate::platform::{executable_name, plugin_library_name};
 
 pub struct LocalStackOptions<'a> {
+    pub topology: LocalTopology,
     pub database_backend: &'a str,
     pub database_path: &'a Path,
     pub database_url: Option<&'a str>,
+}
+
+#[derive(Clone, Copy)]
+pub enum LocalTopology {
+    Standalone,
+    Supervisor,
 }
 
 /// the checked-in supervisor config doesn't pass `--dll-path` to the worker, so it only looks in
@@ -60,30 +65,24 @@ fn ensure_console_plugin_installed(target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// runs `runinator-supervisor --config runinator-supervisor.json start --foreground` against the
-/// checked-in config, blocking until the stack is stopped. database selection is threaded through
-/// as environment variables, which `scripts/start-local-web-service.{sh,ps1}` already read
-/// (`RUNINATOR_DATABASE`/`RUNINATOR_SQLITE_PATH`/`RUNINATOR_DATABASE_URL`) — the same convention
-/// documented for `bash scripts/run-local.sh start` — and which propagate down through the
-/// supervisor's child processes since neither it nor `std::process::Command` clears the parent env.
+/// starts the selected local topology in the foreground.
 pub fn start_local_stack(
     workspace_root: &Path,
     target_dir: &Path,
     options: &LocalStackOptions,
 ) -> Result<()> {
-    let supervisor_binary = target_dir.join(executable_name("runinator-supervisor"));
-    if !supervisor_binary.exists() {
+    let binary_name = match options.topology {
+        LocalTopology::Standalone => "runinator-standalone",
+        LocalTopology::Supervisor => "runinator-supervisor",
+    };
+    let binary = target_dir.join(executable_name(binary_name));
+    if !binary.exists() {
         bail!(
-            "supervisor binary was not found at {}. Build the workspace first.",
-            supervisor_binary.display()
+            "{binary_name} binary was not found at {}. Build the workspace first.",
+            binary.display()
         );
     }
     ensure_console_plugin_installed(target_dir)?;
-
-    let config_path = workspace_root.join("runinator-supervisor.json");
-    if !config_path.exists() {
-        bail!("supervisor config not found at {}.", config_path.display());
-    }
 
     let mut envs: Vec<(&str, String)> =
         vec![("RUNINATOR_DATABASE", options.database_backend.to_string())];
@@ -102,17 +101,34 @@ pub fn start_local_stack(
         envs.push(("RUNINATOR_DATABASE_URL", database_url.to_string()));
     }
 
-    let supervisor_binary_str = supervisor_binary.display().to_string();
-    let config_path_str = config_path.display().to_string();
-    println!("Starting local Runinator stack via supervisor config '{config_path_str}'");
+    let binary_str = binary.display().to_string();
     let env_refs: Vec<(&str, &str)> = envs
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect();
-    exec::run_with_env(
-        &supervisor_binary_str,
-        &["--config", &config_path_str, "start", "--foreground"],
-        workspace_root,
-        &env_refs,
-    )
+    match options.topology {
+        LocalTopology::Standalone => {
+            println!("Starting local Runinator stack via runinator-standalone");
+            exec::run_with_env(
+                &binary_str,
+                &["start", "--foreground"],
+                workspace_root,
+                &env_refs,
+            )
+        }
+        LocalTopology::Supervisor => {
+            let config_path = workspace_root.join("runinator-supervisor.json");
+            if !config_path.exists() {
+                bail!("supervisor config not found at {}.", config_path.display());
+            }
+            let config_path_str = config_path.display().to_string();
+            println!("Starting local Runinator stack via supervisor config '{config_path_str}'");
+            exec::run_with_env(
+                &binary_str,
+                &["--config", &config_path_str, "start", "--foreground"],
+                workspace_root,
+                &env_refs,
+            )
+        }
+    }
 }

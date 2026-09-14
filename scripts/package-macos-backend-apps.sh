@@ -106,6 +106,7 @@ if [[ "$skip_build" -eq 0 ]]; then
     -p runinator-adapter-host \
     -p runinator-desktop-agent \
     -p runinator-ctl \
+    -p runinator-standalone \
     -p runinator-supervisor
 fi
 
@@ -137,6 +138,7 @@ apps=(
   "runinator-worker|Runinator Worker|dev.runinator.worker|Runinator worker service."
   "runinator-desktop-agent|Runinator Desktop Agent|dev.runinator.desktop-agent|Runinator exclusive desktop worker and tray application."
   "runinatorctl|Runinator Control|dev.runinator.ctl|Runinator control and pack-import CLI."
+  "runinator-standalone|Runinator Standalone|dev.runinator.standalone|Runinator single-process local cluster."
   "runinator-supervisor|Runinator Supervisor|dev.runinator.supervisor|Runinator local stack supervisor."
 )
 
@@ -156,7 +158,7 @@ for app in "${apps[@]}"; do
   cat > "$config_path" <<EOF
 name = "$binary"
 product-name = "$product_name"
-version = "${RUNINATOR_VERSION:-0.32.743}"
+version = "${RUNINATOR_VERSION:-0.33.744}"
 identifier = "$identifier"
 description = "$description"
 formats = ["app"]

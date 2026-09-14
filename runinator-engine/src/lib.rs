@@ -27,7 +27,9 @@ mod infrastructure_effect_host;
 mod ingress_consumer;
 mod loops;
 
-pub use engine::{EngineConfig, run_background_engine};
+pub use engine::{
+    BackgroundEngineStore, EngineConfig, run_background_engine, run_background_engine_with_adapter,
+};
 pub use events::{AppEvent, AppEventKind, EventSender};
 pub use infrastructure_effect_host::run_infrastructure_effect_host;
 

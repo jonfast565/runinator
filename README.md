@@ -2,7 +2,7 @@
 
 Runinator is a Rust workspace for scheduling and executing durable workflows across a small local or distributed runtime.
 
-Start a local stack with:
+Start the single-process local stack with:
 
     bash scripts/run-local.sh start
 

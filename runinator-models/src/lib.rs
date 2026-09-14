@@ -17,6 +17,7 @@ pub mod functions;
 pub mod ingress_control;
 pub mod interrupt;
 pub mod invocation;
+pub mod local_runtime;
 pub mod notifications;
 pub mod orchestration;
 pub mod orgs;

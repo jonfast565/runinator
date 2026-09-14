@@ -68,6 +68,7 @@ members = [
     "runinator-broker",
     "runinator-broker-core",
     "runinator-supervisor",
+    "runinator-standalone",
     "runinator-provisioner",
     "runinator-compute",
     "runinator-workflows",
@@ -81,4 +82,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.32.743"
+version = "0.33.744"
