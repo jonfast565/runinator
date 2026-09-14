@@ -33,33 +33,37 @@ impl StateTracker {
     }
 
     pub fn starting(&self, id: &str, kind: &str) {
-        let mut components = self.components.lock().unwrap_or_else(|p| p.into_inner());
-        let component = components
-            .entry(id.to_string())
-            .or_insert_with(|| Component {
-                kind: kind.to_string(),
-                status: "starting".into(),
-                restarts: 0,
-                started: None,
-                last_error: None,
-            });
-        component.kind = kind.to_string();
-        component.status = "starting".into();
-        component.started = None;
-        component.last_error = None;
+        {
+            let mut components = self.components.lock().unwrap_or_else(|p| p.into_inner());
+            let component = components
+                .entry(id.to_string())
+                .or_insert_with(|| Component {
+                    kind: kind.to_string(),
+                    status: "starting".into(),
+                    restarts: 0,
+                    started: None,
+                    last_error: None,
+                });
+            component.kind = kind.to_string();
+            component.status = "starting".into();
+            component.started = None;
+            component.last_error = None;
+        }
+        self.publish(kind, id, "starting");
     }
 
     pub fn running(&self, id: &str) {
-        if let Some(component) = self
-            .components
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get_mut(id)
-        {
+        let kind = {
+            let mut components = self.components.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(component) = components.get_mut(id) else {
+                return;
+            };
             component.status = "running".into();
             component.started.get_or_insert_with(Instant::now);
             component.last_error = None;
-        }
+            component.kind.clone()
+        };
+        self.publish(&kind, id, "running");
     }
 
     pub fn stopped(&self, id: &str) {
@@ -71,11 +75,16 @@ impl StateTracker {
     }
 
     pub fn restarting(&self, id: &str) {
-        let mut components = self.components.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(component) = components.get_mut(id) {
+        let kind = {
+            let mut components = self.components.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(component) = components.get_mut(id) else {
+                return;
+            };
             component.status = "backoff".into();
             component.restarts += 1;
-        }
+            component.kind.clone()
+        };
+        self.publish(&kind, id, "backoff");
     }
 
     pub fn status(&self, id: &str) -> Option<String> {
@@ -87,15 +96,21 @@ impl StateTracker {
     }
 
     fn set_status(&self, id: &str, status: &str, error: Option<String>) {
-        if let Some(component) = self
-            .components
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get_mut(id)
-        {
+        let kind = {
+            let mut components = self.components.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(component) = components.get_mut(id) else {
+                return;
+            };
             component.status = status.into();
             component.last_error = error;
-        }
+            component.kind.clone()
+        };
+        self.publish(&kind, id, status);
+    }
+
+    fn publish(&self, kind: &str, id: &str, status: &str) {
+        crate::dashboard::publish_transition(kind, id, status);
+        crate::dashboard::publish_snapshot(&self.snapshot());
     }
 
     pub fn snapshot(&self) -> LocalRuntimeSnapshot {

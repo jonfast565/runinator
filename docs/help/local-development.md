@@ -184,6 +184,7 @@ You can also run the standalone host directly:
 ```bash
 cargo build --workspace
 cargo run -p runinator-standalone -- start
+cargo run -p runinator-standalone -- start --tui
 cargo run -p runinator-standalone -- status
 cargo run -p runinator-standalone -- restart
 cargo run -p runinator-standalone -- stop
@@ -362,14 +363,16 @@ cargo run -p runinator-supervisor -- logs --watch --lines 40
 
 ### Per-runtime debugging dashboard
 
-The web service, standalone engine worker, worker, waker, and desktop agent each accept `--tui`
-for a small full-screen local dashboard. It shows current work and its age/deadline, process and
-host CPU/RAM, network and disk throughput, the component's existing low-cardinality
-work/transport metrics, and the three most recent log lines at the bottom. The web-service
-dashboard also includes the embedded engine whenever `--run-engine` is enabled (the default).
+The standalone host, web service, standalone engine worker, worker, waker, and desktop agent each
+accept `--tui` for a small full-screen local dashboard. It shows current work and its age/deadline,
+process and host CPU/RAM, network and disk throughput, the component's existing low-cardinality
+work/transport metrics, and the three most recent log lines at the bottom. The standalone dashboard
+aggregates its embedded runtimes by role; the web-service dashboard includes the embedded engine
+whenever `--run-engine` is enabled (the default).
 
 ```bash
 # Direct local transports
+target/debug/runinator-standalone start --tui
 target/debug/runinator-ws --tui
 target/debug/runinator-engine-worker --tui
 target/debug/runinator-worker --tui
@@ -382,8 +385,11 @@ RUNINATOR_API_KEY='…' target/debug/runinator-worker --tui \
 ```
 
 The dashboard needs an interactive terminal; a piped or supervisor-daemon invocation falls back to
-normal logs. While it is open, stdout logging is kept in the normal log file so it cannot corrupt
-the display. Press `q`, `Esc`, or `Ctrl-C` to request the process's usual graceful shutdown.
+normal logs. On the standalone host, `start --tui` and `restart --tui` imply `--foreground`, even
+when terminal detection falls back to normal logs. While a dashboard is open, stdout logging is
+kept in the normal log file so it cannot corrupt the display. Press `q`, `Esc`, or `Ctrl-C` to
+request the process's usual graceful shutdown. `runinator-standalone status --watch` remains a
+plain refreshing status table rather than the full metrics dashboard.
 
 ## Cross-platform Local Run (xtask)
 

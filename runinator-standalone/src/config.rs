@@ -114,13 +114,21 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Start {
+        /// run attached to the current terminal.
         #[arg(long)]
         foreground: bool,
+        /// show the interactive runtime dashboard; implies `--foreground`.
+        #[arg(long, env = "RUNINATOR_TUI", default_value_t = false)]
+        tui: bool,
     },
     Stop,
     Restart {
+        /// run attached to the current terminal after restarting.
         #[arg(long)]
         foreground: bool,
+        /// show the interactive runtime dashboard; implies `--foreground`.
+        #[arg(long, env = "RUNINATOR_TUI", default_value_t = false)]
+        tui: bool,
     },
     Status {
         #[arg(long)]
@@ -136,6 +144,25 @@ pub enum Command {
     },
     #[command(hide = true)]
     Serve,
+}
+
+impl Command {
+    pub fn runs_foreground(&self) -> bool {
+        match self {
+            Self::Start { foreground, tui } | Self::Restart { foreground, tui } => {
+                *foreground || *tui
+            }
+            Self::Serve => true,
+            Self::Stop | Self::Status { .. } | Self::Logs { .. } => false,
+        }
+    }
+
+    pub fn tui_requested(&self) -> bool {
+        matches!(
+            self,
+            Self::Start { tui: true, .. } | Self::Restart { tui: true, .. }
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

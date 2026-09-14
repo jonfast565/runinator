@@ -1,4 +1,5 @@
 mod config;
+mod dashboard;
 mod host;
 mod provisioner;
 mod runtime_factory;
@@ -40,18 +41,18 @@ fn main() -> Result<(), DynError> {
     let cli = Cli::parse();
     let config = cli.resolved_config()?;
     match cli.command {
-        Command::Start { foreground } => {
-            if foreground {
-                run_server(config)
+        command @ Command::Start { .. } => {
+            if command.runs_foreground() {
+                run_server(config, command.tui_requested())
             } else {
                 start_daemon(&config)
             }
         }
         Command::Stop => stop(&config),
-        Command::Restart { foreground } => {
+        command @ Command::Restart { .. } => {
             stop(&config)?;
-            if foreground {
-                run_server(config)
+            if command.runs_foreground() {
+                run_server(config, command.tui_requested())
             } else {
                 start_daemon(&config)
             }
@@ -62,13 +63,14 @@ fn main() -> Result<(), DynError> {
             lines,
             watch,
         } => show_logs(&config, component.as_deref(), lines, watch),
-        Command::Serve => run_server(config),
+        Command::Serve => run_server(config, false),
     }
 }
 
-fn run_server(config: StandaloneConfig) -> Result<(), DynError> {
+fn run_server(config: StandaloneConfig, tui: bool) -> Result<(), DynError> {
     host::configure_environment(&config)?;
-    tokio::runtime::Runtime::new()?.block_on(serve(config))
+    let tui = runinator_observability::tui::prepare(tui);
+    tokio::runtime::Runtime::new()?.block_on(serve(config, tui))
 }
 
 fn start_daemon(config: &StandaloneConfig) -> Result<(), DynError> {
@@ -118,7 +120,7 @@ fn start_daemon(config: &StandaloneConfig) -> Result<(), DynError> {
     Ok(())
 }
 
-async fn serve(config: StandaloneConfig) -> Result<(), DynError> {
+async fn serve(config: StandaloneConfig, tui: bool) -> Result<(), DynError> {
     fs::create_dir_all(&config.state_dir)?;
     let pid_path = config.state_dir.join("standalone.pid");
     if let Some(pid) = read_pid(&pid_path)?
@@ -133,9 +135,14 @@ async fn serve(config: StandaloneConfig) -> Result<(), DynError> {
     }
     fs::write(&pid_path, format!("{}\n", std::process::id()))?;
     remove_if_exists(&config.state_dir.join("stop"))?;
-    let _telemetry = runinator_platform::startup::startup("Runinator Standalone")?;
+    let process = runinator_platform::startup::ProcessResources::start("Runinator Standalone")?;
     let tracker = StateTracker::new();
-    let result = host::run(config.clone(), tracker).await;
+    let dashboard = tui.then(|| dashboard::start(&config, process.shutdown().clone()));
+    let result = host::run(config.clone(), tracker, process.shutdown().clone()).await;
+    process.shutdown().trigger();
+    if let Some(dashboard) = dashboard {
+        let _ = dashboard.join();
+    }
     remove_if_exists(&pid_path)?;
     remove_if_exists(&config.state_dir.join("stop"))?;
     result.map_err(|error| error as DynError)

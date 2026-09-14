@@ -10,13 +10,14 @@ use runinator_db_cli::{
 };
 use runinator_engine::BackgroundEngineStore;
 use runinator_models::{errors::SendableError, provisioning::NodeSpec, replicas::ReplicaKind};
+use runinator_platform::startup::Shutdown;
 use runinator_provisioner::{Provisioner, ProvisionerRegistry};
 use runinator_worker::{AgentRuntime, NoopObserver};
 use runinator_ws::{
     AuthOptions, CircuitBreakerConfig, CorsConfig, OverloadConfig, RateLimitConfig,
     ReplicaAdvertisement, WebserverRuntime, run_webserver,
 };
-use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
+use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
     config::StandaloneConfig, provisioner::StandaloneProvisioner,
@@ -26,7 +27,11 @@ use crate::{
 const LOCAL_API_KEY: &str = "localdev.runinator-local-dev-service-key";
 const ADAPTER_TOKEN: &str = "localdev.runinator-local-dev-adapter-host-token";
 
-pub async fn run(config: StandaloneConfig, tracker: StateTracker) -> Result<(), SendableError> {
+pub async fn run(
+    config: StandaloneConfig,
+    tracker: StateTracker,
+    shutdown: Shutdown,
+) -> Result<(), SendableError> {
     let backend = DatabaseBackend::from_str(&config.database, true)
         .map_err(|error| -> SendableError { error.into() })?;
     let sqlite = prepare_sqlite_path(config.sqlite_path.clone()).await?;
@@ -43,7 +48,7 @@ pub async fn run(config: StandaloneConfig, tracker: StateTracker) -> Result<(), 
             auth_bootstrap_service_api_key_name: Some("local-standalone".into()),
             ..Default::default()
         }).await?;
-        run_with_database(db, config, tracker).await
+        run_with_database(db, config, tracker, shutdown).await
     })
 }
 
@@ -51,11 +56,12 @@ async fn run_with_database<T>(
     db: Arc<T>,
     config: StandaloneConfig,
     tracker: StateTracker,
+    shutdown: Shutdown,
 ) -> Result<(), SendableError>
 where
     T: BackgroundEngineStore + runinator_store::DatabaseImpl + 'static,
 {
-    let shutdown = Arc::new(Notify::new());
+    let shutdown_notify = shutdown.notifier();
     let broker_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.broker_port)).await?;
     let blob_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.blob_port)).await?;
     let adapter_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.adapter_port)).await?;
@@ -94,7 +100,7 @@ where
     });
     let provisioner = Arc::new(StandaloneProvisioner::new(factory.clone(), tracker.clone()));
     let registry = Arc::new(ProvisionerRegistry::new(vec![provisioner.clone()]));
-    let supervision_task = tokio::spawn(provisioner.clone().supervise(shutdown.clone()));
+    let supervision_task = tokio::spawn(provisioner.clone().supervise(shutdown_notify.clone()));
 
     let mut services: Vec<(String, JoinHandle<Result<(), String>>)> = Vec::new();
     tracker.starting("broker", "broker");
@@ -109,7 +115,7 @@ where
     tracker.running("broker");
 
     tracker.starting("blob", "blob");
-    let blob_shutdown = shutdown.clone();
+    let blob_shutdown = shutdown_notify.clone();
     services.push((
         "blob".into(),
         tokio::spawn(async move {
@@ -122,7 +128,7 @@ where
     tracker.running("blob");
 
     tracker.starting("adapter-host", "adapter");
-    let adapter_shutdown = shutdown.clone();
+    let adapter_shutdown = shutdown_notify.clone();
     let plugin_paths = plugin_paths();
     services.push((
         "adapter-host".into(),
@@ -140,7 +146,7 @@ where
     tracker.running("adapter-host");
 
     tracker.starting("web-service", "webservice");
-    let web_shutdown = shutdown.clone();
+    let web_shutdown = shutdown_notify.clone();
     let web_config = config.clone();
     services.push((
         "web-service".into(),
@@ -194,7 +200,7 @@ where
         .scale(ReplicaKind::Worker, config.workers, &NodeSpec::default())
         .await?;
     let desktop = if config.desktop_agent {
-        Some(start_desktop_agent(factory.as_ref(), shutdown.clone(), tracker.clone()).await?)
+        Some(start_desktop_agent(factory.as_ref(), tracker.clone()).await?)
     } else {
         None
     };
@@ -206,25 +212,28 @@ where
         let mut interval = tokio::time::interval(Duration::from_millis(500));
         loop {
             tokio::select! {
-                _ = snapshot_shutdown.notified() => return,
+                _ = snapshot_shutdown.cancelled() => return,
                 _ = interval.tick() => { let _ = snapshot_tracker.write(&snapshot_path); }
             }
         }
     });
 
-    wait_for_api(&config, &tracker).await;
-    start_pack_hooks(&config, &tracker).await;
+    wait_for_api(&config, &tracker, &shutdown).await;
+    if !shutdown.is_cancelled() {
+        start_pack_hooks(&config, &tracker).await;
+    }
     let stop_file = config.state_dir.join("stop");
-    let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let result = loop {
         if stop_file.exists() {
+            shutdown.trigger();
             break Ok(());
         }
         if let Some((name, _task)) = services.iter().find(|(_, task)| task.is_finished()) {
+            shutdown.trigger();
             break Err(format!("standalone singleton '{name}' exited unexpectedly").into());
         }
         tokio::select! {
-            _ = &mut interrupt => break Ok(()),
+            _ = shutdown.cancelled() => break Ok(()),
             _ = tokio::time::sleep(Duration::from_millis(250)) => {}
         }
     };
@@ -234,8 +243,7 @@ where
         let _ = handle.stop(Duration::from_secs(35)).await;
         tracker.stopped(&id);
     }
-    shutdown.notify_one();
-    shutdown.notify_waiters();
+    shutdown.trigger();
     let _ = supervision_task.await;
     for (_, task) in services {
         task.abort();
@@ -247,7 +255,7 @@ where
     result
 }
 
-async fn wait_for_api(config: &StandaloneConfig, tracker: &StateTracker) {
+async fn wait_for_api(config: &StandaloneConfig, tracker: &StateTracker, shutdown: &Shutdown) {
     tracker.starting("api-readiness", "startup-hook");
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/openapi.json", config.api_port);
@@ -262,7 +270,10 @@ async fn wait_for_api(config: &StandaloneConfig, tracker: &StateTracker) {
             tracker.stopped("api-readiness");
             return;
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+        }
     }
     tracker.failed(
         "api-readiness",
@@ -272,7 +283,6 @@ async fn wait_for_api(config: &StandaloneConfig, tracker: &StateTracker) {
 
 async fn start_desktop_agent<T>(
     factory: &StandaloneRuntimeFactory<T>,
-    _shutdown: Arc<Notify>,
     tracker: StateTracker,
 ) -> Result<(runinator_worker::AgentHandle, String), SendableError>
 where
