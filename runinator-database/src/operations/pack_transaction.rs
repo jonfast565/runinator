@@ -7,7 +7,8 @@
 
 use runinator_models::errors::SendableError;
 use runinator_store::PackTransactionStore;
-use sqlx::{Database, TransactionManager, pool::PoolOptions};
+use sqlx::{Database, pool::PoolOptions};
+use sqlx_core::transaction::TransactionManager;
 
 use crate::backend::{SqlBackend, SqlStore};
 

@@ -30,6 +30,7 @@ impl<S: ReadStore> ReadStore for Counted<S> {
     }
 }
 #[test]
+#[cfg(unix)]
 fn directory_pages_are_ordered_complete_and_reuse_cached_metadata() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = Repository::init(temp.path(), Config::default())?;

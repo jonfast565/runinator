@@ -2179,7 +2179,7 @@ fn extract_runinator_operation_key(value: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
 
     fn signature(secret: &str, body: &[u8]) -> String {
         let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).unwrap();

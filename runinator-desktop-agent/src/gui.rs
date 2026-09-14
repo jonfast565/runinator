@@ -266,23 +266,25 @@ impl DesktopAgentApp {
     pub fn new(cc: &eframe::CreationContext<'_>, shared: SharedHandle, draft: AgentConfig) -> Self {
         // Keep the dashboard readable without making controls dominate the window. The responsive
         // layout carries the extra room, so this can stay close to a conventional desktop scale.
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Heading, egui::FontId::proportional(21.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Small, egui::FontId::proportional(13.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
-        cc.egui_ctx.set_style(style);
+        for theme in [egui::Theme::Light, egui::Theme::Dark] {
+            let mut style = (*cc.egui_ctx.style_of(theme)).clone();
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Heading, egui::FontId::proportional(21.0));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Small, egui::FontId::proportional(13.0));
+            style
+                .text_styles
+                .insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
+            cc.egui_ctx.set_style_of(theme, style);
+        }
 
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -738,8 +740,8 @@ impl DesktopAgentApp {
             for label in REQUIRED_LABELS {
                 egui::Frame::default()
                     .fill(ui.visuals().selection.bg_fill)
-                    .rounding(4.0)
-                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                    .corner_radius(4)
+                    .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
                         ui.label(format!("{label} (required)"));
                     });
@@ -748,8 +750,8 @@ impl DesktopAgentApp {
             for (index, label) in self.draft.extra_labels.iter().enumerate() {
                 egui::Frame::default()
                     .fill(ui.visuals().widgets.inactive.bg_fill)
-                    .rounding(4.0)
-                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                    .corner_radius(4)
+                    .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui: &mut egui::Ui| {
                         ui.label(label);
                         if ui.small_button("x").clicked() {
@@ -1664,14 +1666,15 @@ fn format_bytes(value: f64) -> String {
 }
 
 impl eframe::App for DesktopAgentApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         // the worker loop runs on a background runtime, so poll for its status/log updates, and for
         // tray clicks, on a timer rather than only on window events (the window may be hidden).
         ctx.request_repaint_after(Duration::from_millis(400));
 
-        self.handle_tray(ctx);
-        self.handle_close_request(ctx);
-        self.show_exit_dialog(ctx);
+        self.handle_tray(&ctx);
+        self.handle_close_request(&ctx);
+        self.show_exit_dialog(&ctx);
 
         let Snapshot {
             status,
@@ -1691,20 +1694,20 @@ impl eframe::App for DesktopAgentApp {
             ConnectionState::ReenrollmentRequired { reason } => Some(reason.clone()),
             _ => None,
         };
-        self.show_reenrollment_dialog(ctx, reenrollment_reason.as_deref());
-        self.show_settings_dialog(ctx, status.running, control, busy);
-        self.show_execution_profile_approval_dialog(ctx, &execution_profiles);
+        self.show_reenrollment_dialog(&ctx, reenrollment_reason.as_deref());
+        self.show_settings_dialog(&ctx, status.running, control, busy);
+        self.show_execution_profile_approval_dialog(&ctx, &execution_profiles);
 
         let presentation = present_status(&connection, busy);
         self.sync_tray(&presentation);
 
-        egui::TopBottomPanel::bottom("log-panel")
+        egui::Panel::bottom("log-panel")
             .resizable(true)
-            .default_height(190.0)
-            .min_height(130.0)
-            .show(ctx, |ui| self.log_panel(ui));
+            .default_size(190.0)
+            .min_size(130.0)
+            .show(ui, |ui| self.log_panel(ui));
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -1887,7 +1890,7 @@ impl eframe::App for DesktopAgentApp {
         });
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         // Do this before `DesktopAgentApp` drops its runtime. `AgentHandle` detaches on drop, so
         // merely asking the agent to stop from the tray handler can otherwise leave Cargo waiting
         // on work that outlived the eframe window.

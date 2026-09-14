@@ -238,6 +238,37 @@ pub async fn set_workflow_run_breakpoints(
 }
 
 #[tauri::command]
+pub async fn run_workflow_to_node(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    cursor: Uuid,
+    node_id: String,
+) -> CommandResult<TaskResponse> {
+    let value = post_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/command"),
+        &json!({ "verb": "run_to", "cursor": cursor, "node_id": node_id }),
+    )
+    .await?;
+    serde_json::from_value(value).map_err(|error| CommandError::Unexpected(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn set_workflow_run_pause_on_failure(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    enabled: bool,
+) -> CommandResult<TaskResponse> {
+    let value = post_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/command"),
+        &json!({ "verb": "set_pause_on_failure", "enabled": enabled }),
+    )
+    .await?;
+    serde_json::from_value(value).map_err(|error| CommandError::Unexpected(error.to_string()))
+}
+
+#[tauri::command]
 pub async fn control_workflow_effect_terminal(
     state: State<'_, CommandCenterState>,
     effect_id: Uuid,

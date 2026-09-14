@@ -142,7 +142,7 @@ async fn materialize_for_consumer(
             "execution profile archive exceeds 10 MiB",
         )));
     }
-    let actual = format!("{:x}", Sha256::digest(&bytes));
+    let actual = hex::encode(Sha256::digest(&bytes));
     if !actual.eq_ignore_ascii_case(expected) {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -281,7 +281,7 @@ fn unpack(
         let contents = fs::read(&output)?;
         extracted.insert(
             path.to_string_lossy().replace('\\', "/"),
-            (format!("{:x}", Sha256::digest(&contents)), contents.len()),
+            (hex::encode(Sha256::digest(&contents)), contents.len()),
         );
     }
     let manifest_path = target.join(".runinator-profile.json");
@@ -344,7 +344,7 @@ mod tests {
             "config_digest": "config",
             "files": [{
                 "path": ".tool/session.json",
-                "sha256": format!("{:x}", Sha256::digest(declared)),
+                "sha256": hex::encode(Sha256::digest(declared)),
                 "size": declared.len(),
             }],
         });

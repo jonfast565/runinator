@@ -14,12 +14,21 @@ use sqlx::mysql::MySqlQueryResult;
 use sqlx::postgres::PgQueryResult;
 #[cfg(feature = "sqlite")]
 use sqlx::sqlite::SqliteQueryResult;
-use sqlx::{Database, Pool};
+use sqlx::{AssertSqlSafe, Database, Pool, SqlSafeStr, SqlStr};
 
 use crate::queries::SqlDialect;
 
 const DELETE_RETRY_LIMIT: usize = 4;
 const DELETE_RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
+
+/// sql generated exclusively from the database dialect and repository-owned templates.
+pub struct RenderedSql(String);
+
+impl SqlSafeStr for &RenderedSql {
+    fn into_sql_str(self) -> SqlStr {
+        AssertSqlSafe(self.0.as_str()).into_sql_str()
+    }
+}
 
 /// retry a delete when the database chose it as the victim of a transient lock conflict.
 ///
@@ -122,8 +131,8 @@ pub trait SqlBackend: Send + Sync + 'static {
     fn dialect(&self) -> SqlDialect;
 
     /// render a `?`-placeholder template for this backend's dialect.
-    fn render(&self, sql: &str) -> String {
-        self.dialect().render(sql)
+    fn render(&self, sql: &str) -> RenderedSql {
+        RenderedSql(self.dialect().render(sql))
     }
 
     /// run embedded bootstrap work and any extra init scripts.

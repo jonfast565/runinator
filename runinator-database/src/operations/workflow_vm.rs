@@ -76,7 +76,7 @@ where
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
     for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     let continuation_statuses = sqlx::query(&store.render(
@@ -145,7 +145,7 @@ where
     B: SqlBackend,
     for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     sqlx::query(&store.render(
@@ -175,7 +175,7 @@ where
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     let lock = match store.dialect() {
@@ -227,7 +227,7 @@ where
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     for node_id in node_ids {
@@ -274,7 +274,7 @@ where
     for<'r> Vec<u8>: Decode<'r, B::Db> + Type<B::Db>,
     usize: ColumnIndex<<B::Db as Database>::Row>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {

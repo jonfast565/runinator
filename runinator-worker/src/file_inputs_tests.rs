@@ -38,7 +38,7 @@ async fn materialization_checks_digest_before_writing_injected_content() {
             .is_err()
     );
     assert!(!root.path().join(&descriptor.path).exists());
-    descriptor.sha256 = format!("{:x}", Sha256::digest(b"input"));
+    descriptor.sha256 = hex::encode(Sha256::digest(b"input"));
     materialize_file(&files, root.path(), files.run, &descriptor)
         .await
         .unwrap();

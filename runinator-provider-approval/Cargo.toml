@@ -12,4 +12,4 @@ runinator-models = { path = "../runinator-models" }
 runinator-provider-support = { path = "../runinator-provider-support" }
 
 [dev-dependencies]
-uuid = { version = "1.18", features = ["v4", "v7"] }
+uuid = { version = "1.26", features = ["v4", "v7"] }

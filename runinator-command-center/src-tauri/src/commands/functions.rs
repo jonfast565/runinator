@@ -453,6 +453,26 @@ pub async fn run_console_cell(
 }
 
 #[tauri::command]
+pub async fn cancel_console_cell(
+    state: State<'_, CommandCenterState>,
+    cell_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    let value = post_empty(&state, &format!("console/cells/{cell_id}/cancel")).await?;
+    serde_json::from_value(value)
+        .map_err(|error| CommandError::Unexpected(format!("invalid task response: {error}")))
+}
+
+#[tauri::command]
+pub async fn replay_console_cell(
+    state: State<'_, CommandCenterState>,
+    cell_id: Uuid,
+) -> CommandResult<ConsoleCell> {
+    let value = post_empty(&state, &format!("console/cells/{cell_id}/replay")).await?;
+    serde_json::from_value(value)
+        .map_err(|error| CommandError::Unexpected(format!("invalid console cell: {error}")))
+}
+
+#[tauri::command]
 pub async fn list_durable_workspaces(
     state: State<'_, CommandCenterState>,
     offset: i64,

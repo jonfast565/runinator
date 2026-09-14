@@ -9,9 +9,9 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 ratatui = "0.30"
-reedline = "0.50.0"
+reedline = "0.51.0"
 runinator-api = { path = "../runinator-api" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-ctl-core = { path = "../runinator-ctl-core" }
@@ -25,7 +25,7 @@ runinator-workflows = { path = "../runinator-workflows" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "signal", "time"] }
-uuid = { version = "1.18", features = ["v4", "serde"] }
+uuid = { version = "1.26", features = ["v4", "serde"] }
 
 [features]
 default = ["db-sqlite", "db-postgres", "db-mariadb"]
@@ -40,7 +40,7 @@ db-mariadb = ["runinator-pack/db-mariadb", "runinator-provider-catalog/db-mariad
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     # CreateFileW and CreatePipe both name SECURITY_ATTRIBUTES in their signatures.

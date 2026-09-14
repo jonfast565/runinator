@@ -33,7 +33,7 @@ where
     // row indexing + executor plumbing.
     usize: ColumnIndex<<B::Db as Database>::Row>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
@@ -49,9 +49,9 @@ where
                 .execute(&mut *tx)
                 .await?;
         }
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(&self.render(&format!(
             "SELECT id FROM organizations WHERE slug = 'platform'{lock}"
-        ))
+        )))
         .fetch_optional(&mut *tx)
         .await?;
         let Some(row) = row else {

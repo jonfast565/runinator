@@ -14,7 +14,7 @@ pub use results::{has_result_references, resolve_results};
 pub use runinator_workspace_storage as storage;
 
 pub fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn validate_path(path: &Path) -> Result<(), SendableError> {

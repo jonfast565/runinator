@@ -58,6 +58,64 @@ pub async fn fetch_notifications(
 }
 
 #[tauri::command]
+pub async fn fetch_notification_deliveries(
+    state: State<'_, CommandCenterState>,
+    notification_id: Uuid,
+) -> CommandResult<Vec<NotificationDelivery>> {
+    get_json(
+        &state,
+        &format!("notifications/{notification_id}/deliveries"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_notification_policies(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Option<Uuid>,
+) -> CommandResult<Vec<NotificationPolicy>> {
+    let path = workflow_id.map_or_else(
+        || "notification_policies".to_string(),
+        |workflow_id| format!("notification_policies?workflow_id={workflow_id}"),
+    );
+    get_json(&state, &path).await
+}
+
+#[tauri::command]
+pub async fn create_notification_policy(
+    state: State<'_, CommandCenterState>,
+    policy: NewNotificationPolicy,
+) -> CommandResult<NotificationPolicy> {
+    let value = post_json(&state, "notification_policies", &json!(policy)).await?;
+    serde_json::from_value(value)
+        .map_err(|error| CommandError::Unexpected(format!("invalid notification policy: {error}")))
+}
+
+#[tauri::command]
+pub async fn update_notification_policy(
+    state: State<'_, CommandCenterState>,
+    policy_id: Uuid,
+    policy: NewNotificationPolicy,
+) -> CommandResult<NotificationPolicy> {
+    let value = patch_json(
+        &state,
+        &format!("notification_policies/{policy_id}"),
+        &json!(policy),
+    )
+    .await?;
+    serde_json::from_value(value)
+        .map_err(|error| CommandError::Unexpected(format!("invalid notification policy: {error}")))
+}
+
+#[tauri::command]
+pub async fn delete_notification_policy(
+    state: State<'_, CommandCenterState>,
+    policy_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    delete(&state, &format!("notification_policies/{policy_id}")).await
+}
+
+#[tauri::command]
 pub async fn mark_notification_read(
     state: State<'_, CommandCenterState>,
     notification_id: Uuid,

@@ -5,12 +5,12 @@ edition = "2024"
 
 [dependencies]
 runinator-models = { path = "../runinator-models" }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-thiserror = "2.0.18"
-uuid = { version = "1.18", features = ["serde", "v4", "v7"] }
+thiserror = "2.0.20"
+uuid = { version = "1.26", features = ["serde", "v4", "v7"] }
 
 [dev-dependencies]
 # test-only: the serialization round-trip between a yield and a resume is the property the vm's

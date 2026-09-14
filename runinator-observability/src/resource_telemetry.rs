@@ -66,7 +66,7 @@ pub fn host_metadata() -> HostMetadata {
         kernel_version: System::kernel_version(),
         cpu_arch: System::cpu_arch(),
         cpu_brand,
-        physical_cores: system.physical_core_count(),
+        physical_cores: System::physical_core_count(),
         logical_cores: system.cpus().len(),
         mem_total_bytes: system.total_memory(),
         boot_time_unix: System::boot_time(),

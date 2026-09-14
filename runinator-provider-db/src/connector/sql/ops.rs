@@ -65,7 +65,7 @@ macro_rules! sql_ops {
 
             use runinator_models::errors::SendableError;
             use serde_json::Value;
-            use sqlx::{Column, Executor, TypeInfo};
+            use sqlx::{AssertSqlSafe, Column, Executor, SqlSafeStr, TypeInfo};
 
             use super::{SqlStep, statement_error};
             use crate::connector::timeout::with_timeout;
@@ -76,8 +76,8 @@ macro_rules! sql_ops {
             fn build_query<'q>(
                 text: &'q str,
                 params: &'q [Value],
-            ) -> sqlx::query::Query<'q, $db, <$db as sqlx::Database>::Arguments<'q>> {
-                let mut query = sqlx::query(text);
+            ) -> sqlx::query::Query<'q, $db, <$db as sqlx::Database>::Arguments> {
+                let mut query = sqlx::query(AssertSqlSafe(text));
                 for param in params {
                     query = $bind(query, param);
                 }
@@ -86,7 +86,7 @@ macro_rules! sql_ops {
 
             /// column metadata for a result set that came back empty, so exports still get headers.
             async fn describe_columns(pool: &Pool, text: &str) -> Vec<ColumnInfo> {
-                let Ok(described) = pool.describe(text).await else {
+                let Ok(described) = pool.describe(AssertSqlSafe(text).into_sql_str()).await else {
                     return Vec::new();
                 };
                 described
@@ -278,9 +278,9 @@ fn bind_mysql<'q>(
 
 #[cfg(feature = "sqlite")]
 fn bind_sqlite<'q>(
-    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     param: &'q Value,
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     match param {
         Value::Null => query.bind(Option::<String>::None),
         Value::Bool(flag) => query.bind(*flag),

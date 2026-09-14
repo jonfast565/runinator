@@ -33,7 +33,7 @@ where
     // row indexing + executor plumbing.
     usize: ColumnIndex<<B::Db as Database>::Row>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
@@ -284,9 +284,9 @@ where
     }
 
     async fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>, SendableError> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(&self.render(&format!(
             "SELECT {WORKFLOW_COLUMNS} FROM workflows ORDER BY name"
-        ))
+        )))
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_workflow).collect())

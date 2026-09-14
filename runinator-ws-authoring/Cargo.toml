@@ -6,8 +6,8 @@ build = "build.rs"
 
 [dependencies]
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
-base64 = "0.22"
-sha2 = "0.10"
+base64 = "0.23"
+sha2 = "0.11"
 chrono = "0.4"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -16,7 +16,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 tokio-util = { version = "0.7", features = ["io"] }
 tokio = { version = "1", features = ["io-util"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.26", features = ["v4"] }
 
 runinator-blob-core = { path = "../runinator-blob-core" }
 runinator-adapter-contract = { path = "../runinator-adapter-contract" }

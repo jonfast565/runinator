@@ -243,10 +243,13 @@ async fn cold_archives_preserve_every_source_column() {
     db.run_init_scripts(&Vec::new()).await.unwrap();
 
     for table in ArchiveTable::ALL {
-        let rows = sqlx::query(&format!("PRAGMA table_info({})", table.as_str()))
-            .fetch_all(db.pool())
-            .await
-            .unwrap();
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PRAGMA table_info({})",
+            table.as_str()
+        )))
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
         let schema_columns = rows
             .into_iter()
             .map(|row| row.get::<String, _>("name"))

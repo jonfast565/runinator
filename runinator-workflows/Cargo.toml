@@ -8,4 +8,4 @@ runinator-compute = { path = "../runinator-compute" }
 runinator-models = { path = "../runinator-models" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-uuid = { version = "1.18", features = ["serde", "v4", "v7"] }
+uuid = { version = "1.26", features = ["serde", "v4", "v7"] }

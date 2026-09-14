@@ -480,7 +480,7 @@ fn collect(
         "config_digest": profile.config_digest,
         "files": files.iter().map(|(path, bytes)| serde_json::json!({
             "path": path,
-            "sha256": format!("{:x}", Sha256::digest(bytes)),
+            "sha256": hex::encode(Sha256::digest(bytes)),
             "size": bytes.len(),
         })).collect::<Vec<_>>()
     }))?;
@@ -503,7 +503,7 @@ fn collect(
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err("execution profile archive exceeds 10 MiB".into());
     }
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = hex::encode(Sha256::digest(&bytes));
     Ok((profile.id, bytes, digest))
 }
 

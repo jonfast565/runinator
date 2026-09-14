@@ -4,31 +4,32 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono = "0.4"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
-uuid = { version = "1.18", features = ["v4", "serde"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
-eframe = "0.29"
-tray-icon = "0.24"
+uuid = { version = "1.26", features = ["v4", "serde"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+eframe = "0.36"
+tray-icon = "0.25"
 open = "5"
 # must match the feature set tauri-plugin-dialog picks for rfd. rfd's build script panics when
 # `gtk3` and `xdg-portal` are both on, which cargo's feature unification would do to any linux
 # build that has this crate and runinator-command-center in the same invocation.
-rfd = { version = "0.16", default-features = false, features = [
+rfd = { version = "0.17", default-features = false, features = [
     "gtk3",
     "common-controls-v6",
 ] }
 notify-rust = "4"
-png = "0.17"
+png = "0.18"
 glob = "0.3"
-sha2 = "0.10"
-zip = { version = "7.2", default-features = false }
+hex = "0.4"
+sha2 = "0.11"
+zip = { version = "8.6", default-features = false }
 
 runinator-api = { path = "../runinator-api" }
 runinator-comm = { path = "../runinator-comm" }

@@ -11,14 +11,16 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 uuid = { version = "1", features = ["serde"] }
 # `bigdecimal` is what makes DECIMAL/NUMERIC decodable at all — without it sqlx has no rust type
 # for them and every value renders as `<unsupported:…>`.
-sqlx = { version = "0.8.6", default-features = false, features = [
-    "runtime-tokio-rustls",
+sqlx = { version = "0.9.0", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
     "bigdecimal",
     "chrono",
     "uuid",
     "json",
+    "macros",
 ] }
-# version is pinned by sqlx 0.8's own `bigdecimal 0.4` dependency; they must agree or the decode
+# version is pinned by sqlx 0.9's own `bigdecimal 0.4` dependency; they must agree or the decode
 # impls do not apply.
 bigdecimal = "0.4"
 

@@ -59,7 +59,7 @@ pub fn secret_expiry_occurrence(
     digest.update(expires_at.timestamp().to_be_bytes());
     digest.update(warning_seconds.to_be_bytes());
     let digest = digest.finalize();
-    format!("{digest:x}")
+    hex::encode(digest)
 }
 
 #[cfg(test)]

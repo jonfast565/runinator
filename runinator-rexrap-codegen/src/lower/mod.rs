@@ -369,7 +369,7 @@ fn lower_workflow(
         entry.insert("path".into(), Value::String(module.path.clone()));
         entry.insert(
             "digest".into(),
-            Value::String(format!("sha256:{:x}", digest.finalize())),
+            Value::String(format!("sha256:{}", hex::encode(digest.finalize()))),
         );
         source_modules.push(Value::Object(entry));
     }

@@ -6,15 +6,15 @@ edition = "2024"
 [dependencies]
 log = "0.4"
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
-tower-http = { version = "0.6.2", features = ["cors", "catch-panic", "timeout"] }
+tower-http = { version = "0.7.1", features = ["cors", "catch-panic", "timeout"] }
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.18", features = ["v4"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"], optional = true }
+uuid = { version = "1.26", features = ["v4"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"], optional = true }
 # used only to install a process-default rustls CryptoProvider at startup (see main.rs).
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
@@ -46,7 +46,7 @@ runinator-rexrap = { path = "../runinator-rexrap" }
 
 [dev-dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 tower = { version = "0.5", features = ["util"] }
 runinator-auth = { path = "../runinator-auth" }
 # enable the engine's in-crate test hooks (forced-failure injection, test helpers) so the

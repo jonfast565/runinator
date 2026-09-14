@@ -70,7 +70,7 @@ function harness() {
   }
 
   function close(socket: EventSocket) {
-    socket.onclose?.call(socket as WebSocket, new CloseEvent("close"));
+    socket.onclose?.call(socket as WebSocket, new Event("close") as CloseEvent);
   }
 
   return { client, sockets, pending, fire, open, close, onStateChange, onFallbackTick, route };

@@ -175,7 +175,8 @@ fn make_breaker(config: CircuitBreakerConfig, family: CircuitFamily) -> HttpCirc
         })
         // `build_with_handle` is essential because a fresh service is wrapped for each Axum
         // request below; the returned layer keeps one shared state machine per family.
-        .build_with_handle();
+        .build_with_handle()
+        .expect("inbound circuit breaker configuration was validated at startup");
     layer
 }
 

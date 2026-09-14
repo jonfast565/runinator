@@ -11,7 +11,7 @@ edition = "2024"
 # makes an in-memory fake possible for tests.
 [dependencies]
 chrono = "0.4"
-uuid = { version = "1.18", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.26", features = ["v4", "v7", "serde"] }
 
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }

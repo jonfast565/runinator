@@ -4,13 +4,11 @@
 //! `runinator-database`.
 
 use argon2::Argon2;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use rand::RngCore;
 use runinator_models::auth::{
     ApiKeyRecord, AuthContext, AuthSession, Claims, PrincipalKind, ReplicaClaims, User,
 };
@@ -51,9 +49,8 @@ pub struct NewApiKey {
 // ---- password hashing (argon2) ----
 
 pub fn hash_password(password: &str) -> Result<String, String> {
-    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|hash| hash.to_string())
         .map_err(|err| err.to_string())
 }
@@ -85,7 +82,7 @@ pub fn dummy_verify(password: &str) {
 /// cryptographically random bytes (e.g. for the signing secret).
 pub fn random_secret(len: usize) -> Vec<u8> {
     let mut buf = vec![0u8; len];
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::fill(&mut buf);
     buf
 }
 

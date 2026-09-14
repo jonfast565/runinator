@@ -1,10 +1,9 @@
 use std::{fs, path::PathBuf, str::FromStr};
 
-use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_models::errors::SendableError;
 use sqlx::{
-    ConnectOptions, Executor, PgPool,
+    AssertSqlSafe, ConnectOptions, PgPool,
     migrate::Migrator,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
@@ -63,14 +62,11 @@ impl PostgresBackend {
                 continue;
             }
 
-            let mut stream = self.pool.execute_many(sqlx::query(stmt));
-            while let Some(result) = stream.next().await {
-                let query_result = result?;
-                debug!(
-                    "Init scripts: {} row(s) affected",
-                    query_result.rows_affected()
-                );
-            }
+            let query_result = sqlx::query(AssertSqlSafe(stmt)).execute(&self.pool).await?;
+            debug!(
+                "Init scripts: {} row(s) affected",
+                query_result.rows_affected()
+            );
         }
 
         Ok(())

@@ -30,7 +30,7 @@ pub fn verify_bearer(expected: &str, authorization: &str) -> bool {
 
 /// Verify a conventional `sha256=<hex>` (or bare hex) HMAC signature.
 pub fn verify_hmac_sha256(secret: &str, body: &[u8], supplied: &str) -> bool {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let supplied = supplied.strip_prefix("sha256=").unwrap_or(supplied);
     if !supplied.len().is_multiple_of(2) {
         return false;

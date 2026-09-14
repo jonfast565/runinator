@@ -73,7 +73,7 @@ async fn materialize_file(
     let bytes = client
         .download_workflow_file_for_run(descriptor.id, workflow_run_id)
         .await?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = hex::encode(Sha256::digest(&bytes));
     if !digest.eq_ignore_ascii_case(&descriptor.sha256) {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

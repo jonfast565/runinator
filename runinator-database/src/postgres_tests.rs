@@ -8,7 +8,7 @@
 use super::*;
 use crate::dialect_parity::assert_dialect_parity;
 use runinator_store::DatabaseImpl;
-use sqlx::{Connection, PgConnection};
+use sqlx::{AssertSqlSafe, Connection, PgConnection};
 use uuid::Uuid;
 
 fn base_url() -> Option<String> {
@@ -33,7 +33,7 @@ async fn fresh_db() -> Option<(PostgresDb, String, String)> {
     let db = format!("runinator_test_{}", Uuid::new_v4().simple());
 
     let mut conn = PgConnection::connect(&url).await.unwrap();
-    sqlx::query(&format!("CREATE DATABASE {db}"))
+    sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {db}")))
         .execute(&mut conn)
         .await
         .unwrap();
@@ -48,10 +48,12 @@ async fn drop_db(pool: PostgresDb, maintenance_url: &str, db: &str) {
     // postgres refuses to drop a database with sessions still attached, so the pool goes first.
     pool.pool().close().await;
     let mut conn = PgConnection::connect(maintenance_url).await.unwrap();
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    sqlx::query(AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {db} WITH (FORCE)"
+    )))
+    .execute(&mut conn)
+    .await
+    .unwrap();
     conn.close().await.ok();
 }
 

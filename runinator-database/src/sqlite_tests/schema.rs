@@ -160,23 +160,27 @@ async fn tables(db: &SqliteDb) -> Vec<String> {
 }
 
 async fn table_columns(db: &SqliteDb, table: &str) -> BTreeSet<String> {
-    sqlx::query(&format!("PRAGMA table_info(\"{table}\")"))
-        .fetch_all(db.pool())
-        .await
-        .unwrap()
-        .iter()
-        .map(|row| row.get::<String, _>("name"))
-        .collect()
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA table_info(\"{table}\")"
+    )))
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+    .iter()
+    .map(|row| row.get::<String, _>("name"))
+    .collect()
 }
 
 /// the leading column of every foreign key on `table`.
 ///
 /// a composite key only needs an index leading on its first column, which is the `seq = 0` row.
 async fn foreign_key_columns(db: &SqliteDb, table: &str) -> BTreeSet<String> {
-    let rows = sqlx::query(&format!("PRAGMA foreign_key_list(\"{table}\")"))
-        .fetch_all(db.pool())
-        .await
-        .unwrap();
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA foreign_key_list(\"{table}\")"
+    )))
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
     rows.iter()
         .filter(|row| row.get::<i64, _>("seq") == 0)
         .map(|row| row.get::<String, _>("from"))
@@ -185,10 +189,12 @@ async fn foreign_key_columns(db: &SqliteDb, table: &str) -> BTreeSet<String> {
 
 /// every column some index on `table` leads on, which is what a foreign key check can seek into.
 async fn leading_index_columns(db: &SqliteDb, table: &str) -> BTreeSet<String> {
-    let indexes = sqlx::query(&format!("PRAGMA index_list(\"{table}\")"))
-        .fetch_all(db.pool())
-        .await
-        .unwrap();
+    let indexes = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA index_list(\"{table}\")"
+    )))
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
     let mut leading = BTreeSet::new();
 
     for index in &indexes {
@@ -199,10 +205,12 @@ async fn leading_index_columns(db: &SqliteDb, table: &str) -> BTreeSet<String> {
         }
 
         let name = index.get::<String, _>("name");
-        let columns = sqlx::query(&format!("PRAGMA index_info(\"{name}\")"))
-            .fetch_all(db.pool())
-            .await
-            .unwrap();
+        let columns = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PRAGMA index_info(\"{name}\")"
+        )))
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
         // an expression index reports a null column name; it leads on no column we can match.
         if let Some(first) = columns
             .iter()

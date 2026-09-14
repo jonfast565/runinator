@@ -20,7 +20,7 @@ pub(super) async fn load<B>(
 where
     B: SqlBackend,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
@@ -185,7 +185,7 @@ where
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     // first writes must not range-delete rows that cannot exist. under mysql's default repeatable

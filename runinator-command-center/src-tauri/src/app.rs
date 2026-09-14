@@ -59,6 +59,8 @@ pub fn run() {
             crate::commands::update_console_cell,
             crate::commands::delete_console_cell,
             crate::commands::run_console_cell,
+            crate::commands::cancel_console_cell,
+            crate::commands::replay_console_cell,
             crate::commands::start_service_discovery,
             crate::commands::save_workflow_bundle,
             crate::commands::save_workflow_rexrap,
@@ -148,6 +150,8 @@ pub fn run() {
             crate::commands::step_workflow_run,
             crate::commands::continue_workflow_run,
             crate::commands::set_workflow_run_breakpoints,
+            crate::commands::run_workflow_to_node,
+            crate::commands::set_workflow_run_pause_on_failure,
             crate::commands::control_workflow_effect_terminal,
             crate::commands::cancel_workflow_run,
             crate::commands::pause_workflow_run,
@@ -255,6 +259,11 @@ pub fn run() {
             crate::commands::list_broker_messages,
             crate::commands::list_audit_log,
             crate::commands::fetch_notifications,
+            crate::commands::fetch_notification_deliveries,
+            crate::commands::fetch_notification_policies,
+            crate::commands::create_notification_policy,
+            crate::commands::update_notification_policy,
+            crate::commands::delete_notification_policy,
             crate::commands::mark_notification_read,
             crate::commands::mark_all_notifications_read,
             crate::commands::fetch_freeze_windows,
@@ -269,3 +278,7 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("failed to run command center");
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;

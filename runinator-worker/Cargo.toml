@@ -8,18 +8,19 @@ tempfile = "3"
 runinator-workspace = { path = "../runinator-workspace" }
 log = "0.4"
 tracing = "0.1"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.18", features = ["v4", "v5", "serde"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls", "blocking"] }
-zip = { version = "7.2", default-features = false }
-sha2 = "0.10"
+uuid = { version = "1.26", features = ["v4", "v5", "serde"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "blocking"] }
+zip = { version = "8.6", default-features = false }
+hex = "0.4"
+sha2 = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 x509-parser = "0.18"
 serde_json = "1.0"
 serde = { version = "1", features = ["derive"] }
-base64 = "0.22"
+base64 = "0.23"
 runinator-auth = { path = "../runinator-auth" }
 
 runinator-comm = { path = "../runinator-comm" }

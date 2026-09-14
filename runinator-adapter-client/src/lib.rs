@@ -78,7 +78,7 @@ impl AdapterCircuit {
     fn new(enabled: bool, failures: usize, cooldown: Duration) -> Self {
         let (layer, _) = CircuitBreakerLayer::builder()
             .name("adapter_host")
-            .consecutive_failures(failures)
+            .consecutive_failures(failures.max(1))
             .wait_duration_in_open(cooldown)
             .permitted_calls_in_half_open(1)
             .failure_classifier(adapter_host_failure as HttpClassifier)
@@ -100,7 +100,8 @@ impl AdapterCircuit {
                 )
                 .increment(1);
             })
-            .build_with_handle();
+            .build_with_handle()
+            .expect("adapter-host circuit breaker uses a validated static configuration");
         Self {
             enabled,
             cooldown,

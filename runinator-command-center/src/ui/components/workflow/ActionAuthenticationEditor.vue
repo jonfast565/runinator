@@ -231,11 +231,13 @@ function missingSecret(parameter: string): boolean {
 function setSecret(parameter: string, event: Event): void {
   const value = (event.target as HTMLSelectElement).value;
   const nextConfiguration = { ...configuration.value };
+
   if (value) {
     nextConfiguration[parameter] = value;
   } else {
     delete nextConfiguration[parameter];
   }
+
   emit("update:modelValue", {
     ...actionObject.value,
     configuration: nextConfiguration,

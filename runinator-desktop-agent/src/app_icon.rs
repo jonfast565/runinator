@@ -51,7 +51,10 @@ fn decode_rgba(image: &[u8]) -> (Vec<u8>, u32, u32) {
     let mut reader = decoder
         .read_info()
         .expect("the bundled Runinator icon must be a valid PNG");
-    let mut pixels = vec![0; reader.output_buffer_size()];
+    let output_buffer_size = reader
+        .output_buffer_size()
+        .expect("the bundled Runinator icon must have a finite decoded size");
+    let mut pixels = vec![0; output_buffer_size];
     let info = reader
         .next_frame(&mut pixels)
         .expect("the bundled Runinator icon must decode");

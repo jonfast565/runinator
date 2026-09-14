@@ -3,8 +3,8 @@
 // writes use the primary key, and `secondaries` keep pre-rotation values readable during the overlap
 // window.
 
-use chacha20poly1305::aead::{Aead, OsRng};
-use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit, Nonce};
+use chacha20poly1305::aead::{Aead, Generate};
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use sha2::{Digest, Sha256};
 
 const MAGIC: [u8; 4] = [0x52, 0x41, 0x45, 0x31]; // "RAE1" tags an authenticated, key-tagged value.
@@ -42,7 +42,8 @@ impl CipherKey {
     }
 
     fn aead(&self) -> ChaCha20Poly1305 {
-        ChaCha20Poly1305::new(Key::from_slice(&self.enc_key))
+        ChaCha20Poly1305::new_from_slice(&self.enc_key)
+            .expect("chacha20-poly1305 accepts a 32-byte key")
     }
 }
 
@@ -100,7 +101,7 @@ impl SecretCipher {
         if self.primary.is_empty() {
             return plaintext.to_vec();
         }
-        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let nonce = Nonce::generate();
         // chacha20-poly1305 only fails on absurdly large inputs; settings values are tiny.
         let sealed = self
             .primary
@@ -110,7 +111,7 @@ impl SecretCipher {
         let mut out = Vec::with_capacity(HEADER_LEN + sealed.len());
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&self.primary.id);
-        out.extend_from_slice(nonce.as_slice());
+        out.extend_from_slice(nonce.as_ref());
         out.extend_from_slice(&sealed);
         out
     }
@@ -121,16 +122,16 @@ impl SecretCipher {
         let Some((id, nonce, body)) = parse_sealed(value) else {
             return self.primary.is_empty().then(|| value.to_vec());
         };
-        let nonce = Nonce::from_slice(nonce);
+        let nonce = Nonce::try_from(nonce).ok()?;
         // prefer the key named by the tag, then fall back to the rest; the auth tag gates correctness.
         if let Some(key) = self.find_key(id)
-            && let Ok(plaintext) = key.aead().decrypt(nonce, body)
+            && let Ok(plaintext) = key.aead().decrypt(&nonce, body)
         {
             return Some(plaintext);
         }
         self.keys()
             .filter(|key| !key.is_empty())
-            .find_map(|key| key.aead().decrypt(nonce, body).ok())
+            .find_map(|key| key.aead().decrypt(&nonce, body).ok())
     }
 
     /// open stored ciphertext, yielding empty bytes for an unrecoverable authenticated value. prefer

@@ -166,7 +166,7 @@ impl WorkflowRevision {
             definition,
         ))
         .expect("workflow revision payload is serializable");
-        format!("sha256:{:x}", Sha256::digest(payload))
+        format!("sha256:{}", hex::encode(Sha256::digest(payload)))
     }
 
     /// Canonical digest of the parts of a revision that affect execution. Namespace and display
@@ -181,7 +181,7 @@ impl WorkflowRevision {
             .expect("workflow revision payload is serializable");
         let mut digest = Sha256::new();
         digest.update(payload);
-        format!("sha256:{:x}", digest.finalize())
+        format!("sha256:{}", hex::encode(digest.finalize()))
     }
 
     /// rebuild a savable definition from this revision, carrying the *current* row's identity
@@ -243,7 +243,7 @@ impl PipelineRevision {
             .expect("pipeline revision payload is serializable");
         let mut digest = Sha256::new();
         digest.update(payload);
-        format!("sha256:{:x}", digest.finalize())
+        format!("sha256:{}", hex::encode(digest.finalize()))
     }
 
     pub fn from_pipeline(pipeline: &Pipeline, author: &RevisionAuthor) -> Option<Self> {

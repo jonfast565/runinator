@@ -5,10 +5,10 @@ edition = "2024"
 
 [dependencies]
 tracing = "0.1"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.18", features = ["v4", "v7"] }
+uuid = { version = "1.26", features = ["v4", "v7"] }
 
 runinator-models = { path = "../runinator-models" }
 runinator-platform = { path = "../runinator-platform" }

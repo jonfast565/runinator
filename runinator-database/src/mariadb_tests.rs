@@ -8,7 +8,7 @@
 use super::*;
 use crate::dialect_parity::assert_dialect_parity;
 use runinator_store::DatabaseImpl;
-use sqlx::{Connection, MySqlConnection};
+use sqlx::{AssertSqlSafe, Connection, MySqlConnection};
 use uuid::Uuid;
 
 fn base_url(variable: &str) -> Option<String> {
@@ -30,7 +30,7 @@ async fn fresh_db(variable: &str) -> Option<(MariaDb, String, String)> {
     let (server, _) = split_url(&url);
     let db = format!("runinator_test_{}", Uuid::new_v4().simple());
     let mut conn = MySqlConnection::connect(&server).await.unwrap();
-    sqlx::query(&format!("CREATE DATABASE {db}"))
+    sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {db}")))
         .execute(&mut conn)
         .await
         .unwrap();
@@ -43,7 +43,7 @@ async fn fresh_db(variable: &str) -> Option<(MariaDb, String, String)> {
 async fn drop_db(pool: MariaDb, server: &str, db: &str) {
     pool.pool().close().await;
     let mut conn = MySqlConnection::connect(server).await.unwrap();
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {db}"))
+    sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {db}")))
         .execute(&mut conn)
         .await
         .unwrap();

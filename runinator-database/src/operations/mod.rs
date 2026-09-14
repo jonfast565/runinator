@@ -123,7 +123,7 @@ where
     for<'q> Option<i64>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     async fn insert_notification_policy(
@@ -246,7 +246,7 @@ where
     for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
@@ -454,7 +454,7 @@ where
     for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    <B::Db as Database>::Arguments: IntoArguments<B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,

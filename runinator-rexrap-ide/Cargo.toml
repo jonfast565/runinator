@@ -10,4 +10,4 @@ runinator-compute = { path = "../runinator-compute" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-uuid = "1.18"
+uuid = "1.26"

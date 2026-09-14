@@ -4,12 +4,12 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-argon2 = { version = "0.5", features = ["std"] }
-jsonwebtoken = "9"
-rand = "0.8"
-sha2 = "0.10"
-hmac = "0.12"
-base64 = "0.22"
+argon2 = "0.6"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+rand = "0.10"
+sha2 = "0.11"
+hmac = "0.13"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.18", features = ["v4", "v5"] }
+uuid = { version = "1.26", features = ["v4", "v5"] }
 runinator-models = { path = "../runinator-models" }
