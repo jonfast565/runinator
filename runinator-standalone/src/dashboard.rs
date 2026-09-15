@@ -24,11 +24,11 @@ struct RoleSummary {
 }
 
 pub fn start(config: &StandaloneConfig, shutdown: Shutdown) -> JoinHandle<()> {
-    let dashboard = runinator_observability::tui::install();
+    let dashboard = runinator_tui::install();
     register_components(config);
-    runinator_observability::tui::activity(STANDALONE, "starting local runtime", None);
+    runinator_tui::activity(STANDALONE, "starting local runtime", None);
     let dashboard_shutdown = shutdown.clone();
-    runinator_observability::tui::spawn(
+    runinator_tui::spawn(
         dashboard,
         move || dashboard_shutdown.is_cancelled(),
         move || shutdown.trigger(),
@@ -38,19 +38,19 @@ pub fn start(config: &StandaloneConfig, shutdown: Shutdown) -> JoinHandle<()> {
 pub fn publish_transition(kind: &str, id: &str, status: &str) {
     let component = component_name(kind);
     let activity = format!("{id} {status}");
-    runinator_observability::tui::activity(component, activity.clone(), None);
+    runinator_tui::activity(component, activity.clone(), None);
     if component != STANDALONE {
-        runinator_observability::tui::activity(STANDALONE, activity, None);
+        runinator_tui::activity(STANDALONE, activity, None);
     }
 }
 
 pub fn publish_snapshot(snapshot: &LocalRuntimeSnapshot) {
     for (component, summary) in summarize(snapshot) {
-        runinator_observability::tui::gauge(component, "configured", summary.configured);
-        runinator_observability::tui::gauge(component, "running", summary.running);
-        runinator_observability::tui::gauge(component, "starting", summary.starting);
-        runinator_observability::tui::gauge(component, "degraded", summary.degraded);
-        runinator_observability::tui::gauge(component, "restarts", summary.restarts);
+        runinator_tui::gauge(component, "configured", summary.configured);
+        runinator_tui::gauge(component, "running", summary.running);
+        runinator_tui::gauge(component, "starting", summary.starting);
+        runinator_tui::gauge(component, "degraded", summary.degraded);
+        runinator_tui::gauge(component, "restarts", summary.restarts);
     }
 }
 
@@ -99,7 +99,7 @@ fn register_components(config: &StandaloneConfig) {
         ),
     ];
     for (component, details) in components {
-        runinator_observability::tui::register(component, details);
+        runinator_tui::register(component, details);
     }
 }
 

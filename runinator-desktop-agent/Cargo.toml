@@ -39,6 +39,7 @@ runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 runinator-provider-console = { path = "../runinator-provider-console" }
 runinator-provider-local-files = { path = "../runinator-provider-local-files" }
 runinator-observability = { path = "../runinator-observability" }
+runinator-tui = { path = "../runinator-tui" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-worker = { path = "../runinator-worker", features = ["ws"] }
 

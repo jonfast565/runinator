@@ -6,7 +6,9 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
+    fs,
     io::{self, IsTerminal},
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -24,11 +26,37 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table, TableState, Wrap},
 };
 
-use crate::{
-    config::Paths,
-    snapshot::{ProcessSnapshot, StateSnapshot, read_snapshot},
-    types::DynError,
-};
+use serde::{Deserialize, Serialize};
+
+pub type DynError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StateSnapshot {
+    pub supervisor_pid: u32,
+    pub config_path: String,
+    pub started_at: String,
+    pub updated_at: String,
+    pub processes: Vec<ProcessSnapshot>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProcessSnapshot {
+    pub name: String,
+    pub status: String,
+    pub pid: Option<u32>,
+    pub restarts: u32,
+    pub uptime_seconds: Option<u64>,
+    pub last_exit_code: Option<i32>,
+    pub last_error: Option<String>,
+    pub started_at: Option<String>,
+    pub command: String,
+    pub cwd: String,
+    pub log_file: String,
+}
+
+fn read_snapshot(path: &Path) -> Result<StateSnapshot, DynError> {
+    Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+}
 
 /// State is sampled twice per second, so 120 samples makes the graph a one-minute window.
 const HISTORY_CAPACITY: usize = 120;
@@ -38,7 +66,7 @@ const PROCESS_TABLE_CHROME_ROWS: u16 = 4;
 
 /// What leaving the dashboard means depends on who owns the supervision loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DashboardMode {
+pub enum DashboardMode {
     /// `status --watch`: closing only detaches this reader.
     Monitor,
     /// `start --foreground`: closing asks the foreground supervisor to stop gracefully.
@@ -46,7 +74,7 @@ pub(crate) enum DashboardMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DashboardAction {
+pub enum DashboardAction {
     Continue,
     CloseMonitor,
     StopSupervisor,
@@ -54,7 +82,7 @@ pub(crate) enum DashboardAction {
 
 /// An alternate-screen process monitor. It owns terminal restoration so a failed draw or read
 /// cannot strand a shell in raw mode.
-pub(crate) struct SupervisorTui {
+pub struct SupervisorTui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     mode: DashboardMode,
     selected: usize,
@@ -64,16 +92,18 @@ pub(crate) struct SupervisorTui {
     process_page_rows: usize,
     history: MetricHistory,
     active: bool,
+    _claim: crate::TerminalClaim,
 }
 
 impl SupervisorTui {
     /// Enter the dashboard only when both streams point at a real terminal. A pipe continues to
     /// use the script-friendly table renderer instead of emitting control sequences into output.
-    pub(crate) fn open(mode: DashboardMode) -> Result<Option<Self>, DynError> {
+    pub fn open(mode: DashboardMode) -> Result<Option<Self>, DynError> {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Ok(None);
         }
 
+        let claim = crate::claim_terminal()?;
         enable_raw_mode()?;
         let mut terminal = match Terminal::new(CrosstermBackend::new(io::stdout())) {
             Ok(terminal) => terminal,
@@ -97,18 +127,19 @@ impl SupervisorTui {
             process_page_rows: 1,
             history: MetricHistory::default(),
             active: true,
+            _claim: claim,
         }))
     }
 
     /// Run a read-only dashboard for a daemon that is already running.
-    pub(crate) fn watch(mut self, paths: &Paths) -> Result<(), DynError> {
+    pub fn watch(mut self, state_file: &Path) -> Result<(), DynError> {
         let mut snapshot = None;
         let mut warning = None;
         let mut next_refresh = Instant::now();
 
         loop {
             if Instant::now() >= next_refresh {
-                match read_snapshot(&paths.state_file) {
+                match read_snapshot(state_file) {
                     Ok(next) => {
                         self.observe(&next);
                         snapshot = Some(next);
@@ -133,7 +164,7 @@ impl SupervisorTui {
     /// Record one fresh state snapshot before it is drawn. The history is intentionally local to
     /// the UI session: snapshots are the durable contract, while rolling chart data has no reason
     /// to outlive an attached monitor.
-    pub(crate) fn observe(&mut self, snapshot: &StateSnapshot) {
+    pub fn observe(&mut self, snapshot: &StateSnapshot) {
         self.history.observe(snapshot);
         self.process_count = snapshot.processes.len();
         if snapshot.processes.is_empty() {
@@ -143,7 +174,7 @@ impl SupervisorTui {
         }
     }
 
-    pub(crate) fn draw(
+    pub fn draw(
         &mut self,
         snapshot: Option<&StateSnapshot>,
         warning: Option<&str>,
@@ -168,7 +199,7 @@ impl SupervisorTui {
         Ok(())
     }
 
-    pub(crate) fn poll_input(&mut self, timeout: Duration) -> Result<DashboardAction, DynError> {
+    pub fn poll_input(&mut self, timeout: Duration) -> Result<DashboardAction, DynError> {
         if !event::poll(timeout)? {
             return Ok(DashboardAction::Continue);
         }
@@ -717,7 +748,7 @@ mod tests {
         DashboardMode, HISTORY_CAPACITY, MetricHistory, StatusTone, next_process_page,
         previous_process_page, process_page_position, render, status_tone,
     };
-    use crate::snapshot::{ProcessSnapshot, StateSnapshot};
+    use super::{ProcessSnapshot, StateSnapshot};
     use ratatui::{Terminal, backend::TestBackend, style::Color};
 
     fn process(name: &str, status: &str, restarts: u32) -> ProcessSnapshot {

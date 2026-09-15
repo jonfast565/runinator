@@ -55,6 +55,7 @@ const CAPABILITY_PATHS: &[(&str, &str)] = &[
     ("/audit_log", "observability"),
     ("/dead_letters", "observability"),
     ("/broker_messages", "observability"),
+    ("/diagnostics/logs", "observability"),
     ("/auth/switch", "organizations"),
     ("/orgs", "organizations"),
     ("/rate-card", "organizations"),

@@ -28,6 +28,8 @@ use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
 const INGRESS_CONSUMER_ID: &str = "runinator-engine-ingress";
+const DEFAULT_DIAGNOSTICS_RETENTION_SECONDS: i64 = 24 * 60 * 60;
+const DEFAULT_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Apply ingress messages until shutdown.
 ///
@@ -106,7 +108,7 @@ async fn run_ingress_consumer_inner<
             })
             .unwrap_or(1);
         if reported_limit != Some(limit) {
-            runinator_observability::tui::gauge("engine", "ingress capacity", limit as i64);
+            runinator_tui::gauge("engine", "ingress capacity", limit as i64);
             info!(
                 max_concurrent_ingress = limit,
                 "applied engine ingress limit"
@@ -169,6 +171,23 @@ async fn run_ingress_consumer_inner<
                     if let Err(error) = db.purge_broker_messages_before(cutoff).await {
                         warn!(error = %error, "failed to purge expired broker message traces");
                     }
+                    let diagnostics_cutoff = chrono::Utc::now()
+                        - chrono::Duration::seconds(diagnostics_retention_seconds());
+                    if let Err(error) = db
+                        .purge_broker_message_channel_before("diagnostics".into(), diagnostics_cutoff)
+                        .await
+                    {
+                        warn!(error = %error, "failed to purge expired runtime diagnostics");
+                    }
+                    if let Err(error) = db
+                        .trim_broker_message_channel_to_bytes(
+                            "diagnostics".into(),
+                            diagnostics_payload_budget_bytes(),
+                        )
+                        .await
+                    {
+                        warn!(error = %error, "failed to enforce runtime diagnostics payload budget");
+                    }
                     last_cleanup = chrono::Utc::now();
                 }
                 continue;
@@ -193,6 +212,22 @@ async fn run_ingress_consumer_inner<
             settle_delivery(delivery_db, delivery_broker, delivery_nudge, delivery).await;
         });
     }
+}
+
+fn diagnostics_retention_seconds() -> i64 {
+    std::env::var("RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_DIAGNOSTICS_RETENTION_SECONDS)
+}
+
+fn diagnostics_payload_budget_bytes() -> u64 {
+    std::env::var("RUNINATOR_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES)
 }
 
 async fn settle_delivery<

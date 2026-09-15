@@ -63,6 +63,7 @@ pub const API_CREDENTIALS: &str = "/credentials";
 pub const API_WORKER_SETTINGS: &str = "/worker/settings";
 pub const API_EXECUTION_PROFILES: &str = "/execution_profiles";
 pub const API_REPLICAS: &str = "/replicas";
+pub const API_DIAGNOSTIC_LOGS: &str = "/diagnostics/logs";
 pub const API_ORCHESTRATIONS: &str = "/orchestrations";
 
 pub fn api_workflow(workflow_id: Uuid) -> String {

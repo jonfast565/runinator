@@ -9,6 +9,20 @@ a log file via `tracing`, filtered by `RUNINATOR_LOG` (an `EnvFilter` directive,
 default `info`). The web service additionally exposes Prometheus metrics at
 `/metrics`.
 
+Processes also publish bounded structured diagnostics to the authenticated web service when
+`RUNINATOR_SERVICE_URL` (or `RUNINATOR_API_BASE_URL`) is set. Publication is nonblocking, limited to
+8 MiB per process, and reports dropped records. The engine stores accepted batches idempotently in
+the durable broker-message store, retaining diagnostics for 24 hours and within a 1 GiB payload
+budget by default. Configure those bounds with `RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS` and
+`RUNINATOR_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES`. `GET /diagnostics/logs` provides cursor pagination and
+source, severity, time, text, run, and effect filters; unscoped process logs require platform
+authorization, while correlated reads are checked against the run's owning workflow.
+
+The terminal log viewer parses ANSI incrementally, including sequences split across reads, and
+renders supported styles as terminal spans while discarding cursor/control commands. Plain-text
+search remains independent of color. View buffers are capped at 10,000 lines or 8 MiB and support
+filtering, pause/follow, scrolling, truncation, partial lines, and file rotation.
+
 The `runinator-desktop-agent` tray app honors the same `RUNINATOR_LOG` directive at
 startup and additionally renders those `tracing` records into its in-app log console,
 where a **Log → Level** dropdown changes the level live (no restart) and persists it.

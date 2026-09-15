@@ -55,6 +55,11 @@ spec:
             - secretRef:
                 name: runinator-blob-secret
           env:
+            - name: RUNINATOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: runinator-app-secret
+                  key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
             - name: RUNINATOR_BLOB_ADDR
               value: "0.0.0.0:9000"
             - name: RUNINATOR_BLOB_DATA_DIR

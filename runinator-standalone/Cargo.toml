@@ -16,6 +16,7 @@ tracing = "0.1"
 uuid = { version = "1.26", features = ["v4", "v5", "v7", "serde"] }
 
 runinator-adapter-client = { path = "../runinator-adapter-client" }
+runinator-api = { path = "../runinator-api" }
 runinator-adapter-host = { path = "../runinator-adapter-host" }
 runinator-blob = { path = "../runinator-blob", features = ["client", "server"] }
 runinator-broker = { path = "../runinator-broker", features = ["tcp"] }
@@ -25,6 +26,7 @@ runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
 runinator-observability = { path = "../runinator-observability" }
+runinator-tui = { path = "../runinator-tui" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-provider-local-files = { path = "../runinator-provider-local-files" }
@@ -40,3 +42,6 @@ default = ["sqlite", "postgres", "mariadb"]
 sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite", "runinator-ws/sqlite", "runinator-provider-catalog/db-sqlite"]
 postgres = ["runinator-database/postgres", "runinator-db-cli/postgres", "runinator-ws/postgres", "runinator-provider-catalog/db-postgres"]
 mariadb = ["runinator-database/mariadb", "runinator-db-cli/mariadb", "runinator-ws/mariadb", "runinator-provider-catalog/db-mariadb"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

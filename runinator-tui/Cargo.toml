@@ -1,0 +1,29 @@
+[package]
+name = "runinator-tui"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+ratatui = "0.30"
+runinator-api = { path = "../runinator-api" }
+runinator-ctl-core = { path = "../runinator-ctl-core" }
+runinator-models = { path = "../runinator-models" }
+runinator-observability = { path = "../runinator-observability" }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["time"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+uuid = { version = "1.26", features = ["v7"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Pipes",
+] }

@@ -1,4 +1,4 @@
-//! platforms with neither `dup2` nor `SetStdHandle`.
+//! Platforms with neither `dup2` nor `SetStdHandle`.
 //!
 //! there is no such target in this workspace, so this exists to keep `Capture` free of `cfg` rather
 //! than to serve anything. reporting the console unavailable is not a failure: `console.rs` falls
@@ -6,8 +6,8 @@
 
 use std::fs::File;
 
+use super::super::{Result, err};
 use super::{Screen, Shared};
-use crate::commands::{Result, err};
 
 pub(super) enum Redirect {}
 

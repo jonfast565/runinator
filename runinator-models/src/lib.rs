@@ -9,6 +9,7 @@ pub mod console;
 pub mod core;
 pub mod cursor;
 pub mod debug;
+pub mod diagnostics;
 pub mod errors;
 pub mod execution_profiles;
 pub mod files;

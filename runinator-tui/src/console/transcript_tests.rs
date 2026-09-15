@@ -1,4 +1,4 @@
-//! covers what the output pane holds and what it shows at a scroll position.
+//! Covers what the output pane holds and what it shows at a scroll position.
 
 use super::*;
 

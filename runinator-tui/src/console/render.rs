@@ -1,4 +1,4 @@
-//! drawing the console.
+//! Drawing the console.
 //!
 //! the frame is five bands: a status line, the scrollable output pane, the input, the completion
 //! menu, and a key legend. the layout is a pure function of the area, the buffer, and how many rows

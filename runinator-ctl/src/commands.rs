@@ -134,6 +134,9 @@ pub async fn run_command(
             )
             .await
         }
+        Commands::Tui => {
+            runinator_tui::operations::run(client.clone(), api_base_url.to_string()).await
+        }
         Commands::Artifacts { command } => artifacts::artifacts(client, command, json_output).await,
         Commands::RexRap { command } => workflows::rexrap(command, json_output),
         Commands::Settings { command } => settings::settings(client, command, json_output).await,

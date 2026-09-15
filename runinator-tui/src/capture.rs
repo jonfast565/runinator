@@ -1,5 +1,7 @@
 //! Keep writes that bypass `tracing` from painting into the alternate screen.
 //!
+//! Shared by every full-screen Runinator terminal host.
+//!
 //! The process streams are redirected to a pipe while the dashboard is running. The dashboard
 //! itself draws through a separate handle on the real terminal, and a reader thread turns direct
 //! stdout/stderr writes into ordinary rolling-log entries. Moving the streams is platform-specific;
@@ -8,7 +10,11 @@
 use std::fs::File;
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::{
+    sync::mpsc::{self, Receiver},
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
 use super::Dashboard;
 
@@ -58,8 +64,25 @@ impl Drop for Capture {
 }
 
 /// Move bytes from the redirected streams into the dashboard's log pane.
-fn spawn_reader(source: File, dashboard: Arc<Dashboard>) -> io::Result<JoinHandle<()>> {
-    thread::Builder::new()
+struct Reader {
+    handle: JoinHandle<()>,
+    done: Receiver<()>,
+}
+
+impl Reader {
+    fn finish(self) {
+        if self.done.recv_timeout(Duration::from_millis(250)).is_ok() {
+            let _ = self.handle.join();
+        }
+        // A child may have inherited stdout/stderr and still own a writer. Dropping an unfinished
+        // JoinHandle detaches the draining reader so shutdown cannot hang or close the pipe under
+        // that child, which otherwise surfaces as a broken-pipe panic on WSL.
+    }
+}
+
+fn spawn_reader(source: File, dashboard: Arc<Dashboard>) -> io::Result<Reader> {
+    let (done_tx, done) = mpsc::sync_channel(1);
+    let handle = thread::Builder::new()
         .name("runinator-tui-output".to_string())
         .spawn(move || {
             let mut source = source;
@@ -77,58 +100,25 @@ fn spawn_reader(source: File, dashboard: Arc<Dashboard>) -> io::Result<JoinHandl
                         }
                     }
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(_) => break,
+                    // Keep the read end alive across transient WSL pipe/PTY errors. Closing it
+                    // while stdout still targets the pipe turns the next println into EPIPE.
+                    Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
+                    Err(_) => thread::sleep(Duration::from_millis(10)),
                 }
             }
             flush_line(&dashboard, &mut line);
-        })
+            let _ = done_tx.send(());
+        })?;
+    Ok(Reader { handle, done })
 }
 
 fn flush_line(dashboard: &Dashboard, line: &mut Vec<u8>) {
     if line.is_empty() {
         return;
     }
-    let text = String::from_utf8_lossy(line);
-    let text = sanitize(&text);
+    let text = String::from_utf8_lossy(line).into_owned();
     line.clear();
-    if !text.is_empty() {
+    if !text.trim().is_empty() {
         dashboard.log_line(text);
-    }
-}
-
-// A log line is rendered as terminal text rather than a byte stream. Do not allow a direct writer
-// to sneak an ANSI control sequence back through ratatui when we display the captured text.
-fn sanitize(line: &str) -> String {
-    let mut clean = String::with_capacity(line.len());
-    let mut chars = line.chars();
-    while let Some(character) = chars.next() {
-        if character == '\x1b' {
-            if chars.next() == Some('[') {
-                // CSI is complete at its final byte (U+0040..U+007E). Discard a malformed
-                // sequence too: none of its bytes are useful dashboard content.
-                for candidate in chars.by_ref() {
-                    if ('@'..='~').contains(&candidate) {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        if character == '\t' {
-            clean.push(' ');
-        } else if !character.is_control() {
-            clean.push(character);
-        }
-    }
-    clean.trim_end().to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::sanitize;
-
-    #[test]
-    fn strips_terminal_controls_from_captured_output() {
-        assert_eq!(sanitize("\u{1b}[1;31mfailed\u{1b}[0m\t "), "failed");
     }
 }

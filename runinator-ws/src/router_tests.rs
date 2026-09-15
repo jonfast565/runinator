@@ -4,7 +4,15 @@ use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::{Router, routing::get};
 use tower::ServiceExt;
 
-use super::{CorsConfig, cors_layer, handle_panic};
+use super::{CorsConfig, cors_layer, handle_panic, should_log_access};
+
+#[test]
+fn diagnostics_ingestion_does_not_feed_the_remote_log_exporter() {
+    assert!(!should_log_access(
+        runinator_models::api_routes::API_DIAGNOSTIC_LOGS
+    ));
+    assert!(should_log_access("/health"));
+}
 
 // the various payload types `panic!`/`assert!` produce should all map to a 500 without the panic
 // handler itself panicking on an unexpected payload type, and the body must be the generic envelope

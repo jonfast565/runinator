@@ -310,11 +310,28 @@ where
             BrokerMessageDirection::Published => "published",
             BrokerMessageDirection::Received => "received",
         };
-        sqlx::query(&self.render("INSERT INTO broker_messages (id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at, adapter_id, poll_attempt_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
-            .bind(record.id).bind(record.channel).bind(direction).bind(record.message_kind)
-            .bind(record.workflow_run_id).bind(record.delivery_id).bind(record.dedupe_key)
-            .bind(record.trace_id).bind(record.payload.to_string()).bind(record.occurred_at.timestamp()).bind(record.adapter_id).bind(record.poll_attempt_id)
-            .execute(self.pool()).await?;
+        let sql = self.dialect().insert_ignore(
+            "broker_messages",
+            "id, channel, direction, message_kind, workflow_run_id, delivery_id, dedupe_key, trace_id, payload, occurred_at, adapter_id, poll_attempt_id",
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+            "id",
+            None,
+        );
+        sqlx::query(&self.render(&sql))
+            .bind(record.id)
+            .bind(record.channel)
+            .bind(direction)
+            .bind(record.message_kind)
+            .bind(record.workflow_run_id)
+            .bind(record.delivery_id)
+            .bind(record.dedupe_key)
+            .bind(record.trace_id)
+            .bind(record.payload.to_string())
+            .bind(record.occurred_at.timestamp())
+            .bind(record.adapter_id)
+            .bind(record.poll_attempt_id)
+            .execute(self.pool())
+            .await?;
         Ok(())
     }
 
@@ -378,6 +395,55 @@ where
                 .await?
                 .affected(),
         )
+    }
+
+    async fn purge_broker_message_channel_before(
+        &self,
+        channel: String,
+        cutoff: DateTime<Utc>,
+    ) -> Result<u64, SendableError> {
+        Ok(sqlx::query(
+            &self.render("DELETE FROM broker_messages WHERE channel = ? AND occurred_at < ?"),
+        )
+        .bind(channel)
+        .bind(cutoff.timestamp())
+        .execute(self.pool())
+        .await?
+        .affected())
+    }
+
+    async fn trim_broker_message_channel_to_bytes(
+        &self,
+        channel: String,
+        max_bytes: u64,
+    ) -> Result<u64, SendableError> {
+        use sqlx::Row;
+
+        let rows = sqlx::query(&self.render(
+            "SELECT id, LENGTH(payload) AS payload_bytes FROM broker_messages WHERE channel = ? ORDER BY occurred_at DESC, id DESC",
+        ))
+        .bind(&channel)
+        .fetch_all(self.pool())
+        .await?;
+        let mut retained = 0_u64;
+        let mut removed = 0_u64;
+        for row in rows {
+            let bytes = row.try_get::<i64, _>("payload_bytes")?.max(0) as u64;
+            retained = retained.saturating_add(bytes);
+            if retained <= max_bytes {
+                continue;
+            }
+            let id = row.try_get::<Uuid, _>("id")?;
+            removed += sqlx::query(
+                &self.render("DELETE FROM broker_messages WHERE id = ? AND channel = ?"),
+            )
+            .bind(id)
+            .bind(&channel)
+            .execute(self.pool())
+            .await?
+            .affected();
+        }
+        Ok(removed)
     }
 
     async fn record_dead_letter(&self, record: Value) -> Result<Value, SendableError> {

@@ -51,6 +51,11 @@ spec:
             - "--broker-client-id"
             - "runinator-engine-worker-$(POD_NAME)"
           env:
+            - name: RUNINATOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: runinator-app-secret
+                  key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
             - name: RUNINATOR_ADAPTER_HOST_URL
               value: "http://127.0.0.1:8790"
             - name: POD_NAME
@@ -88,7 +93,14 @@ spec:
           env:
             - name: RUNINATOR_ADAPTER_HOST_PORT
               value: "8790"
+            - name: RUNINATOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: runinator-app-secret
+                  key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
           envFrom:
+            - configMapRef:
+                name: runinator-common
             - secretRef:
                 name: runinator-adapter-secret
           # exec, not httpGet: the host binds loopback only (it is the process that loads adapter

@@ -369,12 +369,16 @@ async fn trace_propagation_middleware(
         );
         let duration_ms = started.elapsed().as_millis() as u64;
         let status = response.status().as_u16();
-        if status >= 500 {
-            tracing::error!(status, duration_ms, "request completed");
-        } else if status >= 400 {
-            tracing::warn!(status, duration_ms, "request completed");
-        } else {
-            tracing::info!(status, duration_ms, "request completed");
+        // diagnostics ingestion is itself driven by the tracing subscriber. recording a normal
+        // access event for it would enqueue another diagnostics batch indefinitely.
+        if should_log_access(&path) {
+            if status >= 500 {
+                tracing::error!(status, duration_ms, "request completed");
+            } else if status >= 400 {
+                tracing::warn!(status, duration_ms, "request completed");
+            } else {
+                tracing::info!(status, duration_ms, "request completed");
+            }
         }
         if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
             response.headers_mut().insert(REQUEST_ID_HEADER, value);
@@ -383,6 +387,10 @@ async fn trace_propagation_middleware(
     }
     .instrument(span)
     .await
+}
+
+fn should_log_access(path: &str) -> bool {
+    path != runinator_models::api_routes::API_DIAGNOSTIC_LOGS
 }
 
 /// turn a recovered handler panic into the standard json error envelope. the panic payload is logged

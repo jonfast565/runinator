@@ -27,3 +27,25 @@ pub struct LocalRuntimeComponentSnapshot {
     pub uptime_seconds: Option<u64>,
     pub last_error: Option<String>,
 }
+
+/// Versioned, atomically-written local attachment data kept beside the compatibility `state.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalDashboardSnapshot {
+    pub version: u32,
+    pub host_id: String,
+    pub host_kind: LocalRuntimeHostKind,
+    pub pid: u32,
+    pub started_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub resource_samples: Vec<LocalResourceSample>,
+    pub components: Vec<LocalRuntimeComponentSnapshot>,
+    pub log_location: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalResourceSample {
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    pub memory_bytes: u64,
+}

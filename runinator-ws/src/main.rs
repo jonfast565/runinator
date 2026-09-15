@@ -93,7 +93,7 @@ async fn run_process() -> Result<(), SendableError> {
         run_engine,
         max_concurrent_ingress,
     } = args;
-    let tui = runinator_observability::tui::prepare(tui);
+    let tui = runinator_tui::prepare(tui);
     // A single-backend build compiles the other dispatch arms out. Keep their CLI fields accepted
     // (so the command surface stays stable) without warning when that happens.
     if !matches!(announce_scheme.as_str(), "http" | "https") {
@@ -192,22 +192,22 @@ async fn run_process() -> Result<(), SendableError> {
         .map_err(map_bootstrap_error)?;
     let shutdown = resources.process().shutdown().clone();
     if tui {
-        let dashboard = runinator_observability::tui::install();
-        runinator_observability::tui::register(
+        let dashboard = runinator_tui::install();
+        runinator_tui::register(
             "web service",
             [
                 format!("http://127.0.0.1:{port}"),
                 format!("broker {broker_backend_display} via {broker_connection}"),
             ],
         );
-        runinator_observability::tui::gauge(
+        runinator_tui::gauge(
             "web service",
             "HTTP capacity",
             max_concurrent_requests as i64,
         );
         let dashboard_shutdown = shutdown.clone();
         let dashboard_stop = dashboard_shutdown.clone();
-        runinator_observability::tui::spawn(
+        runinator_tui::spawn(
             dashboard,
             move || dashboard_shutdown.is_cancelled(),
             move || dashboard_stop.trigger(),
@@ -264,11 +264,7 @@ async fn run_process() -> Result<(), SendableError> {
     }
 
     info!("Starting Runinator webservice with {database_backend} database");
-    runinator_observability::tui::activity(
-        "web service",
-        format!("listening on port {port}"),
-        None,
-    );
+    runinator_tui::activity("web service", format!("listening on port {port}"), None);
     dispatch_server_database!(database, |db| {
         run_webserver(WebserverRuntime {
             pool: db,

@@ -12,7 +12,9 @@
       "command": "./target/debug/runinator-broker",
       "env": {
         "RUNINATOR_BROKER_TRANSPORT": "tcp",
-        "RUNINATOR_BROKER_ADDR": "127.0.0.1:7070"
+        "RUNINATOR_BROKER_ADDR": "127.0.0.1:7070",
+        "RUNINATOR_SERVICE_URL": "http://127.0.0.1:8080/",
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
       }
     },
     {
@@ -21,7 +23,9 @@
       "env": {
         "RUNINATOR_BLOB_ADDR": "127.0.0.1:9100",
         "RUNINATOR_BLOB_DATA_DIR": ".runinator-supervisor/blobs",
-        "RUNINATOR_BLOB_ALLOW_ANONYMOUS": "true"
+        "RUNINATOR_BLOB_ALLOW_ANONYMOUS": "true",
+        "RUNINATOR_SERVICE_URL": "http://127.0.0.1:8080/",
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
       }
     },
     {
@@ -30,7 +34,9 @@
       "env": {
         "RUNINATOR_ADAPTER_HOST_ADDR": "127.0.0.1",
         "RUNINATOR_ADAPTER_HOST_PORT": "8790",
-        "RUNINATOR_ADAPTER_HOST_TOKEN": "localdev.runinator-local-dev-adapter-host-token"
+        "RUNINATOR_ADAPTER_HOST_TOKEN": "localdev.runinator-local-dev-adapter-host-token",
+        "RUNINATOR_SERVICE_URL": "http://127.0.0.1:8080/",
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
       }
     },
     {
@@ -41,6 +47,10 @@
         "RUNINATOR_AUTH_BOOTSTRAP_ADMIN": "admin:admin",
         "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY": "localdev.runinator-local-dev-service-key",
         "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME": "local-supervisor",
+        "RUNINATOR_SERVICE_URL": "http://127.0.0.1:8080/",
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key",
+        "RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS": "86400",
+        "RUNINATOR_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES": "1073741824",
         "RUNINATOR_OVERLOAD_PROTECTION_ENABLED": "true",
         "RUNINATOR_MAX_CONCURRENT_REQUESTS": "512",
         "RUNINATOR_REQUEST_TIMEOUT_SECONDS": "30",
@@ -48,7 +58,7 @@
         "RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS": "30",
         "RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED": "true",
         "RUNINATOR_PROVISIONER_SUPERVISOR_WORKER": "{\"command\":\"./target/debug/runinator-worker\",\"args\":[\"--advertise-host\",\"127.0.0.1\",\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--max-concurrent-actions\",\"4\",\"--api-base-url\",\"http://127.0.0.1:8080/\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}",
-        "RUNINATOR_PROVISIONER_SUPERVISOR_WAKER": "{\"command\":\"./target/debug/runinator-waker\",\"args\":[\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\"]}",
+        "RUNINATOR_PROVISIONER_SUPERVISOR_WAKER": "{\"command\":\"./target/debug/runinator-waker\",\"args\":[\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--service-url\",\"http://127.0.0.1:8080/\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}",
         "RUNINATOR_BLOB_ENDPOINT": "http://127.0.0.1:9100/",
         "RUNINATOR_ADAPTER_HOST_URL": "http://127.0.0.1:8790",
         "RUNINATOR_ADAPTER_HOST_TOKEN": "localdev.runinator-local-dev-adapter-host-token",
@@ -112,6 +122,10 @@
     {
       "name": "waker",
       "command": "./target/debug/runinator-waker",
+      "env": {
+        "RUNINATOR_SERVICE_URL": "http://127.0.0.1:8080/",
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
+      },
       "args": [
         "--waker-id",
         "runinator-waker-local",

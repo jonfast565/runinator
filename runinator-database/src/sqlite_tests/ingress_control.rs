@@ -201,3 +201,63 @@ async fn broker_message_trace_filters_by_run_and_prunes_old_rows() {
         1
     );
 }
+
+#[tokio::test]
+async fn diagnostics_are_idempotent_and_trimmed_without_touching_other_channels() {
+    let db = ingress_db().await;
+    let now = Utc::now();
+    let duplicate_id = Uuid::now_v7();
+    let record = |id, channel: &str, message: &str, occurred_at| BrokerMessageRecord {
+        adapter_id: None,
+        poll_attempt_id: None,
+        id,
+        channel: channel.into(),
+        direction: BrokerMessageDirection::Received,
+        message_kind: "runtime_log".into(),
+        workflow_run_id: None,
+        delivery_id: None,
+        dedupe_key: None,
+        trace_id: None,
+        payload: runinator_models::json!({"message": message}),
+        occurred_at,
+    };
+
+    db.record_broker_message(record(duplicate_id, "diagnostics", "first", now))
+        .await
+        .unwrap();
+    db.record_broker_message(record(duplicate_id, "diagnostics", "duplicate", now))
+        .await
+        .unwrap();
+    db.record_broker_message(record(
+        Uuid::now_v7(),
+        "diagnostics",
+        "newest and retained",
+        now + chrono::Duration::seconds(1),
+    ))
+    .await
+    .unwrap();
+    db.record_broker_message(record(Uuid::now_v7(), "effect", "untouched", now))
+        .await
+        .unwrap();
+
+    let diagnostics = db
+        .fetch_broker_messages(None, None, None, Some("diagnostics".into()), 20)
+        .await
+        .unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[1].payload["message"], "first");
+
+    assert_eq!(
+        db.trim_broker_message_channel_to_bytes("diagnostics".into(), 40)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.fetch_broker_messages(None, None, None, Some("effect".into()), 20)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}

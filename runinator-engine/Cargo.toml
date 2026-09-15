@@ -28,6 +28,7 @@ runinator-store = { path = "../runinator-store" }
 runinator-compute = { path = "../runinator-compute" }
 runinator-models = { path = "../runinator-models" }
 runinator-observability = { path = "../runinator-observability" }
+runinator-tui = { path = "../runinator-tui" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-secrets = { path = "../runinator-secrets" }
 runinator-console = { path = "../runinator-console" }

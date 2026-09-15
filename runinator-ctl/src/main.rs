@@ -4,7 +4,6 @@ mod commands;
 mod output;
 mod params;
 mod service;
-mod tui;
 
 use clap::Parser;
 
@@ -17,7 +16,11 @@ async fn main() -> commands::Result<()> {
 }
 
 async fn run_process() -> commands::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    if full_screen_command(&cli.command) && !api_base_was_explicit() {
+        let suggestion = auth::stored_server_suggestion()?;
+        cli.api_base_url = runinator_tui::operations::select_server(suggestion.as_deref())?;
+    }
     // Skip the banner in JSON mode to keep machine-readable output clean. For the MCP server,
     // whose caller is a protocol client rather than a terminal; and for the console, which prints
     // it itself once its interface is up so that it lands at the top of the output pane instead of
@@ -52,3 +55,40 @@ async fn run_process() -> commands::Result<()> {
         }
     }
 }
+
+fn full_screen_command(command: &Commands) -> bool {
+    match command {
+        Commands::Tui => true,
+        Commands::Console {
+            execute,
+            file,
+            plain,
+            ..
+        } => !plain && execute.is_none() && file.is_none(),
+        _ => false,
+    }
+}
+
+fn api_base_was_explicit() -> bool {
+    api_base_was_explicit_in(
+        std::env::var_os("RUNINATOR_API_BASE_URL"),
+        std::env::args_os(),
+    )
+}
+
+fn api_base_was_explicit_in(
+    environment: Option<std::ffi::OsString>,
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> bool {
+    if environment.is_some_and(|value| !value.is_empty()) {
+        return true;
+    }
+    arguments.into_iter().any(|argument| {
+        let argument = argument.to_string_lossy();
+        argument == "--api-base-url" || argument.starts_with("--api-base-url=")
+    })
+}
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;

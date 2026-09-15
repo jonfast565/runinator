@@ -20,13 +20,14 @@ use runinator_models::{
         api_workflow_run_journal, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_EXECUTION_PROFILES,
-        API_FREEZE_WINDOWS, API_FUNCTIONS, API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS,
-        API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS, API_IDEMPOTENCY_KEYS_CLAIM,
-        API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE, API_PACKS_IMPORT,
-        API_PROVIDERS, API_REPLICAS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SUPERVISOR_STATUS,
-        API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
-        API_WORKFLOW_EFFECTS, API_WORKFLOW_FILES, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_DIAGNOSTIC_LOGS,
+        API_EXECUTION_PROFILES, API_FREEZE_WINDOWS, API_FUNCTIONS, API_FUNCTIONS_CATALOG,
+        API_FUNCTION_ARTIFACTS, API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS,
+        API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
+        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_SIMULATE,
+        API_WORKFLOWS_VALIDATE, API_WORKFLOW_EFFECTS, API_WORKFLOW_FILES, API_WORKFLOW_RUNS,
+        API_WORKFLOW_TRIGGERS_DUE,
     },
     auth::{
         AgentEnrollmentToken, AgentMachineEnrollment, CreateAgentEnrollmentTokenRequest,
@@ -35,6 +36,7 @@ use runinator_models::{
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SettingsBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail, NewConsoleCell},
+    diagnostics::{RuntimeLogBatch, RuntimeLogPage, RuntimeLogQuery},
     execution_profiles::{
         ExecutionProfile, ExecutionProfileAgentStatusRequest, ExecutionProfileCollectionStatus,
         ExecutionProfileOperation, ExecutionProfileOperationClaimRequest,
@@ -239,6 +241,50 @@ impl<L> AsyncApiClient<L>
 where
     L: ServiceLocator,
 {
+    pub async fn publish_runtime_logs(&self, batch: &RuntimeLogBatch) -> Result<()> {
+        let url = self.build_url(API_DIAGNOSTIC_LOGS).await?;
+        let response = self.send(self.http_post(url.clone()).json(batch)).await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    pub async fn fetch_runtime_logs(&self, query: &RuntimeLogQuery) -> Result<RuntimeLogPage> {
+        let mut url = self.build_url(API_DIAGNOSTIC_LOGS).await?;
+        if let Some(id) = query.workflow_run_id {
+            url.query_pairs_mut()
+                .append_pair("workflow_run_id", &id.to_string());
+        }
+        if let Some(id) = query.effect_id {
+            url.query_pairs_mut()
+                .append_pair("effect_id", &id.to_string());
+        }
+        if let Some(source) = &query.source {
+            url.query_pairs_mut().append_pair("source", source);
+        }
+        if let Some(level) = &query.level {
+            url.query_pairs_mut().append_pair("level", level);
+        }
+        if let Some(text) = &query.text {
+            url.query_pairs_mut().append_pair("text", text);
+        }
+        if let Some(from) = query.from {
+            url.query_pairs_mut()
+                .append_pair("from", &from.to_rfc3339());
+        }
+        if let Some(until) = query.until {
+            url.query_pairs_mut()
+                .append_pair("until", &until.to_rfc3339());
+        }
+        if let Some(cursor) = &query.cursor {
+            url.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        if let Some(limit) = query.limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.send(self.http_get(url.clone())).await?;
+        Ok(Self::handle_response(url, response).await?.json().await?)
+    }
     async fn get_json_path<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = self.build_url(path).await?;
         let response = self.send(self.http_get(url.clone())).await?;

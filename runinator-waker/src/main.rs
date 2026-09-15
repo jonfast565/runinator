@@ -22,7 +22,13 @@ async fn main() -> Result<(), SendableError> {
 async fn run_process() -> Result<(), SendableError> {
     info!("parsing waker config");
     let config = parse_config()?;
-    let tui = runinator_observability::tui::prepare(config.tui);
+    if let Some(service_url) = &config.service_url {
+        runinator_observability::remote_logs::configure(
+            service_url.clone(),
+            config.api_key.clone(),
+        );
+    }
+    let tui = runinator_tui::prepare(config.tui);
     info!(
         broker_mode = %config.broker_mode,
         broker_client_id = %config.broker_client_id,
@@ -57,8 +63,8 @@ async fn run_process() -> Result<(), SendableError> {
     let shutdown = process.shutdown();
     let notify = shutdown.notifier();
     if tui {
-        let dashboard = runinator_observability::tui::install();
-        runinator_observability::tui::register(
+        let dashboard = runinator_tui::install();
+        runinator_tui::register(
             "waker",
             [
                 format!(
@@ -68,14 +74,10 @@ async fn run_process() -> Result<(), SendableError> {
                 format!("wake group {}", config.waker_consumer_group),
             ],
         );
-        runinator_observability::tui::gauge(
-            "waker",
-            "wake capacity",
-            config.max_concurrent_wakes as i64,
-        );
+        runinator_tui::gauge("waker", "wake capacity", config.max_concurrent_wakes as i64);
         let dashboard_shutdown = shutdown.clone();
         let dashboard_stop = dashboard_shutdown.clone();
-        runinator_observability::tui::spawn(
+        runinator_tui::spawn(
             dashboard,
             move || dashboard_shutdown.is_cancelled(),
             move || dashboard_stop.trigger(),
@@ -102,7 +104,7 @@ async fn run_process() -> Result<(), SendableError> {
         attributes.clone(),
     )
     .await?;
-    runinator_observability::tui::activity("waker", "waiting for timer wakes", None);
+    runinator_tui::activity("waker", "waiting for timer wakes", None);
 
     runinator_waker::spawn_liveness(&config, notify.clone());
     let heartbeat =

@@ -1,4 +1,4 @@
-//! the console's output scrollback.
+//! The console's output scrollback.
 //!
 //! pure: it takes the bytes a command wrote, keeps them as lines, and answers "what is visible at
 //! this scroll position". nothing here touches a terminal or a file descriptor, which is what lets
@@ -11,7 +11,8 @@
 use std::collections::VecDeque;
 
 /// how many lines of command output the console keeps.
-pub(crate) const LINE_LIMIT: usize = 5_000;
+pub(crate) const LINE_LIMIT: usize = 10_000;
+const BYTE_LIMIT: usize = 8 * 1024 * 1024;
 
 /// how far the pane moves per wheel notch.
 pub(crate) const WHEEL_ROWS: isize = 3;
@@ -58,6 +59,7 @@ pub(crate) struct Transcript {
     /// lines discarded to stay under the limit, so the pane can say so.
     dropped: usize,
     limit: usize,
+    bytes: usize,
     scan: Scan,
     /// the parameter bytes of the control sequence being read.
     parameters: String,
@@ -94,6 +96,7 @@ impl Transcript {
             column: 0,
             dropped: 0,
             limit: limit.max(1),
+            bytes: 0,
             scan: Scan::Text,
             parameters: String::new(),
         }
@@ -139,6 +142,7 @@ impl Transcript {
         self.pending.clear();
         self.offset = 0;
         self.dropped = 0;
+        self.bytes = 0;
     }
 
     /// keep the offset inside what a pane of `height` rows can show.
@@ -217,18 +221,29 @@ impl Transcript {
         match character {
             '\n' => self.newline(),
             // a carriage return rewrites the line in place, the way a progress counter does.
-            '\r' => self.pending.clear(),
+            '\r' => {
+                self.bytes = self.bytes.saturating_sub(self.pending.len());
+                self.pending.clear();
+            }
             '\t' => {
                 let stop = TAB_WIDTH - self.pending.chars().count() % TAB_WIDTH;
                 self.pending.push_str(&" ".repeat(stop));
+                self.bytes += stop;
+                self.enforce_limits();
             }
             '\u{8}' => {
-                self.pending.pop();
+                if let Some(character) = self.pending.pop() {
+                    self.bytes = self.bytes.saturating_sub(character.len_utf8());
+                }
             }
             '\u{1b}' => self.scan = Scan::Escape,
             // remaining control characters have no meaning in a log line.
             character if character.is_control() => {}
-            character => self.pending.push(character),
+            character => {
+                self.pending.push(character);
+                self.bytes += character.len_utf8();
+                self.enforce_limits();
+            }
         }
     }
 
@@ -269,14 +284,25 @@ impl Transcript {
 
     fn newline(&mut self) {
         self.lines.push_back(std::mem::take(&mut self.pending));
-        if self.lines.len() > self.limit {
-            self.lines.pop_front();
-            self.dropped += 1;
-        }
+        self.enforce_limits();
         // a view that has been scrolled back stays on the lines it was showing; only a following
         // view moves with the output.
         if self.offset > 0 {
             self.offset += 1;
+        }
+    }
+
+    fn enforce_limits(&mut self) {
+        while self.lines.len() > self.limit || (self.bytes > BYTE_LIMIT && !self.lines.is_empty()) {
+            if let Some(line) = self.lines.pop_front() {
+                self.bytes = self.bytes.saturating_sub(line.len());
+                self.dropped += 1;
+            }
+        }
+        while self.bytes > BYTE_LIMIT && !self.pending.is_empty() {
+            let remove = self.pending.chars().next().map_or(0, char::len_utf8);
+            self.pending.drain(..remove);
+            self.bytes = self.bytes.saturating_sub(remove);
         }
     }
 }

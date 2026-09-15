@@ -1,4 +1,4 @@
-//! covers that a command's ordinary printing reaches the transcript, that the interface's own
+//! Covers that a command's ordinary printing reaches the transcript, that the interface's own
 //! drawing does not, and that the streams come back afterwards.
 //!
 //! these write to `io::stdout()` directly rather than with `println!`: the test harness redirects
@@ -128,6 +128,32 @@ fn the_streams_come_back_well_enough_to_capture_again() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn restore_does_not_wait_for_an_inherited_child_writer() {
+    let _guard = exclusive();
+    let (mut capture, screen, transcript) =
+        Capture::install(500).expect("the streams can be redirected");
+    let mut child = std::process::Command::new("sh")
+        .args([
+            "-c",
+            "printf child-started\\n; sleep 1; printf child-finished\\n",
+        ])
+        .spawn()
+        .expect("child starts");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let started = std::time::Instant::now();
+    capture.restore();
+    drop(screen);
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(800),
+        "restore waited for an inherited writer"
+    );
+    child.wait().expect("child exits");
+    let captured = lines(&transcript);
+    assert!(holding(&captured, "child-started"), "{captured:?}");
+}
+
 // the same claim as `the_interface_does_not_draw_into_its_own_log`, but as identity rather than
 // On Unix, the UI draws on the same file stdout used at startup. Windows reaches
 // the console by name (`CONOUT$`) instead, where there is no such thing to compare.
@@ -176,7 +202,7 @@ fn what_is_printed_first_is_what_the_pane_shows_first() {
         Capture::install(500).expect("the streams can be redirected");
     {
         let mut stdout = std::io::stdout();
-        let _ = writeln!(stdout, "{}", crate::banner::text());
+        let _ = writeln!(stdout, "RUNINATOR-CONSOLE-BANNER");
         let _ = writeln!(stdout, "console-capture-later-work");
         let _ = stdout.flush();
     }
@@ -184,10 +210,7 @@ fn what_is_printed_first_is_what_the_pane_shows_first() {
     drop(screen);
 
     let captured = lines(&transcript);
-    let crest = crate::banner::text()
-        .lines()
-        .find(|line| line.contains("_ \\"))
-        .expect("the banner has a figlet row");
+    let crest = "RUNINATOR-CONSOLE-BANNER";
     let banner_at = captured.iter().position(|line| line.contains(crest));
     let work_at = captured
         .iter()

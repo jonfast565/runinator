@@ -6,7 +6,7 @@ use std::{env, fs, fs::File, path::PathBuf, sync::Mutex};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::telemetry::{self, TelemetryGuard};
-use crate::tui;
+use crate::tui_log;
 
 // ensures the global subscriber is installed at most once per process. plugins loaded into a
 // service process (e.g. console plugin) call back in via a ctor; the second call becomes a no-op
@@ -37,7 +37,7 @@ pub fn setup_logger(
         // A full-screen dashboard owns stdout while it is active. Keeping normal tracing on the
         // file layer prevents log lines from tearing through the dashboard; the same log remains
         // available through the usual local log path.
-        if std::env::var_os("RUNINATOR_TUI").is_some() {
+        if tui_log::is_active() {
             Box::new(std::io::sink()) as Box<dyn std::io::Write + Send>
         } else {
             Box::new(std::io::stdout()) as Box<dyn std::io::Write + Send>
@@ -51,11 +51,17 @@ pub fn setup_logger(
     // alternate screen, and this second formatting sink preserves the most recent three events in
     // its bottom pane. Outside TUI mode the optional layer is absent, avoiding an extra formatter
     // on every production log record.
-    let tui_layer = tui::is_active().then(|| {
+    let tui_layer = tui_log::is_active().then(|| {
         fmt::layer()
             .with_ansi(false)
             .with_target(true)
-            .with_writer(tui::LogMakeWriter)
+            .with_writer(tui_log::LogMakeWriter)
+    });
+    let remote_layer = crate::remote_logs::prepare(service_name).map(|writer| {
+        fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_writer(writer)
     });
 
     let telemetry = telemetry::init(service_name)?;
@@ -75,6 +81,7 @@ pub fn setup_logger(
         .with(stdout_layer)
         .with(file_layer)
         .with(tui_layer)
+        .with(remote_layer)
         .with(otel_trace_layer)
         .with(otel_log_layer)
         .try_init()

@@ -10,7 +10,7 @@ use reedline::{
 };
 use runinator_models::console::{ConsoleCell, ConsoleCellStatus, ConsoleSession, NewConsoleCell};
 
-use crate::tui;
+use runinator_tui::console as tui;
 
 use super::repl;
 use super::repl_completer::ReplCompleter;

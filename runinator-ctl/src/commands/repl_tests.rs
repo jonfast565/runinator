@@ -332,15 +332,19 @@ fn a_console_verb_is_matched_before_the_clap_surface() {
 
 #[test]
 fn submits_a_finished_line_and_waits_for_an_open_one() {
-    assert!(is_submittable("1 + 2"));
-    assert!(is_submittable(":workflows list"));
-    assert!(!is_submittable("workflow \"x\" v1 {"));
-    assert!(is_submittable(
+    assert!(runinator_ctl_core::console::is_submittable("1 + 2"));
+    assert!(runinator_ctl_core::console::is_submittable(
+        ":workflows list"
+    ));
+    assert!(!runinator_ctl_core::console::is_submittable(
+        "workflow \"x\" v1 {"
+    ));
+    assert!(runinator_ctl_core::console::is_submittable(
         "workflow \"x\" v1 {\n  yield { value: 1 }\n}"
     ));
-    assert!(!is_submittable("\"unfinished"));
-    assert!(!is_submittable("1 + \\"));
-    assert!(!is_submittable("   "));
+    assert!(!runinator_ctl_core::console::is_submittable("\"unfinished"));
+    assert!(!runinator_ctl_core::console::is_submittable("1 + \\"));
+    assert!(!runinator_ctl_core::console::is_submittable("   "));
 }
 
 #[test]

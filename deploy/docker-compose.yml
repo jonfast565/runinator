@@ -35,6 +35,9 @@ services:
       target: broker
     ports:
       - "7070:7070"
+    environment:
+      RUNINATOR_SERVICE_URL: "http://ws:8080/"
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
 
   bootstrap:
     build:
@@ -64,6 +67,8 @@ services:
     environment:
       RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
       RUNINATOR_BLOB_SECRET_ACCESS_KEY: "localdev-blob-secret"
+      RUNINATOR_SERVICE_URL: "http://ws:8080/"
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
     volumes:
       - blob-data:/var/lib/runinator/blobs
 
@@ -92,6 +97,10 @@ services:
       RUNINATOR_BLOB_ENDPOINT: "http://blob:9000/"
       RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
       RUNINATOR_BLOB_SECRET_ACCESS_KEY: "localdev-blob-secret"
+      RUNINATOR_SERVICE_URL: "http://ws:8080/"
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
+      RUNINATOR_DIAGNOSTICS_RETENTION_SECONDS: "86400"
+      RUNINATOR_DIAGNOSTICS_PAYLOAD_BUDGET_BYTES: "1073741824"
     command:
       - "--database"
       - "postgres"
@@ -128,6 +137,8 @@ services:
       RUNINATOR_BLOB_ENDPOINT: "http://blob:9000/"
       RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
       RUNINATOR_BLOB_SECRET_ACCESS_KEY: "localdev-blob-secret"
+      RUNINATOR_SERVICE_URL: "http://ws:8080/"
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
     command:
       - "--database"
       - "postgres"
@@ -145,6 +156,10 @@ services:
       target: waker
     depends_on:
       - broker
+      - ws
+    environment:
+      RUNINATOR_SERVICE_URL: "http://ws:8080/"
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
     command:
       - "--broker-backend"
       - "tcp"

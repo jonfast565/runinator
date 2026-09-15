@@ -6,7 +6,6 @@ mod process_backend;
 mod service;
 mod snapshot;
 mod supervisor;
-mod tui;
 mod types;
 
 pub use runinator_supervisor::os;

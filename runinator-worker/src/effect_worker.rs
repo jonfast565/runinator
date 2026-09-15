@@ -677,7 +677,7 @@ async fn process_provider_effect(
     }
     let provider_name = action.provider.clone();
     let function_name = action.function.clone();
-    runinator_observability::tui::activity(
+    runinator_tui::activity(
         "worker",
         format!("executing {provider_name}.{function_name}"),
         Some(Duration::from_secs(action.timeout_seconds.max(0) as u64)),

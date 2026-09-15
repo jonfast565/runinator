@@ -109,10 +109,6 @@ fn summary_width(first: usize) -> usize {
     output::terminal_width().saturating_sub(first + 3).max(24)
 }
 
-pub(crate) fn is_submittable(source: &str) -> bool {
-    core::is_submittable(source)
-}
-
 pub(crate) fn complete(line: &str) -> Completion {
     core::complete(line)
 }

@@ -6,7 +6,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::commands::repl;
+use runinator_ctl_core::console as repl;
 
 /// what the repl loop should do after a key.
 #[derive(Debug, Clone, PartialEq, Eq)]

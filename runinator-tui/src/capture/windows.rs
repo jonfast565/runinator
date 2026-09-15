@@ -1,4 +1,4 @@
-//! Windows implementation of the dashboard stream capture.
+//! Windows implementation of the shared dashboard stream capture.
 //!
 //! Rust resolves stdout/stderr through `GetStdHandle` for each write, while crossterm opens the
 //! active console by name. Swapping the standard handles therefore catches direct writes without
@@ -8,7 +8,6 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Globalization::CP_UTF8;
@@ -21,7 +20,7 @@ use windows_sys::Win32::System::Console::{
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 
-use super::{Dashboard, Screen, spawn_reader};
+use super::{Dashboard, Reader, Screen, spawn_reader};
 
 const FAILED: i32 = 0;
 
@@ -30,7 +29,7 @@ pub(super) struct Redirect {
     stderr: HANDLE,
     write: Option<File>,
     code_page: Option<u32>,
-    reader: Option<JoinHandle<()>>,
+    reader: Option<Reader>,
 }
 
 unsafe impl Send for Redirect {}
@@ -48,7 +47,7 @@ impl Redirect {
         }
         drop(self.write.take());
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            reader.finish();
         }
     }
 }

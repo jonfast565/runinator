@@ -37,6 +37,7 @@ runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-observability = { path = "../runinator-observability" }
+runinator-tui = { path = "../runinator-tui" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-secrets = { path = "../runinator-secrets" }
 runinator-store = { path = "../runinator-store" }

@@ -105,7 +105,7 @@ without publishing a successful output binding.
 - `runinator-ws-middleware` owns authentication, authorization, rate limiting, and overload protection.
 - `runinator-ws-identity`, `runinator-ws-authoring`, and `runinator-ws-runtime` own their domain handlers and route registrations.
 
-The Tauri command center presents the web service; it does not host a worker or execute provider actions. `runinatorctl` is the terminal control client, and its console and MCP server dispatch through the same command surface as its normal command-line interface.
+The Tauri command center presents the web service; it does not host a worker or execute provider actions. `runinatorctl` is the terminal control client, and its console and MCP server dispatch through the same command surface as its normal command-line interface. `runinator-tui` owns terminal capture, ANSI rendering, console presentation, supervisor views, specialized runtime controls, and the shared local/remote operations console; host crates provide actions and snapshots without taking presentation ownership back.
 
 ### Injectable client capabilities
 
@@ -218,6 +218,12 @@ before reporting artifact events.
 7. An inbound adapter can verify a webhook or claim a due poll; the normalized event enters the
    same durable admission path as any other ingress event.
 8. When the last real continuation retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
+
+Structured process diagnostics use a bounded, nonblocking exporter and an authenticated ingestion
+operation. The diagnostics application service validates run/effect correlations, persists records
+idempotently in the durable broker-message store, and enforces independent age and payload-budget
+retention. This path is separate from effect output delivery, so provider output is not republished
+or settled twice.
 
 ## Extension guide
 

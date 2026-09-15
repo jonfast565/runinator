@@ -23,11 +23,15 @@ fn run_process() -> Result<(), SendableError> {
         .map_err(|err| errors::RUNTIME_BUILD.error(err))?;
     runtime.block_on(async move {
         let config = parse_config()?;
-        let tui = runinator_observability::tui::prepare(config.tui);
+        runinator_observability::remote_logs::configure(
+            config.api_base_url.clone(),
+            config.api_key.clone(),
+        );
+        let tui = runinator_tui::prepare(config.tui);
         let process = ProcessResources::start("Runinator Worker")?;
         if tui {
-            let dashboard = runinator_observability::tui::install();
-            runinator_observability::tui::register(
+            let dashboard = runinator_tui::install();
+            runinator_tui::register(
                 "worker",
                 [
                     format!(
@@ -39,7 +43,7 @@ fn run_process() -> Result<(), SendableError> {
             );
             let dashboard_shutdown = process.shutdown().clone();
             let dashboard_stop = dashboard_shutdown.clone();
-            runinator_observability::tui::spawn(
+            runinator_tui::spawn(
                 dashboard,
                 move || dashboard_shutdown.is_cancelled(),
                 move || dashboard_stop.trigger(),
@@ -59,7 +63,7 @@ async fn run(config: Config, shutdown: Shutdown) -> Result<(), SendableError> {
         labels = ?config.labels,
         "worker starting"
     );
-    runinator_observability::tui::activity("worker", "connecting to broker", None);
+    runinator_tui::activity("worker", "connecting to broker", None);
 
     // the shared agent lifecycle owns registration retry, heartbeat, and restarting the action loop
     // after a failure; tracing already reports loop activity here, so no observer is needed.

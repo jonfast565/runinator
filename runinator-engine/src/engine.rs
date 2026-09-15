@@ -148,19 +148,19 @@ pub async fn run_background_engine_with_adapter<T: BackgroundEngineStore>(
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
     let config = config.normalized();
-    runinator_observability::tui::register(
+    runinator_tui::register(
         "engine",
         [format!(
             "durable orchestration  •  ingress concurrency {}",
             config.max_concurrent_ingress
         )],
     );
-    runinator_observability::tui::gauge(
+    runinator_tui::gauge(
         "engine",
         "ingress capacity",
         config.max_concurrent_ingress as i64,
     );
-    runinator_observability::tui::activity("engine", "starting durable orchestration loops", None);
+    runinator_tui::activity("engine", "starting durable orchestration loops", None);
     // A standalone engine owns no HTTP-side signals; its durable loops continue polling normally.
     let local_signals = local_signals.unwrap_or_default();
     // Trace at the engine boundary so an operator can follow real broker traffic by the workflow
@@ -296,7 +296,7 @@ pub async fn run_background_engine_with_adapter<T: BackgroundEngineStore>(
     ));
 
     info!("background engine started");
-    runinator_observability::tui::activity("engine", "waiting for durable work", None);
+    runinator_tui::activity("engine", "waiting for durable work", None);
     tokio::select! {
         // graceful shutdown is checked first so normal teardown is never misreported as a failure.
         biased;

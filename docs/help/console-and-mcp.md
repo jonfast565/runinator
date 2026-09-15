@@ -41,6 +41,13 @@ been run, a prompt at the bottom, and the session's scope beside it.
 naming the session and the service, a scrollable pane holding everything commands have printed, the
 input, a completion menu, and a key legend.
 
+Both the full-screen console and `runinatorctl tui` reuse `--api-base-url`,
+`RUNINATOR_API_BASE_URL`, and the normal login/API-key session rules. If neither the flag nor the
+environment selected a server, they prompt before authentication; clap's localhost default alone
+is intentionally insufficient. Noninteractive commands and `console --plain` retain their existing
+defaults. Full-screen commands are excluded from MCP/browser execution and nested terminal sessions
+are rejected.
+
 The output pane is the console's own scrollback, not the terminal's. `PgUp`/`PgDn` page through it,
 `Shift+↑`/`Shift+↓` move a line, `Shift+Home`/`Shift+End` jump to the oldest line or back to
 following, and `Shift+←`/`Shift+→` scroll sideways for output wider than the pane (tables are

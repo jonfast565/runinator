@@ -120,6 +120,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    let process = runinator_platform::startup::ProcessResources::start("Runinator Adapter Host")
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+
     let token = std::env::var("RUNINATOR_ADAPTER_HOST_TOKEN")
         .map_err(|_| "RUNINATOR_ADAPTER_HOST_TOKEN is required")?;
     let paths = std::env::var_os("RUNINATOR_ADAPTER_PLUGIN_PATHS")
@@ -131,7 +134,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(8790);
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let listener = tokio::net::TcpListener::bind(address).await?;
-    serve(listener, token, paths, std::future::pending()).await
+    let shutdown = process.shutdown().clone();
+    serve(
+        listener,
+        token,
+        paths,
+        async move { shutdown.cancelled().await },
+    )
+    .await
 }
 
 pub async fn run_child_command(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {

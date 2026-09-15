@@ -21,10 +21,15 @@
 
 use std::fs::File;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{self, Receiver},
+};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
+use super::Result;
 use super::transcript::Transcript;
-use crate::commands::Result;
 
 #[cfg(unix)]
 #[path = "capture/unix.rs"]
@@ -110,7 +115,13 @@ fn pump(mut source: File, sink: Shared) {
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
+            // WSL PTYs can transiently fail a pipe read during terminal teardown. Keep the read
+            // end alive while writers can still reach it so their next write cannot become EPIPE.
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
         };
         tail.extend_from_slice(&buffer[..read]);
         let text = match std::str::from_utf8(&tail) {
@@ -140,13 +151,32 @@ fn pump(mut source: File, sink: Shared) {
 }
 
 /// start the reader thread over a pipe's read end.
-fn spawn_reader(source: File, limit: usize) -> Result<(std::thread::JoinHandle<()>, Shared)> {
+pub(super) struct Reader {
+    handle: JoinHandle<()>,
+    done: Receiver<()>,
+}
+
+impl Reader {
+    pub(super) fn finish(self) {
+        if self.done.recv_timeout(Duration::from_millis(250)).is_ok() {
+            let _ = self.handle.join();
+        }
+        // An inherited child writer may outlive the prompt. Detaching the drain prevents exit from
+        // hanging and keeps the read end open until that writer closes naturally.
+    }
+}
+
+fn spawn_reader(source: File, limit: usize) -> Result<(Reader, Shared)> {
     let transcript: Shared = Arc::new(Mutex::new(Transcript::with_limit(limit)));
     let sink = Arc::clone(&transcript);
-    let reader = std::thread::Builder::new()
+    let (done_tx, done) = mpsc::sync_channel(1);
+    let handle = std::thread::Builder::new()
         .name("console-output".to_string())
-        .spawn(move || pump(source, sink))?;
-    Ok((reader, transcript))
+        .spawn(move || {
+            pump(source, sink);
+            let _ = done_tx.send(());
+        })?;
+    Ok((Reader { handle, done }, transcript))
 }
 
 #[cfg(test)]

@@ -31,6 +31,10 @@ struct StoredSession {
     active_org_id: Option<Uuid>,
 }
 
+pub fn stored_server_suggestion() -> Result<Option<String>> {
+    Ok(read_session()?.map(|session| session.api_base_url))
+}
+
 pub async fn login(cli: &Cli) -> Result<()> {
     let username = credential(&cli.username).map_or_else(|| prompt("username"), Ok)?;
     let password = credential(&cli.password).map_or_else(|| prompt("password"), Ok)?;

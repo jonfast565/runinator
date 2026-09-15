@@ -1,4 +1,4 @@
-//! moving the standard streams with `SetStdHandle`.
+//! Moving the standard streams with `SetStdHandle`.
 //!
 //! `println!` here does not travel through descriptor 1, but it does call
 //! `GetStdHandle(STD_OUTPUT_HANDLE)` on *every* write rather than caching what it gets back
@@ -21,7 +21,6 @@
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
-use std::thread::JoinHandle;
 
 use windows_sys::Win32::Foundation::{
     DUPLICATE_SAME_ACCESS, DuplicateHandle, GENERIC_READ, GENERIC_WRITE, HANDLE,
@@ -38,8 +37,8 @@ use windows_sys::Win32::System::Console::{
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-use super::{Screen, Shared, spawn_reader};
-use crate::commands::{Result, err};
+use super::super::{Result, err};
+use super::{Reader, Screen, Shared, spawn_reader};
 
 /// the win32 `BOOL` a failed call returns.
 const FAILED: i32 = 0;
@@ -54,7 +53,7 @@ pub(super) struct Redirect {
     write: Option<File>,
     /// the console's output code page before it was put into utf-8, when it had to be changed.
     code_page: Option<u32>,
-    reader: Option<JoinHandle<()>>,
+    reader: Option<Reader>,
 }
 
 // `HANDLE` is a raw pointer, which is not `Send` by default. these are process-wide kernel objects
@@ -79,7 +78,7 @@ impl Redirect {
         // end-of-file — the same moment the unix half reaches by closing descriptors 1 and 2.
         drop(self.write.take());
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            reader.finish();
         }
     }
 }

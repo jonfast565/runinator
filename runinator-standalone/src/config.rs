@@ -13,6 +13,13 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
+    /// remote server used by the attached operations console.
+    #[arg(long, env = "RUNINATOR_API_BASE_URL", global = true)]
+    pub api_base_url: Option<String>,
+    /// API key or access token used by the attached operations console.
+    #[arg(long, env = "RUNINATOR_API_KEY", global = true)]
+    pub api_key: Option<String>,
+
     #[arg(long, env = "RUNINATOR_STANDALONE_STATE_DIR", global = true)]
     pub state_dir: Option<PathBuf>,
     #[arg(
@@ -100,6 +107,9 @@ pub struct Cli {
     pub no_desktop_agent: bool,
     #[arg(long = "pack", env = "RUNINATOR_STANDALONE_PACK", global = true)]
     pub packs: Vec<PathBuf>,
+    /// path to the runinatorctl executable used by startup pack imports.
+    #[arg(long, env = "RUNINATOR_STANDALONE_CTL_PATH", global = true)]
+    pub ctl_path: Option<PathBuf>,
     #[arg(
         long,
         env = "RUNINATOR_STANDALONE_NO_DEFAULT_PACK",
@@ -142,6 +152,8 @@ pub enum Command {
         #[arg(long)]
         watch: bool,
     },
+    /// open the operations console without starting or stopping a runtime.
+    Tui,
     #[command(hide = true)]
     Serve,
 }
@@ -153,7 +165,7 @@ impl Command {
                 *foreground || *tui
             }
             Self::Serve => true,
-            Self::Stop | Self::Status { .. } | Self::Logs { .. } => false,
+            Self::Stop | Self::Status { .. } | Self::Logs { .. } | Self::Tui => false,
         }
     }
 
@@ -183,30 +195,80 @@ pub struct StandaloneConfig {
     pub auth_enabled: bool,
     pub desktop_agent: bool,
     pub packs: Vec<PathBuf>,
+    #[serde(default)]
+    pub ctl_path: Option<PathBuf>,
 }
 
 impl Cli {
+    pub fn resolved_state_dir(&self) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+        let invoking_dir = std::env::current_dir()?;
+        let state_path = self
+            .state_dir
+            .clone()
+            .unwrap_or(runinator_platform::app_data::app_data_path("standalone")?);
+        validate_wsl_path(&state_path)?;
+        Ok(absolute_from(&invoking_dir, state_path))
+    }
+
     pub fn resolved_config(
         &self,
     ) -> Result<StandaloneConfig, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(path) = &self.config_json {
-            return Ok(serde_json::from_slice(&std::fs::read(path)?)?);
+            let invoking_dir = std::env::current_dir()?;
+            let config_path = absolute_from(&invoking_dir, path.clone());
+            let mut config: StandaloneConfig =
+                serde_json::from_slice(&std::fs::read(&config_path)?)?;
+            let base = config_path.parent().unwrap_or(&invoking_dir);
+            config.resolve_paths(base)?;
+            return Ok(config);
         }
-        let state_dir = self
-            .state_dir
-            .clone()
-            .unwrap_or(runinator_platform::app_data::app_data_path("standalone")?);
-        let sqlite_path = self
+        let invoking_dir = std::env::current_dir()?;
+        let state_dir = self.resolved_state_dir()?;
+        let sqlite_source = self
             .sqlite_path
             .clone()
             .unwrap_or(runinator_platform::app_data::default_sqlite_path()?);
-        let mut packs = self.packs.clone();
+        validate_wsl_path(&sqlite_source)?;
+        let sqlite_path = absolute_from(&invoking_dir, sqlite_source);
+        let mut packs = self
+            .packs
+            .iter()
+            .map(|path| {
+                validate_wsl_path(path).map(|()| absolute_from(&invoking_dir, path.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         if packs.is_empty() && !self.no_default_pack {
-            let default = PathBuf::from("packs/hello-world");
+            let default = invoking_dir.join("packs/hello-world");
             if default.exists() {
                 packs.push(default);
+            } else if matches!(
+                &self.command,
+                Command::Start { .. } | Command::Restart { .. } | Command::Serve
+            ) {
+                eprintln!(
+                    "optional default pack was not found at {}; continuing without it",
+                    default.display()
+                );
             }
         }
+        for pack in &packs {
+            if !pack.exists() {
+                return Err(
+                    format!("standalone pack path does not exist: {}", pack.display()).into(),
+                );
+            }
+        }
+        let ctl_path = self
+            .ctl_path
+            .as_ref()
+            .map(|path| {
+                validate_wsl_path(path)?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(absolute_from(
+                    &invoking_dir,
+                    path.clone(),
+                ))
+            })
+            .transpose()?;
         Ok(StandaloneConfig {
             state_dir,
             database: self.database.clone(),
@@ -224,8 +286,64 @@ impl Cli {
             auth_enabled: self.auth_enabled,
             desktop_agent: !self.no_desktop_agent,
             packs,
+            ctl_path,
         })
     }
+}
+
+impl StandaloneConfig {
+    fn resolve_paths(
+        &mut self,
+        base: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        validate_wsl_path(&self.state_dir)?;
+        validate_wsl_path(&self.sqlite_path)?;
+        self.state_dir = absolute_from(base, self.state_dir.clone());
+        self.sqlite_path = absolute_from(base, self.sqlite_path.clone());
+        for pack in &mut self.packs {
+            validate_wsl_path(pack)?;
+            *pack = absolute_from(base, pack.clone());
+            if !pack.exists() {
+                return Err(
+                    format!("standalone pack path does not exist: {}", pack.display()).into(),
+                );
+            }
+        }
+        if let Some(path) = &mut self.ctl_path {
+            validate_wsl_path(path)?;
+            *path = absolute_from(base, path.clone());
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn absolute_from(base: &std::path::Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    }
+}
+
+pub(crate) fn validate_wsl_path(
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(not(windows))]
+    {
+        let value = path.to_string_lossy();
+        if value.as_bytes().get(1) == Some(&b':')
+            && value
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+        {
+            return Err(format!(
+                "Windows path '{value}' cannot be opened by a Linux/WSL process; use its /mnt/<drive>/... path"
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

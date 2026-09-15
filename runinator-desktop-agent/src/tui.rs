@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
-use runinator_observability::tui;
+use runinator_tui as tui;
 use runinator_worker::agent::{AgentConnection, AgentObserver, AgentRuntime, AgentStatus};
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info};

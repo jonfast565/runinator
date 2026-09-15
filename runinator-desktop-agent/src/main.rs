@@ -37,10 +37,14 @@ fn main() -> ExitCode {
     let args = CliArgs::parse();
     // Precedence is CLI > env > saved JSON > defaults; see `CliArgs::apply`.
     let config = args.apply(config::load());
+    runinator_observability::remote_logs::configure(
+        config.service_url.clone(),
+        config.api_key.clone(),
+    );
     // Prepare before this process installs its tracing subscriber so terminal mode can reserve
     // stdout for the alternate-screen dashboard. A non-interactive `--tui` falls back to headless
     // operation with ordinary logs, matching the other runtime binaries.
-    let terminal_tui = runinator_observability::tui::prepare(args.tui);
+    let terminal_tui = runinator_tui::prepare(args.tui);
 
     // ensure only one agent runs at a time: two copies would both register the exclusive `desktop`
     // replica and contend for the same pinned/labeled work.

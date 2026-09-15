@@ -58,6 +58,7 @@ members = [
     "runinator-sandbox",
     "runinator-plugin-console",
     "runinator-observability",
+    "runinator-tui",
     "runinator-secrets",
     "runinator-scheduling",
     "runinator-platform",
@@ -82,4 +83,4 @@ members = [
 ]
 
 [workspace.package]
-version = "0.34.751"
+version = "0.35.752"

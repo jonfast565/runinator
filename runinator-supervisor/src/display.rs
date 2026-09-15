@@ -5,13 +5,13 @@ use chrono::{DateTime, Local};
 use crate::{
     config::Paths,
     snapshot::{StateSnapshot, read_snapshot},
-    tui::{DashboardMode, SupervisorTui},
     types::DynError,
 };
+use runinator_tui::supervisor::{DashboardMode, SupervisorTui};
 
 pub fn show_status(paths: &Paths, watch: bool) -> Result<(), DynError> {
     if watch && let Some(dashboard) = SupervisorTui::open(DashboardMode::Monitor)? {
-        return dashboard.watch(paths);
+        return dashboard.watch(&paths.state_file);
     }
 
     loop {

@@ -18,9 +18,9 @@ use crate::{
     display::{clear_screen, render_snapshot},
     os::{is_process_running, send_kill, send_terminate},
     snapshot::{ProcessSnapshot, StateSnapshot, write_snapshot},
-    tui::{DashboardAction, DashboardMode, SupervisorTui},
     types::DynError,
 };
+use runinator_tui::supervisor::{DashboardAction, DashboardMode, SupervisorTui};
 
 #[derive(Debug, Clone, Copy)]
 enum ProcStatus {

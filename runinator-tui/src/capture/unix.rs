@@ -1,17 +1,15 @@
-//! Unix implementation of the dashboard stream capture.
+//! Unix implementation of the shared dashboard stream capture.
 
+use super::{Dashboard, Reader, Screen, spawn_reader};
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::fd::{FromRawFd, RawFd};
 use std::sync::Arc;
-use std::thread::JoinHandle;
-
-use super::{Dashboard, Screen, spawn_reader};
 
 pub(super) struct Redirect {
     stdout: RawFd,
     stderr: RawFd,
-    reader: Option<JoinHandle<()>>,
+    reader: Option<Reader>,
 }
 
 impl Redirect {
@@ -27,7 +25,7 @@ impl Redirect {
             libc::close(self.stderr);
         }
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            reader.finish();
         }
     }
 }
@@ -83,6 +81,10 @@ fn pipe() -> io::Result<(RawFd, RawFd)> {
     if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
+    if let Err(error) = set_close_on_exec(ends[0]).and_then(|()| set_close_on_exec(ends[1])) {
+        close(&ends);
+        return Err(error);
+    }
     Ok((ends[0], ends[1]))
 }
 
@@ -93,7 +95,20 @@ fn duplicate(fd: RawFd, opened: &[RawFd]) -> io::Result<RawFd> {
         close(opened);
         return Err(error);
     }
+    if let Err(error) = set_close_on_exec(copy) {
+        close(&[copy]);
+        close(opened);
+        return Err(error);
+    }
     Ok(copy)
+}
+
+fn set_close_on_exec(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn close(fds: &[RawFd]) {

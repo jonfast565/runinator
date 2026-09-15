@@ -30,12 +30,16 @@ use ratatui::crossterm::terminal::{
 use ratatui::crossterm::{cursor, execute};
 use ratatui::layout::Position;
 
-use crate::commands::Result;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub(crate) mod capture;
-pub(crate) mod editor;
-pub(crate) mod render;
-pub(crate) mod transcript;
+fn err(message: impl Into<String>) -> Box<dyn std::error::Error + Send + Sync> {
+    Box::new(io::Error::other(message.into()))
+}
+
+mod capture;
+mod editor;
+mod render;
+mod transcript;
 
 use capture::{Capture, Screen, Shared};
 use editor::{Outcome, PromptEditor};
@@ -46,13 +50,13 @@ use transcript::{COLUMN_STEP, LINE_LIMIT, Transcript, WHEEL_ROWS};
 const TICK: Duration = Duration::from_millis(100);
 
 /// what one turn of the prompt produced.
-pub(crate) enum Submission {
+pub enum Submission {
     Line(String),
     Exit,
 }
 
 /// the console, owning the terminal and the captured output while it is open.
-pub(crate) struct Prompt {
+pub struct Prompt {
     terminal: Terminal<CrosstermBackend<Screen>>,
     editor: PromptEditor,
     transcript: Shared,
@@ -67,10 +71,12 @@ pub(crate) struct Prompt {
     note: Option<String>,
     raw: bool,
     screen: bool,
+    _claim: crate::TerminalClaim,
 }
 
 impl Prompt {
-    pub(crate) fn new(session: String, api_base_url: String) -> Result<Self> {
+    pub fn new(session: String, api_base_url: String) -> Result<Self> {
+        let claim = crate::claim_terminal()?;
         let (capture, screen, transcript) = Capture::install(LINE_LIMIT)?;
         let mut prompt = Self {
             terminal: Terminal::new(CrosstermBackend::new(screen))?,
@@ -84,23 +90,24 @@ impl Prompt {
             note: None,
             raw: false,
             screen: false,
+            _claim: claim,
         };
         prompt.enter()?;
         Ok(prompt)
     }
 
     /// the session shown in the status line, which `:use` and `:new` change.
-    pub(crate) fn set_session(&mut self, session: String) {
+    pub fn set_session(&mut self, session: String) {
         self.session = session;
     }
 
     /// the message shown under the input until the next line is typed.
-    pub(crate) fn set_note(&mut self, note: Option<String>) {
+    pub fn set_note(&mut self, note: Option<String>) {
         self.note = note;
     }
 
     /// read one line, blocking until it is submitted or the console is closed.
-    pub(crate) fn read_line(&mut self) -> Result<Submission> {
+    pub fn read_line(&mut self) -> Result<Submission> {
         loop {
             self.draw("ready")?;
             // polling rather than blocking on `read` is what lets output a command is still writing
@@ -137,7 +144,7 @@ impl Prompt {
     /// `None` means Ctrl+C: the command's future is dropped, which cancels whatever it was waiting
     /// on. output keeps arriving in the pane throughout, and the pane stays scrollable, so a long
     /// run can be read while it is still going.
-    pub(crate) async fn run<T>(&mut self, task: impl Future<Output = T>) -> Result<Option<T>> {
+    pub async fn run<T>(&mut self, task: impl Future<Output = T>) -> Result<Option<T>> {
         let mut task = std::pin::pin!(task);
         loop {
             tokio::select! {
@@ -163,7 +170,7 @@ impl Prompt {
     ///
     /// this prints, and printing is captured, so the echo lands in the pane ahead of whatever the
     /// command writes next — in order, since both travel the same pipe.
-    pub(crate) fn echo(&mut self, line: &str) {
+    pub fn echo(&mut self, line: &str) {
         let command = line.trim_start().starts_with(':');
         let sigil = if command { ":" } else { "›" };
         for (index, text) in line.lines().enumerate() {
@@ -173,11 +180,11 @@ impl Prompt {
     }
 
     /// the lines typed so far, which the caller persists between sessions.
-    pub(crate) fn history(&self) -> Vec<String> {
+    pub fn history(&self) -> Vec<String> {
         self.editor.history().to_vec()
     }
 
-    pub(crate) fn with_history(mut self, history: Vec<String>) -> Self {
+    pub fn with_history(mut self, history: Vec<String>) -> Self {
         self.editor = PromptEditor::new(history);
         self
     }

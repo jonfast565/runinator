@@ -262,7 +262,7 @@ pub async fn waker_loop_with_settings(
             if active.values != next || active.source != "server" {
                 active.values = next;
                 active.source = "server";
-                runinator_observability::tui::gauge(
+                runinator_tui::gauge(
                     "waker",
                     "wake capacity",
                     active.values.max_concurrent_wakes as i64,
@@ -315,7 +315,7 @@ async fn handle_wake(
     let now = Utc::now();
     metrics::wake_received((delivery.command.due_at - now).num_milliseconds() as f64);
     let remaining = (delivery.command.due_at - now).to_std().unwrap_or_default();
-    runinator_observability::tui::activity(
+    runinator_tui::activity(
         "waker",
         format!("wake {}", delivery.command.effect_id()),
         (!remaining.is_zero()).then_some(remaining),
@@ -359,7 +359,7 @@ async fn handle_wake(
 /// infrastructure effect host that armed this timer, so the waker never needs to know what kind of
 /// effect it is settling.
 async fn settle(broker: &dyn Broker, group: &str, delivery: &runinator_broker::WakeDelivery) {
-    runinator_observability::tui::activity(
+    runinator_tui::activity(
         "waker",
         format!("settling wake {}", delivery.command.effect_id()),
         None,

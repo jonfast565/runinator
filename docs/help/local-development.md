@@ -185,6 +185,7 @@ You can also run the standalone host directly:
 cargo build --workspace
 cargo run -p runinator-standalone -- start
 cargo run -p runinator-standalone -- start --tui
+cargo run -p runinator-standalone -- tui
 cargo run -p runinator-standalone -- status
 cargo run -p runinator-standalone -- restart
 cargo run -p runinator-standalone -- stop
@@ -194,6 +195,19 @@ The web service, broker, blob service, adapter host, engines, wakers, and ordina
 tasks inside one OS process. `--workers`, `--wakers`, and `--engines` set startup scale; the existing
 node-pool API can change those counts live through the `standalone` provisioning backend. The
 exclusive desktop-style worker is included by default and can be omitted with `--no-desktop-agent`.
+
+`runinator-standalone tui` opens the shared operations console without changing the runtime. When
+the local state file exists it offers the local server first; `--api-base-url` or
+`RUNINATOR_API_BASE_URL` selects a remote server directly. `runinatorctl tui` uses the same console,
+but always requires an explicit or interactively selected server. Existing CLI credentials and
+stored sessions are matched to that server; the built-in localhost CLI default does not count as a
+selection for either full-screen CLI.
+
+Before a standalone daemon is launched, relative state, SQLite, pack, and control-executable paths
+are made absolute. Pack imports therefore keep resolving from the invoking directory after the
+daemon changes process context. Use `--ctl-path` or `RUNINATOR_STANDALONE_CTL_PATH` when sibling
+executable discovery is not appropriate. WSL paths under its Linux filesystem and `/mnt` work,
+including spaces; pass `/mnt/c/...` rather than a Windows `C:\\...` drive path.
 
 For process-isolation debugging, select the legacy supervisor explicitly:
 
@@ -390,6 +404,16 @@ when terminal detection falls back to normal logs. While a dashboard is open, st
 kept in the normal log file so it cannot corrupt the display. Press `q`, `Esc`, or `Ctrl-C` to
 request the process's usual graceful shutdown. `runinator-standalone status --watch` remains a
 plain refreshing status table rather than the full metrics dashboard.
+
+### Operations console
+
+The shared `runinator-tui` library also owns the full-screen console, supervisor display, desktop
+controls, runtime dashboards, ANSI log rendering, and terminal capture. Its operations console has
+Overview, Components, Workflows, Runs, and Logs tabs. It can scale supported groups, launch a
+workflow through guided type-aware fields (with JSON as the advanced input), inspect and control
+runs, review whole-run or selected-step replay plans, and filter retained process logs. Local
+standalone attachment supplements API data from an atomic, versioned `dashboard.json` beside the
+compatible `state.json`; remote views reconnect and retain the last successful display while stale.
 
 ## Cross-platform Local Run (xtask)
 

@@ -27,6 +27,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-models = { path = "../runinator-models" }
 runinator-observability = { path = "../runinator-observability" }
+runinator-tui = { path = "../runinator-tui" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-secrets = { path = "../runinator-secrets" }
 opentelemetry = "0.32"

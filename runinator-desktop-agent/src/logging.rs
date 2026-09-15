@@ -56,6 +56,7 @@ pub fn init(shared: SharedHandle, initial: LogLevel) {
         .with(filter)
         .with(console_layer)
         .with(file_layer)
+        .with(remote_layer())
         .try_init()
         .is_err()
     {
@@ -70,8 +71,10 @@ pub fn init(shared: SharedHandle, initial: LogLevel) {
 /// install stderr tracing for the headless host. unlike the gui path there is no in-memory console
 /// or reload handle; process supervisors consume stderr, and `RUNINATOR_LOG` retains precedence.
 pub fn init_headless(initial: LogLevel) {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(initial_filter(initial))
+    let _ = tracing_subscriber::registry()
+        .with(initial_filter(initial))
+        .with(tracing_subscriber::fmt::layer())
+        .with(remote_layer())
         .try_init();
 }
 
@@ -93,13 +96,26 @@ pub fn init_tui(initial: LogLevel) {
         .with_target(true)
         .with_level(true)
         .without_time()
-        .with_writer(runinator_observability::tui::LogMakeWriter);
+        .with_writer(runinator_tui::LogMakeWriter);
 
     let _ = tracing_subscriber::registry()
         .with(initial_filter(initial))
         .with(dashboard_layer)
         .with(file_layer)
+        .with(remote_layer())
         .try_init();
+}
+
+fn remote_layer<S>() -> Option<impl tracing_subscriber::Layer<S>>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    runinator_observability::remote_logs::prepare("desktop-agent").map(|writer| {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_writer(writer)
+    })
 }
 
 /// change the live log level from the GUI; a no-op until [`init`] has run.

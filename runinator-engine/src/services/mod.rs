@@ -8,6 +8,7 @@ mod automation_operations;
 mod catalog_operations;
 mod console_operations;
 mod debug_operations;
+mod diagnostics_operations;
 mod execution_profile_operations;
 mod function_invocations;
 mod function_packages;
@@ -30,6 +31,7 @@ pub use automation_operations::AutomationOperations;
 pub use catalog_operations::{CatalogOperations, provider_catalog_item};
 pub use console_operations::ConsoleOperations;
 pub use debug_operations::DebugOperations;
+pub use diagnostics_operations::DiagnosticsOperations;
 pub use execution_profile_operations::ExecutionProfileOperations;
 pub use function_invocations::FunctionInvocations;
 pub use function_packages::FunctionPackages;
@@ -55,6 +57,9 @@ pub use workspace_operations::{
     WorkspaceOperations, WorkspaceRecovery,
 };
 
+#[cfg(test)]
+#[path = "diagnostics_operations_tests.rs"]
+mod diagnostics_operations_tests;
 #[cfg(test)]
 #[path = "pack_operations_tests.rs"]
 mod pack_operations_tests;

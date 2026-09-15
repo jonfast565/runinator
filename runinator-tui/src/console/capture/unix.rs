@@ -1,4 +1,4 @@
-//! moving the standard streams with `dup2`.
+//! Moving the standard streams with `dup2`.
 //!
 //! descriptors 1 and 2 are pointed at the pipe's write end, and `install` keeps a duplicate of each
 //! original: one to restore from, and one for the interface to draw on.
@@ -6,15 +6,14 @@
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::fd::{FromRawFd, RawFd};
-use std::thread::JoinHandle;
 
-use super::{Screen, Shared, spawn_reader};
-use crate::commands::{Result, err};
+use super::super::{Result, err};
+use super::{Reader, Screen, Shared, spawn_reader};
 
 pub(super) struct Redirect {
     stdout: RawFd,
     stderr: RawFd,
-    reader: Option<JoinHandle<()>>,
+    reader: Option<Reader>,
 }
 
 impl Redirect {
@@ -32,7 +31,7 @@ impl Redirect {
         // descriptors 1 and 2 were the last write ends open, so the reader now sees end-of-file and
         // drains the rest of the pipe before it finishes.
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            reader.finish();
         }
     }
 }
@@ -86,6 +85,10 @@ fn pipe() -> Result<(RawFd, RawFd)> {
             io::Error::last_os_error()
         )));
     }
+    if let Err(error) = set_close_on_exec(ends[0]).and_then(|()| set_close_on_exec(ends[1])) {
+        close(&ends);
+        return Err(error.into());
+    }
     Ok((ends[0], ends[1]))
 }
 
@@ -97,7 +100,20 @@ fn duplicate(fd: RawFd, opened: &[RawFd]) -> Result<RawFd> {
         close(opened);
         return Err(err(format!("cannot duplicate the terminal: {failure}")));
     }
+    if let Err(error) = set_close_on_exec(copy) {
+        close(&[copy]);
+        close(opened);
+        return Err(error.into());
+    }
     Ok(copy)
+}
+
+fn set_close_on_exec(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn close(fds: &[RawFd]) {

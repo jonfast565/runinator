@@ -7,13 +7,15 @@ use std::{
 
 use chrono::Utc;
 use runinator_models::local_runtime::{
-    LocalRuntimeComponentSnapshot, LocalRuntimeHostKind, LocalRuntimeSnapshot,
+    LocalDashboardSnapshot, LocalResourceSample, LocalRuntimeComponentSnapshot,
+    LocalRuntimeHostKind, LocalRuntimeSnapshot,
 };
 
 #[derive(Clone)]
 pub struct StateTracker {
     started_at: String,
     components: Arc<Mutex<BTreeMap<String, Component>>>,
+    resources: Arc<runinator_observability::resource_telemetry::TelemetryCollector>,
 }
 
 struct Component {
@@ -29,6 +31,9 @@ impl StateTracker {
         Self {
             started_at: Utc::now().to_rfc3339(),
             components: Arc::new(Mutex::new(BTreeMap::new())),
+            resources: Arc::new(
+                runinator_observability::resource_telemetry::TelemetryCollector::new(),
+            ),
         }
     }
 
@@ -135,11 +140,72 @@ impl StateTracker {
     }
 
     pub fn write(&self, path: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let snapshot = self.snapshot();
         let temp = path.with_extension("json.tmp");
-        std::fs::write(&temp, serde_json::to_vec_pretty(&self.snapshot())?)?;
-        std::fs::rename(temp, path)?;
+        std::fs::write(&temp, serde_json::to_vec_pretty(&snapshot)?)?;
+        replace_file(&temp, path)?;
+        let Some(state_dir) = path.parent() else {
+            return Ok(());
+        };
+        let resource = self.resources.sample();
+        let dashboard = LocalDashboardSnapshot {
+            version: 1,
+            host_id: runinator_observability::resource_telemetry::host_metadata()
+                .host_name
+                .unwrap_or_else(|| format!("standalone-{}", std::process::id())),
+            host_kind: snapshot.host_kind,
+            pid: snapshot.pid,
+            started_at: snapshot.started_at,
+            updated_at: snapshot.updated_at,
+            resource_samples: vec![LocalResourceSample {
+                sampled_at: resource.sampled_at.to_rfc3339(),
+                cpu_percent: f64::from(resource.cpu_percent),
+                memory_bytes: resource.mem_used_bytes,
+            }],
+            components: snapshot.components,
+            log_location: state_dir.join("standalone.log").display().to_string(),
+        };
+        let dashboard_path = state_dir.join("dashboard.json");
+        let dashboard_temp = state_dir.join("dashboard.json.tmp");
+        std::fs::write(&dashboard_temp, serde_json::to_vec_pretty(&dashboard)?)?;
+        replace_file(&dashboard_temp, &dashboard_path)?;
         Ok(())
     }
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    if unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

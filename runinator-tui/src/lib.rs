@@ -8,7 +8,10 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     io::{self, IsTerminal, Write},
-    sync::{Arc, OnceLock, RwLock},
+    sync::{
+        Arc, Mutex, OnceLock, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -28,11 +31,33 @@ use ratatui::{
 };
 use tracing_subscriber::fmt::MakeWriter;
 
-use crate::resource_telemetry::TelemetryCollector;
+use runinator_observability::resource_telemetry::TelemetryCollector;
 
+mod ansi;
 mod capture;
+pub mod console;
+pub mod operations;
+pub mod supervisor;
+
+use ansi::{AnsiParser, StyledLine};
 
 static DASHBOARD: OnceLock<Arc<Dashboard>> = OnceLock::new();
+static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct TerminalClaim;
+
+fn claim_terminal() -> io::Result<TerminalClaim> {
+    TERMINAL_ACTIVE
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map(|_| TerminalClaim)
+        .map_err(|_| io::Error::other("a Runinator full-screen terminal is already active"))
+}
+
+impl Drop for TerminalClaim {
+    fn drop(&mut self) {
+        TERMINAL_ACTIVE.store(false, Ordering::Release);
+    }
+}
 
 /// The compact dashboard reserves exactly three rows for recent events. Retaining the same number
 /// avoids a growing in-memory log and guarantees that the bottom panel never crowds out runtime
@@ -66,6 +91,7 @@ pub fn prepare(enabled: bool) -> bool {
     // Install before the process logger so early startup diagnostics are eligible for the rolling
     // log pane; later callers of `install` receive this same shared state.
     let _ = install();
+    runinator_observability::tui_log::install_sink(log_line);
     true
 }
 
@@ -206,7 +232,8 @@ pub fn spawn_with_key_handler(
 pub struct Dashboard {
     started: Instant,
     components: RwLock<BTreeMap<&'static str, Component>>,
-    logs: RwLock<VecDeque<String>>,
+    logs: RwLock<VecDeque<StyledLine>>,
+    ansi: Mutex<AnsiParser>,
 }
 
 impl Default for Dashboard {
@@ -215,6 +242,7 @@ impl Default for Dashboard {
             started: Instant::now(),
             components: RwLock::new(BTreeMap::new()),
             logs: RwLock::new(VecDeque::with_capacity(MAX_LOG_LINES)),
+            ansi: Mutex::new(AnsiParser::default()),
         }
     }
 }
@@ -291,6 +319,14 @@ impl Dashboard {
     }
 
     fn log_line(&self, line: String) {
+        let line = self
+            .ansi
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .parse_line(&line);
+        if line.plain.is_empty() {
+            return;
+        }
         let mut logs = self.logs.write().unwrap_or_else(|err| err.into_inner());
         if logs.len() == MAX_LOG_LINES {
             logs.pop_front();
@@ -334,7 +370,7 @@ impl Dashboard {
 struct DashboardSnapshot {
     uptime: Duration,
     components: Vec<ComponentSnapshot>,
-    logs: Vec<String>,
+    logs: Vec<StyledLine>,
 }
 
 struct ComponentSnapshot {
@@ -417,6 +453,7 @@ fn run(
     request_shutdown: Arc<dyn Fn() + Send + Sync>,
     handle_key: Arc<dyn Fn(char) -> bool + Send + Sync>,
 ) -> io::Result<()> {
+    let _terminal_claim = claim_terminal()?;
     // `setup_logger` moves tracing into the dashboard while TUI mode is active, but that cannot
     // constrain a dependency that writes directly to stdout or stderr. Take both streams into the
     // rolling log before entering the alternate screen; the returned screen handle stays pointed
@@ -682,7 +719,7 @@ fn render(
     let log_lines = snapshot
         .logs
         .iter()
-        .map(|line| Line::from(line.clone()))
+        .map(StyledLine::to_ratatui_line)
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(log_lines)
@@ -934,6 +971,22 @@ mod tests {
             dashboard.log_line(line.to_string());
         }
 
-        assert_eq!(dashboard.snapshot().logs, ["two", "three", "four"]);
+        assert_eq!(
+            dashboard
+                .snapshot()
+                .logs
+                .iter()
+                .map(|line| line.plain.as_str())
+                .collect::<Vec<_>>(),
+            ["two", "three", "four"]
+        );
+    }
+
+    #[test]
+    fn nested_terminal_sessions_are_rejected_and_the_claim_is_released() {
+        let first = super::claim_terminal().expect("first terminal claim");
+        assert!(super::claim_terminal().is_err());
+        drop(first);
+        assert!(super::claim_terminal().is_ok());
     }
 }

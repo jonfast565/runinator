@@ -263,6 +263,8 @@ pub enum Commands {
         #[arg(long)]
         plain: bool,
     },
+    /// Open the full-screen operations console.
+    Tui,
     /// Inspect provider/action metadata.
     Providers {
         #[command(subcommand)]

@@ -15,6 +15,7 @@ runinator-platform = { path = "../runinator-platform" }
 opentelemetry = "0.32"
 runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-observability = { path = "../runinator-observability" }
+runinator-tui = { path = "../runinator-tui" }
 
 [features]
 default = ["http", "tcp", "ws"]

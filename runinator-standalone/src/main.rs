@@ -39,6 +39,9 @@ fn main() -> Result<(), DynError> {
         return Ok(());
     }
     let cli = Cli::parse();
+    if matches!(cli.command, Command::Tui) {
+        return run_operations(&cli);
+    }
     let config = cli.resolved_config()?;
     match cli.command {
         command @ Command::Start { .. } => {
@@ -63,13 +66,39 @@ fn main() -> Result<(), DynError> {
             lines,
             watch,
         } => show_logs(&config, component.as_deref(), lines, watch),
+        Command::Tui => unreachable!("handled before runtime configuration"),
         Command::Serve => run_server(config, false),
+    }
+}
+
+fn run_operations(cli: &Cli) -> Result<(), DynError> {
+    let state_dir = cli.resolved_state_dir()?;
+    let local_url = state_dir
+        .join("state.json")
+        .exists()
+        .then(|| format!("http://127.0.0.1:{}/", cli.api_port));
+    let server = match &cli.api_base_url {
+        Some(server) => server.clone(),
+        None => runinator_tui::operations::select_server(local_url.as_deref())?,
+    };
+    let client = runinator_api::AsyncApiClient::with_credentials(
+        runinator_api::StaticLocator::new(server.clone()),
+        cli.api_key.clone(),
+    )?;
+    let dashboard_path = state_dir.join("dashboard.json");
+    let local_attachment = local_url.as_ref().is_some_and(|url| url == &server);
+    if local_attachment {
+        tokio::runtime::Runtime::new()?.block_on(
+            runinator_tui::operations::run_with_local_snapshot(client, server, dashboard_path),
+        )
+    } else {
+        tokio::runtime::Runtime::new()?.block_on(runinator_tui::operations::run(client, server))
     }
 }
 
 fn run_server(config: StandaloneConfig, tui: bool) -> Result<(), DynError> {
     host::configure_environment(&config)?;
-    let tui = runinator_observability::tui::prepare(tui);
+    let tui = runinator_tui::prepare(tui);
     tokio::runtime::Runtime::new()?.block_on(serve(config, tui))
 }
 

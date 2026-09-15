@@ -26,6 +26,10 @@ pub(super) struct Blocked {
 
 const BLOCKED: &[Blocked] = &[
     Blocked {
+        path: &["tui"],
+        reason: "the operations console is an interactive full-screen interface.",
+    },
+    Blocked {
         path: &["console"],
         reason: "the console is an interactive screen that never returns. run its `:` commands \
                  directly instead — every one of them is a command line.",

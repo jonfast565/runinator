@@ -1,3 +1,5 @@
+//! Fallback for platforms without process stream redirection support.
+
 use std::fs::File;
 use std::io;
 use std::sync::Arc;

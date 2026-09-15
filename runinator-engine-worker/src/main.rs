@@ -76,7 +76,10 @@ async fn run_process() -> Result<(), SendableError> {
         instance_id,
         max_concurrent_ingress,
     } = args;
-    let tui = runinator_observability::tui::prepare(tui);
+    if let Some(url) = &service_url {
+        runinator_observability::remote_logs::configure(url.clone(), api_key.clone());
+    }
+    let tui = runinator_tui::prepare(tui);
 
     // Use a stable per-process ID when claiming trigger/action-dispatch rows. Kubernetes passes the pod name.
     let instance = instance_id
@@ -124,8 +127,8 @@ async fn run_process() -> Result<(), SendableError> {
         .await?;
     let shutdown = resources.process().shutdown().clone();
     if tui {
-        let dashboard = runinator_observability::tui::install();
-        runinator_observability::tui::register(
+        let dashboard = runinator_tui::install();
+        runinator_tui::register(
             "engine",
             [
                 format!("broker {broker_backend_display} via {broker_connection}"),
@@ -134,7 +137,7 @@ async fn run_process() -> Result<(), SendableError> {
         );
         let dashboard_shutdown = shutdown.clone();
         let dashboard_stop = dashboard_shutdown.clone();
-        runinator_observability::tui::spawn(
+        runinator_tui::spawn(
             dashboard,
             move || dashboard_shutdown.is_cancelled(),
             move || dashboard_stop.trigger(),

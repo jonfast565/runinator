@@ -100,6 +100,20 @@ pub trait DeliveryStore: Send + Sync + 'static {
         cutoff: DateTime<Utc>,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 
+    /// Remove one diagnostic channel's expired records without shortening other broker traces.
+    fn purge_broker_message_channel_before(
+        &self,
+        channel: String,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Keep the newest records in one channel within a retained serialized-payload budget.
+    fn trim_broker_message_channel_to_bytes(
+        &self,
+        channel: String,
+        max_bytes: u64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Persist a dead-lettered broker message for later inspection/replay.
     fn record_dead_letter(
         &self,

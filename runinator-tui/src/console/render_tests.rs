@@ -1,11 +1,11 @@
-//! covers what the console actually draws, rendered into a test backend rather than a terminal.
+//! Covers what the console actually draws, rendered into a test backend rather than a terminal.
 
 use super::*;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::tui::transcript::Transcript;
+use super::super::transcript::Transcript;
 
 /// tall enough for a status line, a few rows of output, the input, and the legend.
 const ROWS: u16 = 12;

@@ -1,4 +1,4 @@
-//! covers the prompt's editing state: typing, submitting, history, and completion.
+//! Covers the prompt's editing state: typing, submitting, history, and completion.
 
 use super::*;
 

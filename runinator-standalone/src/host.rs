@@ -20,8 +20,10 @@ use runinator_ws::{
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
-    config::StandaloneConfig, provisioner::StandaloneProvisioner,
-    runtime_factory::StandaloneRuntimeFactory, state::StateTracker,
+    config::{StandaloneConfig, absolute_from, validate_wsl_path},
+    provisioner::StandaloneProvisioner,
+    runtime_factory::StandaloneRuntimeFactory,
+    state::StateTracker,
 };
 
 const LOCAL_API_KEY: &str = "localdev.runinator-local-dev-service-key";
@@ -308,37 +310,96 @@ async fn start_pack_hooks(config: &StandaloneConfig, tracker: &StateTracker) {
     }
     tracker.starting("pack-import", "startup-hook");
     for pack in &config.packs {
-        let Some(executable) = sibling_executable("runinatorctl") else {
+        let executable = config
+            .ctl_path
+            .clone()
+            .or_else(|| sibling_executable("runinatorctl"));
+        let Some(executable) = executable else {
             tracker.failed(
                 "pack-import",
-                "runinatorctl was not found beside runinator-standalone",
+                "runinatorctl was not found beside runinator-standalone; set --ctl-path or RUNINATOR_STANDALONE_CTL_PATH",
             );
             return;
         };
-        let mut command = tokio::process::Command::new(executable);
+        if !executable.is_file() {
+            tracker.failed(
+                "pack-import",
+                format!(
+                    "runinatorctl executable was not found at {}",
+                    executable.display()
+                ),
+            );
+            return;
+        }
+        if !pack.exists() {
+            tracker.failed(
+                "pack-import",
+                format!("pack path was not found at {}", pack.display()),
+            );
+            return;
+        }
+        let mut command = tokio::process::Command::new(&executable);
         command
             .env("RUNINATOR_API_KEY", LOCAL_API_KEY)
             .arg("--api-base-url")
             .arg(format!("http://127.0.0.1:{}/", config.api_port))
             .args(["workflows", "apply"])
             .arg(pack);
-        match command.status().await {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                tracker.failed(
-                    "pack-import",
-                    format!("workflow import exited with {status}"),
-                );
+        match command.output().await {
+            Ok(output) if output.status.success() => {
+                let stdout = bounded_output(&output.stdout);
+                if !stdout.is_empty() {
+                    tracing::info!(pack = %pack.display(), output = %stdout, "startup pack import completed");
+                    runinator_tui::log_line(format!("pack import {}: {stdout}", pack.display()));
+                }
+            }
+            Ok(output) => {
+                let stdout = bounded_output(&output.stdout);
+                let stderr = bounded_output(&output.stderr);
+                let combined = [stdout, stderr]
+                    .into_iter()
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let detail = if combined.is_empty() {
+                    format!(
+                        "workflow import for {} exited with {}",
+                        pack.display(),
+                        output.status
+                    )
+                } else {
+                    format!(
+                        "workflow import for {} exited with {}: {combined}",
+                        pack.display(),
+                        output.status
+                    )
+                };
+                tracing::error!(pack = %pack.display(), error = %detail, "startup pack import failed");
+                runinator_tui::log_line(detail.clone());
+                tracker.failed("pack-import", detail);
                 return;
             }
             Err(error) => {
-                tracker.failed("pack-import", error);
+                tracker.failed(
+                    "pack-import",
+                    format!(
+                        "failed to execute {} for pack {}: {error}",
+                        executable.display(),
+                        pack.display()
+                    ),
+                );
                 return;
             }
         }
     }
     tracker.running("pack-import");
     tracker.stopped("pack-import");
+}
+
+fn bounded_output(bytes: &[u8]) -> String {
+    const LIMIT: usize = 8 * 1024;
+    let start = bytes.len().saturating_sub(LIMIT);
+    String::from_utf8_lossy(&bytes[start..]).trim().to_string()
 }
 
 fn sibling_executable(name: &str) -> Option<PathBuf> {
@@ -375,6 +436,12 @@ fn plugin_paths() -> Vec<PathBuf> {
 
 pub fn configure_environment(config: &StandaloneConfig) -> Result<(), SendableError> {
     let child = std::env::current_exe()?;
+    let invoking_dir = std::env::current_dir()?;
+    let local_files_source = std::env::var_os("RUNINATOR_LOCAL_FILES_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    validate_wsl_path(&local_files_source)?;
+    let local_files_root = absolute_from(&invoking_dir, local_files_source);
     let blob_dir = config.state_dir.join("blobs");
     // safety: configuration is applied before the standalone multithreaded runtime starts.
     unsafe {
@@ -403,7 +470,7 @@ pub fn configure_environment(config: &StandaloneConfig) -> Result<(), SendableEr
             format!("http://127.0.0.1:{}/", config.api_port),
         );
         std::env::set_var("RUNINATOR_API_KEY", LOCAL_API_KEY);
-        std::env::set_var("RUNINATOR_LOCAL_FILES_ROOT", ".");
+        std::env::set_var("RUNINATOR_LOCAL_FILES_ROOT", local_files_root);
     }
     Ok(())
 }

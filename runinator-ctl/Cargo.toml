@@ -21,6 +21,7 @@ runinator-pack-wire = { path = "../runinator-pack-wire" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-platform = { path = "../runinator-platform" }
 runinator-rexrap = { path = "../runinator-rexrap" }
+runinator-tui = { path = "../runinator-tui" }
 runinator-workflows = { path = "../runinator-workflows" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
