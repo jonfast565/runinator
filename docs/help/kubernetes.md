@@ -267,6 +267,10 @@ after editing their manifests):
 cargo run -p xtask -- k8s deploy --recreate-infra
 ```
 
+If an older cluster has an allocated ClusterIP for `runinator-postgres`, xtask
+recreates only that Service as headless before applying the stack. The
+PostgreSQL StatefulSet and its data claim remain in place.
+
 Every mutating `xtask k8s` command is serialized by the `runinator-xtask`
 Kubernetes Lease in the persistent `runinator-deploy-lock` namespace. The Lease
 is acquired before image build and push, renewed through apply and rollout, and

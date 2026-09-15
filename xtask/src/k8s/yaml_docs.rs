@@ -27,6 +27,19 @@ pub fn doc_name(doc: &Value) -> Option<&str> {
     doc.get("metadata")?.get("name")?.as_str()
 }
 
+/// whether the named service is rendered as a headless service.
+pub fn service_is_headless(docs: &[Value], name: &str) -> bool {
+    docs.iter().any(|doc| {
+        doc_kind(doc) == Some("Service")
+            && doc_name(doc) == Some(name)
+            && doc
+                .get("spec")
+                .and_then(|spec| spec.get("clusterIP"))
+                .and_then(Value::as_str)
+                == Some("None")
+    })
+}
+
 /// drops `StatefulSet` documents named in `skip_names`, leaving every other document untouched.
 /// mirrors `Remove-K8sStatefulSetDocs`, used to preserve already-running postgres/rabbitmq state.
 pub fn filter_out_statefulsets(docs: &[Value], skip_names: &[&str]) -> Vec<Value> {

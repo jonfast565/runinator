@@ -103,6 +103,62 @@ fn render_manifest(
     }
 }
 
+fn reconcile_headless_service(
+    workspace_root: &Path,
+    ctx_args: &[String],
+    docs: &[Value],
+    name: &str,
+) -> Result<()> {
+    if !yaml_docs::service_is_headless(docs, name) {
+        return Ok(());
+    }
+
+    let get_args = kubectl_args(
+        ctx_args,
+        &[
+            "get",
+            "service",
+            name,
+            "--namespace",
+            NAMESPACE,
+            "--ignore-not-found",
+            "-o",
+            "jsonpath={.spec.clusterIP}",
+        ],
+    );
+    let live_cluster_ip = exec::capture("kubectl", &get_args, workspace_root)?;
+    let live_cluster_ip = live_cluster_ip.trim();
+    if live_cluster_ip.is_empty() || live_cluster_ip == "None" {
+        return Ok(());
+    }
+
+    println!(
+        "==> Recreating service/{name} to migrate immutable clusterIP {live_cluster_ip} to headless"
+    );
+    let delete_args = kubectl_args(
+        ctx_args,
+        &[
+            "delete",
+            "service",
+            name,
+            "--namespace",
+            NAMESPACE,
+            "--wait=true",
+        ],
+    );
+    exec::run("kubectl", &delete_args, workspace_root)?;
+
+    let service = docs
+        .iter()
+        .find(|doc| {
+            yaml_docs::doc_kind(doc) == Some("Service") && yaml_docs::doc_name(doc) == Some(name)
+        })
+        .ok_or_else(|| anyhow::anyhow!("rendered manifest does not contain service/{name}"))?;
+    let stdin = yaml_docs::serialize_documents(std::slice::from_ref(service))?;
+    let apply_args = kubectl_args(ctx_args, &["apply", "-f", "-"]);
+    exec::run_with_stdin("kubectl", &apply_args, workspace_root, &stdin)
+}
+
 pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
     exec::require_tool("kubectl")?;
 
@@ -234,12 +290,22 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
         );
         exec::run("kubectl", &args, options.workspace_root)?;
         return Ok(());
-    } else if !skip_pg && !skip_mq {
+    }
+
+    let rendered_manifest =
+        render_manifest(options.workspace_root, &ctx_args, &apply_path, is_overlay)?;
+    let docs = yaml_docs::parse_documents(&rendered_manifest)?;
+    reconcile_headless_service(
+        options.workspace_root,
+        &ctx_args,
+        &docs,
+        "runinator-postgres",
+    )?;
+
+    if !skip_pg && !skip_mq {
         let args = kubectl_args(&ctx_args, &[verb, flag, &apply_path_str]);
         exec::run("kubectl", &args, options.workspace_root)?;
     } else {
-        let rendered = kustomize_render(options.workspace_root, &ctx_args, &apply_path)?;
-        let docs = yaml_docs::parse_documents(&rendered)?;
         let mut skip_names = Vec::new();
         if skip_pg {
             skip_names.push("runinator-postgres");
@@ -252,10 +318,6 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
         let args = kubectl_args(&ctx_args, &["apply", "-f", "-"]);
         exec::run_with_stdin("kubectl", &args, options.workspace_root, &stdin)?;
     }
-
-    let rendered_manifest =
-        render_manifest(options.workspace_root, &ctx_args, &apply_path, is_overlay)?;
-    let docs = yaml_docs::parse_documents(&rendered_manifest)?;
 
     remove_superseded_workload_controllers(options.workspace_root, &ctx_args, &docs);
 
@@ -423,6 +485,13 @@ pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
     if options.from_scratch {
         reset_postgres_data(options.workspace_root, &ctx_args, &filtered)?;
     }
+
+    reconcile_headless_service(
+        options.workspace_root,
+        &ctx_args,
+        &filtered,
+        "runinator-postgres",
+    )?;
 
     let stdin = yaml_docs::serialize_documents(&filtered)?;
     let apply_args = kubectl_args(&ctx_args, &["apply", "-f", "-"]);

@@ -5,7 +5,8 @@ use super::deploy::postgres_data_claim_name;
 use super::images::{image_tag, prebuilt_image_map, versioned_image_tag};
 use super::kustomize::{add_component, set_overlay_images, split_image_reference};
 use super::yaml_docs::{
-    filter_out_statefulsets, parse_documents, rollout_target, select_by_names, workload_kind,
+    filter_out_statefulsets, parse_documents, rollout_target, select_by_names, service_is_headless,
+    workload_kind,
 };
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -204,6 +205,32 @@ fn select_by_names_keeps_only_matching_documents_regardless_of_kind() {
         2,
         "both the Deployment and Service named runinator-ws should match"
     );
+}
+
+#[test]
+fn service_is_headless_requires_the_named_service_to_request_no_cluster_ip() {
+    let docs = parse_documents(
+        "\
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-postgres
+spec:
+  clusterIP: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-ws
+spec:
+  clusterIP: 10.96.0.10
+",
+    )
+    .unwrap();
+
+    assert!(service_is_headless(&docs, "runinator-postgres"));
+    assert!(!service_is_headless(&docs, "runinator-ws"));
+    assert!(!service_is_headless(&docs, "runinator-missing"));
 }
 
 #[test]
