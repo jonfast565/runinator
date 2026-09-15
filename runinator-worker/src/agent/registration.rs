@@ -74,7 +74,10 @@ pub(crate) fn spawn_agent_heartbeat(heartbeat: AgentHeartbeat) -> JoinHandle<()>
         shutdown,
     } = heartbeat;
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(heartbeat_interval);
+        let mut ticker = tokio::time::interval_at(
+            tokio::time::Instant::now() + heartbeat_interval,
+            heartbeat_interval,
+        );
         let mut heartbeat_seq = 0u64;
         let shutdown_notify = shutdown.notify();
         loop {

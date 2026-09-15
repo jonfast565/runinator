@@ -188,25 +188,6 @@ where
     ));
     tracker.running("web-service");
 
-    provisioner
-        .scale(
-            ReplicaKind::Background,
-            config.engines,
-            &NodeSpec::default(),
-        )
-        .await?;
-    provisioner
-        .scale(ReplicaKind::Waker, config.wakers, &NodeSpec::default())
-        .await?;
-    provisioner
-        .scale(ReplicaKind::Worker, config.workers, &NodeSpec::default())
-        .await?;
-    let desktop = if config.desktop_agent {
-        Some(start_desktop_agent(factory.as_ref(), tracker.clone()).await?)
-    } else {
-        None
-    };
-
     let snapshot_path = config.state_dir.join("state.json");
     let snapshot_tracker = tracker.clone();
     let snapshot_shutdown = shutdown.clone();
@@ -221,9 +202,30 @@ where
     });
 
     wait_for_api(&config, &tracker, &shutdown).await;
-    if !shutdown.is_cancelled() {
+    let desktop = if shutdown.is_cancelled() {
+        None
+    } else {
+        // import before replica registration starts competing SQLite write transactions.
         start_pack_hooks(&config, &tracker).await;
-    }
+        provisioner
+            .scale(
+                ReplicaKind::Background,
+                config.engines,
+                &NodeSpec::default(),
+            )
+            .await?;
+        provisioner
+            .scale(ReplicaKind::Waker, config.wakers, &NodeSpec::default())
+            .await?;
+        provisioner
+            .scale(ReplicaKind::Worker, config.workers, &NodeSpec::default())
+            .await?;
+        if config.desktop_agent {
+            Some(start_desktop_agent(factory.as_ref(), tracker.clone()).await?)
+        } else {
+            None
+        }
+    };
     let stop_file = config.state_dir.join("stop");
     let result = loop {
         if stop_file.exists() {

@@ -257,6 +257,41 @@ async fn in_memory_broker_round_trips_ingress_delivery() {
 }
 
 #[tokio::test]
+async fn in_memory_broker_accepts_overlapping_replica_availability() {
+    let broker = InMemoryBroker::new();
+    let replica_id = Uuid::now_v7();
+    let command = runinator_comm::WsIngressCommand::replica_available(
+        runinator_models::replicas::ReplicaRegistrationRequest {
+            replica_id: Some(replica_id),
+            replica_type: runinator_models::replicas::ReplicaKind::Waker,
+            instance_id: "waker-test".into(),
+            runtime_id: replica_id.to_string(),
+            display_name: None,
+            host: None,
+            port: None,
+            base_path: None,
+            version: None,
+            attributes: Default::default(),
+        },
+        Vec::new(),
+    );
+    let message = crate::IngressMessage {
+        dedupe_key: Some(command.dedupe_key()),
+        command,
+        enqueued_at: Utc::now(),
+    };
+
+    broker.publish_ingress(message.clone()).await.unwrap();
+    broker.publish_ingress(message).await.unwrap();
+
+    let delivery = broker.receive_ingress("engine").await.unwrap();
+    broker
+        .ack_ingress("engine", delivery.delivery_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn broker_ui_event_publisher_fans_out_to_every_subscriber() {
     use crate::UiEventPublisher;
     use runinator_comm::UiEvent;

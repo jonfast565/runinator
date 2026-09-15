@@ -294,7 +294,8 @@ fn spawn_engine_heartbeat(
     shutdown: Arc<Notify>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(10));
+        let interval = Duration::from_secs(10);
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
         loop {
             tokio::select! {
                 _ = shutdown.notified() => {

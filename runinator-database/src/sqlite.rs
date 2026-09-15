@@ -28,7 +28,8 @@ impl SqliteBackend {
     pub async fn new(filename: &str) -> Result<Self, SendableError> {
         let options = SqliteConnectOptions::new()
             .filename(filename)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .busy_timeout(std::time::Duration::from_secs(5));
         let options_with_logs = options
             .log_statements(log::LevelFilter::Debug)
             .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));

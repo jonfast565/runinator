@@ -23,11 +23,25 @@ where
         let (stream, _) = listener.accept().await?;
         let broker = Arc::clone(&broker);
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(stream, broker).await {
-                eprintln!("broker tcp connection error: {err}");
+            let Err(err) = handle_connection(stream, broker).await else {
+                return;
+            };
+            if is_client_disconnect(&err) {
+                return;
             }
+            eprintln!("broker tcp connection error: {err}");
         });
     }
+}
+
+fn is_client_disconnect(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::UnexpectedEof
+    )
 }
 
 async fn handle_connection<B>(stream: TcpStream, broker: Arc<B>) -> Result<(), std::io::Error>

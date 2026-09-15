@@ -158,7 +158,8 @@ pub fn spawn_replica_heartbeat(
 ) -> tokio::task::JoinHandle<()> {
     let telemetry = TelemetryCollector::new();
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(10));
+        let interval = Duration::from_secs(10);
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
         loop {
             tokio::select! {
                 _ = shutdown.notified() => {

@@ -485,6 +485,12 @@ impl Broker for InMemoryBroker {
         let mut guard = self.state.lock();
         let dedupe = message.dedupe_key_or_hash();
         if !guard.ingress_dedupe.insert(dedupe.clone()) {
+            if matches!(
+                message.command,
+                runinator_comm::WsIngressCommand::ReplicaAvailability { .. }
+            ) {
+                return Ok(());
+            }
             return Err(BrokerError::Duplicate(dedupe));
         }
 
