@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::deploy::postgres_data_claim_name;
-use super::images::{image_tag, versioned_image_tag};
+use super::images::{image_tag, prebuilt_image_map, versioned_image_tag};
 use super::kustomize::{add_component, set_overlay_images, split_image_reference};
 use super::yaml_docs::{
     filter_out_statefulsets, parse_documents, rollout_target, select_by_names, workload_kind,
@@ -56,6 +56,20 @@ fn image_tag_prefixes_a_repository_only_when_present() {
             "dev"
         ),
         "registry.example.com/runinator/runinator-ws:dev"
+    );
+}
+
+#[test]
+fn prebuilt_image_map_preserves_the_selected_release() {
+    let images = prebuilt_image_map(
+        Some("registry.example.com/runinator"),
+        "0.35.752-kube-20260915073115",
+        Some(&["runinator-ws"]),
+    );
+    assert_eq!(images.len(), 1);
+    assert_eq!(
+        images.get("runinator-ws").map(String::as_str),
+        Some("registry.example.com/runinator/runinator-ws:0.35.752-kube-20260915073115")
     );
 }
 

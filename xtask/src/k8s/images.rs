@@ -81,6 +81,24 @@ pub fn image_tag(name: &str, repository: Option<&str>, tag: &str) -> String {
     }
 }
 
+/// returns the image overrides for an already-built release.
+pub fn prebuilt_image_map(
+    repository: Option<&str>,
+    tag: &str,
+    include_names: Option<&[&str]>,
+) -> HashMap<String, String> {
+    IMAGES
+        .iter()
+        .filter(|image| include_names.is_none_or(|include| include.contains(&image.name)))
+        .map(|image| {
+            (
+                image.name.to_string(),
+                image_tag(image.name, repository, tag),
+            )
+        })
+        .collect()
+}
+
 /// resolves the requested `--image-tag` to a concrete value: an explicit non-`local` tag is used
 /// as-is, otherwise the workspace version and a timestamp identify the deployment build.
 pub fn versioned_image_tag(requested_tag: &str) -> String {

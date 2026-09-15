@@ -418,13 +418,21 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
         workspace_root.join(&args.manifest)
     };
 
+    let include_names: Option<Vec<&str>> = args
+        .command_center_only
+        .then_some(vec!["runinator-command-center"]);
     let image_map = if args.skip_build {
-        None
+        anyhow::ensure!(
+            args.image_tag != "local" && !args.image_tag.trim().is_empty(),
+            "--skip-build requires an explicit --image-tag naming existing images"
+        );
+        Some(k8s::images::prebuilt_image_map(
+            image_repository.as_deref(),
+            &image_tag,
+            include_names.as_deref(),
+        ))
     } else {
         let should_push = image_repository.is_some();
-        let include_names: Option<Vec<&str>> = args
-            .command_center_only
-            .then_some(vec!["runinator-command-center"]);
 
         println!("==> Building container images (tag: {image_tag})");
         let built = k8s::images::build_container_images(

@@ -328,6 +328,15 @@ pass `--expose-direct-ingress`:
 cargo run -p xtask -- k8s deploy --expose-direct-ingress
 ```
 
+To apply images that were built or pushed by an earlier invocation, combine
+`--skip-build` with the exact existing tag. The tag is still rendered into the
+selected overlay; `local` is not accepted in this mode because it would name a
+new, nonexistent timestamped release.
+
+```bash
+cargo run -p xtask -- k8s deploy --skip-build --image-tag 1.0.0
+```
+
 This injects the `deploy/k8s/components/direct-ingress` component at render time
 (it is never wired into a base/overlay, so prod stays closed unless you opt in).
 It adds a host-based ingress for the web service at `api.runinator.local` and a
