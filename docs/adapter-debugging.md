@@ -19,6 +19,13 @@ The polling-status response includes the frozen worker-label selector, the numbe
 workers, and an actionable diagnostic when no worker can accept profile-backed polling. This makes
 label drift visible before a poll attempt times out.
 
+The `slack_ingress` builtin accepts only Slack Events API requests with a current timestamp and a
+valid `v0` signature. URL verification is handled directly. Human message replies must name a
+thread root previously correlated from a successful Slack notification receipt. The adapter journal
+records duplicate, accepted, and rejected replies; the audit log records the mapped human for both
+authorization success and denial. Outbound Slack notification policies must include `team_id` in
+their configuration so the receipt can produce the same `slack:<team_id>` identity used inbound.
+
 Normalized poll events enter the delivery journal before a checkpoint can advance. Routing failures and full downstream review queues therefore retain the delivery for retry. A capture failure retains the old checkpoint. Polling and webhook normalization both extract external-operation provenance for self-origin suppression. GitHub initialization establishes a current boundary without replaying history; a later scan exceeding the page or commit budget fails visibly without advancing its checkpoint. It does not silently truncate the event batch.
 
 Completed delivery history and terminal poll/test attempts are retained for seven days. Held and failed deliveries remain available. The inspector shows the most recent 500 deliveries and 100 attempts; the journal rejects new captures at 10,000 unresolved deliveries per adapter. Poll/test publication has a recoverable 30-second lease and a five-minute attempt deadline. Late terminal updates cannot replace an already terminal attempt. Diagnostic responses redact common secret fields without changing the durable event used for execution.

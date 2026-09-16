@@ -57,6 +57,10 @@ Already tracked elsewhere, cross-referenced rather than refiled:
   `runinator-secrets`.
 - **Band:** P1.
 
+**Implemented 2026-09-16.** The catalog now includes a bounded `http.request` provider with the
+planned methods, request encodings, expected-status handling, execution-profile credentials,
+redirect checks, response-size limits, and an explicit outbound host allowlist.
+
 **Verified 2026-09-16.** There is no HTTP provider crate. `ls runinator-provider-*` returns
 `ai, approval, aws, catalog, console, db, email, functions, git, github, github-cli, jira,
 local-files, slack, std, support, workspace`. HTTP exists only as two effectful compute intrinsics:
@@ -124,6 +128,10 @@ platform would have, and an agent chooses its arguments.
 - **Owning crates:** `runinator-provider-ai`, `runinator-models`.
 - **Band:** P1.
 
+**Implemented 2026-09-16.** `claude_code` accepts the same `output_schema` contract as the Codex
+action, uses Claude's structured-output mode, repairs common fenced or prefixed JSON once inside the
+provider, and reports stable schema-validation errors. Shipped decision prompts now use schemas.
+
 **Verified 2026-09-16.** `runinator-provider-ai/src/provider.rs` declares an `output_schema`
 parameter on the `codex` action (line 118,
 `ParameterMetadata::optional("output_schema", RuninatorType::Any)`) and **no equivalent on
@@ -185,6 +193,11 @@ ticket cost" — a question every team adopting an agent harness asks within the
 - **Owning crates:** `runinator-rexrap`, `runinator-pack`, `runinator-provider-ai`.
 - **Band:** P2.
 
+**Implemented 2026-09-16.** Shipped agent prompts are readable Markdown assets. Compiled workflow
+metadata records their SHA-256 digests, the Claude provider reports the selected asset, digest, and
+source, and execution-profile or organization overrides can replace a named prompt without forking
+the pack.
+
 **Verified 2026-09-16.** Every prompt in every shipped pack is an inline string literal. The
 implement-phase prompt at `packs/sdlc-missions/sdlc-missions.rrx:131` is a single unbroken line of
 roughly 500 characters embedded in the workflow source. The language does provide a compile-time
@@ -237,6 +250,11 @@ not at read time.
 - **Owning crates:** `runinator-workflows`, `runinator-ctl`, `runinator-database`,
   `runinator-command-center`.
 - **Band:** P2.
+
+**Implemented 2026-09-16.** `runinatorctl workflows eval` loads a JSON corpus, applies the exact
+pack revision, runs each case through real providers, supports deterministic JSON-pointer or bounded
+judge-workflow scoring, and reports aggregate agreement. Cases and judges remain ordinary durable
+runs with frozen revisions and prompt digests, so their history is retained by the existing run UI.
 
 **Verified 2026-09-16.** `runinatorctl workflows test` simulates the state machine offline against
 `tests` blocks with mocked task outputs, asserting on the branch taken and the final outputs — see
@@ -368,6 +386,14 @@ those terms.
 
 - **Owning crates:** `runinator-adapter-host`, `runinator-provider-slack`, `runinator-engine`.
 - **Band:** P3.
+
+**Implemented 2026-09-16.** The builtin `slack_ingress` adapter verifies Slack's signed Events API
+requests and normalizes thread replies into steer, approve, or reject commands. Successful outbound
+Slack notification receipts create a durable thread-to-mission correlation. Slack subjects are
+explicitly linked to enabled Runinator users, and every reply is re-authorized against the mission's
+owning pipeline before control is applied. Accepted actions become mission evidence and audit rows;
+unmapped or unauthorized identities are rejected and audited without invoking the agent or settling
+an approval.
 
 **Verified 2026-09-16.** `runinatorctl missions steer <id> "<message>"` delivers a bounded message
 into a mission's current steerable AI phase through the provider's structured protocol, and

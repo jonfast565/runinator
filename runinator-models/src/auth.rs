@@ -185,6 +185,29 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
+/// External identity explicitly linked to a Runinator human principal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserIdentity {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub provider: String,
+    pub subject: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserIdentityPutRequest {
+    pub provider: String,
+    pub subject: String,
+}
+
+impl Validate for UserIdentityPutRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        required_text("provider", &self.provider, SHORT_TEXT_MAX)?;
+        required_text("subject", &self.subject, SHORT_TEXT_MAX)
+    }
+}
+
 /// user identity and current platform authority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserView {

@@ -14,8 +14,10 @@ use runinator_adapter_client::{AdapterHostClient, HttpAdapterHostClient};
 use runinator_adapter_contract::{
     AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterValidationRequest,
 };
-use runinator_broker_core::{UiEventPublisher, emit_adapter};
-use runinator_engine::services::{AdapterOperations, ExecutionProfileOperations};
+use runinator_broker_core::{Broker, UiEventPublisher, emit_adapter};
+use runinator_engine::services::{
+    AdapterOperations, ConversationControlOperations, ExecutionProfileOperations,
+};
 use runinator_models::{
     auth::{AuthContext, Permission, PrincipalKind, ResourceType},
     orchestration::{
@@ -651,7 +653,7 @@ fn allowed_webhook_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
 fn webhook_header_allowlist() -> std::collections::BTreeSet<String> {
     let configured = std::env::var("RUNINATOR_ADAPTER_WEBHOOK_HEADER_ALLOWLIST")
         .unwrap_or_else(|_| {
-            "authorization,content-type,x-runinator-signature,x-hub-signature-256,x-github-delivery,x-github-event,x-atlassian-webhook-identifier".into()
+            "authorization,content-type,x-runinator-signature,x-hub-signature-256,x-github-delivery,x-github-event,x-atlassian-webhook-identifier,x-slack-signature,x-slack-request-timestamp".into()
         });
     configured
         .split(',')
@@ -1381,6 +1383,7 @@ pub async fn webhook<
 >(
     Extension(host): Extension<Arc<dyn AdapterHostClient>>,
     Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
     Path(endpoint): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -1491,8 +1494,78 @@ pub async fn webhook<
             })),
         );
     }
+    if adapter.kind == "slack_ingress"
+        && let Some(challenge) = normalized
+            .events
+            .iter()
+            .find(|event| event.event_type == "url_verification")
+            .and_then(|event| event.payload.get("challenge"))
+            .cloned()
+    {
+        return (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "challenge": challenge
+            }))),
+        );
+    }
     let mut outcomes = Vec::new();
+    let conversation_control = ConversationControlOperations::new(db.clone());
     for event in normalized.events {
+        if adapter.kind == "slack_ingress" && event.event_type == "thread_reply" {
+            let mut record = match operations
+                .capture_delivery(
+                    runinator_models::adapter_control::AdapterOrigin {
+                        adapter_id: adapter.id,
+                        revision: revision.revision,
+                        delivery_record_id: None,
+                    },
+                    None,
+                    Some(event.clone()),
+                    None,
+                )
+                .await
+            {
+                Ok(record) => record,
+                Err(error) => return api_error(error.to_string()),
+            };
+            if record.state != "pending" {
+                outcomes.push(runinator_models::json!({
+                    "delivery_record_id": record.id,
+                    "state": record.state,
+                    "duplicate": true,
+                }));
+                continue;
+            }
+            match conversation_control
+                .apply_slack_reply(broker.as_ref(), adapter.org_id, &event)
+                .await
+            {
+                Ok(outcome) => {
+                    record.state = "applied".into();
+                    record.outcome = outcome.clone();
+                    outcomes.push(runinator_models::json!({
+                        "delivery_record_id": record.id,
+                        "state": record.state,
+                        "outcome": outcome,
+                    }));
+                }
+                Err(error) => {
+                    record.state = "rejected".into();
+                    record.error = Some(error.clone());
+                    outcomes.push(runinator_models::json!({
+                        "delivery_record_id": record.id,
+                        "state": record.state,
+                        "error": error,
+                    }));
+                }
+            }
+            record.updated_at = Utc::now();
+            if let Err(error) = operations.update_delivery(record).await {
+                return api_error(error.to_string());
+            }
+            continue;
+        }
         match operations
             .capture_delivery(
                 runinator_models::adapter_control::AdapterOrigin {
@@ -1506,8 +1579,9 @@ pub async fn webhook<
             )
             .await
         {
-            Ok(record) => outcomes
-                .push(serde_json::json!({"delivery_record_id":record.id,"state":record.state})),
+            Ok(record) => outcomes.push(
+                serde_json::json!({"delivery_record_id":record.id,"state":record.state}).into(),
+            ),
             Err(error) => return api_error(error.to_string()),
         }
     }
@@ -1524,7 +1598,7 @@ pub async fn webhook<
     )
 }
 
-pub fn routes<T>(pool: Arc<T>, publisher: UiEventPublisher) -> axum::Router
+pub fn routes<T>(pool: Arc<T>, broker: Arc<dyn Broker>, publisher: UiEventPublisher) -> axum::Router
 where
     T: OrchestrationStore
         + AuthorizationStore
@@ -1537,11 +1611,17 @@ where
         + ExecutionProfileStore
         + ReplicaStore,
 {
-    routes_with_host(pool, publisher, Arc::new(HttpAdapterHostClient::from_env()))
+    routes_with_host(
+        pool,
+        broker,
+        publisher,
+        Arc::new(HttpAdapterHostClient::from_env()),
+    )
 }
 
 pub fn routes_with_host<T>(
     pool: Arc<T>,
+    broker: Arc<dyn Broker>,
     publisher: UiEventPublisher,
     host: Arc<dyn AdapterHostClient>,
 ) -> axum::Router
@@ -1587,6 +1667,7 @@ where
         .route("/orchestrations/adapters/{id}/test", post(test::<T>))
         .route("/webhooks/orchestration/{adapter_id}", post(webhook::<T>))
         .layer(Extension(host))
+        .layer(Extension(broker))
         .layer(Extension(pool))
         .layer(Extension(publisher))
 }

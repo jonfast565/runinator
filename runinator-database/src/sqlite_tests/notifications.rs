@@ -6,6 +6,7 @@ use runinator_models::{
     notifications::{NotificationChannel, NotificationDeliveryStatus},
     workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest},
 };
+use runinator_store::roles::NewNotificationDelivery;
 
 fn inbox_notification(org_id: Uuid, dedupe_key: &str) -> NewNotification {
     NewNotification {
@@ -148,14 +149,15 @@ async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched
         idempotency_key: format!("notification:{delivery_id}"),
         notification_delivery_id: Some(delivery_id),
     };
-    db.create_notification_delivery(
-        delivery_id,
-        notification.id,
-        None,
-        NotificationChannel::Slack,
-        Some("#ops".into()),
-        command.clone(),
-    )
+    db.create_notification_delivery(NewNotificationDelivery {
+        id: delivery_id,
+        notification_id: notification.id,
+        policy_id: None,
+        channel: NotificationChannel::Slack,
+        target: Some("#ops".into()),
+        workflow_run_id: None,
+        command: command.clone(),
+    })
     .await
     .unwrap();
 
@@ -210,5 +212,23 @@ async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched
         .await
         .unwrap();
     assert_eq!(deliveries[0].status, NotificationDeliveryStatus::Dispatched);
+    db.mark_notification_delivery(
+        delivery_id,
+        NotificationDeliveryStatus::Delivered,
+        None,
+        Some(runinator_models::json!({
+            "channel": "C123",
+            "ts": "1700.1",
+            "runinator_team_id": "T123"
+        })),
+    )
+    .await
+    .unwrap();
+    let delivered = db
+        .fetch_notification_delivery(delivery_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivered.response["ts"].as_str(), Some("1700.1"));
     assert_eq!(deliveries[0].attempts, 1);
 }

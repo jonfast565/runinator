@@ -358,11 +358,15 @@ pub struct NotificationDelivery {
     pub channel: NotificationChannel,
     #[serde(default)]
     pub target: Option<String>,
+    #[serde(default)]
+    pub workflow_run_id: Option<Uuid>,
     pub status: NotificationDeliveryStatus,
     #[serde(default)]
     pub attempts: i64,
     #[serde(default)]
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub response: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

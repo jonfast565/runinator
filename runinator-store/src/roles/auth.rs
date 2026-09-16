@@ -11,7 +11,7 @@ use uuid::Uuid;
 use runinator_models::{
     auth::{
         AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, AuthSession, Grant,
-        LocalCredential, Team, User,
+        LocalCredential, Team, User, UserIdentity,
     },
     errors::SendableError,
     rbac::PlatformRole,
@@ -51,6 +51,34 @@ pub trait AuthStore: Send + Sync + 'static {
         &self,
         username: String,
     ) -> impl Future<Output = Result<Option<User>, SendableError>> + Send;
+
+    /// Resolve a human principal from a verified external provider identity.
+    fn fetch_user_by_identity(
+        &self,
+        provider: String,
+        subject: String,
+    ) -> impl Future<Output = Result<Option<User>, SendableError>> + Send;
+
+    /// List external identities linked to one user.
+    fn list_user_identities(
+        &self,
+        user_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<UserIdentity>, SendableError>> + Send;
+
+    /// Link one globally unique provider subject to a user.
+    fn upsert_user_identity(
+        &self,
+        user_id: Uuid,
+        provider: String,
+        subject: String,
+    ) -> impl Future<Output = Result<UserIdentity, SendableError>> + Send;
+
+    /// Remove one external identity link owned by the selected user.
+    fn delete_user_identity(
+        &self,
+        user_id: Uuid,
+        identity_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Resolve a local login: the user plus the stored argon2 hash for `username`.
     fn fetch_local_credential(

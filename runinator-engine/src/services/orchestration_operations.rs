@@ -265,6 +265,56 @@ impl<T: OrchestrationStore + RuntimeStore + WorkflowVmStore> OrchestrationOperat
         }
         Ok(None)
     }
+
+    /// Resolve the current unresolved approval owned by the binding's active mission phase.
+    pub async fn active_mission_approval_effect(
+        &self,
+        binding: &runinator_models::orchestration::OrchestrationBinding,
+    ) -> Result<Option<runinator_models::workflow_vm::WorkflowEffect>, SendableError> {
+        if !binding.scope.starts_with("mission.") || binding.status.is_terminal() {
+            return Ok(None);
+        }
+        let Some(pipeline_run_id) = self
+            .store
+            .fetch_orchestration_epochs(binding.id)
+            .await?
+            .into_iter()
+            .find(|epoch| epoch.epoch == binding.current_epoch)
+            .and_then(|epoch| epoch.pipeline_run_id)
+        else {
+            return Ok(None);
+        };
+        let mut attempts = self
+            .store
+            .fetch_pipeline_member_attempts(pipeline_run_id)
+            .await?;
+        attempts.sort_by_key(|attempt| std::cmp::Reverse(attempt.attempt));
+        for workflow_run_id in attempts
+            .into_iter()
+            .filter(|attempt| {
+                !attempt.status.is_terminal()
+                    && binding.current_phase.as_deref() == Some(attempt.member_key.as_str())
+            })
+            .filter_map(|attempt| attempt.workflow_run_id)
+        {
+            let effect = self
+                .store
+                .fetch_workflow_effects(workflow_run_id)
+                .await?
+                .into_iter()
+                .find(|effect| {
+                    !effect.status.is_terminal()
+                        && matches!(
+                            effect.request,
+                            runinator_models::workflow_vm::WorkflowEffectRequest::Approval { .. }
+                        )
+                });
+            if effect.is_some() {
+                return Ok(effect);
+            }
+        }
+        Ok(None)
+    }
 }
 
 fn is_active_harnessed_ai_effect(effect: &runinator_models::workflow_vm::WorkflowEffect) -> bool {

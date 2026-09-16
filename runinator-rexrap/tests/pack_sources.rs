@@ -31,9 +31,12 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn every_pack_source_compiles() {
-    let options = CompileOptions::default();
     let mut failures = Vec::new();
     for path in pack_sources() {
+        let options = CompileOptions {
+            source_dir: path.parent().map(Path::to_path_buf),
+            ..CompileOptions::default()
+        };
         let src = std::fs::read_to_string(&path).expect("read pack source");
         let blocks = match parse_rrx_blocks(&src) {
             Ok(blocks) => blocks,

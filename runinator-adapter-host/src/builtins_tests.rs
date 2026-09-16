@@ -3,7 +3,8 @@ use super::*;
 #[test]
 fn catalog_uses_registry_metadata() {
     let catalog = builtin_catalog();
-    assert_eq!(catalog.len(), 3);
+    assert_eq!(catalog.len(), 4);
+    assert!(catalog.contains_key("slack_ingress"));
     for (kind, adapter) in registry() {
         assert_eq!(catalog[kind].metadata.kind, adapter.metadata().kind);
         assert_eq!(catalog[kind].origin, "builtin");

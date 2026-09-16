@@ -165,6 +165,90 @@ where
         Ok(row.map(|row| mappers::row_to_user(&row)))
     }
 
+    async fn fetch_user_by_identity(
+        &self,
+        provider: String,
+        subject: String,
+    ) -> Result<Option<User>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT u.id, u.username, u.email, u.disabled, u.created_at, u.updated_at
+             FROM users u JOIN user_identities i ON i.user_id = u.id
+             WHERE i.provider = ? AND i.subject = ?",
+        ))
+        .bind(provider)
+        .bind(subject)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_user(&row)))
+    }
+
+    async fn list_user_identities(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<runinator_models::auth::UserIdentity>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, user_id, provider, subject, created_at FROM user_identities
+             WHERE user_id = ? ORDER BY provider, subject",
+        ))
+        .bind(user_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| runinator_models::auth::UserIdentity {
+                id: row.get("id"),
+                user_id: row.get("user_id"),
+                provider: row.get("provider"),
+                subject: row.get("subject"),
+                created_at: DateTime::<Utc>::from_timestamp(row.get("created_at"), 0)
+                    .unwrap_or_else(Utc::now),
+            })
+            .collect())
+    }
+
+    async fn upsert_user_identity(
+        &self,
+        user_id: Uuid,
+        provider: String,
+        subject: String,
+    ) -> Result<runinator_models::auth::UserIdentity, SendableError> {
+        let id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "INSERT INTO user_identities (id, user_id, provider, subject, password_hash, created_at)
+             VALUES (?, ?, ?, ?, NULL, ?)",
+        ))
+        .bind(id)
+        .bind(user_id)
+        .bind(&provider)
+        .bind(&subject)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        Ok(runinator_models::auth::UserIdentity {
+            id,
+            user_id,
+            provider,
+            subject,
+            created_at: DateTime::<Utc>::from_timestamp(now, 0).unwrap_or_else(Utc::now),
+        })
+    }
+
+    async fn delete_user_identity(
+        &self,
+        user_id: Uuid,
+        identity_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "DELETE FROM user_identities WHERE id = ? AND user_id = ? AND provider <> 'local'",
+        ))
+        .bind(identity_id)
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
+    }
+
     async fn fetch_local_credential(
         &self,
         username: String,

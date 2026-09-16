@@ -18,6 +18,18 @@ use runinator_models::{
     },
 };
 
+/// Immutable inputs for one external notification delivery and its provider-effect outbox row.
+#[derive(Debug, Clone)]
+pub struct NewNotificationDelivery {
+    pub id: Uuid,
+    pub notification_id: Uuid,
+    pub policy_id: Option<Uuid>,
+    pub channel: NotificationChannel,
+    pub target: Option<String>,
+    pub workflow_run_id: Option<Uuid>,
+    pub command: EffectCommand,
+}
+
 /// Core persistence operations for Runinator.
 /// Notifications, the policies that raise them, and per-channel delivery attempts.
 pub trait NotificationStore: Send + Sync + 'static {
@@ -132,12 +144,7 @@ pub trait NotificationStore: Send + Sync + 'static {
     /// Record an external-channel delivery attributed to a notification.
     fn create_notification_delivery(
         &self,
-        delivery_id: Uuid,
-        notification_id: Uuid,
-        policy_id: Option<Uuid>,
-        channel: NotificationChannel,
-        target: Option<String>,
-        command: EffectCommand,
+        delivery: NewNotificationDelivery,
     ) -> impl Future<Output = Result<NotificationDelivery, SendableError>> + Send;
 
     /// Lease frozen notification provider effects for publication. Notification delivery has an
@@ -167,7 +174,14 @@ pub trait NotificationStore: Send + Sync + 'static {
         delivery_id: Uuid,
         status: NotificationDeliveryStatus,
         error: Option<String>,
+        response: Option<runinator_models::value::Value>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch one external delivery by its immutable effect/delivery identity.
+    fn fetch_notification_delivery(
+        &self,
+        delivery_id: Uuid,
+    ) -> impl Future<Output = Result<Option<NotificationDelivery>, SendableError>> + Send;
 
     /// List deliveries for a notification, newest first.
     fn fetch_notification_deliveries(

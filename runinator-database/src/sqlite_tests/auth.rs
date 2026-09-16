@@ -3,6 +3,42 @@
 use super::*;
 
 #[tokio::test]
+async fn external_user_identities_resolve_and_can_be_removed() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-external-identities-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let user = db
+        .create_user("slack-human".into(), None, None)
+        .await
+        .unwrap();
+    let user_id = user.id.unwrap();
+    let identity = db
+        .upsert_user_identity(user_id, "slack:T123".into(), "U123".into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.fetch_user_by_identity("slack:T123".into(), "U123".into())
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        Some(user_id)
+    );
+    assert_eq!(db.list_user_identities(user_id).await.unwrap().len(), 1);
+    assert!(db.delete_user_identity(user_id, identity.id).await.unwrap());
+    assert!(
+        db.fetch_user_by_identity("slack:T123".into(), "U123".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn reusable_dependencies_follow_owner_membership_grants_and_tenant_boundaries() {
     let path = std::env::temp_dir().join(format!(
         "runinator-resource-dependencies-{}.db",

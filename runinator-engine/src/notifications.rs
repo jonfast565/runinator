@@ -23,7 +23,7 @@ use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_secrets::stored_secret::secret_expiry_occurrence;
 use runinator_store::{
     RuntimeStore,
-    roles::{NotificationStore, RunStore, WorkflowVmStore},
+    roles::{NewNotificationDelivery, NotificationStore, RunStore, WorkflowVmStore},
 };
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -488,14 +488,15 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
             notification_delivery_id: Some(delivery_id),
         };
         self.db
-            .create_notification_delivery(
-                delivery_id,
-                *notification_id,
-                Some(policy.id),
-                policy.channel,
-                Some(target),
+            .create_notification_delivery(NewNotificationDelivery {
+                id: delivery_id,
+                notification_id: *notification_id,
+                policy_id: Some(policy.id),
+                channel: policy.channel,
+                target: Some(target),
+                workflow_run_id: context.workflow_run_id,
                 command,
-            )
+            })
             .await?;
         Ok(())
     }

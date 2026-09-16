@@ -70,10 +70,15 @@ macro_rules! notification_delivery_from_row {
             channel: NotificationChannel::try_from($row.get::<String, _>("channel").as_str())
                 .unwrap_or(NotificationChannel::InApp),
             target: $row.get::<Option<String>, _>("target"),
+            workflow_run_id: $row.get::<Option<Uuid>, _>("workflow_run_id"),
             status: NotificationDeliveryStatus::try_from($row.get::<String, _>("status").as_str())
                 .unwrap_or(NotificationDeliveryStatus::Pending),
             attempts: $row.get::<i64, _>("attempts"),
             last_error: $row.get::<Option<String>, _>("last_error"),
+            response: $row
+                .get::<Option<String>, _>("response_json")
+                .and_then(|value| serde_json::from_str(&value).ok())
+                .unwrap_or(Value::Null),
             created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             updated_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("updated_at"), 0)

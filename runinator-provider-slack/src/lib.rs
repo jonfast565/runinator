@@ -25,6 +25,7 @@ use crate::errors::{API_ERROR, HTTP_ERROR, INVALID_JSON, INVALID_PARAMS, UNSUPPO
 struct SendMessageParams {
     channel: String,
     text: String,
+    team_id: Option<String>,
     attachments: Option<Value>,
     blocks: Option<Value>,
     thread_ts: Option<String>,
@@ -81,6 +82,8 @@ impl Provider for SlackProvider {
                     token_param(),
                     ParameterMetadata::required("channel", RuninatorType::String),
                     ParameterMetadata::required("text", RuninatorType::String),
+                    ParameterMetadata::optional("team_id", RuninatorType::String)
+                        .with_description("Slack workspace id retained in the delivery receipt for inbound thread correlation."),
                     ParameterMetadata::optional(
                         "attachments",
                         RuninatorType::array(attachment_type()),
@@ -134,6 +137,7 @@ impl Provider for SlackProvider {
 
 fn send_message(request: ProviderExecutionRequest) -> Result<TaskExecutionResult, SendableError> {
     let params: SendMessageParams = parse_params(&request)?;
+    let team_id = params.team_id.clone();
     let payload = build_send_message_payload(params)?;
     let client = build_client(request.timeout_secs)?;
     let builder = client
@@ -142,7 +146,10 @@ fn send_message(request: ProviderExecutionRequest) -> Result<TaskExecutionResult
         .json(&payload);
     let response =
         runinator_provider_support::apply_blocking_http_credentials(builder, &request)?.send()?;
-    let output = parse_slack_ok(response)?;
+    let mut output = parse_slack_ok(response)?;
+    if let (Some(team_id), Some(object)) = (team_id, output.as_object_mut()) {
+        object.insert("runinator_team_id".into(), json!(team_id));
+    }
     Ok(TaskExecutionResult {
         message: Some("slack message sent".into()),
         output_json: Some(output),

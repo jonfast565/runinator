@@ -1085,6 +1085,56 @@ fn jira_metadata() -> AdapterKindMetadata {
     }
 }
 
+fn slack_ingress_metadata() -> AdapterKindMetadata {
+    AdapterKindMetadata {
+        kind: "slack_ingress".into(),
+        version: "1".into(),
+        display_name: "Slack conversation ingress".into(),
+        description: Some(
+            "Signed Slack Events API replies that steer or resolve a correlated mission".into(),
+        ),
+        fields: vec![
+            field(
+                "team_id",
+                RuninatorType::String,
+                true,
+                false,
+                "Slack workspace/team id used for correlation and identity mapping.",
+                Value::Null,
+            ),
+            field(
+                "signing_secret",
+                RuninatorType::String,
+                true,
+                true,
+                "Slack app signing secret used to verify Events API requests.",
+                Value::Null,
+            ),
+        ],
+        polling_fields: vec![],
+        event_names: vec!["thread_reply".into(), "url_verification".into()],
+        canonical_pointers: vec![
+            "/team_id".into(),
+            "/user_id".into(),
+            "/channel".into(),
+            "/thread_ts".into(),
+            "/text".into(),
+        ],
+        capabilities: vec!["slack_signing_secret".into(), "conversational_control".into()],
+        polling_authentication: vec![],
+        polling_secret_fields: vec![],
+        execution_profile_scopes: vec![],
+        execution_profile_required_labels: BTreeMap::new(),
+        identity_fields: vec!["team_id".into()],
+        setup_instructions: vec![
+            "Create a Slack app, enable Events API, and subscribe to message.channels and message.groups as needed.".into(),
+            "Set the Events API request URL to this adapter's webhook URL and bind the app signing secret.".into(),
+            "Map Slack users to Runinator users before allowing replies to control missions.".into(),
+            "Set team_id in matching Slack notification-policy configuration so outbound thread roots are correlated automatically.".into(),
+        ],
+    }
+}
+
 fn github_metadata() -> AdapterKindMetadata {
     AdapterKindMetadata {
         kind: "github".into(),
@@ -2167,6 +2217,138 @@ fn handle_jira(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
     }
 }
 
+fn handle_slack_ingress(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
+    let Ok((bytes, payload)) = decode_body(&request, body_limit) else {
+        return AdapterResponse::rejected("invalid Slack JSON body");
+    };
+    let timestamp = request
+        .headers
+        .get("x-slack-request-timestamp")
+        .and_then(|value| value.parse::<i64>().ok());
+    let Some(timestamp) = timestamp else {
+        return AdapterResponse::rejected("missing Slack request timestamp");
+    };
+    if (chrono::Utc::now().timestamp() - timestamp).abs() > 300 {
+        return AdapterResponse::rejected("Slack request timestamp is outside the replay window");
+    }
+    let signature = request.headers.get("x-slack-signature");
+    let secret = configured_string(&request.secrets, "signing_secret")
+        .or_else(|_| configured_string(&request.configuration, "signing_secret"));
+    let mut signed = format!("v0:{timestamp}:").into_bytes();
+    signed.extend_from_slice(&bytes);
+    if secret
+        .ok()
+        .zip(signature)
+        .is_none_or(|(secret, signature)| {
+            !signature
+                .strip_prefix("v0=")
+                .is_some_and(|signature| verify_hmac_sha256(secret, &signed, signature))
+        })
+    {
+        return AdapterResponse::rejected("Slack signature verification failed");
+    }
+
+    if payload.get("type").and_then(Value::as_str) == Some("url_verification") {
+        let Some(challenge) = payload.get("challenge").and_then(Value::as_str) else {
+            return AdapterResponse::rejected("Slack URL verification lacks a challenge");
+        };
+        return AdapterResponse {
+            verified: true,
+            events: vec![NormalizedAdapterEvent {
+                source: "slack".into(),
+                delivery_id: format!("challenge:{timestamp}"),
+                event_type: "url_verification".into(),
+                scope: "challenge".into(),
+                correlation_key: challenge.into(),
+                subject_revision: None,
+                occurred_at: None,
+                payload: json!({ "challenge": challenge }).into(),
+                provenance: Value::Null.into(),
+            }],
+            errors: vec![],
+        };
+    }
+
+    let configured_team = configured_string(&request.configuration, "team_id").unwrap_or_default();
+    let team_id = payload
+        .get("team_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if team_id.is_empty() || team_id != configured_team {
+        return AdapterResponse::rejected("Slack team id does not match this adapter");
+    }
+    let event = payload.get("event").unwrap_or(&Value::Null);
+    if event.get("type").and_then(Value::as_str) != Some("message")
+        || event.get("subtype").is_some()
+        || event.get("bot_id").is_some()
+    {
+        return AdapterResponse {
+            verified: true,
+            events: vec![],
+            errors: vec![],
+        };
+    }
+    let user_id = event
+        .get("user")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let channel = event
+        .get("channel")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let thread_ts = event
+        .get("thread_ts")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let text = event
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if user_id.is_empty() || channel.is_empty() || thread_ts.is_empty() || text.trim().is_empty() {
+        return AdapterResponse {
+            verified: true,
+            events: vec![],
+            errors: vec![],
+        };
+    }
+    let command = match text.trim().to_ascii_lowercase().as_str() {
+        "approve" | "/approve" => "approve",
+        "reject" | "/reject" => "reject",
+        _ => "steer",
+    };
+    let delivery_id = payload
+        .get("event_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if delivery_id.is_empty() {
+        return AdapterResponse::rejected("Slack event lacks an event id");
+    }
+    AdapterResponse {
+        verified: true,
+        events: vec![NormalizedAdapterEvent {
+            source: format!("slack:{team_id}"),
+            delivery_id: delivery_id.into(),
+            event_type: "thread_reply".into(),
+            scope: channel.into(),
+            correlation_key: thread_ts.into(),
+            subject_revision: None,
+            occurred_at: None,
+            payload: json!({
+                "team_id": team_id,
+                "user_id": user_id,
+                "channel": channel,
+                "thread_ts": thread_ts,
+                "message_ts": event.get("ts").cloned().unwrap_or(Value::Null),
+                "text": text,
+                "command": command,
+            })
+            .into(),
+            provenance: json!({ "provider": "slack", "event_id": delivery_id }).into(),
+        }],
+        errors: vec![],
+    }
+}
+
 fn value_string(value: &Value) -> String {
     value
         .as_str()
@@ -2211,6 +2393,52 @@ mod tests {
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>()
         )
+    }
+
+    fn slack_signature(secret: &str, timestamp: i64, body: &[u8]) -> String {
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(format!("v0:{timestamp}:").as_bytes());
+        mac.update(body);
+        format!(
+            "v0={}",
+            mac.finalize()
+                .into_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+    }
+
+    #[test]
+    fn slack_thread_reply_is_verified_and_normalized_for_conversation_control() {
+        let timestamp = chrono::Utc::now().timestamp();
+        let body = br#"{"type":"event_callback","team_id":"T123","event_id":"Ev123","event":{"type":"message","user":"U123","text":"Please focus on the failing parser test","channel":"C123","ts":"1700.2","thread_ts":"1700.1"}}"#;
+        let response = handle_slack_ingress(
+            AdapterRequest {
+                method: "POST".into(),
+                headers: BTreeMap::from([
+                    ("x-slack-request-timestamp".into(), timestamp.to_string()),
+                    (
+                        "x-slack-signature".into(),
+                        slack_signature("secret", timestamp, body),
+                    ),
+                ]),
+                body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+                configuration: json!({ "team_id": "T123" }),
+                secrets: json!({ "signing_secret": "secret" }),
+            },
+            DEFAULT_BODY_LIMIT,
+        );
+
+        assert!(response.verified);
+        assert_eq!(response.events[0].source, "slack:T123");
+        assert_eq!(response.events[0].scope, "C123");
+        assert_eq!(response.events[0].correlation_key, "1700.1");
+        assert_eq!(
+            response.events[0].payload["command"].as_str(),
+            Some("steer")
+        );
+        assert_eq!(response.events[0].payload["user_id"].as_str(), Some("U123"));
     }
 
     #[test]

@@ -174,6 +174,21 @@ Steering is accepted only while a harnessed Claude or Codex phase owns a steerab
 delivered through the provider's structured protocol, never as shell input. If a mission is between phases or already terminal, wait
 for the next active AI phase or inspect its final evidence instead.
 
+Slack can be the same control surface when a `slack_ingress` adapter is installed. Configure the
+matching Slack notification policy with its workspace id as `team_id`; the successful outbound
+message receipt then correlates that message's thread to the live mission. A platform member
+administrator must explicitly link each human first with `POST /users/{user_id}/identities`:
+
+```json
+{ "provider": "slack:T012345", "subject": "U012345" }
+```
+
+A normal signed reply steers the active harness. A reply containing only `approve` or `reject`
+settles the current approval instead. The mapped user still needs Run permission on the mission's
+owning pipeline; the adapter never grants or bypasses that permission. Accepted and denied replies
+are retained in the adapter journal and audit log, and accepted replies also appear as mission
+evidence attributed to the mapped user.
+
 Lifecycle intents are policy-defined controls, not arbitrary graph jumps. Inspect the mission's
 frozen policy before submitting one:
 

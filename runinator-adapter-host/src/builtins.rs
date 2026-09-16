@@ -113,6 +113,7 @@ fn validate_configuration(
 struct GenericWebhook;
 struct Github;
 struct Jira;
+struct SlackIngress;
 impl BuiltinAdapter for GenericWebhook {
     fn metadata(&self) -> AdapterKindMetadata {
         generic_metadata()
@@ -143,11 +144,23 @@ impl BuiltinAdapter for Jira {
         Box::pin(poll_jira(request))
     }
 }
+impl BuiltinAdapter for SlackIngress {
+    fn metadata(&self) -> AdapterKindMetadata {
+        slack_ingress_metadata()
+    }
+    fn handle(&self, request: AdapterRequest, body_limit: usize) -> AdapterResponse {
+        handle_slack_ingress(request, body_limit)
+    }
+}
 pub(super) fn registry() -> &'static BTreeMap<String, Box<dyn BuiltinAdapter>> {
     static REGISTRY: OnceLock<BTreeMap<String, Box<dyn BuiltinAdapter>>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        let adapters: Vec<Box<dyn BuiltinAdapter>> =
-            vec![Box::new(GenericWebhook), Box::new(Github), Box::new(Jira)];
+        let adapters: Vec<Box<dyn BuiltinAdapter>> = vec![
+            Box::new(GenericWebhook),
+            Box::new(Github),
+            Box::new(Jira),
+            Box::new(SlackIngress),
+        ];
         adapters
             .into_iter()
             .map(|adapter| (adapter.metadata().kind, adapter))

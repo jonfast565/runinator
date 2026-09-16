@@ -99,7 +99,7 @@ fn run_claude_once(
     token: CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<TaskExecutionResult, SendableError> {
-    let argv = build_claude_argv(&params);
+    let argv = build_claude_argv(params);
 
     let mut command = Command::new(&params.binary);
     command

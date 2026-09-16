@@ -8,6 +8,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use runinator_models::{
+    adapter_control::AdapterDeliveryRecord,
     errors::SendableError,
     orchestration::{
         AdapterDefinition, AdapterRevision, IngressAction, IngressAdmissionStatus,
@@ -103,6 +104,13 @@ impl<T: OrchestrationStore> AdapterOperations<T> {
 
     pub async fn delete(&self, id: Uuid) -> Result<bool, SendableError> {
         self.store.delete_orchestration_adapter(id).await
+    }
+
+    pub async fn update_delivery(
+        &self,
+        delivery: AdapterDeliveryRecord,
+    ) -> Result<(), SendableError> {
+        self.store.update_adapter_delivery(delivery).await
     }
 
     pub async fn poll_status(

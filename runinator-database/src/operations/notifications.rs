@@ -544,27 +544,23 @@ where
 
     async fn create_notification_delivery(
         &self,
-        delivery_id: Uuid,
-        notification_id: Uuid,
-        policy_id: Option<Uuid>,
-        channel: NotificationChannel,
-        target: Option<String>,
-        command: runinator_comm::EffectCommand,
+        delivery: NewNotificationDelivery,
     ) -> Result<NotificationDelivery, SendableError> {
-        let id = delivery_id;
+        let id = delivery.id;
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
-            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, target, status, attempts, last_error, dedupe_key, command_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
+            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, target, workflow_run_id, status, attempts, last_error, dedupe_key, command_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
         ))
         .bind(id)
-        .bind(notification_id)
-        .bind(policy_id)
-        .bind(channel.as_str())
-        .bind(target)
+        .bind(delivery.notification_id)
+        .bind(delivery.policy_id)
+        .bind(delivery.channel.as_str())
+        .bind(delivery.target)
+        .bind(delivery.workflow_run_id)
         .bind(NotificationDeliveryStatus::Pending.as_str())
         .bind(format!("notification:{id}"))
-        .bind(serde_json::to_string(&command)?)
+        .bind(serde_json::to_string(&delivery.command)?)
         .bind(now)
         .bind(now)
         .execute(self.pool())
@@ -664,19 +660,35 @@ where
         delivery_id: Uuid,
         status: NotificationDeliveryStatus,
         error: Option<String>,
+        response: Option<Value>,
     ) -> Result<(), SendableError> {
         sqlx::query(&self.render(
             "UPDATE notification_deliveries
-             SET status = ?, attempts = attempts + 1, last_error = ?, updated_at = ?
+             SET status = ?, attempts = attempts + 1, last_error = ?, response_json = ?, updated_at = ?
              WHERE id = ?",
         ))
         .bind(status.as_str())
         .bind(error)
+        .bind(response.map(|value| value.to_string()))
         .bind(Utc::now().timestamp())
         .bind(delivery_id)
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    async fn fetch_notification_delivery(
+        &self,
+        delivery_id: Uuid,
+    ) -> Result<Option<NotificationDelivery>, SendableError> {
+        let columns = NOTIFICATION_DELIVERY_COLUMNS;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_deliveries WHERE id = ?"
+        )))
+        .bind(delivery_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.as_ref().map(mappers::row_to_notification_delivery))
     }
 
     async fn fetch_notification_deliveries(

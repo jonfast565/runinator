@@ -17,7 +17,7 @@ use runinator_models::auth::{
     CreateApiKeyResponse, CreatePersonalApiKeyRequest, CreateTeamRequest, CreateUserRequest,
     EnrollAgentRequest, EnrollAgentResponse, LoginRequest, LoginResponse, PersonalApiKeyScope,
     PrincipalKind, RefreshRequest, UpdateApiKeyRequest, UpdateCurrentUserRequest,
-    UpdateTeamRequest, UpdateUserRequest, User,
+    UpdateTeamRequest, UpdateUserRequest, User, UserIdentityPutRequest,
 };
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::server_settings::{
@@ -1304,6 +1304,71 @@ pub async fn delete_user<T: AuthStore + RbacStore + RuntimeStore>(
     }
 }
 
+pub async fn list_user_identities<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(user_id): Path<Uuid>,
+) -> Reply {
+    if let Err(reply) = ctx.require_scope_action(Action::MembersManage, ScopeRef::PLATFORM) {
+        return reply.into_reply();
+    }
+    match db.list_user_identities(user_id).await {
+        Ok(identities) => match identities
+            .iter()
+            .map(json_value)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+            Err(reply) => reply.into_reply(),
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn create_user_identity<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(user_id): Path<Uuid>,
+    ValidatedJson(request): ValidatedJson<UserIdentityPutRequest>,
+) -> Reply {
+    if let Err(reply) = ctx.require_scope_action(Action::MembersManage, ScopeRef::PLATFORM) {
+        return reply.into_reply();
+    }
+    if request.provider == runinator_models::auth::PROVIDER_LOCAL {
+        return bad_request("local identities are managed through the password endpoints");
+    }
+    match db.fetch_user(user_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found("user not found"),
+        Err(err) => return api_error(err.to_string()),
+    }
+    match db
+        .upsert_user_identity(user_id, request.provider, request.subject)
+        .await
+    {
+        Ok(identity) => match json_value(&identity) {
+            Ok(value) => (StatusCode::CREATED, Json(ApiResponse::JsonValue(value))),
+            Err(reply) => reply.into_reply(),
+        },
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+pub async fn delete_user_identity<T: AuthStore + RbacStore + RuntimeStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((user_id, identity_id)): Path<(Uuid, Uuid)>,
+) -> Reply {
+    if let Err(reply) = ctx.require_scope_action(Action::MembersManage, ScopeRef::PLATFORM) {
+        return reply.into_reply();
+    }
+    match db.delete_user_identity(user_id, identity_id).await {
+        Ok(true) => task_response_success("External identity removed"),
+        Ok(false) => not_found("external identity not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 // ---- api keys ----
 
 pub async fn list_api_keys<T: AuthStore + RbacStore + RuntimeStore>(
@@ -1969,6 +2034,16 @@ pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore + OrgStore>
             get(list_user_teams::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/users/{id}/identities",
+            get(list_user_identities::<T>)
+                .post(create_user_identity::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/users/{id}/identities/{identity_id}",
+            delete(delete_user_identity::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/api_keys",
             get(list_api_keys::<T>)
                 .post(create_api_key::<T>)
@@ -2322,6 +2397,45 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "user teams",
         Example::Team,
+    ),
+    endpoint!(
+        "get",
+        "/users/{id}/identities",
+        "Auth",
+        "List user identities",
+        "Admin endpoint that lists external identity mappings for a user.",
+        false,
+        None,
+        &[],
+        200,
+        "external identities",
+        Example::None,
+    ),
+    endpoint!(
+        "post",
+        "/users/{id}/identities",
+        "Auth",
+        "Create a user identity",
+        "Admin endpoint that maps an external provider subject to a local user.",
+        false,
+        json_body("External provider and subject mapping.", Example::None),
+        &[],
+        201,
+        "created external identity",
+        Example::None,
+    ),
+    endpoint!(
+        "delete",
+        "/users/{id}/identities/{identity_id}",
+        "Auth",
+        "Delete a user identity",
+        "Admin endpoint that removes an external identity mapping from a local user.",
+        false,
+        None,
+        &[],
+        200,
+        "external identity removed",
+        Example::TaskResponse,
     ),
     endpoint!(
         "get",

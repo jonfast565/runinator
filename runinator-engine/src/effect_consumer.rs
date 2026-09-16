@@ -10,12 +10,14 @@ use runinator_models::workflow_vm::{
     WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowJournalEntry,
 };
 use runinator_models::{
-    notifications::NotificationDeliveryStatus,
+    notifications::{NotificationChannel, NotificationDeliveryStatus},
     orchestration::{DeliverySemantics, ExternalOperationStatus, OrchestrationEvidence},
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_runtime::workflow_vm::interrupt_handler_continuation;
-use runinator_store::roles::{ExternalOperationUpdate, OrchestrationStore, WorkflowVmStore};
+use runinator_store::roles::{
+    ExternalOperationUpdate, NewOrchestrationCorrelationAlias, OrchestrationStore, WorkflowVmStore,
+};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -49,15 +51,32 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
         if let Some(notification_delivery_id) = delivery.result.notification_delivery_id {
             let result = match &delivery.result.kind {
                 EffectResultKind::Status {
-                    status, message, ..
+                    status,
+                    output,
+                    message,
                 } => {
                     let status = if *status == WorkflowEffectStatus::Succeeded {
                         NotificationDeliveryStatus::Delivered
                     } else {
                         NotificationDeliveryStatus::Failed
                     };
-                    db.mark_notification_delivery(notification_delivery_id, status, message.clone())
-                        .await
+                    let settled = db
+                        .mark_notification_delivery(
+                            notification_delivery_id,
+                            status,
+                            message.clone(),
+                            output.clone(),
+                        )
+                        .await;
+                    if settled.is_ok() && status == NotificationDeliveryStatus::Delivered {
+                        correlate_slack_notification(
+                            db.as_ref(),
+                            notification_delivery_id,
+                            output.as_ref(),
+                        )
+                        .await;
+                    }
+                    settled
                 }
                 // Notification sends have no stream/artifact/lease contract; acknowledge stray
                 // payloads so an old/misbehaving provider cannot wedge the result channel.
@@ -373,6 +392,59 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                 }
             }
         }
+    }
+}
+
+async fn correlate_slack_notification<T: crate::engine::BackgroundEngineStore>(
+    db: &T,
+    delivery_id: uuid::Uuid,
+    output: Option<&runinator_models::value::Value>,
+) {
+    let Some(output) = output else {
+        return;
+    };
+    let Some(team_id) = output
+        .get("runinator_team_id")
+        .and_then(|value| value.as_str())
+    else {
+        return;
+    };
+    let Some(channel) = output.get("channel").and_then(|value| value.as_str()) else {
+        return;
+    };
+    let Some(thread_ts) = output.get("ts").and_then(|value| value.as_str()) else {
+        return;
+    };
+    let delivery = match db.fetch_notification_delivery(delivery_id).await {
+        Ok(Some(delivery)) if delivery.channel == NotificationChannel::Slack => delivery,
+        _ => return,
+    };
+    let Some(workflow_run_id) = delivery.workflow_run_id else {
+        return;
+    };
+    let binding = match db
+        .fetch_current_orchestration_binding_for_workflow_run(workflow_run_id)
+        .await
+    {
+        Ok(Some(binding)) if binding.scope.starts_with("mission.") => binding,
+        _ => return,
+    };
+    if let Err(error) = db
+        .upsert_orchestration_correlation_alias(
+            NewOrchestrationCorrelationAlias {
+                id: uuid::Uuid::now_v7(),
+                binding_id: binding.id,
+                generation: binding.generation,
+                org_id: binding.org_id,
+                source: format!("slack:{team_id}"),
+                scope: channel.to_string(),
+                correlation_key: thread_ts.to_string(),
+            },
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        warn!(error = %error, delivery_id = %delivery_id, "failed to correlate Slack notification thread");
     }
 }
 

@@ -33,8 +33,8 @@ use runinator_models::{
         FunctionExport, FunctionPackage, FunctionVersion, NewFunctionVersion,
     },
     notifications::{
-        NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
-        NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
+        NewNotification, NewNotificationPolicy, Notification, NotificationDelivery,
+        NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
     },
     orchestration::IdempotencyClaim,
     orgs::{OrgMembership, OrgRole, Organization},
@@ -95,7 +95,7 @@ const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, 
 
 const NOTIFICATION_POLICY_COLUMNS: &str = "id, org_id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
 const NOTIFICATION_COLUMNS: &str = "id, org_id, source_resource_type, source_resource_id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
-const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, command_json, published_at, claimed_by, claimed_until, created_at, updated_at";
+const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, workflow_run_id, status, attempts, last_error, response_json, command_json, published_at, claimed_by, claimed_until, created_at, updated_at";
 
 /// true when an insert lost a unique-constraint race rather than failing for a reason worth
 /// surfacing. lets a caller that assigns its own sequence number recompute and retry.
@@ -960,12 +960,13 @@ impl ArchiveTableSql for ArchiveTable {
             ],
             ArchiveTable::NotificationDeliveries => archive_columns![
                 "id" => Uuid, "notification_id" => Uuid, "policy_id" => OptionalUuid,
-                "channel" => Text, "target" => OptionalText, "status" => Text,
+                "channel" => Text, "target" => OptionalText,
+                "workflow_run_id" => OptionalUuid, "status" => Text,
                 "attempts" => Integer, "last_error" => OptionalText,
                 "created_at" => Integer, "updated_at" => Integer,
                 "dedupe_key" => OptionalText, "command_json" => OptionalText,
                 "published_at" => OptionalInteger, "claimed_by" => OptionalText,
-                "claimed_until" => OptionalInteger,
+                "claimed_until" => OptionalInteger, "response_json" => OptionalText,
             ],
             ArchiveTable::AutomationRecords => archive_columns![
                 "id" => Uuid, "record_type" => Text, "workflow_run_id" => OptionalUuid,
@@ -1277,7 +1278,7 @@ impl ArchiveTableSql for ArchiveTable {
             "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE id = ?".to_string()
         }
         ArchiveTable::NotificationDeliveries => {
-            "SELECT id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at FROM notification_deliveries WHERE id = ? AND status NOT IN ('pending', 'retrying')".to_string()
+            "SELECT id, notification_id, policy_id, channel, target, workflow_run_id, status, attempts, last_error, created_at, updated_at, dedupe_key, command_json, published_at, claimed_by, claimed_until, response_json FROM notification_deliveries WHERE id = ? AND status NOT IN ('pending', 'retrying')".to_string()
         }
         ArchiveTable::AutomationRecords => {
             "SELECT id, record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at FROM automation_records WHERE id = ?".to_string()
@@ -1455,9 +1456,16 @@ impl ArchiveTableSql for ArchiveTable {
                 "id": row.get::<Uuid, _>("id").to_string(), "notification_id": row.get::<Uuid, _>("notification_id").to_string(),
                 "policy_id": row.get::<Option<Uuid>, _>("policy_id").map(|id| id.to_string()),
                 "channel": row.get::<String, _>("channel"), "target": row.get::<Option<String>, _>("target"),
+                "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
                 "status": row.get::<String, _>("status"), "attempts": row.get::<i64, _>("attempts"),
                 "last_error": row.get::<Option<String>, _>("last_error"), "created_at": row.get::<i64, _>("created_at"),
                 "updated_at": row.get::<i64, _>("updated_at"),
+                "dedupe_key": row.get::<Option<String>, _>("dedupe_key"),
+                "command_json": row.get::<Option<String>, _>("command_json"),
+                "published_at": row.get::<Option<i64>, _>("published_at"),
+                "claimed_by": row.get::<Option<String>, _>("claimed_by"),
+                "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
+                "response_json": row.get::<Option<String>, _>("response_json"),
             }),
             ArchiveTable::AutomationRecords => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(), "record_type": row.get::<String, _>("record_type"),
