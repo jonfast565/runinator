@@ -10,6 +10,7 @@ use runinator_provider_functions::FunctionsProvider;
 use runinator_provider_git::GitProvider;
 use runinator_provider_github::GitHubProvider;
 use runinator_provider_github_cli::GitHubCliProvider;
+use runinator_provider_http::HttpProvider;
 use runinator_provider_jira::JiraProvider;
 use runinator_provider_slack::SlackProvider;
 use runinator_provider_std::StdProvider;
@@ -25,6 +26,7 @@ pub fn built_in_providers() -> Vec<StaticProvider> {
         Box::new(JiraProvider {}) as StaticProvider,
         Box::new(GitHubProvider {}) as StaticProvider,
         Box::new(GitHubCliProvider) as StaticProvider,
+        Box::new(HttpProvider) as StaticProvider,
         Box::new(SlackProvider {}) as StaticProvider,
         Box::new(GitProvider) as StaticProvider,
         Box::new(AiCommandProvider) as StaticProvider,

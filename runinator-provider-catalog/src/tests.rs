@@ -16,6 +16,7 @@ fn built_in_provider_names_stay_in_runtime_registration_order() {
             "jira",
             "github",
             "github_cli",
+            "http",
             "slack",
             "git",
             "ai-command",

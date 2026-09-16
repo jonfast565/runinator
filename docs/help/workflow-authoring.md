@@ -279,6 +279,14 @@ Outbound workflows can use `github_cli.api`, `github_cli.graphql`, or the allowl
 shell. Existing typed `github.*` actions can also use that profile; they obtain a short-lived token
 from `gh auth token` inside the worker process and retain their typed HTTP contracts.
 
+For services without a dedicated provider, `http.request` supports bounded `GET`, `POST`, `PUT`,
+`PATCH`, `DELETE`, and `HEAD` calls with headers, query parameters, JSON/form/text/base64 bodies,
+redirect control, and explicit accepted statuses. A nested `secret://` header value is resolved only
+inside the worker. Requests accept 2xx by default; set `expect_status: []` to return every status as
+a value, or list the exact accepted statuses. Private, loopback, link-local, and metadata targets are
+blocked unless their hostname appears in the worker's comma-separated
+`RUNINATOR_HTTP_ALLOWED_HOSTS` policy. Each redirect is checked again.
+
 The first successful poll establishes a high-water checkpoint without admitting historical events.
 Later polls normalize events through the same pipeline-ingress service as webhooks.
 
