@@ -2,8 +2,11 @@
   "mcpServers": {
     "runinator": {
       "type": "stdio",
-      "command": "${CLAUDE_PROJECT_DIR}/scripts/start-runinatorctl.sh",
+      "command": "bash",
       "args": [
+        "-c",
+        "exec \"$(git rev-parse --show-toplevel)/scripts/start-runinatorctl.sh\" \"$@\"",
+        "runinator-mcp",
         "--mcp",
         "--port",
         "8081",
