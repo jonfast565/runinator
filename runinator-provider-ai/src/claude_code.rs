@@ -22,7 +22,7 @@ use runinator_provider_support::terminal::{self, CommandBuilder, TerminalError};
 
 use crate::errors::{
     CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INPUT, CLAUDE_INTERACTIVE_NOT_PERMITTED,
-    CLAUDE_INVALID_JSON, CLAUDE_SPAWN, CLAUDE_TIMEOUT,
+    CLAUDE_INVALID_JSON, CLAUDE_SCHEMA, CLAUDE_SPAWN, CLAUDE_TIMEOUT,
 };
 use crate::params::{ClaudeCodeParams, parse_params};
 
@@ -139,6 +139,7 @@ pub(crate) fn run_claude_code(
     }
 
     let parsed = parse_claude_output(&params.output_format, &output.stdout)?;
+    validate_structured_output(params.output_schema.as_ref(), &parsed)?;
     Ok(TaskExecutionResult {
         message: Some("Claude Code completed".into()),
         // preserve the advertised `response: any` contract for workflow bindings.
@@ -304,6 +305,7 @@ fn run_claude_harness(
             CLAUDE_EXIT_CODE.error(format!("Claude Code harness reported failure: {message}"))
         );
     }
+    validate_structured_output(params.output_schema.as_ref(), &response)?;
     let session_id = response
         .get("session_id")
         .or_else(|| response.get("sessionId"))
@@ -624,6 +626,7 @@ fn build_claude_argv(params: &ClaudeCodeParams) -> Vec<String> {
         argv.push("--permission-mode".into());
         argv.push(mode.into());
     }
+    append_output_schema(&mut argv, params);
     for arg in &params.extra_args {
         argv.push(arg.clone());
     }
@@ -675,8 +678,16 @@ fn build_claude_harness_argv(params: &ClaudeCodeParams) -> Vec<String> {
         argv.push("--permission-mode".into());
         argv.push(mode.into());
     }
+    append_output_schema(&mut argv, params);
     argv.extend(params.extra_args.iter().cloned());
     argv
+}
+
+fn append_output_schema(argv: &mut Vec<String>, params: &ClaudeCodeParams) {
+    if let Some(schema) = &params.output_schema {
+        argv.push("--json-schema".into());
+        argv.push(schema.to_string());
+    }
 }
 
 fn mission_mcp_config(params: &ClaudeCodeParams) -> String {
@@ -715,6 +726,22 @@ fn parse_claude_output(format: &str, stdout: &str) -> Result<Value, SendableErro
         }),
         _ => Ok(json!({ "text": stdout })),
     }
+}
+
+fn validate_structured_output(
+    schema: Option<&Value>,
+    response: &Value,
+) -> Result<(), SendableError> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    let structured = response.get("structured_output").ok_or_else(|| {
+        CLAUDE_SCHEMA.error("Claude Code completed without a structured_output field")
+    })?;
+    let ty = runinator_models::providers::RuninatorType::from_json_schema_checked(schema)
+        .map_err(|error| CLAUDE_SCHEMA.error(format!("invalid output schema: {error}")))?;
+    ty.validate_value(structured)
+        .map_err(|violation| CLAUDE_SCHEMA.error(violation.message_with_label("structured output")))
 }
 
 #[cfg(test)]

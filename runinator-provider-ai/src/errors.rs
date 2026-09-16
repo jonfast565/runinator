@@ -79,6 +79,11 @@ pub(crate) const CODEX_PROTOCOL: ErrorDescriptor = ErrorDescriptor::new(
 );
 pub(crate) const CODEX_INPUT: ErrorDescriptor =
     ErrorDescriptor::new("AI018", "ai_command.codex.input", "Codex input is invalid");
+pub(crate) const CLAUDE_SCHEMA: ErrorDescriptor = ErrorDescriptor::new(
+    "AI019",
+    "ai_command.claude_code.schema",
+    "Claude Code structured output did not match its schema",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -99,6 +104,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CODEX_EXIT_CODE,
     CODEX_PROTOCOL,
     CODEX_INPUT,
+    CLAUDE_SCHEMA,
 ];
 
 impl<R> ProviderErrors for AiCommandProvider<R> {

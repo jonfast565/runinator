@@ -76,6 +76,7 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                         .with_default(json!(false)),
                     ParameterMetadata::optional("mission_id", RuninatorType::String),
                     ParameterMetadata::optional("max_turns", RuninatorType::Integer),
+                    ParameterMetadata::optional("output_schema", RuninatorType::Any),
                     ParameterMetadata::optional(
                         "extra_args",
                         RuninatorType::array(RuninatorType::String),

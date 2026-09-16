@@ -53,6 +53,11 @@ fn harness_uses_stream_json_and_keeps_steering_as_a_user_message() {
             "mcp_config": "/tmp/mission-mcp.json",
             "max_turns": 7,
             "permission_mode": "acceptEdits",
+            "output_schema": {
+                "type": "object",
+                "properties": { "next_member": { "type": "string" } },
+                "required": ["next_member"]
+            },
         })
         .into(),
     )
@@ -75,6 +80,16 @@ fn harness_uses_stream_json_and_keeps_steering_as_a_user_message() {
             .any(|values| values == ["--mcp-config", "/tmp/mission-mcp.json"])
     );
     assert!(argv.windows(2).any(|values| values == ["--max-turns", "7"]));
+    let schema = argv
+        .windows(2)
+        .find(|values| values[0] == "--json-schema")
+        .map(|values| &values[1])
+        .expect("output schema");
+    let schema: Value = serde_json::from_str(schema).unwrap();
+    assert_eq!(
+        schema.pointer("/required/0").and_then(Value::as_str),
+        Some("next_member")
+    );
     assert!(!argv.contains(&"initial task".to_string()));
 
     let blank_resume: ClaudeCodeParams =
@@ -93,6 +108,27 @@ fn harness_uses_stream_json_and_keeps_steering_as_a_user_message() {
             .and_then(Value::as_str),
         Some("refocus on the failing test")
     );
+}
+
+#[test]
+fn structured_output_is_verified_against_the_declared_schema() {
+    let schema = json!({
+        "type": "object",
+        "properties": { "approved": { "type": "boolean" } },
+        "required": ["approved"]
+    });
+    validate_structured_output(
+        Some(&schema),
+        &json!({ "structured_output": { "approved": true } }),
+    )
+    .unwrap();
+
+    let error = validate_structured_output(
+        Some(&schema),
+        &json!({ "structured_output": { "approved": "yes" } }),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains(CLAUDE_SCHEMA.code));
 }
 
 #[test]

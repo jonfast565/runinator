@@ -170,11 +170,12 @@ workflow "Review Ticket Mission" v1 {
             mission_id: string(params.orchestration.binding_id),
             max_turns: 5,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.sdlc.implement", "runinator.sdlc.verify"] }, summary: { type: "string" }, findings: { type: "array", items: { type: "string" } } }, required: ["next_member", "summary", "findings"] },
             allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, summary: string, findings: string[] } = std.encoding.parse_json(review.response.result)
+            let decision: { next_member: string, summary: string, findings: string[] } = review.response.structured_output
             return {
                 resources_patch: { sdlc: { internal_review: decision } },
                 evidence: { role: "reviewer", review: decision },
@@ -303,11 +304,12 @@ workflow "Assess Pull Request Feedback" v1 {
             mission_id: string(params.orchestration.binding_id),
             max_turns: 4,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.sdlc.repair", "runinator.sdlc.merge", "runinator.sdlc.await_feedback"] }, approved: { type: "boolean" }, summary: { type: "string" }, findings: { type: "array", items: { type: "string" } } }, required: ["next_member", "approved", "summary", "findings"] },
             allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, approved: bool, summary: string, findings: string[] } = std.encoding.parse_json(assessment.response.result)
+            let decision: { next_member: string, approved: bool, summary: string, findings: string[] } = assessment.response.structured_output
             return {
                 resources_patch: { sdlc: { feedback: decision } },
                 evidence: { role: "feedback_reviewer", decision: decision, reviews: reviews.response, comments: comments.response },
@@ -409,11 +411,12 @@ workflow "Assess Deployment Impact" v1 {
             mission_id: string(params.orchestration.binding_id),
             max_turns: 4,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.sdlc.deploy", "runinator.sdlc.close"] }, summary: { type: "string" } }, required: ["next_member", "summary"] },
             allowed_tools: "Read,Glob,Grep,Bash(git show:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, summary: string } = std.encoding.parse_json(impact.response.result)
+            let decision: { next_member: string, summary: string } = impact.response.structured_output
             return {
                 resources_patch: { sdlc: { deployment_impact: decision } },
                 evidence: { role: "deployment_analyst", decision: decision },
@@ -473,11 +476,12 @@ workflow "Monitor Named Deployment" v1 {
             mission_id: string(params.orchestration.binding_id),
             max_turns: 3,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.sdlc.close", "runinator.sdlc.deploy_monitor", "runinator.sdlc.handoff"] }, summary: { type: "string" } }, required: ["next_member", "summary"] },
             allowed_tools: "mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, summary: string } = std.encoding.parse_json(assessment.response.result)
+            let decision: { next_member: string, summary: string } = assessment.response.structured_output
             return {
                 resources_patch: { sdlc: { deployment_status: decision, deployment_runs: runs.response } },
                 evidence: { role: "deployment_monitor", decision: decision, runs: runs.response },

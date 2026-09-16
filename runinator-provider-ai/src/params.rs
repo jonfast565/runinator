@@ -53,6 +53,9 @@ pub(crate) struct ClaudeCodeParams {
     /// Bound autonomous work performed in one Claude Code turn.
     #[serde(default)]
     pub max_turns: Option<u32>,
+    /// JSON Schema enforced by Claude Code and verified again before the effect succeeds.
+    #[serde(default)]
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Deserialize)]

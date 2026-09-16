@@ -98,11 +98,12 @@ workflow "Review Coding Mission" v1 {
             mission_id: params.orchestration.binding_id,
             max_turns: 4,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.missions.coding_verify", "runinator.missions.coding_implement"] }, summary: { type: "string" }, findings: { type: "array", items: { type: "string" } } }, required: ["next_member", "summary", "findings"] },
             allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, summary: string, findings: string[] } = std.encoding.parse_json(review.response.result)
+            let decision: { next_member: string, summary: string, findings: string[] } = review.response.structured_output
             return {
                 resources_patch: { coding: { latest_review: decision } },
                 evidence: { role: "reviewer", review: decision },
@@ -132,11 +133,12 @@ workflow "Verify Coding Mission" v1 {
             mission_id: params.orchestration.binding_id,
             max_turns: 4,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.missions.coding_implement", "runinator.missions.coding_summary"] }, summary: { type: "string" }, checks: { type: "array", items: { type: "string" } }, failures: { type: "array", items: { type: "string" } } }, required: ["next_member", "summary", "checks", "failures"] },
             allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo fmt:*),Bash(pnpm test:*),Bash(pnpm build:*),Bash(npm test:*),Bash(npm run build:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, summary: string, checks: string[], failures: string[] } = std.encoding.parse_json(verification.response.result)
+            let decision: { next_member: string, summary: string, checks: string[], failures: string[] } = verification.response.structured_output
             return {
                 resources_patch: { coding: { latest_verification: decision } },
                 evidence: { role: "verifier", verification: decision },
@@ -263,11 +265,12 @@ workflow "Critique Research Mission" v1 {
             mission_id: params.orchestration.binding_id,
             max_turns: 4,
             permission_mode: "dontAsk",
+            output_schema: { type: "object", properties: { next_member: { type: "string", enum: ["runinator.missions.research_investigate", "runinator.missions.research_report"] }, summary: { type: "string" }, gaps: { type: "array", items: { type: "string" } }, confidence: { type: "string", enum: ["low", "medium", "high"] } }, required: ["next_member", "summary", "gaps", "confidence"] },
             allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(rg:*),mcp__runinator-mission__runinator_missions_show,mcp__runinator-mission__runinator_missions_evidence,mcp__runinator-mission__runinator_missions_intent"
         )
 
         compute {
-            let decision: { next_member: string, summary: string, gaps: string[], confidence: string } = std.encoding.parse_json(critique.response.result)
+            let decision: { next_member: string, summary: string, gaps: string[], confidence: string } = critique.response.structured_output
             return {
                 resources_patch: { research: { latest_critique: decision } },
                 evidence: { role: "research_critic", critique: decision },
