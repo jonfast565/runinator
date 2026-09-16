@@ -403,26 +403,6 @@ pub fn redeploy_grafana(options: GrafanaRedeployOptions) -> Result<()> {
 pub fn recover_rabbitmq(workspace_root: &Path, kube_context: Option<&str>) -> Result<()> {
     exec::require_tool("kubectl")?;
     let ctx_args = context_args(kube_context);
-    let exec_in_broker = |rabbitmq_args: &[&str]| -> Result<()> {
-        let mut args = kubectl_args(
-            &ctx_args,
-            &[
-                "exec",
-                "pod/runinator-rabbitmq-0",
-                "--namespace",
-                NAMESPACE,
-                "--",
-                "rabbitmqctl",
-            ],
-        );
-        args.extend_from_slice(rabbitmq_args);
-        exec::run("kubectl", &args, workspace_root)
-    };
-
-    exec_in_broker(&["delete_vhost", "/"])?;
-    exec_in_broker(&["add_vhost", "/"])?;
-    exec_in_broker(&["set_permissions", "-p", "/", "runinator", ".*", ".*", ".*"])?;
-
     // replace an unhealthy broker pod so it picks up the StatefulSet's current template.
     let args = kubectl_args(
         &ctx_args,
@@ -448,6 +428,26 @@ pub fn recover_rabbitmq(workspace_root: &Path, kube_context: Option<&str>) -> Re
         ],
     );
     exec::run("kubectl", &args, workspace_root)?;
+
+    let exec_in_broker = |rabbitmq_args: &[&str]| -> Result<()> {
+        let mut args = kubectl_args(
+            &ctx_args,
+            &[
+                "exec",
+                "pod/runinator-rabbitmq-0",
+                "--namespace",
+                NAMESPACE,
+                "--",
+                "rabbitmqctl",
+            ],
+        );
+        args.extend_from_slice(rabbitmq_args);
+        exec::run("kubectl", &args, workspace_root)
+    };
+
+    exec_in_broker(&["delete_vhost", "/"])?;
+    exec_in_broker(&["add_vhost", "/"])?;
+    exec_in_broker(&["set_permissions", "-p", "/", "runinator", ".*", ".*", ".*"])?;
 
     for target in [
         "deployment/runinator-ws",
