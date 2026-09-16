@@ -542,10 +542,16 @@ impl<'a> Decompiler<'a> {
                 Some("run_parked") => "parked",
                 _ => "failure",
             };
-            let channel = match policy.get("channel").and_then(Value::as_str) {
-                Some("email") => "email",
-                Some("in_app") => "app",
-                _ => "slack",
+            let channel = match (
+                policy.get("provider").and_then(Value::as_str),
+                policy.get("function").and_then(Value::as_str),
+            ) {
+                (Some(provider), Some(function)) => format!("{provider}.{function}"),
+                _ => match policy.get("channel").and_then(Value::as_str) {
+                    Some("email") => "email".into(),
+                    Some("in_app") => "app".into(),
+                    _ => "slack".into(),
+                },
             };
             let target = policy
                 .get("target")
@@ -573,6 +579,9 @@ impl<'a> Decompiler<'a> {
             if has_configuration {
                 let rendered = self.expr(configuration.unwrap_or(&Value::Null))?;
                 text.push_str(&format!(" with {rendered}"));
+            }
+            if policy.get("interactive").and_then(Value::as_bool) == Some(true) {
+                text.push_str(" interactive");
             }
             if policy.get("enabled").and_then(Value::as_bool) == Some(false) {
                 text.push_str(" disabled");

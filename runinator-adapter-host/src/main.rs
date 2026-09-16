@@ -15,10 +15,10 @@ use axum::{
     routing::{get, post},
 };
 use runinator_adapter_contract::{
-    ADAPTER_ABI_VERSION, AdapterMetadataEnvelope, AdapterPollRequest, AdapterPollResponse,
-    AdapterRequest, AdapterResponse, AdapterValidationRequest, AdapterValidationResponse,
-    FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL, MarkerFn, NAME_SYMBOL, NameFn,
-    POLL_SYMBOL, VALIDATE_SYMBOL, verify_bearer, verify_hmac_sha256,
+    ADAPTER_ABI_VERSION, AdapterImmediateResponse, AdapterMetadataEnvelope, AdapterPollRequest,
+    AdapterPollResponse, AdapterRequest, AdapterResponse, AdapterValidationRequest,
+    AdapterValidationResponse, FileOperationFn, HANDLE_SYMBOL, MARKER_SYMBOL, METADATA_SYMBOL,
+    MarkerFn, NAME_SYMBOL, NameFn, POLL_SYMBOL, VALIDATE_SYMBOL, verify_bearer, verify_hmac_sha256,
 };
 use runinator_models::{
     orchestration::{
@@ -1089,9 +1089,9 @@ fn slack_ingress_metadata() -> AdapterKindMetadata {
     AdapterKindMetadata {
         kind: "slack_ingress".into(),
         version: "1".into(),
-        display_name: "Slack conversation ingress".into(),
+        display_name: "Slack interaction ingress".into(),
         description: Some(
-            "Signed Slack Events API replies that steer or resolve a correlated mission".into(),
+            "Signed Slack replies for explicitly routed actionable notifications".into(),
         ),
         fields: vec![
             field(
@@ -1112,7 +1112,7 @@ fn slack_ingress_metadata() -> AdapterKindMetadata {
             ),
         ],
         polling_fields: vec![],
-        event_names: vec!["thread_reply".into(), "url_verification".into()],
+        event_names: vec!["interaction_response".into()],
         canonical_pointers: vec![
             "/team_id".into(),
             "/user_id".into(),
@@ -1120,7 +1120,7 @@ fn slack_ingress_metadata() -> AdapterKindMetadata {
             "/thread_ts".into(),
             "/text".into(),
         ],
-        capabilities: vec!["slack_signing_secret".into(), "conversational_control".into()],
+        capabilities: vec!["slack_signing_secret".into(), "interaction_response".into()],
         polling_authentication: vec![],
         polling_secret_fields: vec![],
         execution_profile_scopes: vec![],
@@ -1129,8 +1129,8 @@ fn slack_ingress_metadata() -> AdapterKindMetadata {
         setup_instructions: vec![
             "Create a Slack app, enable Events API, and subscribe to message.channels and message.groups as needed.".into(),
             "Set the Events API request URL to this adapter's webhook URL and bind the app signing secret.".into(),
-            "Map Slack users to Runinator users before allowing replies to control missions.".into(),
-            "Set team_id in matching Slack notification-policy configuration so outbound thread roots are correlated automatically.".into(),
+            "Map Slack users to Runinator users before allowing replies to apply notification actions.".into(),
+            "Select Slack explicitly on an interactive notification policy and provide team_id so outbound messages can bind their replies.".into(),
         ],
     }
 }
@@ -2048,6 +2048,7 @@ fn handle_generic(request: AdapterRequest, body_limit: usize) -> AdapterResponse
             verified: true,
             events: vec![event],
             errors: vec![],
+            immediate_response: None,
         },
         Err(error) => AdapterResponse::rejected(error),
     }
@@ -2141,6 +2142,7 @@ fn handle_github(request: AdapterRequest, body_limit: usize) -> AdapterResponse 
             provenance: provenance.into(),
         }],
         errors: vec![],
+        immediate_response: None,
     }
 }
 
@@ -2214,6 +2216,7 @@ fn handle_jira(request: AdapterRequest, body_limit: usize) -> AdapterResponse {
             provenance: provenance.into(),
         }],
         errors: vec![],
+        immediate_response: None,
     }
 }
 
@@ -2254,18 +2257,12 @@ fn handle_slack_ingress(request: AdapterRequest, body_limit: usize) -> AdapterRe
         };
         return AdapterResponse {
             verified: true,
-            events: vec![NormalizedAdapterEvent {
-                source: "slack".into(),
-                delivery_id: format!("challenge:{timestamp}"),
-                event_type: "url_verification".into(),
-                scope: "challenge".into(),
-                correlation_key: challenge.into(),
-                subject_revision: None,
-                occurred_at: None,
-                payload: json!({ "challenge": challenge }).into(),
-                provenance: Value::Null.into(),
-            }],
+            events: vec![],
             errors: vec![],
+            immediate_response: Some(AdapterImmediateResponse {
+                status: 200,
+                body: json!({ "challenge": challenge }),
+            }),
         };
     }
 
@@ -2286,6 +2283,7 @@ fn handle_slack_ingress(request: AdapterRequest, body_limit: usize) -> AdapterRe
             verified: true,
             events: vec![],
             errors: vec![],
+            immediate_response: None,
         };
     }
     let user_id = event
@@ -2309,12 +2307,18 @@ fn handle_slack_ingress(request: AdapterRequest, body_limit: usize) -> AdapterRe
             verified: true,
             events: vec![],
             errors: vec![],
+            immediate_response: None,
         };
     }
     let command = match text.trim().to_ascii_lowercase().as_str() {
         "approve" | "/approve" => "approve",
         "reject" | "/reject" => "reject",
         _ => "steer",
+    };
+    let input = if command == "steer" {
+        Value::String(text.to_string())
+    } else {
+        Value::Null
     };
     let delivery_id = payload
         .get("event_id")
@@ -2328,24 +2332,25 @@ fn handle_slack_ingress(request: AdapterRequest, body_limit: usize) -> AdapterRe
         events: vec![NormalizedAdapterEvent {
             source: format!("slack:{team_id}"),
             delivery_id: delivery_id.into(),
-            event_type: "thread_reply".into(),
+            event_type: "interaction_response".into(),
             scope: channel.into(),
             correlation_key: thread_ts.into(),
             subject_revision: None,
             occurred_at: None,
             payload: json!({
                 "team_id": team_id,
-                "user_id": user_id,
+                "actor_subject": user_id,
                 "channel": channel,
                 "thread_ts": thread_ts,
-                "message_ts": event.get("ts").cloned().unwrap_or(Value::Null),
-                "text": text,
-                "command": command,
+                "message_id": event.get("ts").cloned().unwrap_or(Value::Null),
+                "action_id": command,
+                "input": input,
             })
             .into(),
             provenance: json!({ "provider": "slack", "event_id": delivery_id }).into(),
         }],
         errors: vec![],
+        immediate_response: None,
     }
 }
 
@@ -2410,7 +2415,7 @@ mod tests {
     }
 
     #[test]
-    fn slack_thread_reply_is_verified_and_normalized_for_conversation_control() {
+    fn slack_thread_reply_is_verified_and_normalized_as_an_interaction_response() {
         let timestamp = chrono::Utc::now().timestamp();
         let body = br#"{"type":"event_callback","team_id":"T123","event_id":"Ev123","event":{"type":"message","user":"U123","text":"Please focus on the failing parser test","channel":"C123","ts":"1700.2","thread_ts":"1700.1"}}"#;
         let response = handle_slack_ingress(
@@ -2434,11 +2439,15 @@ mod tests {
         assert_eq!(response.events[0].source, "slack:T123");
         assert_eq!(response.events[0].scope, "C123");
         assert_eq!(response.events[0].correlation_key, "1700.1");
+        assert_eq!(response.events[0].event_type, "interaction_response");
         assert_eq!(
-            response.events[0].payload["command"].as_str(),
+            response.events[0].payload["action_id"].as_str(),
             Some("steer")
         );
-        assert_eq!(response.events[0].payload["user_id"].as_str(), Some("U123"));
+        assert_eq!(
+            response.events[0].payload["actor_subject"].as_str(),
+            Some("U123")
+        );
     }
 
     #[test]

@@ -1251,6 +1251,18 @@ async fn materialize_workflow_notifications<T: NotificationStore>(
             event,
             severity,
             channel,
+            provider: spec
+                .get("provider")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            function: spec
+                .get("function")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            interactive: spec
+                .get("interactive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             target: spec
                 .get("target")
                 .and_then(Value::as_str)

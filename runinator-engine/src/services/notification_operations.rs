@@ -36,6 +36,14 @@ impl<T> NotificationOperations<T> {
 }
 
 impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
+    async fn hydrate(&self, mut notification: Notification) -> Result<Notification, SendableError> {
+        notification.interaction = self
+            .store
+            .fetch_notification_interaction(notification.id)
+            .await?;
+        Ok(notification)
+    }
+
     pub async fn list(
         &self,
         org_id: Option<Uuid>,
@@ -43,8 +51,19 @@ impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
         unread_only: bool,
         limit: i64,
     ) -> Result<Vec<Notification>, SendableError> {
-        repository::fetch_notifications(self.store.as_ref(), org_id, user_id, unread_only, limit)
-            .await
+        let notifications = repository::fetch_notifications(
+            self.store.as_ref(),
+            org_id,
+            user_id,
+            unread_only,
+            limit,
+        )
+        .await?;
+        let mut hydrated = Vec::with_capacity(notifications.len());
+        for notification in notifications {
+            hydrated.push(self.hydrate(notification).await?);
+        }
+        Ok(hydrated)
     }
 
     pub async fn create(
@@ -61,7 +80,7 @@ impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
                 },
             ),
         );
-        Ok(created.notification)
+        self.hydrate(created.notification).await
     }
 
     pub async fn fetch(
@@ -70,7 +89,12 @@ impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
         notification_id: Uuid,
         user_id: Uuid,
     ) -> Result<Option<Notification>, SendableError> {
-        repository::fetch_notification(self.store.as_ref(), org_id, notification_id, user_id).await
+        match repository::fetch_notification(self.store.as_ref(), org_id, notification_id, user_id)
+            .await?
+        {
+            Some(notification) => self.hydrate(notification).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     pub async fn mark_read(
@@ -89,7 +113,10 @@ impl<T: RuntimeStore + NotificationStore> NotificationOperations<T> {
         if notification.is_some() {
             self.changed();
         }
-        Ok(notification)
+        match notification {
+            Some(notification) => self.hydrate(notification).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     pub async fn delete(

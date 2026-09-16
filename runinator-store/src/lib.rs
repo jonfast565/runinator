@@ -82,10 +82,10 @@ pub mod prelude {
     pub use crate::roles::{
         AdapterControlStore, ArchiveStore, AuthStore, AutomationStore, ConsoleStore,
         DefinitionStore, DeliveryStore, DurableWorkspaceStore, ExecutionProfileStore, FileStore,
-        FunctionStore, IngressStore, NewNotificationDelivery, NewWorkflowVmRun, NotificationStore,
-        OrchestrationBindingUpdate, OrchestrationStore, OrgStore, QueueSnapshot, RbacStore,
-        ReplicaStore, RunStore, ScheduleStore, ScheduledWorkflowVm, SettingStore,
-        WorkflowTimerInterrupt, WorkflowVmStore, WorkspaceStore,
+        FunctionStore, IngressStore, NewNotificationDelivery, NewNotificationInteraction,
+        NewWorkflowVmRun, NotificationStore, OrchestrationBindingUpdate, OrchestrationStore,
+        OrgStore, QueueSnapshot, RbacStore, ReplicaStore, RunStore, ScheduleStore,
+        ScheduledWorkflowVm, SettingStore, WorkflowTimerInterrupt, WorkflowVmStore, WorkspaceStore,
     };
     pub use crate::runtime_store::RuntimeStore;
 }

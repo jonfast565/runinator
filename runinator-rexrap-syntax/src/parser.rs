@@ -1683,6 +1683,7 @@ fn parse_notify_decl(pair: Pair<Rule>) -> Result<NotifyDecl, RexRapError> {
     let mut after_seconds = None;
     let mut severity = None;
     let mut configuration = None;
+    let mut interactive = false;
     let mut enabled = true;
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -1695,10 +1696,20 @@ fn parse_notify_decl(pair: Pair<Rule>) -> Result<NotifyDecl, RexRapError> {
                 });
             }
             Rule::notify_channel => {
-                channel = Some(match inner.as_str() {
+                let value = inner.as_str();
+                channel = Some(match value {
                     "email" => NotifyChannel::Email,
                     "app" => NotifyChannel::App,
-                    _ => NotifyChannel::Slack,
+                    "slack" => NotifyChannel::Slack,
+                    _ => {
+                        let (provider, function) = value.split_once('.').ok_or_else(|| {
+                            RexRapError::syntax(span, "invalid notification provider action")
+                        })?;
+                        NotifyChannel::Provider {
+                            provider: provider.to_string(),
+                            function: function.to_string(),
+                        }
+                    }
                 });
             }
             Rule::expr => target = Some(parse_expr(inner)?),
@@ -1716,6 +1727,7 @@ fn parse_notify_decl(pair: Pair<Rule>) -> Result<NotifyDecl, RexRapError> {
                     Rule::notify_with => {
                         configuration = Some(parse_object(first_inner(option)?)?);
                     }
+                    Rule::notify_interactive => interactive = true,
                     _ => {}
                 }
             }
@@ -1744,6 +1756,7 @@ fn parse_notify_decl(pair: Pair<Rule>) -> Result<NotifyDecl, RexRapError> {
         after_seconds,
         severity,
         configuration,
+        interactive,
         enabled,
         span,
         comments: CommentSet::default(),

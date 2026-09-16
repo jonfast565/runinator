@@ -3,10 +3,14 @@
 use super::*;
 use runinator_comm::{EffectCommand, EffectExecutor};
 use runinator_models::{
-    notifications::{NotificationChannel, NotificationDeliveryStatus},
+    notifications::{
+        ConversationReceipt, NotificationChannel, NotificationDeliveryStatus,
+        NotificationInteractionAction, NotificationInteractionInput, NotificationInteractionState,
+        NotificationInteractionTarget,
+    },
     workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest},
 };
-use runinator_store::roles::NewNotificationDelivery;
+use runinator_store::roles::{NewNotificationDelivery, NewNotificationInteraction};
 
 fn inbox_notification(org_id: Uuid, dedupe_key: &str) -> NewNotification {
     NewNotification {
@@ -23,6 +27,109 @@ fn inbox_notification(org_id: Uuid, dedupe_key: &str) -> NewNotification {
         metadata: Value::Null,
         dedupe_key: Some(dedupe_key.into()),
     }
+}
+
+#[tokio::test]
+async fn notification_interactions_bind_provider_neutral_conversations() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-notification-interaction-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let org_id = Uuid::now_v7();
+    let notification = db
+        .create_notification(&inbox_notification(org_id, "interaction"))
+        .await
+        .unwrap();
+    let interaction = db
+        .create_notification_interaction(NewNotificationInteraction {
+            id: Uuid::now_v7(),
+            notification_id: notification.id,
+            org_id: Some(org_id),
+            target: NotificationInteractionTarget::Effect {
+                workflow_run_id: Uuid::now_v7(),
+                effect_id: Uuid::now_v7(),
+                attempt: 2,
+            },
+            actions: vec![NotificationInteractionAction {
+                id: "approve".into(),
+                label: "Approve".into(),
+                input: NotificationInteractionInput::None,
+            }],
+        })
+        .await
+        .unwrap();
+    let delivery_id = Uuid::now_v7();
+    let command = EffectCommand {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: delivery_id,
+        workflow_run_id: Uuid::nil(),
+        continuation_id: Uuid::nil(),
+        attempt: 0,
+        request: WorkflowEffectRequest::Action {
+            provider: "teams".into(),
+            function: "send_message".into(),
+            input: Value::Null,
+            timeout_seconds: Some(30),
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: Default::default(),
+            workspace_affinity: None,
+            execution_profile: None,
+            idempotency_key: None,
+            function_binding: None,
+        },
+        executor: EffectExecutor::Provider,
+        target: Default::default(),
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: format!("notification:{delivery_id}"),
+        notification_delivery_id: Some(delivery_id),
+    };
+    db.create_notification_delivery(NewNotificationDelivery {
+        id: delivery_id,
+        notification_id: notification.id,
+        policy_id: None,
+        channel: NotificationChannel::InApp,
+        provider: Some("teams".into()),
+        function: Some("send_message".into()),
+        target: Some("operations".into()),
+        workflow_run_id: None,
+        command,
+    })
+    .await
+    .unwrap();
+    let receipt = ConversationReceipt {
+        source: "teams:tenant-1".into(),
+        scope: "operations".into(),
+        correlation_key: "message-1".into(),
+    };
+    db.bind_notification_conversation(interaction.id, delivery_id, Some(org_id), receipt.clone())
+        .await
+        .unwrap();
+    let found = db
+        .fetch_notification_interaction_by_conversation(Some(org_id), receipt)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.id, interaction.id);
+    assert!(
+        db.mark_notification_interaction_stale(found.id, Utc::now())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db.fetch_notification_interaction(notification.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        NotificationInteractionState::Stale
+    );
+
+    let _ = std::fs::remove_file(path);
 }
 
 #[tokio::test]
@@ -155,6 +262,8 @@ async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched
         policy_id: None,
         channel: NotificationChannel::Slack,
         target: Some("#ops".into()),
+        provider: None,
+        function: None,
         workflow_run_id: None,
         command: command.clone(),
     })
@@ -219,7 +328,11 @@ async fn notification_effect_outbox_claims_retries_and_marks_delivery_dispatched
         Some(runinator_models::json!({
             "channel": "C123",
             "ts": "1700.1",
-            "runinator_team_id": "T123"
+            "interaction_receipt": {
+                "source": "slack:T123",
+                "scope": "C123",
+                "correlation_key": "1700.1"
+            }
         })),
     )
     .await

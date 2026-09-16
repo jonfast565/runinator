@@ -444,7 +444,7 @@ where
         let updated_at = Utc::now().timestamp();
         let result = sqlx::query(&self.render(
             "UPDATE notification_policies
-             SET org_id = ?, workflow_id = ?, name = ?, event = ?, severity = ?, channel = ?, target = ?,
+             SET org_id = ?, workflow_id = ?, name = ?, event = ?, severity = ?, channel = ?, provider = ?, provider_function = ?, interactive = ?, target = ?,
                  threshold_seconds = ?, enabled = ?, managed_by = ?, configuration = ?, updated_at = ?
              WHERE id = ?",
         ))
@@ -454,6 +454,9 @@ where
         .bind(policy.event.as_str())
         .bind(policy.severity.as_str())
         .bind(policy.channel.as_str())
+        .bind(policy.provider.clone())
+        .bind(policy.function.clone())
+        .bind(policy.interactive)
         .bind(policy.target.clone())
         .bind(policy.threshold_seconds)
         .bind(policy.enabled)
@@ -518,14 +521,18 @@ where
                 let now = Utc::now().timestamp();
                 sqlx::query(&self.render(&format!(
                     "INSERT INTO notification_policies ({NOTIFICATION_POLICY_COLUMNS})
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 )))
                 .bind(Uuid::now_v7())
+                .bind(policy.org_id)
                 .bind(policy.workflow_id)
                 .bind(policy.name.as_str())
                 .bind(policy.event.as_str())
                 .bind(policy.severity.as_str())
                 .bind(policy.channel.as_str())
+                .bind(policy.provider.clone())
+                .bind(policy.function.clone())
+                .bind(policy.interactive)
                 .bind(policy.target.clone())
                 .bind(policy.threshold_seconds)
                 .bind(policy.enabled)
@@ -549,13 +556,15 @@ where
         let id = delivery.id;
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
-            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, target, workflow_run_id, status, attempts, last_error, dedupe_key, command_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
+            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, provider, provider_function, target, workflow_run_id, status, attempts, last_error, dedupe_key, command_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
         ))
         .bind(id)
         .bind(delivery.notification_id)
         .bind(delivery.policy_id)
         .bind(delivery.channel.as_str())
+        .bind(delivery.provider)
+        .bind(delivery.function)
         .bind(delivery.target)
         .bind(delivery.workflow_run_id)
         .bind(NotificationDeliveryStatus::Pending.as_str())
@@ -706,5 +715,142 @@ where
             .iter()
             .map(mappers::row_to_notification_delivery)
             .collect())
+    }
+
+    async fn create_notification_interaction(
+        &self,
+        interaction: NewNotificationInteraction,
+    ) -> Result<NotificationInteraction, SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "INSERT INTO notification_interactions (id, notification_id, org_id, target_json, actions_json, state, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
+        ))
+        .bind(interaction.id)
+        .bind(interaction.notification_id)
+        .bind(interaction.org_id)
+        .bind(serde_json::to_string(&interaction.target)?)
+        .bind(serde_json::to_string(&interaction.actions)?)
+        .bind(now)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {NOTIFICATION_INTERACTION_COLUMNS} FROM notification_interactions WHERE id = ?"
+        )))
+        .bind(interaction.id)
+        .fetch_one(self.pool())
+        .await?;
+        mappers::row_to_notification_interaction(&row)
+    }
+
+    async fn fetch_notification_interaction(
+        &self,
+        notification_id: Uuid,
+    ) -> Result<Option<NotificationInteraction>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {NOTIFICATION_INTERACTION_COLUMNS} FROM notification_interactions WHERE notification_id = ?"
+        )))
+        .bind(notification_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref()
+            .map(mappers::row_to_notification_interaction)
+            .transpose()
+    }
+
+    async fn fetch_notification_interaction_by_conversation(
+        &self,
+        org_id: Option<Uuid>,
+        receipt: ConversationReceipt,
+    ) -> Result<Option<NotificationInteraction>, SendableError> {
+        let org_scope = org_id
+            .map(|id| format!("organization:{id}"))
+            .unwrap_or_else(|| "platform".into());
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {} FROM notification_interactions i
+             JOIN notification_conversations c ON c.interaction_id = i.id
+             WHERE c.org_scope = ? AND c.source = ? AND c.scope = ? AND c.correlation_key = ?",
+            NOTIFICATION_INTERACTION_COLUMNS
+                .split(", ")
+                .map(|column| format!("i.{column}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )))
+        .bind(org_scope)
+        .bind(receipt.source)
+        .bind(receipt.scope)
+        .bind(receipt.correlation_key)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref()
+            .map(mappers::row_to_notification_interaction)
+            .transpose()
+    }
+
+    async fn bind_notification_conversation(
+        &self,
+        interaction_id: Uuid,
+        delivery_id: Uuid,
+        org_id: Option<Uuid>,
+        receipt: ConversationReceipt,
+    ) -> Result<(), SendableError> {
+        let org_scope = org_id
+            .map(|id| format!("organization:{id}"))
+            .unwrap_or_else(|| "platform".into());
+        let sql = self.dialect().insert_ignore(
+            "notification_conversations",
+            "id, interaction_id, delivery_id, org_scope, source, scope, correlation_key, created_at",
+            "?, ?, ?, ?, ?, ?, ?, ?",
+            "org_scope, source, scope, correlation_key",
+            None,
+        );
+        sqlx::query(&self.render(&sql))
+            .bind(Uuid::now_v7())
+            .bind(interaction_id)
+            .bind(delivery_id)
+            .bind(org_scope)
+            .bind(receipt.source)
+            .bind(receipt.scope)
+            .bind(receipt.correlation_key)
+            .bind(Utc::now().timestamp())
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn resolve_notification_interaction(
+        &self,
+        interaction_id: Uuid,
+        action: String,
+        actor_id: Uuid,
+        resolved_at: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE notification_interactions SET state = 'resolved', resolved_action = ?, resolved_by = ?, resolved_at = ?, updated_at = ? WHERE id = ? AND state = 'open'",
+        ))
+        .bind(action)
+        .bind(actor_id)
+        .bind(resolved_at.timestamp())
+        .bind(resolved_at.timestamp())
+        .bind(interaction_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
+    }
+
+    async fn mark_notification_interaction_stale(
+        &self,
+        interaction_id: Uuid,
+        updated_at: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE notification_interactions SET state = 'stale', updated_at = ? WHERE id = ? AND state = 'open'",
+        ))
+        .bind(updated_at.timestamp())
+        .bind(interaction_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
     }
 }

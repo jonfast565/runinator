@@ -3,6 +3,7 @@ export { defaultApi } from "./default";
 
 export type NotificationsApi = Pick<
   typeof Api,
+  | "applyNotificationAction"
   | "createNotificationPolicy"
   | "deleteNotification"
   | "deleteNotificationPolicy"

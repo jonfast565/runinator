@@ -1896,6 +1896,14 @@ export async function deleteNotification(notificationId: string) {
   return command<TaskResponse>("delete_notification", { notificationId });
 }
 
+export async function applyNotificationAction(
+  notificationId: string,
+  actionId: string,
+  input: JsonValue | null,
+) {
+  return command<JsonValue>("apply_notification_action", { notificationId, actionId, input });
+}
+
 export async function fetchNotificationDeliveries(notificationId: string) {
   return command<NotificationDelivery[]>("fetch_notification_deliveries", { notificationId });
 }

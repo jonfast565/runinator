@@ -7,13 +7,13 @@ mod adapter_operations;
 mod automation_operations;
 mod catalog_operations;
 mod console_operations;
-mod conversation_control;
 mod debug_operations;
 mod diagnostics_operations;
 mod execution_profile_operations;
 mod function_invocations;
 mod function_packages;
 mod ingress_operations;
+pub(crate) mod interaction_operations;
 mod notification_operations;
 mod orchestration_operations;
 mod pack_operations;
@@ -31,13 +31,13 @@ pub use adapter_operations::{AdapterOperations, AdapterRoutingError};
 pub use automation_operations::AutomationOperations;
 pub use catalog_operations::{CatalogOperations, provider_catalog_item};
 pub use console_operations::ConsoleOperations;
-pub use conversation_control::ConversationControlOperations;
 pub use debug_operations::DebugOperations;
 pub use diagnostics_operations::DiagnosticsOperations;
 pub use execution_profile_operations::ExecutionProfileOperations;
 pub use function_invocations::FunctionInvocations;
 pub use function_packages::FunctionPackages;
 pub use ingress_operations::IngressOperations;
+pub use interaction_operations::InteractionOperations;
 pub use notification_operations::NotificationOperations;
 pub use orchestration_operations::{
     IntentDecision, OrchestrationOperations, OutOfBandOverrideRequest, choose_intent,
@@ -62,6 +62,9 @@ pub use workspace_operations::{
 #[cfg(test)]
 #[path = "diagnostics_operations_tests.rs"]
 mod diagnostics_operations_tests;
+#[cfg(test)]
+#[path = "interaction_operations_tests.rs"]
+mod interaction_operations_tests;
 #[cfg(test)]
 #[path = "pack_operations_tests.rs"]
 mod pack_operations_tests;

@@ -9,6 +9,7 @@ fn lowers_notify_policies_into_metadata() {
         workflow "Nightly" v1 {
             notify on failure -> slack "#oncall"
             notify on sla -> email "ops@example.com" after 30m severity critical
+            notify on parked -> teams.send_message "ops" after 5m interactive
 
             do {
                 Console.run(command: "echo hi")
@@ -22,7 +23,7 @@ fn lowers_notify_policies_into_metadata() {
         .pointer("/notifications")
         .and_then(Value::as_array)
         .expect("notifications in metadata");
-    assert_eq!(policies.len(), 2);
+    assert_eq!(policies.len(), 3);
     assert_eq!(policies[0].get("event"), Some(&Value::from("run_failed")));
     assert_eq!(policies[0].get("channel"), Some(&Value::from("slack")));
     assert_eq!(policies[0].get("target"), Some(&Value::from("#oncall")));
@@ -39,6 +40,13 @@ fn lowers_notify_policies_into_metadata() {
         Some(&Value::from(1800))
     );
     assert_eq!(policies[1].get("severity"), Some(&Value::from("critical")));
+    assert_eq!(policies[2].get("channel"), Some(&Value::from("in_app")));
+    assert_eq!(policies[2].get("provider"), Some(&Value::from("teams")));
+    assert_eq!(
+        policies[2].get("function"),
+        Some(&Value::from("send_message"))
+    );
+    assert_eq!(policies[2].get("interactive"), Some(&Value::from(true)));
 }
 #[test]
 fn round_trips_notify_policies() {
@@ -47,6 +55,7 @@ fn round_trips_notify_policies() {
             notify on failure -> slack "#oncall"
             notify on retry_exhausted -> app "ui" severity info
             notify on parked -> slack "#oncall" after 2h with { token: "secret://slack/alt" } disabled
+            notify on parked -> teams.send_message "ops" after 5m interactive
 
             do {
                 Console.run(command: "echo hi")
@@ -61,6 +70,10 @@ fn round_trips_notify_policies() {
     );
     assert!(rexrap.contains("after 2h"), "{rexrap}");
     assert!(rexrap.contains("disabled"), "{rexrap}");
+    assert!(
+        rexrap.contains("teams.send_message \"ops\" after 5m interactive"),
+        "{rexrap}"
+    );
     let second = compile_str(&rexrap, &CompileOptions::default()).expect("recompile");
     assert_eq!(
         def.definition.metadata.pointer("/notifications"),

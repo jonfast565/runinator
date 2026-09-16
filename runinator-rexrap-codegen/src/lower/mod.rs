@@ -970,6 +970,10 @@ impl Lowerer {
                 "channel".into(),
                 Value::String(policy.channel.runtime_name().into()),
             );
+            if let Some((provider, function)) = policy.channel.provider_binding() {
+                spec.insert("provider".into(), Value::String(provider.into()));
+                spec.insert("function".into(), Value::String(function.into()));
+            }
             spec.insert("target".into(), Value::String(target));
             spec.insert(
                 "severity".into(),
@@ -986,6 +990,7 @@ impl Lowerer {
             if let Some(configuration) = &policy.configuration {
                 spec.insert("configuration".into(), self.lower_expr(configuration)?);
             }
+            spec.insert("interactive".into(), Value::Bool(policy.interactive));
             spec.insert("enabled".into(), Value::Bool(policy.enabled));
             specs.push(Value::Object(spec));
         }

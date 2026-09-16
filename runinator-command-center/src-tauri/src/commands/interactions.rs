@@ -70,6 +70,21 @@ pub async fn fetch_notification_deliveries(
 }
 
 #[tauri::command]
+pub async fn apply_notification_action(
+    state: State<'_, CommandCenterState>,
+    notification_id: Uuid,
+    action_id: String,
+    input: Value,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("notifications/{notification_id}/actions/{action_id}"),
+        &json!({ "input": input }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn fetch_notification_policies(
     state: State<'_, CommandCenterState>,
     workflow_id: Option<Uuid>,

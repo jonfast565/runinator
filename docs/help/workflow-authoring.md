@@ -355,24 +355,25 @@ Workflows declare alerting policies in the REXRAP header, materialized from
 - `notify on parked -> ... after <duration>` fires when a run sits waiting/approval/input/blocked
   past the threshold.
 
-`<channel>` is `slack`, `email`, or `app` (in-app only). `severity info|warning|critical`
-defaults to `warning`; `with { ... }` overrides the generated provider configuration
-(notably the credential reference); `disabled` imports the policy switched off. The two
+`<channel>` is `app` (in-app only), the `slack` or `email` compatibility alias, or a generic
+`<provider>.<function>` destination. `severity info|warning|critical` defaults to `warning`;
+`interactive` explicitly projects valid actions for the current durable effect; `with { ... }`
+overrides the generated provider configuration; `disabled` imports the policy switched off. The two
 duration events require `after`, and the compiler rejects them without it — a policy the
 scanner could never match is a silent failure during an incident.
 
 ```rexrap
-notify on failure -> slack "#oncall" severity critical
+notify on parked -> app "mission-control" after 5m interactive
 notify on sla -> email "ops@example.com" after 30m
+notify on failure -> teams.send_message "operations" severity critical
 ```
 
 Policies can equally be managed from the command center's **Notifications** tab
 (capability `notifications:manage`); pack-managed rows are read-only there because an
 import reconciles them. Emission happens in `runinator-engine` at the terminal
-transition, plus a periodic scanner for the duration events. The engine never speaks a
-vendor protocol: an in-app policy writes the notifications row, and every other channel
-is enqueued as a provider-effect command on the notification delivery outbox so a worker delivers it through the
-`runinator-provider-slack` / `-email` provider like any other action. Delivery attempts
+transition, plus a periodic scanner for the duration events. The engine never speaks a vendor
+protocol: an in-app policy writes the notifications row, and an explicitly selected provider action
+is enqueued on the notification delivery outbox like any other provider effect. Delivery attempts
 are tracked per notification and readable at `GET /notifications/{id}/deliveries`.
 
 #### Schedule policy: concurrency, catch-up, and freeze windows

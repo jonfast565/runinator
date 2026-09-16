@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed } from "vue";
 import { notificationsService } from "../../../core/services";
-import type { NewNotificationPolicy } from "../../../core/domain/models";
+import type { JsonValue, NewNotificationPolicy } from "../../../core/domain/models";
 import { mirrorServiceState } from "./sync";
 
 export const useNotificationsStore = defineStore("notifications", () => {
@@ -11,14 +11,20 @@ export const useNotificationsStore = defineStore("notifications", () => {
     notifications: computed(() => state.value.notifications),
     unreadOnly: computed({
       get: () => state.value.unreadOnly,
-      set: (value) => { notificationsService.setUnreadOnly(value); },
+      set: (value) => {
+        notificationsService.setUnreadOnly(value);
+      },
     }),
     unreadCount: computed(() => notificationsService.unreadCount()),
     refreshNotifications: () => notificationsService.refreshNotifications(),
-    clearNotifications: () => { notificationsService.clearNotifications(); },
+    clearNotifications: () => {
+      notificationsService.clearNotifications();
+    },
     markRead: (id: string) => notificationsService.markRead(id),
     markAllRead: () => notificationsService.markAllRead(),
     remove: (id: string) => notificationsService.remove(id),
+    applyAction: (notificationId: string, actionId: string, input: JsonValue | null) =>
+      notificationsService.applyAction(notificationId, actionId, input),
     removeAllRead: () => notificationsService.removeAllRead(),
     policies: computed(() => state.value.policies),
     refreshPolicies: () => notificationsService.refreshPolicies(),

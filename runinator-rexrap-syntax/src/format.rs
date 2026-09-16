@@ -531,6 +531,9 @@ impl Formatter {
         if let Some(configuration) = &policy.configuration {
             text.push_str(&format!(" with {}", format_expr(configuration)));
         }
+        if policy.interactive {
+            text.push_str(" interactive");
+        }
         if !policy.enabled {
             text.push_str(" disabled");
         }

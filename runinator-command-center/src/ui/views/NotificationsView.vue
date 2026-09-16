@@ -56,7 +56,24 @@
         >
         <template #cell-created_at="{ row }">{{ formatDate(row.created_at) }}</template>
         <template #cell-actions="{ row }">
-          <span class="text-right">
+          <span class="flex flex-wrap justify-end gap-1 text-right">
+            <button
+              v-for="action in openActions(row)"
+              :key="action.id"
+              class="btn btn-sm"
+              :disabled="applyingActionId === `${row.id}:${action.id}`"
+              @click.stop="applyInteractionAction(row, action)"
+            >
+              {{ action.label }}
+            </button>
+            <button
+              v-if="row.workflow_run_id"
+              class="btn btn-sm btn-ghost"
+              title="Inspect workflow run"
+              @click.stop="inspectRun(row.workflow_run_id)"
+            >
+              Inspect
+            </button>
             <button
               v-if="!row.read_at"
               class="btn btn-icon btn-ghost"
@@ -65,7 +82,11 @@
             >
               <Icon name="check" />
             </button>
-            <button class="btn btn-icon btn-ghost" title="Dismiss from my inbox" @click.stop="remove(row.id)">
+            <button
+              class="btn btn-icon btn-ghost"
+              title="Dismiss from my inbox"
+              @click.stop="remove(row.id)"
+            >
               <Icon name="trash" />
             </button>
           </span>
@@ -126,7 +147,7 @@
             <span>Target</span>
             <input
               v-model="draftTarget"
-              :required="draft.channel !== 'in_app'"
+              :required="draft.channel !== 'in_app' || Boolean(draft.provider)"
               :type="draft.channel === 'email' ? 'email' : 'text'"
               :pattern="targetPattern"
               :title="targetTitle"
@@ -136,6 +157,18 @@
           <label v-if="needsThreshold">
             <span>After (minutes)</span>
             <input v-model.number="thresholdMinutes" type="number" min="1" required />
+          </label>
+          <label>
+            <span>Provider override</span>
+            <input v-model.trim="draftProvider" placeholder="Optional provider id" />
+          </label>
+          <label>
+            <span>Provider action</span>
+            <input v-model.trim="draftFunction" placeholder="Required with provider" />
+          </label>
+          <label class="!flex-row items-center gap-2 self-end [&>input]:w-auto">
+            <input v-model="draft.interactive" type="checkbox" />
+            <span>Include run actions</span>
           </label>
           <label class="!flex-row items-center gap-2 self-end [&>input]:w-auto">
             <input v-model="draft.enabled" type="checkbox" />
@@ -206,10 +239,13 @@ import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useActionsStore } from "../../ui/adapters/pinia/actions";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import type {
+  JsonValue,
   NewNotificationPolicy,
   Notification,
   NotificationEvent,
+  NotificationInteractionAction,
   NotificationPolicy,
 } from "../../core/domain/models";
 import { DURATION_NOTIFICATION_EVENTS } from "../../core/domain/models";
@@ -218,7 +254,9 @@ import { formatDate } from "../../core/utils/format";
 const store = useNotificationsStore();
 const app = useAppStore();
 const actions = useActionsStore();
+const workflows = useWorkflowsStore();
 const loading = ref(false);
+const applyingActionId = ref<string | null>(null);
 
 const columns: DataTableColumn<Notification>[] = [
   { key: "id", label: "ID", sortable: true },
@@ -282,11 +320,63 @@ async function markAllRead() {
 async function remove(id: string) {
   const notification = store.notifications.find((candidate) => candidate.id === id);
 
-  if (!notification || !window.confirm(`Dismiss notification “${notification.title}” from my inbox?`)) {
+  if (
+    !notification ||
+    !window.confirm(`Dismiss notification “${notification.title}” from my inbox?`)
+  ) {
     return;
   }
 
   await store.remove(id);
+}
+
+function openActions(notification: Notification): NotificationInteractionAction[] {
+  return notification.interaction?.state === "open" ? notification.interaction.actions : [];
+}
+
+async function applyInteractionAction(
+  notification: Notification,
+  action: NotificationInteractionAction,
+) {
+  let input: JsonValue | null = null;
+
+  if (action.input !== "none") {
+    const raw = window.prompt(
+      action.input === "json" ? `${action.label}: enter JSON` : `${action.label}: enter a value`,
+    );
+
+    if (raw === null) {
+      return;
+    }
+
+    if (action.input === "json") {
+      try {
+        input = JSON.parse(raw) as JsonValue;
+      } catch {
+        app.setError("The action input must be valid JSON.");
+        return;
+      }
+    } else {
+      input = raw;
+    }
+  } else if (!window.confirm(`${action.label} this workflow run?`)) {
+    return;
+  }
+
+  applyingActionId.value = `${notification.id}:${action.id}`;
+
+  try {
+    await store.applyAction(notification.id, action.id, input);
+  } finally {
+    applyingActionId.value = null;
+  }
+}
+
+async function inspectRun(workflowRunId: string) {
+  workflows.openRunInTab(workflowRunId);
+  workflows.activateRunTab(workflowRunId);
+  app.activeTab = "Runs";
+  await workflows.fetchWorkflowRunDetail(workflowRunId);
 }
 
 async function deleteRead() {
@@ -294,7 +384,9 @@ async function deleteRead() {
 
   if (
     !count ||
-    !window.confirm(`Dismiss ${String(count)} read notification${count === 1 ? "" : "s"} from my inbox?`)
+    !window.confirm(
+      `Dismiss ${String(count)} read notification${count === 1 ? "" : "s"} from my inbox?`,
+    )
   ) {
     return;
   }
@@ -331,12 +423,14 @@ const policyColumns: DataTableColumn<NotificationPolicy>[] = [
   { key: "name", label: "Name", sortable: true, mobile: true },
   { key: "event", label: "Event", sortable: true },
   { key: "channel", label: "Channel", sortable: true },
+  { key: "provider", label: "Provider", sortable: true },
   { key: "target", label: "Target" },
   { key: "severity", label: "Severity", sortable: true },
   { key: "threshold_seconds", label: "After" },
   { key: "workflow_id", label: "Scope" },
   { key: "managed_by", label: "Source" },
   { key: "enabled", label: "Enabled", sortable: true },
+  { key: "interactive", label: "Interactive", sortable: true },
   { key: "actions", label: "", align: "right", mobile: true },
 ];
 
@@ -360,6 +454,24 @@ const draftTarget = computed({
   },
 });
 
+const draftProvider = computed({
+  get: () => draft.value?.provider ?? "",
+  set: (value: string) => {
+    if (draft.value) {
+      draft.value.provider = value;
+    }
+  },
+});
+
+const draftFunction = computed({
+  get: () => draft.value?.function ?? "",
+  set: (value: string) => {
+    if (draft.value) {
+      draft.value.function = value;
+    }
+  },
+});
+
 // operators think in minutes; the contract is seconds.
 const thresholdMinutes = computed({
   get: () => (draft.value?.threshold_seconds ? draft.value.threshold_seconds / 60 : 30),
@@ -377,8 +489,11 @@ function startCreate() {
     name: "",
     event: "run_failed",
     severity: "warning",
-    channel: "slack",
+    channel: "in_app",
     target: "",
+    provider: null,
+    function: null,
+    interactive: false,
     threshold_seconds: null,
     enabled: true,
     managed_by: null,
@@ -395,6 +510,9 @@ function startEdit(policy: NotificationPolicy) {
     severity: policy.severity,
     channel: policy.channel,
     target: policy.target ?? "",
+    provider: policy.provider ?? null,
+    function: policy.function ?? null,
+    interactive: policy.interactive,
     threshold_seconds: policy.threshold_seconds ?? null,
     enabled: policy.enabled,
     managed_by: policy.managed_by ?? null,
@@ -425,6 +543,8 @@ async function savePolicy() {
   const payload: NewNotificationPolicy = {
     ...draft.value,
     target: draft.value.target?.trim() ? draft.value.target.trim() : null,
+    provider: draft.value.provider?.trim() ? draft.value.provider.trim() : null,
+    function: draft.value.function?.trim() ? draft.value.function.trim() : null,
     // a transition event carries no threshold; clear any value left behind by switching the event.
     threshold_seconds: needsThreshold.value ? (draft.value.threshold_seconds ?? 1800) : null,
   };

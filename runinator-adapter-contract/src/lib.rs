@@ -75,6 +75,17 @@ pub struct AdapterResponse {
     pub events: Vec<NormalizedAdapterEvent>,
     #[serde(default)]
     pub errors: Vec<String>,
+    /// optional adapter-defined JSON response returned immediately after verification. this keeps
+    /// webhook handshakes inside the adapter instead of teaching the HTTP handler vendor rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub immediate_response: Option<AdapterImmediateResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterImmediateResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub body: Value,
 }
 
 /// A draft configuration submitted before an adapter definition is persisted.
@@ -151,6 +162,7 @@ impl AdapterResponse {
             verified: false,
             events: Vec::new(),
             errors: vec![error.into()],
+            immediate_response: None,
         }
     }
 }

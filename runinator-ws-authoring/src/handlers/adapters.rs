@@ -16,7 +16,7 @@ use runinator_adapter_contract::{
 };
 use runinator_broker_core::{Broker, UiEventPublisher, emit_adapter};
 use runinator_engine::services::{
-    AdapterOperations, ConversationControlOperations, ExecutionProfileOperations,
+    AdapterOperations, ExecutionProfileOperations, InteractionOperations,
 };
 use runinator_models::{
     auth::{AuthContext, Permission, PrincipalKind, ResourceType},
@@ -31,8 +31,8 @@ use runinator_store::{
     RuntimeStore,
     roles::{
         DefinitionStore, ExecutionProfileStore, IngressStore, NewAdapterDefinition,
-        NewAdapterRevision, OrchestrationStore, RbacStore, ReplicaStore, ScheduleStore,
-        SettingStore, WorkflowVmStore,
+        NewAdapterRevision, NotificationStore, OrchestrationStore, RbacStore, ReplicaStore,
+        ScheduleStore, SettingStore, WorkflowVmStore,
     },
 };
 use runinator_ws_core::{
@@ -1379,6 +1379,7 @@ pub async fn webhook<
         + runinator_store::roles::RbacStore
         + ScheduleStore
         + WorkflowVmStore
+        + NotificationStore
         + ExecutionProfileStore,
 >(
     Extension(host): Extension<Arc<dyn AdapterHostClient>>,
@@ -1494,25 +1495,14 @@ pub async fn webhook<
             })),
         );
     }
-    if adapter.kind == "slack_ingress"
-        && let Some(challenge) = normalized
-            .events
-            .iter()
-            .find(|event| event.event_type == "url_verification")
-            .and_then(|event| event.payload.get("challenge"))
-            .cloned()
-    {
-        return (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(runinator_models::json!({
-                "challenge": challenge
-            }))),
-        );
+    if let Some(response) = normalized.immediate_response {
+        let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+        return (status, Json(ApiResponse::JsonValue(response.body.into())));
     }
     let mut outcomes = Vec::new();
-    let conversation_control = ConversationControlOperations::new(db.clone());
+    let interaction_operations = InteractionOperations::new(db.clone());
     for event in normalized.events {
-        if adapter.kind == "slack_ingress" && event.event_type == "thread_reply" {
+        if event.event_type == "interaction_response" {
             let mut record = match operations
                 .capture_delivery(
                     runinator_models::adapter_control::AdapterOrigin {
@@ -1537,8 +1527,33 @@ pub async fn webhook<
                 }));
                 continue;
             }
-            match conversation_control
-                .apply_slack_reply(broker.as_ref(), adapter.org_id, &event)
+            let response = runinator_models::notifications::ExternalInteractionResponse {
+                actor_subject: event
+                    .payload
+                    .get("actor_subject")
+                    .and_then(runinator_models::value::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                action_id: event
+                    .payload
+                    .get("action_id")
+                    .and_then(runinator_models::value::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                input: event.payload.get("input").cloned().unwrap_or_default(),
+                message_id: event
+                    .payload
+                    .get("message_id")
+                    .and_then(runinator_models::value::Value::as_str)
+                    .map(str::to_string),
+            };
+            let receipt = runinator_models::notifications::ConversationReceipt {
+                source: event.source.clone(),
+                scope: event.scope.clone(),
+                correlation_key: event.correlation_key.clone(),
+            };
+            match interaction_operations
+                .apply_external(broker.as_ref(), Some(adapter.org_id), receipt, response)
                 .await
             {
                 Ok(outcome) => {
@@ -1608,6 +1623,7 @@ where
         + IngressStore
         + ScheduleStore
         + WorkflowVmStore
+        + NotificationStore
         + ExecutionProfileStore
         + ReplicaStore,
 {
@@ -1634,6 +1650,7 @@ where
         + IngressStore
         + ScheduleStore
         + WorkflowVmStore
+        + NotificationStore
         + ExecutionProfileStore
         + ReplicaStore,
 {

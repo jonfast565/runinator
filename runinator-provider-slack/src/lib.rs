@@ -148,7 +148,16 @@ fn send_message(request: ProviderExecutionRequest) -> Result<TaskExecutionResult
         runinator_provider_support::apply_blocking_http_credentials(builder, &request)?.send()?;
     let mut output = parse_slack_ok(response)?;
     if let (Some(team_id), Some(object)) = (team_id, output.as_object_mut()) {
-        object.insert("runinator_team_id".into(), json!(team_id));
+        let channel = object.get("channel").cloned().unwrap_or(Value::Null);
+        let correlation_key = object.get("ts").cloned().unwrap_or(Value::Null);
+        object.insert(
+            "interaction_receipt".into(),
+            json!({
+                "source": format!("slack:{team_id}"),
+                "scope": channel,
+                "correlation_key": correlation_key,
+            }),
+        );
     }
     Ok(TaskExecutionResult {
         message: Some("slack message sent".into()),

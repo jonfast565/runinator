@@ -343,28 +343,37 @@ impl NotifyEvent {
 }
 
 /// where a header `notify` policy delivers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotifyChannel {
     Slack,
     Email,
     App,
+    Provider { provider: String, function: String },
 }
 
 impl NotifyChannel {
-    pub fn keyword(self) -> &'static str {
+    pub fn keyword(&self) -> String {
         match self {
-            NotifyChannel::Slack => "slack",
-            NotifyChannel::Email => "email",
-            NotifyChannel::App => "app",
+            NotifyChannel::Slack => "slack".into(),
+            NotifyChannel::Email => "email".into(),
+            NotifyChannel::App => "app".into(),
+            NotifyChannel::Provider { provider, function } => format!("{provider}.{function}"),
         }
     }
 
     /// the runtime `NotificationChannel` name this lowers to.
-    pub fn runtime_name(self) -> &'static str {
+    pub fn runtime_name(&self) -> &'static str {
         match self {
             NotifyChannel::Slack => "slack",
             NotifyChannel::Email => "email",
-            NotifyChannel::App => "in_app",
+            NotifyChannel::App | NotifyChannel::Provider { .. } => "in_app",
+        }
+    }
+
+    pub fn provider_binding(&self) -> Option<(&str, &str)> {
+        match self {
+            NotifyChannel::Provider { provider, function } => Some((provider, function)),
+            _ => None,
         }
     }
 }
@@ -380,6 +389,8 @@ pub struct NotifyDecl {
     pub severity: Option<String>,
     /// optional `with { ... }` provider configuration overriding the generated delivery fields.
     pub configuration: Option<Expr>,
+    /// expose actions for the currently parked run effect.
+    pub interactive: bool,
     pub enabled: bool,
     pub span: Span,
     pub comments: CommentSet,

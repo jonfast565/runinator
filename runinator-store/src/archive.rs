@@ -252,6 +252,8 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("ingress_admissions", ColdArchive),
     table_policy!("ingress_events", ColdArchive),
     table_policy!("notification_deliveries", ColdArchive),
+    table_policy!("notification_interactions", CascadeWithParent),
+    table_policy!("notification_conversations", CascadeWithParent),
     table_policy!("notification_policies", ExplicitLifecycle),
     table_policy!("notification_receipts", CascadeWithParent),
     table_policy!("notifications", ColdArchive),

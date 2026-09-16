@@ -21,6 +21,9 @@ fn policy(channel: NotificationChannel, target: Option<&str>) -> NotificationPol
         severity: NotificationSeverity::Critical,
         channel,
         target: target.map(|t| t.to_string()),
+        provider: None,
+        function: None,
+        interactive: false,
         threshold_seconds: None,
         enabled: true,
         managed_by: None,
@@ -47,6 +50,7 @@ fn slack_delivery_renders_channel_and_text() {
         &policy(NotificationChannel::Slack, Some("#oncall")),
         "#oncall",
         &context(),
+        None,
     );
     assert_eq!(
         configuration.get("channel").and_then(|v| v.as_str()),
@@ -71,6 +75,7 @@ fn email_delivery_renders_recipient_and_subject() {
         &policy(NotificationChannel::Email, Some("ops@example.com")),
         "ops@example.com",
         &context(),
+        None,
     );
     assert_eq!(
         configuration.get("to").and_then(|v| v.as_str()),
@@ -86,7 +91,7 @@ fn email_delivery_renders_recipient_and_subject() {
 fn policy_configuration_overrides_generated_fields() {
     let mut custom = policy(NotificationChannel::Slack, Some("#oncall"));
     custom.configuration = runinator_models::json!({ "token": "secret://slack/alt" });
-    let configuration = delivery_configuration(&custom, "#oncall", &context());
+    let configuration = delivery_configuration(&custom, "#oncall", &context(), None);
     assert_eq!(
         configuration.get("token").and_then(|v| v.as_str()),
         Some("secret://slack/alt")
@@ -95,6 +100,28 @@ fn policy_configuration_overrides_generated_fields() {
     assert_eq!(
         configuration.get("channel").and_then(|v| v.as_str()),
         Some("#oncall")
+    );
+}
+
+#[test]
+fn explicit_provider_receives_the_standard_notification_envelope() {
+    let mut custom = policy(NotificationChannel::InApp, Some("operations"));
+    custom.provider = Some("teams".into());
+    custom.function = Some("send_message".into());
+    let configuration = delivery_configuration(&custom, "operations", &context(), None);
+    assert_eq!(
+        configuration.get("target").and_then(|value| value.as_str()),
+        Some("operations")
+    );
+    assert_eq!(
+        configuration.get("title").and_then(|value| value.as_str()),
+        Some("nightly failed")
+    );
+    assert_eq!(
+        configuration
+            .get("severity")
+            .and_then(|value| value.as_str()),
+        Some("critical")
     );
 }
 
@@ -212,6 +239,9 @@ async fn repeated_secret_expiry_scans_emit_one_notification() {
         severity: NotificationSeverity::Warning,
         channel: NotificationChannel::InApp,
         target: None,
+        provider: None,
+        function: None,
+        interactive: false,
         threshold_seconds: Some(3_600),
         enabled: true,
         managed_by: None,

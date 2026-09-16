@@ -1,6 +1,11 @@
 import { defaultApi, type NotificationsApi } from "../api/ports/notifications";
 
-import type { NewNotificationPolicy, Notification, NotificationPolicy } from "../domain/models";
+import type {
+  JsonValue,
+  NewNotificationPolicy,
+  Notification,
+  NotificationPolicy,
+} from "../domain/models";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
 
@@ -66,6 +71,19 @@ export function createNotificationsService(app: AppService, api: NotificationsAp
         notifications: state.notifications.filter((notification) => notification.id !== id),
       }));
       await service.refreshNotifications();
+    },
+    async applyAction(notificationId: string, actionId: string, input: JsonValue | null) {
+      try {
+        await app.runOperation("Applying notification action", () =>
+          api.applyNotificationAction(notificationId, actionId, input),
+        );
+      } catch (error: unknown) {
+        app.setError(String(error));
+        return false;
+      }
+
+      await service.refreshNotifications();
+      return true;
     },
     async refreshPolicies() {
       const policies = await app

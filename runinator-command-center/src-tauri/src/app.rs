@@ -261,6 +261,7 @@ pub fn run() {
             crate::commands::list_audit_log,
             crate::commands::fetch_notifications,
             crate::commands::fetch_notification_deliveries,
+            crate::commands::apply_notification_action,
             crate::commands::fetch_notification_policies,
             crate::commands::create_notification_policy,
             crate::commands::update_notification_policy,

@@ -174,20 +174,24 @@ Steering is accepted only while a harnessed Claude or Codex phase owns a steerab
 delivered through the provider's structured protocol, never as shell input. If a mission is between phases or already terminal, wait
 for the next active AI phase or inspect its final evidence instead.
 
-Slack can be the same control surface when a `slack_ingress` adapter is installed. Configure the
-matching Slack notification policy with its workspace id as `team_id`; the successful outbound
-message receipt then correlates that message's thread to the live mission. A platform member
-administrator must explicitly link each human first with `POST /users/{user_id}/identities`:
+Interactive in-app notifications are the normal control surface for a parked mission. An
+interactive policy exposes only the actions supported by the current exact effect attempt:
+approve/reject, open/close, submit input, send a signal, or steer an interactive terminal. Use the
+notification's **Inspect** action to open the run and its durable state.
+
+External conversations are optional. When a policy explicitly chooses Slack and a `slack_ingress`
+adapter is installed, the provider's standard interaction receipt binds the outbound message thread
+to the same notification action contract. A platform member administrator must explicitly link each
+human first with `POST /users/{user_id}/identities`:
 
 ```json
 { "provider": "slack:T012345", "subject": "U012345" }
 ```
 
-A normal signed reply steers the active harness. A reply containing only `approve` or `reject`
-settles the current approval instead. The mapped user still needs Run permission on the mission's
-owning pipeline; the adapter never grants or bypasses that permission. Accepted and denied replies
-are retained in the adapter journal and audit log, and accepted replies also appear as mission
-evidence attributed to the mapped user.
+A reply applies the action selected by the adapter (`approve`, `reject`, or `steer` for the Slack
+builtin). The mapped user still needs Run permission on the owning workflow; the adapter never
+grants or bypasses that permission. Old or unbound threads fail closed. Accepted and denied replies
+are retained in the adapter journal and audit log.
 
 Lifecycle intents are policy-defined controls, not arbitrary graph jumps. Inspect the mission's
 frozen policy before submitting one:

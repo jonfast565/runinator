@@ -27,7 +27,7 @@ Two framing constraints inherited from `AGENTS.md`: keep dependency direction
 services -> shared-contracts, and thread any shared-contract change through every broker backend,
 mapper, and config file.
 
-**Source audit:** 2026-09-16, against workspace version `0.35.754`.
+**Source audit:** 2026-09-16, updated through workspace version `0.36.760`.
 
 ---
 
@@ -40,7 +40,7 @@ mapper, and config file.
 | 12.3 | Prompt assets: external, versioned, diffable | **P2** | rexrap, pack, provider-ai |
 | 12.4 | Agent decision evaluation harness | **P2** | workflows, ctl, database, command-center |
 | 12.5 | Extensible adapter profile schemas | **P2** | adapter-contract, adapter-sdk, adapter-host |
-| 12.6 | Conversational steering ingress | **P3** | adapter-host, provider-slack, engine |
+| 12.6 | Actionable notification controls | **P3** | engine, ws-runtime, command-center, adapters |
 
 Already tracked elsewhere, cross-referenced rather than refiled:
 
@@ -382,51 +382,36 @@ those terms.
 
 ---
 
-## 12.6 Conversational steering ingress
+## 12.6 Actionable notification controls
 
-- **Owning crates:** `runinator-adapter-host`, `runinator-provider-slack`, `runinator-engine`.
+- **Owning crates:** `runinator-engine`, `runinator-ws-runtime`, `runinator-command-center`, and
+  optional provider/adapter crates.
 - **Band:** P3.
 
-**Implemented 2026-09-16.** The builtin `slack_ingress` adapter verifies Slack's signed Events API
-requests and normalizes thread replies into steer, approve, or reject commands. Successful outbound
-Slack notification receipts create a durable thread-to-mission correlation. Slack subjects are
-explicitly linked to enabled Runinator users, and every reply is re-authorized against the mission's
-owning pipeline before control is applied. Accepted actions become mission evidence and audit rows;
-unmapped or unauthorized identities are rejected and audited without invoking the agent or settling
-an approval.
+**Implemented 2026-09-16.** Interactive policies now project the current durable effect into an
+actionable notification. The action contract is provider-neutral and covers approvals, gates,
+input, signals, and interactive terminal steering. The Command Center is the default control
+surface: it renders only the actions valid for that exact effect attempt and links back to the run.
+The engine settles the existing effect or publishes the existing terminal-control command; it does
+not introduce a second approval, gate, signal, or steering path. Stale attempts fail closed.
 
-**Verified 2026-09-16.** `runinatorctl missions steer <id> "<message>"` delivers a bounded message
-into a mission's current steerable AI phase through the provider's structured protocol, and
-`POST /orchestrations/{id}/steer` is the HTTP equivalent. The Slack provider offers `send_message`
-plus six read actions. There is no inbound path from a Slack reply to a steer call; the builtin
-adapter kinds are `github`, `jira`, and `generic_webhook`.
+External delivery is optional and explicit. A policy may retain the `slack` and `email` aliases or
+name any provider action as `<provider>.<function>`; `app` remains internal-only. An adapter returns
+the standard `interaction_response` event and providers may return a standard
+`interaction_receipt` to bind their external conversation. External subjects must map to enabled
+Runinator users and are re-authorized for Run permission before an action is applied. Existing
+unbound Slack threads deliberately expire instead of falling back to mission-specific behavior.
 
-**Why this is necessary.** Steering is the platform's answer to the most common thing that happens
-when a human watches an agent work: they notice it is heading somewhere wrong and want to say so
-without killing the run. The mechanism is well designed — bounded, structured, accepted only while a
-harnessed phase owns a steerable effect, and never injected as shell input.
+REXRAP uses `interactive` as an explicit opt-in, for example:
 
-But it is reachable only from a terminal. A mission can already post to Slack when it parks, when it
-needs an approval, or when it finishes; the person who reads that message and knows the answer has
-to leave Slack, find the mission id, and run a CLI command. In practice that means they do not, and
-the correction arrives as a rejected PR twenty minutes later instead of a redirect in the moment.
+```rexrap
+notify on parked -> app "mission-control" after 5m interactive
+notify on parked -> slack "#oncall" after 5m interactive
+notify on parked -> teams.send_message "operations" after 5m interactive
+```
 
-The same gap applies to approvals. `notify on parked -> slack "#oncall"` tells a channel that
-something is waiting; resolving it still requires `runinatorctl approvals approve <effect-id>`. For
-an approval gating a staging migration — exactly the case where you want a fast, attributable
-human decision — the round trip is the cost.
-
-**Approach.** A Slack ingress adapter that maps a threaded reply on a mission's notification message
-to a steer call on that mission, and an approval-response mapping for the approve and reject cases.
-Reuse the existing correlation machinery: the outbound notification records the mission binding, so
-the thread timestamp is a correlation key like any other. Authorization is the hard part and should
-be explicit — a Slack user identity has to map to a Runinator principal with the right capability
-before a reply can move a mission, and the audit record should name the human, not the adapter.
-
-**Boundary notes.** Lower priority than the rest of this list: it is convenience over capability,
-and everything it enables is already possible from the CLI. It is listed because it is the
-difference between steering being a feature and steering being something people actually use, and
-because the correlation and notification plumbing it needs is already built.
+The first form is the default recommendation. Slack appears only when the workflow explicitly asks
+for Slack.
 
 ---
 
@@ -444,8 +429,8 @@ because the correlation and notification plumbing it needs is already built.
   intentionally degraded prompt lowers it; results are attributable to a pack revision.
 - **12.5** — an installation adds a project-specific field to an adapter profile and reads it in a
   workflow with no Rust change; an invalid profile is rejected at `adapters apply`.
-- **12.6** — a threaded Slack reply steers a live mission, the audit record names the human who sent
-  it, and a reply from an unauthorized user is rejected and logged.
+- **12.6** — an in-app notification resolves each supported durable control, stale attempts fail
+  closed, and an explicitly configured external reply succeeds only for a mapped, authorized user.
 
 ## Note
 

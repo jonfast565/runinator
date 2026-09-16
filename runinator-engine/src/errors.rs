@@ -269,6 +269,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     ADAPTER_EVENT_UNAVAILABLE,
     CONTRACT_PUBLICATION,
     REPLAY_UNSAFE,
+    INTERACTION_REJECTED,
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
     IMPORT_UNKNOWN_CHAINED_TARGET,
@@ -328,6 +329,11 @@ pub const REPLAY_UNSAFE: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI173",
     "workflow.replay.unsafe",
     "Replay safety check refused execution",
+);
+pub const INTERACTION_REJECTED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI174",
+    "notification.interaction.rejected",
+    "Notification interaction rejected",
 );
 
 /// orchestration engine error dictionary.

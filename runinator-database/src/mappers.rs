@@ -31,7 +31,8 @@ use runinator_models::{
     },
     notifications::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
-        NotificationEvent, NotificationPolicy, NotificationSeverity,
+        NotificationEvent, NotificationInteraction, NotificationInteractionState,
+        NotificationPolicy, NotificationSeverity,
     },
     orchestration::{
         IngressAdmission, IngressAdmissionStatus, IngressEventDisposition, IngressInboxEntry,

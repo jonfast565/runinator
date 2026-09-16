@@ -18,6 +18,7 @@ macro_rules! notification_from_row {
             body: $row.get::<Option<String>, _>("body"),
             target: $row.get::<Option<String>, _>("target"),
             metadata: parse_json($row.get::<String, _>("metadata")),
+            interaction: None,
             read_at: $row
                 .get::<Option<i64>, _>("read_at")
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
@@ -44,6 +45,9 @@ macro_rules! notification_policy_from_row {
                 .unwrap_or(NotificationSeverity::Warning),
             channel: NotificationChannel::try_from($row.get::<String, _>("channel").as_str())
                 .unwrap_or(NotificationChannel::InApp),
+            provider: $row.get::<Option<String>, _>("provider"),
+            function: $row.get::<Option<String>, _>("provider_function"),
+            interactive: $row.get("interactive"),
             target: $row.get::<Option<String>, _>("target"),
             threshold_seconds: $row.get::<Option<i64>, _>("threshold_seconds"),
             enabled: $row.get("enabled"),
@@ -69,6 +73,8 @@ macro_rules! notification_delivery_from_row {
             policy_id: $row.get::<Option<Uuid>, _>("policy_id"),
             channel: NotificationChannel::try_from($row.get::<String, _>("channel").as_str())
                 .unwrap_or(NotificationChannel::InApp),
+            provider: $row.get::<Option<String>, _>("provider"),
+            function: $row.get::<Option<String>, _>("provider_function"),
             target: $row.get::<Option<String>, _>("target"),
             workflow_run_id: $row.get::<Option<Uuid>, _>("workflow_run_id"),
             status: NotificationDeliveryStatus::try_from($row.get::<String, _>("status").as_str())
@@ -89,6 +95,27 @@ macro_rules! notification_delivery_from_row {
 
 row_mapper!(row_to_notification_delivery(row) -> NotificationDelivery {
     notification_delivery_from_row!(row)
+});
+
+fallible_row_mapper!(row_to_notification_interaction(row) -> NotificationInteraction {
+    let target = serde_json::from_str(&row.get::<String, _>("target_json"))
+        .map_err(|error| crate::errors::WORKFLOW_VM_CORRUPT_STATE.error(error))?;
+    let actions = serde_json::from_str(&row.get::<String, _>("actions_json"))
+        .map_err(|error| crate::errors::WORKFLOW_VM_CORRUPT_STATE.error(error))?;
+    Ok(NotificationInteraction {
+        id: row.get("id"),
+        notification_id: row.get("notification_id"),
+        org_id: row.get("org_id"),
+        target,
+        actions,
+        state: NotificationInteractionState::try_from(row.get::<String, _>("state").as_str())
+            .unwrap_or(NotificationInteractionState::Stale),
+        resolved_action: row.get("resolved_action"),
+        resolved_by: row.get("resolved_by"),
+        resolved_at: row.get::<Option<i64>, _>("resolved_at").and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        created_at: DateTime::<Utc>::from_timestamp(row.get("created_at"), 0).unwrap_or_else(Utc::now),
+        updated_at: DateTime::<Utc>::from_timestamp(row.get("updated_at"), 0).unwrap_or_else(Utc::now),
+    })
 });
 
 fallible_row_mapper!(row_to_notification_effect_dispatch(row) -> runinator_comm::NotificationEffectDispatchRecord {

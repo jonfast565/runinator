@@ -13,8 +13,10 @@ use uuid::Uuid;
 use runinator_models::{
     errors::SendableError,
     notifications::{
-        NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
-        NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
+        ConversationReceipt, NewNotification, NewNotificationPolicy, Notification,
+        NotificationChannel, NotificationDelivery, NotificationDeliveryStatus, NotificationEvent,
+        NotificationInteraction, NotificationInteractionAction, NotificationInteractionTarget,
+        NotificationPolicy,
     },
 };
 
@@ -25,9 +27,20 @@ pub struct NewNotificationDelivery {
     pub notification_id: Uuid,
     pub policy_id: Option<Uuid>,
     pub channel: NotificationChannel,
+    pub provider: Option<String>,
+    pub function: Option<String>,
     pub target: Option<String>,
     pub workflow_run_id: Option<Uuid>,
     pub command: EffectCommand,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewNotificationInteraction {
+    pub id: Uuid,
+    pub notification_id: Uuid,
+    pub org_id: Option<Uuid>,
+    pub target: NotificationInteractionTarget,
+    pub actions: Vec<NotificationInteractionAction>,
 }
 
 /// Core persistence operations for Runinator.
@@ -188,4 +201,42 @@ pub trait NotificationStore: Send + Sync + 'static {
         &self,
         notification_id: Uuid,
     ) -> impl Future<Output = Result<Vec<NotificationDelivery>, SendableError>> + Send;
+
+    fn create_notification_interaction(
+        &self,
+        interaction: NewNotificationInteraction,
+    ) -> impl Future<Output = Result<NotificationInteraction, SendableError>> + Send;
+
+    fn fetch_notification_interaction(
+        &self,
+        notification_id: Uuid,
+    ) -> impl Future<Output = Result<Option<NotificationInteraction>, SendableError>> + Send;
+
+    fn fetch_notification_interaction_by_conversation(
+        &self,
+        org_id: Option<Uuid>,
+        receipt: ConversationReceipt,
+    ) -> impl Future<Output = Result<Option<NotificationInteraction>, SendableError>> + Send;
+
+    fn bind_notification_conversation(
+        &self,
+        interaction_id: Uuid,
+        delivery_id: Uuid,
+        org_id: Option<Uuid>,
+        receipt: ConversationReceipt,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn resolve_notification_interaction(
+        &self,
+        interaction_id: Uuid,
+        action: String,
+        actor_id: Uuid,
+        resolved_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    fn mark_notification_interaction_stale(
+        &self,
+        interaction_id: Uuid,
+        updated_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 }

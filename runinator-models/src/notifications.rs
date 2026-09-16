@@ -31,6 +31,8 @@ pub struct Notification {
     #[serde(default)]
     pub metadata: Value,
     #[serde(default)]
+    pub interaction: Option<NotificationInteraction>,
+    #[serde(default)]
     pub read_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -233,6 +235,12 @@ pub struct NotificationPolicy {
     #[serde(default)]
     pub channel: NotificationChannel,
     #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub function: Option<String>,
+    #[serde(default)]
+    pub interactive: bool,
+    #[serde(default)]
     pub target: Option<String>,
     /// threshold for duration events, or the warning window for `secret_expiring`.
     /// `secret_expiring` defaults to the engine's 30-day window when omitted.
@@ -261,6 +269,12 @@ pub struct NewNotificationPolicy {
     #[serde(default)]
     pub channel: NotificationChannel,
     #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub function: Option<String>,
+    #[serde(default)]
+    pub interactive: bool,
+    #[serde(default)]
     pub target: Option<String>,
     #[serde(default)]
     pub threshold_seconds: Option<i64>,
@@ -288,6 +302,20 @@ impl Validate for NewNotificationPolicy {
         required_text("name", &self.name, SHORT_TEXT_MAX)?;
         optional_text("target", self.target.as_deref(), 2 * 1024)?;
         optional_text("managed_by", self.managed_by.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("provider", self.provider.as_deref(), SHORT_TEXT_MAX)?;
+        optional_text("function", self.function.as_deref(), SHORT_TEXT_MAX)?;
+        if self.provider.is_some() != self.function.is_some() {
+            return Err(ValidationError::new(
+                "provider",
+                "provider and function must be supplied together",
+            ));
+        }
+        if let Some(provider) = &self.provider {
+            required_text("provider", provider, SHORT_TEXT_MAX)?;
+        }
+        if let Some(function) = &self.function {
+            required_text("function", function, SHORT_TEXT_MAX)?;
+        }
         if let Some(seconds) = self.threshold_seconds
             && seconds <= 0
         {
@@ -357,6 +385,10 @@ pub struct NotificationDelivery {
     pub policy_id: Option<Uuid>,
     pub channel: NotificationChannel,
     #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub function: Option<String>,
+    #[serde(default)]
     pub target: Option<String>,
     #[serde(default)]
     pub workflow_run_id: Option<Uuid>,
@@ -369,4 +401,156 @@ pub struct NotificationDelivery {
     pub response: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationInteractionState {
+    Open,
+    Resolved,
+    Stale,
+}
+
+impl NotificationInteractionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Resolved => "resolved",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+impl TryFrom<&str> for NotificationInteractionState {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "open" => Ok(Self::Open),
+            "resolved" => Ok(Self::Resolved),
+            "stale" => Ok(Self::Stale),
+            other => Err(format!("unknown notification interaction state '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationInteractionInput {
+    None,
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationInteractionAction {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_interaction_input")]
+    pub input: NotificationInteractionInput,
+}
+
+fn default_interaction_input() -> NotificationInteractionInput {
+    NotificationInteractionInput::None
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotificationInteractionTarget {
+    Effect {
+        workflow_run_id: Uuid,
+        effect_id: Uuid,
+        attempt: u32,
+    },
+    Signal {
+        workflow_run_id: Uuid,
+        effect_id: Uuid,
+        attempt: u32,
+        name: String,
+    },
+    Terminal {
+        workflow_run_id: Uuid,
+        effect_id: Uuid,
+        attempt: u32,
+    },
+}
+
+impl NotificationInteractionTarget {
+    pub fn workflow_run_id(&self) -> Uuid {
+        match self {
+            Self::Effect {
+                workflow_run_id, ..
+            }
+            | Self::Signal {
+                workflow_run_id, ..
+            }
+            | Self::Terminal {
+                workflow_run_id, ..
+            } => *workflow_run_id,
+        }
+    }
+
+    pub fn effect_id(&self) -> Uuid {
+        match self {
+            Self::Effect { effect_id, .. }
+            | Self::Signal { effect_id, .. }
+            | Self::Terminal { effect_id, .. } => *effect_id,
+        }
+    }
+
+    pub fn attempt(&self) -> u32 {
+        match self {
+            Self::Effect { attempt, .. }
+            | Self::Signal { attempt, .. }
+            | Self::Terminal { attempt, .. } => *attempt,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NotificationInteraction {
+    pub id: Uuid,
+    pub notification_id: Uuid,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    pub target: NotificationInteractionTarget,
+    pub actions: Vec<NotificationInteractionAction>,
+    pub state: NotificationInteractionState,
+    #[serde(default)]
+    pub resolved_action: Option<String>,
+    #[serde(default)]
+    pub resolved_by: Option<Uuid>,
+    #[serde(default)]
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationReceipt {
+    pub source: String,
+    pub scope: String,
+    pub correlation_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalInteractionResponse {
+    pub actor_subject: String,
+    pub action_id: String,
+    #[serde(default)]
+    pub input: Value,
+    #[serde(default)]
+    pub message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NotificationInteractionActionRequest {
+    #[serde(default)]
+    pub input: Value,
+}
+
+impl Validate for NotificationInteractionActionRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }

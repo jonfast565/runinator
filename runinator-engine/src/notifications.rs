@@ -424,7 +424,21 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
             ),
         );
 
-        if policy.channel == NotificationChannel::InApp {
+        if policy.interactive
+            && let Some(workflow_run_id) = context.workflow_run_id
+            && let Err(error) =
+                crate::services::interaction_operations::create_interaction_for_notification(
+                    self.db,
+                    created.id,
+                    org_id,
+                    workflow_run_id,
+                )
+                .await
+        {
+            warn!(notification = %created.id, %error, "failed to create notification interaction");
+        }
+
+        if policy.channel == NotificationChannel::InApp && policy.provider.is_none() {
             return;
         }
         if let Err(err) = self.enqueue_delivery(policy, &created.id, context).await {
@@ -447,7 +461,12 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
         notification_id: &Uuid,
         context: &EmissionContext,
     ) -> Result<(), SendableError> {
-        let Some((provider, function)) = policy.channel.provider() else {
+        let provider_action = policy
+            .provider
+            .as_deref()
+            .zip(policy.function.as_deref())
+            .or_else(|| policy.channel.provider());
+        let Some((provider, function)) = provider_action else {
             return Err(crate::errors::NOTIFY_UNROUTABLE_CHANNEL.error(policy.channel.as_str()));
         };
         let Some(target) = policy.target.clone().filter(|t| !t.trim().is_empty()) else {
@@ -455,7 +474,11 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
         };
 
         let delivery_id = Uuid::now_v7();
-        let configuration = delivery_configuration(policy, &target, context);
+        let interaction = self
+            .db
+            .fetch_notification_interaction(*notification_id)
+            .await?;
+        let configuration = delivery_configuration(policy, &target, context, interaction.as_ref());
         let command = EffectCommand {
             version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
             command_id: Uuid::now_v7(),
@@ -493,6 +516,8 @@ impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
                 notification_id: *notification_id,
                 policy_id: Some(policy.id),
                 channel: policy.channel,
+                provider: Some(provider.to_string()),
+                function: Some(function.to_string()),
                 target: Some(target),
                 workflow_run_id: context.workflow_run_id,
                 command,
@@ -508,20 +533,32 @@ fn delivery_configuration(
     policy: &NotificationPolicy,
     target: &str,
     context: &EmissionContext,
+    interaction: Option<&runinator_models::notifications::NotificationInteraction>,
 ) -> runinator_models::workflows::WorkflowObject {
-    let mut configuration = match policy.channel {
-        NotificationChannel::Slack => runinator_models::json!({
-            // resolved late by the worker from the settings store.
-            "token": "secret://slack/bot_token",
-            "channel": target,
-            "text": format!("*{}*\n{}", context.title, context.body),
-        }),
-        NotificationChannel::Email => runinator_models::json!({
-            "to": target,
-            "subject": context.title,
+    let mut configuration = if policy.provider.is_some() {
+        runinator_models::json!({
+            "target": target,
+            "title": context.title,
             "body": context.body,
-        }),
-        NotificationChannel::InApp => runinator_models::json!({}),
+            "severity": policy.severity.as_str(),
+            "workflow_run_id": context.workflow_run_id,
+            "interaction": interaction,
+        })
+    } else {
+        match policy.channel {
+            NotificationChannel::Slack => runinator_models::json!({
+                // resolved late by the worker from the settings store.
+                "token": "secret://slack/bot_token",
+                "channel": target,
+                "text": format!("*{}*\n{}", context.title, context.body),
+            }),
+            NotificationChannel::Email => runinator_models::json!({
+                "to": target,
+                "subject": context.title,
+                "body": context.body,
+            }),
+            NotificationChannel::InApp => runinator_models::json!({ "target": target }),
+        }
     };
     if let (Some(base), Some(overrides)) = (
         configuration.as_object_mut(),

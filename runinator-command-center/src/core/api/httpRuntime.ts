@@ -1154,6 +1154,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `notifications/${escape(arg(args, "notificationId"))}`,
   },
+  apply_notification_action: {
+    method: "POST",
+    path: (args) =>
+      `notifications/${escape(arg(args, "notificationId"))}/actions/${escape(arg(args, "actionId"))}`,
+    body: (args) => ({ input: argOpt(args, "input") ?? null }),
+  },
   fetch_notification_deliveries: {
     method: "GET",
     path: (args) => `notifications/${escape(arg(args, "notificationId"))}/deliveries`,

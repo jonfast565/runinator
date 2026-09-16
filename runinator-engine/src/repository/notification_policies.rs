@@ -55,7 +55,7 @@ fn validate_policy(policy: &NewNotificationPolicy) -> Result<(), SendableError> 
         return Err(crate::errors::NOTIFY_MISSING_TARGET.error("policy name is required"));
     }
     // an external channel with no target has nowhere to deliver.
-    if policy.channel != NotificationChannel::InApp
+    if (policy.channel != NotificationChannel::InApp || policy.provider.is_some())
         && policy
             .target
             .as_deref()

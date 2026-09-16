@@ -8,13 +8,19 @@ use axum::{
 };
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
-    notifications::{NewNotification, NewNotificationPolicy, Notification},
+    notifications::{
+        NewNotification, NewNotificationPolicy, Notification, NotificationInteractionActionRequest,
+    },
     web::TaskResponse,
 };
-use runinator_store::{RuntimeStore, roles::NotificationStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{NotificationStore, WorkflowVmStore},
+};
 use serde::Deserialize;
 
-use runinator_engine::services::NotificationOperations;
+use runinator_broker_core::Broker;
+use runinator_engine::services::{InteractionOperations, NotificationOperations};
 use runinator_ws_core::ValidatedJson;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
@@ -474,8 +480,50 @@ pub async fn mark_all_notifications_read<
     )
 }
 
+pub async fn apply_notification_action<
+    T: AuthorizationStore + RuntimeStore + NotificationStore + WorkflowVmStore,
+>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((notification_id, action_id)): Path<(Uuid, String)>,
+    ValidatedJson(request): ValidatedJson<NotificationInteractionActionRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let Some(user_id) = ctx.principal_id else {
+        return forbidden("notification actions require a user principal");
+    };
+    let notification = match service.fetch(ctx.org_id, notification_id, user_id).await {
+        Ok(Some(notification)) => notification,
+        Ok(None) => return not_found(format!("Notification {notification_id} not found")),
+        Err(error) => return api_error(error.to_string()),
+    };
+    let Some(interaction) = notification.interaction else {
+        return bad_request("notification is not interactive");
+    };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(interaction.target.workflow_run_id(), Permission::Run)
+        .await
+    {
+        return reply.into_reply();
+    }
+    match InteractionOperations::new(db)
+        .apply(
+            broker.as_ref(),
+            interaction,
+            user_id,
+            &action_id,
+            request.input,
+        )
+        .await
+    {
+        Ok(outcome) => (StatusCode::OK, Json(ApiResponse::JsonValue(outcome))),
+        Err(error) => bad_request(error),
+    }
+}
+
 /// the `notifications` endpoints.
-pub fn routes<T: AuthorizationStore + RuntimeStore + NotificationStore>(
+pub fn routes<T: AuthorizationStore + RuntimeStore + NotificationStore + WorkflowVmStore>(
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::Extension;
@@ -504,6 +552,10 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + NotificationStore>(
             get(list_notification_deliveries::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/notifications/{id}/actions/{action_id}",
+            post(apply_notification_action::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/notification_policies",
             get(list_notification_policies::<T>)
                 .post(create_notification_policy::<T>)
@@ -519,6 +571,19 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + NotificationStore>(
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
+    endpoint!(
+        "post",
+        "/notifications/{id}/actions/{action_id}",
+        "Notifications",
+        "Apply a notification action",
+        "Executes one action frozen onto an interactive notification after rechecking run permission and effect freshness.",
+        false,
+        json_body("Optional action input.", Example::None),
+        &[],
+        200,
+        "notification action applied",
+        Example::None,
+    ),
     endpoint!(
         "get",
         "/notifications",

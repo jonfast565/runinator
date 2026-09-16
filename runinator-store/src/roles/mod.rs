@@ -47,7 +47,7 @@ pub use execution_profiles::ExecutionProfileStore;
 pub use files::FileStore;
 pub use functions::FunctionStore;
 pub use ingress::IngressStore;
-pub use notifications::{NewNotificationDelivery, NotificationStore};
+pub use notifications::{NewNotificationDelivery, NewNotificationInteraction, NotificationStore};
 pub use orchestrations::{
     AdapterPollDispatch, ExternalOperationUpdate, NewAdapterDefinition, NewAdapterRevision,
     NewOrchestrationCommand, NewOrchestrationCorrelationAlias, NewOrchestrationEpoch,

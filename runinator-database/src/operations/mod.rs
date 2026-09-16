@@ -33,8 +33,9 @@ use runinator_models::{
         FunctionExport, FunctionPackage, FunctionVersion, NewFunctionVersion,
     },
     notifications::{
-        NewNotification, NewNotificationPolicy, Notification, NotificationDelivery,
-        NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
+        ConversationReceipt, NewNotification, NewNotificationPolicy, Notification,
+        NotificationDelivery, NotificationDeliveryStatus, NotificationEvent,
+        NotificationInteraction, NotificationPolicy,
     },
     orchestration::IdempotencyClaim,
     orgs::{OrgMembership, OrgRole, Organization},
@@ -93,9 +94,10 @@ const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configur
 const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata, orchestration_binding_id, execution_epoch, start_member";
 const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at";
 
-const NOTIFICATION_POLICY_COLUMNS: &str = "id, org_id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
+const NOTIFICATION_POLICY_COLUMNS: &str = "id, org_id, workflow_id, name, event, severity, channel, provider, provider_function, interactive, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
 const NOTIFICATION_COLUMNS: &str = "id, org_id, source_resource_type, source_resource_id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
-const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, workflow_run_id, status, attempts, last_error, response_json, command_json, published_at, claimed_by, claimed_until, created_at, updated_at";
+const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, provider, provider_function, target, workflow_run_id, status, attempts, last_error, response_json, command_json, published_at, claimed_by, claimed_until, created_at, updated_at";
+const NOTIFICATION_INTERACTION_COLUMNS: &str = "id, notification_id, org_id, target_json, actions_json, state, resolved_action, resolved_by, resolved_at, created_at, updated_at";
 
 /// true when an insert lost a unique-constraint race rather than failing for a reason worth
 /// surfacing. lets a caller that assigns its own sequence number recompute and retry.
@@ -134,7 +136,7 @@ where
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(&format!(
             "INSERT INTO notification_policies ({NOTIFICATION_POLICY_COLUMNS})
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )))
         .bind(id)
         .bind(policy.org_id)
@@ -143,6 +145,9 @@ where
         .bind(policy.event.as_str())
         .bind(policy.severity.as_str())
         .bind(policy.channel.as_str())
+        .bind(policy.provider.clone())
+        .bind(policy.function.clone())
+        .bind(policy.interactive)
         .bind(policy.target.clone())
         .bind(policy.threshold_seconds)
         .bind(policy.enabled)
@@ -960,7 +965,8 @@ impl ArchiveTableSql for ArchiveTable {
             ],
             ArchiveTable::NotificationDeliveries => archive_columns![
                 "id" => Uuid, "notification_id" => Uuid, "policy_id" => OptionalUuid,
-                "channel" => Text, "target" => OptionalText,
+                "channel" => Text, "target" => OptionalText, "provider" => OptionalText,
+                "provider_function" => OptionalText,
                 "workflow_run_id" => OptionalUuid, "status" => Text,
                 "attempts" => Integer, "last_error" => OptionalText,
                 "created_at" => Integer, "updated_at" => Integer,
@@ -1278,7 +1284,7 @@ impl ArchiveTableSql for ArchiveTable {
             "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE id = ?".to_string()
         }
         ArchiveTable::NotificationDeliveries => {
-            "SELECT id, notification_id, policy_id, channel, target, workflow_run_id, status, attempts, last_error, created_at, updated_at, dedupe_key, command_json, published_at, claimed_by, claimed_until, response_json FROM notification_deliveries WHERE id = ? AND status NOT IN ('pending', 'retrying')".to_string()
+            "SELECT id, notification_id, policy_id, channel, target, provider, provider_function, workflow_run_id, status, attempts, last_error, created_at, updated_at, dedupe_key, command_json, published_at, claimed_by, claimed_until, response_json FROM notification_deliveries WHERE id = ? AND status NOT IN ('pending', 'retrying')".to_string()
         }
         ArchiveTable::AutomationRecords => {
             "SELECT id, record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at FROM automation_records WHERE id = ?".to_string()
@@ -1456,6 +1462,7 @@ impl ArchiveTableSql for ArchiveTable {
                 "id": row.get::<Uuid, _>("id").to_string(), "notification_id": row.get::<Uuid, _>("notification_id").to_string(),
                 "policy_id": row.get::<Option<Uuid>, _>("policy_id").map(|id| id.to_string()),
                 "channel": row.get::<String, _>("channel"), "target": row.get::<Option<String>, _>("target"),
+                "provider": row.get::<Option<String>, _>("provider"), "provider_function": row.get::<Option<String>, _>("provider_function"),
                 "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
                 "status": row.get::<String, _>("status"), "attempts": row.get::<i64, _>("attempts"),
                 "last_error": row.get::<Option<String>, _>("last_error"), "created_at": row.get::<i64, _>("created_at"),

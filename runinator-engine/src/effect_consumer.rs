@@ -10,14 +10,12 @@ use runinator_models::workflow_vm::{
     WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowJournalEntry,
 };
 use runinator_models::{
-    notifications::{NotificationChannel, NotificationDeliveryStatus},
+    notifications::{ConversationReceipt, NotificationDeliveryStatus},
     orchestration::{DeliverySemantics, ExternalOperationStatus, OrchestrationEvidence},
     workflow_vm::WorkflowEffectStatus,
 };
 use runinator_runtime::workflow_vm::interrupt_handler_continuation;
-use runinator_store::roles::{
-    ExternalOperationUpdate, NewOrchestrationCorrelationAlias, OrchestrationStore, WorkflowVmStore,
-};
+use runinator_store::roles::{ExternalOperationUpdate, OrchestrationStore, WorkflowVmStore};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -69,7 +67,7 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                         )
                         .await;
                     if settled.is_ok() && status == NotificationDeliveryStatus::Delivered {
-                        correlate_slack_notification(
+                        bind_notification_conversation(
                             db.as_ref(),
                             notification_delivery_id,
                             output.as_ref(),
@@ -395,7 +393,7 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
     }
 }
 
-async fn correlate_slack_notification<T: crate::engine::BackgroundEngineStore>(
+async fn bind_notification_conversation<T: crate::engine::BackgroundEngineStore>(
     db: &T,
     delivery_id: uuid::Uuid,
     output: Option<&runinator_models::value::Value>,
@@ -403,48 +401,45 @@ async fn correlate_slack_notification<T: crate::engine::BackgroundEngineStore>(
     let Some(output) = output else {
         return;
     };
-    let Some(team_id) = output
-        .get("runinator_team_id")
-        .and_then(|value| value.as_str())
-    else {
+    let Some(receipt) = output.get("interaction_receipt") else {
         return;
     };
-    let Some(channel) = output.get("channel").and_then(|value| value.as_str()) else {
-        return;
+    let receipt = ConversationReceipt {
+        source: receipt
+            .get("source")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        scope: receipt
+            .get("scope")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        correlation_key: receipt
+            .get("correlation_key")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
     };
-    let Some(thread_ts) = output.get("ts").and_then(|value| value.as_str()) else {
+    if receipt.source.is_empty() || receipt.scope.is_empty() || receipt.correlation_key.is_empty() {
         return;
-    };
+    }
     let delivery = match db.fetch_notification_delivery(delivery_id).await {
-        Ok(Some(delivery)) if delivery.channel == NotificationChannel::Slack => delivery,
+        Ok(Some(delivery)) => delivery,
         _ => return,
     };
-    let Some(workflow_run_id) = delivery.workflow_run_id else {
-        return;
-    };
-    let binding = match db
-        .fetch_current_orchestration_binding_for_workflow_run(workflow_run_id)
+    let interaction = match db
+        .fetch_notification_interaction(delivery.notification_id)
         .await
     {
-        Ok(Some(binding)) if binding.scope.starts_with("mission.") => binding,
+        Ok(Some(interaction)) => interaction,
         _ => return,
     };
     if let Err(error) = db
-        .upsert_orchestration_correlation_alias(
-            NewOrchestrationCorrelationAlias {
-                id: uuid::Uuid::now_v7(),
-                binding_id: binding.id,
-                generation: binding.generation,
-                org_id: binding.org_id,
-                source: format!("slack:{team_id}"),
-                scope: channel.to_string(),
-                correlation_key: thread_ts.to_string(),
-            },
-            chrono::Utc::now(),
-        )
+        .bind_notification_conversation(interaction.id, delivery_id, interaction.org_id, receipt)
         .await
     {
-        warn!(error = %error, delivery_id = %delivery_id, "failed to correlate Slack notification thread");
+        warn!(error = %error, delivery_id = %delivery_id, "failed to bind notification conversation");
     }
 }
 

@@ -4,6 +4,7 @@ import type { NewNotificationPolicy, NotificationPolicy } from "../../domain/mod
 import type { AppService } from "../app";
 
 vi.mock("../../api/commandCenterApi", () => ({
+  applyNotificationAction: vi.fn(),
   fetchNotifications: vi.fn(),
   markNotificationRead: vi.fn(),
   markAllNotificationsRead: vi.fn(),
@@ -29,6 +30,9 @@ const policy: NotificationPolicy = {
   severity: "critical",
   channel: "slack",
   target: "#oncall",
+  provider: null,
+  function: null,
+  interactive: false,
   threshold_seconds: null,
   enabled: true,
   managed_by: null,
@@ -44,6 +48,9 @@ const draft: NewNotificationPolicy = {
   severity: "critical",
   channel: "slack",
   target: "#oncall",
+  provider: null,
+  function: null,
+  interactive: false,
   threshold_seconds: null,
   enabled: true,
   managed_by: null,

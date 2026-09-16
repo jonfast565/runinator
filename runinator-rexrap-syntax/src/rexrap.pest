@@ -275,12 +275,13 @@ concurrency_policy = { "cancel_previous" | "skip" | "queue" | "allow" }
 // ride in the compiled definition and are materialized as pack-managed rows on import, like triggers.
 notify_decl = { "notify" ~ "on" ~ notify_event ~ "->" ~ notify_channel ~ expr ~ notify_option* }
 notify_event = { "failure" | "retry_exhausted" | "sla" | "parked" }
-notify_channel = { "slack" | "email" | "app" }
-notify_option = { notify_after | notify_severity | notify_with | notify_disabled }
+notify_channel = @{ (ident ~ "." ~ ident) | "slack" | "email" | "app" }
+notify_option = { notify_after | notify_severity | notify_with | notify_interactive | notify_disabled }
 notify_after = { "after" ~ duration }
 notify_severity = { "severity" ~ notify_level }
 notify_level = { "info" | "warning" | "critical" }
 notify_with = { "with" ~ object }
+notify_interactive = { "interactive" }
 notify_disabled = { "disabled" }
 
 // reusable named argument groups, declared in the workflow header. an alias binds a name to an
