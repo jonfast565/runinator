@@ -84,6 +84,40 @@ and final output. Every `.rrx` source in the pack is considered automatically, o
 additional sources with `--tests`. The command
 exits non-zero when any case fails, so it drops straight into CI.
 
+Agent prompts should be Markdown assets included with `file("prompts/review.md")`, with dynamic
+case data passed separately through `prompt_context`. Set `prompt_asset` to a stable name and, when
+the pack exposes a nullable config slot, pass it as `prompt_override`. The `ai-command.claude_code`
+provider chooses the execution-profile environment override
+`RUNINATOR_PROMPT_<UPPERCASE_ASSET_NAME>` first, then the organization config override, then the
+pack Markdown. It appends `prompt_context` after selecting the base text and returns
+`prompt: { asset, digest, source }` beside `response`. The pack compiler also records every prose
+include under workflow revision metadata as `prompt_assets`, so prompt-only revisions have an
+immutable SHA-256 identity and readable source diffs.
+
+`runinatorctl workflows eval <pack> --corpus <path>` is the live counterpart to `workflows test`.
+It applies the pack, runs real providers, and therefore can cost tokens. A corpus is one JSON suite
+or a directory of suites:
+
+```json
+{
+  "workflow": "Review Coding Mission",
+  "cases": [
+    {
+      "name": "clean change advances",
+      "input": { "request": { "goal": "review the fixture" } },
+      "expect": { "pointer": "/next_member", "equals": "runinator.missions.coding_verify" }
+    }
+  ]
+}
+```
+
+Use `judge` instead of `expect` for prose outcomes: `{ "workflow": "Judge Review",
+"input": { "rubric": "..." }, "pass_pointer": "/pass" }`. The candidate result is injected as
+`candidate`. Each case and judge is an ordinary durable workflow run named
+`eval:<eval-id>:<case>`, so its frozen revision, prompt digests, effects, logs, and result remain
+visible in Runs and the command center. The command reports per-case results and aggregate agreement
+and exits non-zero on disagreement.
+
 The same simulator also backs a server-side dry-run: `POST /workflows/simulate`
 (`WorkflowSimulateRequest`: `{ workflow, inputs?, replay_run? }`) walks a workflow
 against live config — publishing no actions — and returns the routed path, per-node

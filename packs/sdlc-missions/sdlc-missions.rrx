@@ -93,13 +93,17 @@ workflow "Prepare Ticket Workspace" v1 {
 workflow "Plan Ticket Mission" v1 {
     params { issue: any, profile: any, orchestration: any }
     key plan
+    import settings prompts as prompt_settings
 
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(1800s)
         @profile("claude")
         let plan = ai-command.claude_code(
-            prompt: "Plan Jira ticket ${string(params.issue.key)}. Ticket: ${json(params.orchestration.resources.sdlc.ticket)}. Relevant Slack context: ${json(params.orchestration.resources.sdlc.slack_context)}. Read repository guidance and the current source. Produce a concrete implementation and verification plan. Do not modify files, commit, push, open a pull request, merge, or deploy.",
+            prompt: file("prompts/plan.md"),
+            prompt_asset: "plan",
+            prompt_override: prompt_settings.config.plan,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key) ++ "\nTicket: " ++ json(params.orchestration.resources.sdlc.ticket) ++ "\nRelevant Slack context: " ++ json(params.orchestration.resources.sdlc.slack_context),
             harnessed: true,
             role: "planner",
             mission_mcp: true,
@@ -112,7 +116,7 @@ workflow "Plan Ticket Mission" v1 {
         compute {
             return {
                 resources_patch: { sdlc: { plan: plan.response.result } },
-                evidence: { role: "planner", response: plan.response },
+                evidence: { role: "planner", response: plan.response, prompt: plan.prompt },
                 next_member: "runinator.sdlc.implement"
             }
         }
@@ -122,13 +126,17 @@ workflow "Plan Ticket Mission" v1 {
 workflow "Implement Ticket Mission" v1 {
     params { issue: any, profile: any, orchestration: any }
     key implement
+    import settings prompts as prompt_settings
 
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(7200s)
         @profile("claude")
         let implementation = ai-command.claude_code(
-            prompt: "Implement Jira ticket ${string(params.issue.key)}. Follow this accepted plan: ${string(params.orchestration.resources.sdlc.plan)}. Work only in the assigned workspace, follow repository instructions, make the smallest complete change, and run narrow checks. Leave changes uncommitted for independent review. Do not push, open a pull request, merge, deploy, change credentials, or start another mission.",
+            prompt: file("prompts/implement.md"),
+            prompt_asset: "implement",
+            prompt_override: prompt_settings.config.implement,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key) ++ "\nAccepted plan: " ++ string(params.orchestration.resources.sdlc.plan),
             harnessed: true,
             role: "implementer",
             resume_session: string(params.orchestration.resources.sdlc.implementation_session ?? ""),
@@ -147,7 +155,7 @@ workflow "Implement Ticket Mission" v1 {
                         implementation: implementation.response.result
                     }
                 },
-                evidence: { role: "implementer", response: implementation.response },
+                evidence: { role: "implementer", response: implementation.response, prompt: implementation.prompt },
                 next_member: "runinator.sdlc.review"
             }
         }
@@ -157,13 +165,17 @@ workflow "Implement Ticket Mission" v1 {
 workflow "Review Ticket Mission" v1 {
     params { issue: any, profile: any, orchestration: any }
     key review
+    import settings prompts as prompt_settings
 
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(3600s)
         @profile("claude")
         let review = ai-command.claude_code(
-            prompt: "Independently review the uncommitted implementation for ${string(params.issue.key)}. Inspect the ticket, plan, workspace diff, correctness, scope, tests, and regressions. Do not edit files. Reply only with JSON: {\"next_member\":\"runinator.sdlc.implement\"|\"runinator.sdlc.verify\",\"summary\":\"short summary\",\"findings\":[\"...\"]}. Route to implement only for a concrete repair. Do not commit, push, merge, or deploy.",
+            prompt: file("prompts/review.md"),
+            prompt_asset: "review",
+            prompt_override: prompt_settings.config.review,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key),
             harnessed: true,
             role: "reviewer",
             mission_mcp: true,
@@ -178,7 +190,7 @@ workflow "Review Ticket Mission" v1 {
             let decision: { next_member: string, summary: string, findings: string[] } = review.response.structured_output
             return {
                 resources_patch: { sdlc: { internal_review: decision } },
-                evidence: { role: "reviewer", review: decision },
+                evidence: { role: "reviewer", review: decision, prompt: review.prompt },
                 next_member: decision.next_member
             }
         }
@@ -279,6 +291,7 @@ workflow "Assess Pull Request Feedback" v1 {
     params { issue: any, profile: any, orchestration: any }
     key feedback
     import settings github as github_settings
+    import settings prompts as prompt_settings
 
     do {
         let reviews = github.reviews(
@@ -297,7 +310,10 @@ workflow "Assess Pull Request Feedback" v1 {
         @timeout(1800s)
         @profile("claude")
         let assessment = ai-command.claude_code(
-            prompt: "Assess current feedback for ${string(params.issue.key)} at exact candidate ${string(params.orchestration.resources.sdlc.published_revision)}. Reviews: ${json(reviews.response)}. Comments: ${json(comments.response)}. Do not edit files. Reply only with JSON: {\"next_member\":\"runinator.sdlc.repair\"|\"runinator.sdlc.merge\"|\"runinator.sdlc.await_feedback\",\"approved\":true|false,\"summary\":\"short summary\",\"findings\":[\"...\"]}. Choose merge only when required reviews approve and no unresolved change request remains; choose repair for actionable changes; otherwise wait.",
+            prompt: file("prompts/feedback.md"),
+            prompt_asset: "feedback",
+            prompt_override: prompt_settings.config.feedback,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key) ++ "\nCandidate revision: " ++ string(params.orchestration.resources.sdlc.published_revision) ++ "\nReviews: " ++ json(reviews.response) ++ "\nComments: " ++ json(comments.response),
             harnessed: true,
             role: "feedback_reviewer",
             mission_mcp: true,
@@ -312,7 +328,7 @@ workflow "Assess Pull Request Feedback" v1 {
             let decision: { next_member: string, approved: bool, summary: string, findings: string[] } = assessment.response.structured_output
             return {
                 resources_patch: { sdlc: { feedback: decision } },
-                evidence: { role: "feedback_reviewer", decision: decision, reviews: reviews.response, comments: comments.response },
+                evidence: { role: "feedback_reviewer", decision: decision, reviews: reviews.response, comments: comments.response, prompt: assessment.prompt },
                 next_member: decision.next_member
             }
         }
@@ -323,6 +339,7 @@ workflow "Repair Pull Request Feedback" v1 {
     params { issue: any, profile: any, orchestration: any }
     key repair
     import settings slack as slack_settings
+    import settings prompts as prompt_settings
 
     do {
         let context = slack.search_messages(
@@ -336,7 +353,10 @@ workflow "Repair Pull Request Feedback" v1 {
         @timeout(7200s)
         @profile("claude")
         let repair = ai-command.claude_code(
-            prompt: "Repair pull request feedback for ${string(params.issue.key)}. Findings: ${json(params.orchestration.resources.sdlc.feedback)}. Refreshed Slack context: ${json(context)}. Work only in the assigned workspace. Make the smallest correct repair and run narrow checks. Leave changes uncommitted. Do not push, merge, deploy, change credentials, or start another mission.",
+            prompt: file("prompts/repair.md"),
+            prompt_asset: "repair",
+            prompt_override: prompt_settings.config.repair,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key) ++ "\nFindings: " ++ json(params.orchestration.resources.sdlc.feedback) ++ "\nRefreshed Slack context: " ++ json(context),
             harnessed: true,
             role: "repairer",
             resume_session: string(params.orchestration.resources.sdlc.implementation_session ?? ""),
@@ -350,7 +370,7 @@ workflow "Repair Pull Request Feedback" v1 {
         compute {
             return {
                 resources_patch: { sdlc: { repair: repair.response.result, repair_slack_context: context } },
-                evidence: { role: "repairer", response: repair.response },
+                evidence: { role: "repairer", response: repair.response, prompt: repair.prompt },
                 next_member: "runinator.sdlc.review"
             }
         }
@@ -398,13 +418,17 @@ workflow "Merge Exact Pull Request Revision" v1 {
 workflow "Assess Deployment Impact" v1 {
     params { issue: any, profile: any, orchestration: any }
     key impact
+    import settings prompts as prompt_settings
 
     do {
         @workspace(params.orchestration.workspace_affinity)
         @timeout(1800s)
         @profile("claude")
         let impact = ai-command.claude_code(
-            prompt: "Assess deployment impact for merged ticket ${string(params.issue.key)} at ${string(params.orchestration.resources.sdlc.published_revision)}. Inspect the committed diff and repository deployment guidance. Reply only with JSON: {\"next_member\":\"runinator.sdlc.deploy\"|\"runinator.sdlc.close\",\"summary\":\"short rationale\"}. Select deploy only when the configured named deployment workflow is required for these changes. Do not edit files, dispatch, deploy, or change credentials.",
+            prompt: file("prompts/deployment-impact.md"),
+            prompt_asset: "deployment-impact",
+            prompt_override: prompt_settings.config.deployment_impact,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key) ++ "\nMerged revision: " ++ string(params.orchestration.resources.sdlc.published_revision),
             harnessed: true,
             role: "deployment_analyst",
             mission_mcp: true,
@@ -419,7 +443,7 @@ workflow "Assess Deployment Impact" v1 {
             let decision: { next_member: string, summary: string } = impact.response.structured_output
             return {
                 resources_patch: { sdlc: { deployment_impact: decision } },
-                evidence: { role: "deployment_analyst", decision: decision },
+                evidence: { role: "deployment_analyst", decision: decision, prompt: impact.prompt },
                 next_member: decision.next_member
             }
         }
@@ -455,6 +479,7 @@ workflow "Monitor Named Deployment" v1 {
     params { issue: any, profile: any, orchestration: any }
     key deploy_monitor
     import settings github as github_settings
+    import settings prompts as prompt_settings
 
     do {
         wait 60s
@@ -469,7 +494,10 @@ workflow "Monitor Named Deployment" v1 {
         @timeout(900s)
         @profile("claude")
         let assessment = ai-command.claude_code(
-            prompt: "Classify the newest workflow_dispatch deployment for ticket ${string(params.issue.key)} and revision ${string(params.orchestration.resources.sdlc.published_revision)}. Runs: ${json(runs.response)}. Reply only with JSON: {\"next_member\":\"runinator.sdlc.close\"|\"runinator.sdlc.deploy_monitor\"|\"runinator.sdlc.handoff\",\"summary\":\"short status\"}. Close only for a successful matching deployment, monitor while queued/in progress or not yet visible, and hand off on failure or ambiguity.",
+            prompt: file("prompts/deployment-monitor.md"),
+            prompt_asset: "deployment-monitor",
+            prompt_override: prompt_settings.config.deployment_monitor,
+            prompt_context: "Jira ticket: " ++ string(params.issue.key) ++ "\nRevision: " ++ string(params.orchestration.resources.sdlc.published_revision) ++ "\nWorkflow runs: " ++ json(runs.response),
             harnessed: true,
             role: "deployment_monitor",
             mission_mcp: true,
@@ -484,7 +512,7 @@ workflow "Monitor Named Deployment" v1 {
             let decision: { next_member: string, summary: string } = assessment.response.structured_output
             return {
                 resources_patch: { sdlc: { deployment_status: decision, deployment_runs: runs.response } },
-                evidence: { role: "deployment_monitor", decision: decision, runs: runs.response },
+                evidence: { role: "deployment_monitor", decision: decision, runs: runs.response, prompt: assessment.prompt },
                 next_member: decision.next_member
             }
         }
@@ -610,4 +638,21 @@ pipeline "Label-driven SDLC Mission" {
     workflow "runinator.sdlc.deploy_monitor"
     workflow "runinator.sdlc.close"
     workflow "runinator.sdlc.handoff"
+}
+
+settings {
+    @schema({ type: ["string", "null"] })
+    config prompts.plan = null
+    @schema({ type: ["string", "null"] })
+    config prompts.implement = null
+    @schema({ type: ["string", "null"] })
+    config prompts.review = null
+    @schema({ type: ["string", "null"] })
+    config prompts.feedback = null
+    @schema({ type: ["string", "null"] })
+    config prompts.repair = null
+    @schema({ type: ["string", "null"] })
+    config prompts.deployment_impact = null
+    @schema({ type: ["string", "null"] })
+    config prompts.deployment_monitor = null
 }

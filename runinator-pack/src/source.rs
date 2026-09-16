@@ -10,6 +10,7 @@ use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
 use runinator_rexrap::WorkflowSignature;
+use sha2::{Digest, Sha256};
 
 use crate::errors::{PackError, Result};
 
@@ -384,6 +385,7 @@ fn compile_rexrap_with_signatures(
             e.render(&formatted)
         ))
     })?;
+    attach_prompt_assets(&mut definition, &formatted, options.source_dir.as_deref())?;
     // stamp with the source mtime so re-applying an edited file overwrites the stored workflow.
     definition.updated_at = file_modified(path);
     Ok(definition)
@@ -420,9 +422,77 @@ fn compile_rexrap_all_with_signatures(
         ))
     })?;
     for definition in &mut definitions {
+        attach_prompt_assets(definition, &formatted, options.source_dir.as_deref())?;
         definition.updated_at = file_modified(path);
     }
     Ok(definitions)
+}
+
+/// Record content identities for prose includes in the immutable workflow revision. The compiled
+/// action already carries the bytes; this manifest makes prompt-only changes reviewable and gives
+/// eval reports a stable attribution without introducing a second runtime asset store.
+fn attach_prompt_assets(
+    definition: &mut WorkflowDefinition,
+    source: &str,
+    source_dir: Option<&Path>,
+) -> Result<()> {
+    let Some(source_dir) = source_dir else {
+        return Ok(());
+    };
+    let mut assets = Vec::new();
+    for path in runinator_rexrap::included_file_paths(source, source_dir).map_err(|error| {
+        PackError::compile(format!("failed to enumerate prompt assets: {error}"))
+    })? {
+        let extension = path.extension().and_then(|value| value.to_str());
+        if !matches!(extension, Some("md" | "markdown" | "txt" | "prompt")) {
+            continue;
+        }
+        let content = fs::read(&path)?;
+        let relative = path.strip_prefix(source_dir).unwrap_or(path.as_path());
+        let name = relative
+            .with_extension("")
+            .to_string_lossy()
+            .replace(['/', '\\'], ".")
+            .trim_start_matches("prompts.")
+            .to_string();
+        assets.push(serde_json::json!({
+            "name": name,
+            "path": relative.to_string_lossy(),
+            "digest": sha256_hex(&content),
+            "size_bytes": content.len(),
+        }));
+    }
+    if assets.is_empty() {
+        return Ok(());
+    }
+    assets.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+    if !definition.definition.metadata.is_object() {
+        definition.definition.metadata = Value::Object(Default::default());
+    }
+    let Some(metadata) = definition.definition.metadata.as_object_mut() else {
+        return Err(PackError::compile(
+            "workflow metadata could not hold the prompt asset manifest",
+        ));
+    };
+    metadata.insert(
+        "prompt_assets".into(),
+        serde_json::to_value(assets)
+            .map_err(|error| PackError::compile(error.to_string()))?
+            .into(),
+    );
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(7 + digest.len() * 2);
+    encoded.push_str("sha256:");
+    for byte in digest {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 fn collect_workflow_signatures_with_current(

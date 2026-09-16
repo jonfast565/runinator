@@ -16,6 +16,18 @@ pub(crate) struct ClaudeCodeParams {
     #[serde(default = "default_model")]
     pub model: String,
     pub prompt: String,
+    /// Stable pack-local identity for the prompt text. The provider records it with the digest of
+    /// the exact text sent to Claude and uses it to resolve execution-profile overrides.
+    #[serde(default)]
+    pub prompt_asset: Option<String>,
+    /// Organization-scoped override resolved by the workflow from the settings store. An empty
+    /// value is treated as absent so packs can ship a nullable/default slot.
+    #[serde(default)]
+    pub prompt_override: Option<String>,
+    /// Dynamic invocation context appended after asset/override selection. Keeping context separate
+    /// lets one prompt variant serve many cases without copying runtime values into the asset.
+    #[serde(default)]
+    pub prompt_context: Option<String>,
     #[serde(default)]
     pub interactive: bool,
     #[serde(default)]

@@ -51,6 +51,22 @@ pub(super) async fn workflows(
         } => {
             return workflows_test(file, tests, filter.as_deref(), json_output);
         }
+        WorkflowCommands::Eval {
+            file,
+            corpus,
+            filter,
+            timeout_seconds,
+        } => {
+            return workflows_eval(
+                client,
+                file,
+                corpus,
+                filter.as_deref(),
+                Duration::from_secs(*timeout_seconds),
+                json_output,
+            )
+            .await;
+        }
         WorkflowCommands::Dev {
             file,
             run,
@@ -488,5 +504,7 @@ fn source_snapshot(file: &Path, json_file: Option<&Path>) -> SourceSnapshot {
 
 mod workflow_tests;
 pub use workflow_tests::workflows_test;
+mod workflow_evals;
+use workflow_evals::workflows_eval;
 mod rexrap;
 pub(super) use rexrap::rexrap;

@@ -213,6 +213,47 @@ fn directory_pack_loads_rexraps_settings() {
 }
 
 #[test]
+fn prose_includes_are_recorded_as_content_addressed_prompt_assets() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join(format!(
+        "runinator_prompt_asset_pack_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("prompts")).expect("temp prompt dir");
+    let prompt = b"Review the change carefully.\n";
+    fs::write(dir.join("prompts/review.md"), prompt).expect("write prompt");
+    fs::write(
+        dir.join("flow.rrx"),
+        r#"language rexrap-1
+
+namespace runinator.test {
+    workflow "Prompt Asset" v1 {
+        key prompt_asset
+        do {
+            let review = console.run(command: file("prompts/review.md"))
+        }
+    }
+}
+"#,
+    )
+    .expect("write rexrap");
+
+    let bundle = load_workflow_bundle(&dir).expect("compile prompt pack");
+    let assets = bundle.workflows[0].definition.metadata["prompt_assets"]
+        .as_array()
+        .expect("prompt assets");
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0]["name"].as_str(), Some("review"));
+    assert_eq!(assets[0]["path"].as_str(), Some("prompts/review.md"));
+    let expected_digest = super::sha256_hex(prompt);
+    assert_eq!(assets[0]["digest"].as_str(), Some(expected_digest.as_str()));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn directory_pack_types_pack_local_subflows() {
     use std::fs;
 

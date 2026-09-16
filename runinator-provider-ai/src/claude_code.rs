@@ -19,6 +19,7 @@ use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 use runinator_provider_support::process_runner::{ProcessFailure, ProcessRequest, ProcessRunner};
 use runinator_provider_support::terminal::{self, CommandBuilder, TerminalError};
+use sha2::{Digest, Sha256};
 
 use crate::errors::{
     CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INPUT, CLAUDE_INTERACTIVE_NOT_PERMITTED,
@@ -62,7 +63,8 @@ pub(crate) fn run_claude_code(
     token: CancellationToken,
     runner: &dyn ProcessRunner,
 ) -> Result<TaskExecutionResult, SendableError> {
-    let params: ClaudeCodeParams = parse_params(request)?;
+    let mut params: ClaudeCodeParams = parse_params(request)?;
+    let prompt_metadata = resolve_prompt(&mut params, request);
     if params.mission_mcp && params.mcp_config.is_some() {
         return Err(CLAUDE_INPUT
             .error("mission_mcp and caller-authored mcp_config cannot be enabled together"));
@@ -79,12 +81,24 @@ pub(crate) fn run_claude_code(
     if token.is_cancelled() {
         return Err(CLAUDE_CANCELED.bare());
     }
-    if params.interactive {
-        return run_claude_interactive(request, params, sink, token);
-    }
-    if params.harnessed {
-        return run_claude_harness(request, params, sink, token);
-    }
+    let mut result = if params.interactive {
+        run_claude_interactive(request, params, sink, token)?
+    } else if params.harnessed {
+        run_claude_harness(request, params, sink, token)?
+    } else {
+        run_claude_once(request, &params, sink, token, runner)?
+    };
+    attach_prompt_metadata(&mut result, prompt_metadata);
+    Ok(result)
+}
+
+fn run_claude_once(
+    request: &ProviderExecutionRequest,
+    params: &ClaudeCodeParams,
+    sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
+    runner: &dyn ProcessRunner,
+) -> Result<TaskExecutionResult, SendableError> {
     let argv = build_claude_argv(&params);
 
     let mut command = Command::new(&params.binary);
@@ -147,6 +161,92 @@ pub(crate) fn run_claude_code(
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PromptMetadata {
+    asset: Option<String>,
+    digest: String,
+    source: &'static str,
+}
+
+/// Resolve prompt variation at the provider boundary. Profile environment wins over the
+/// organization setting carried by the workflow, which wins over the immutable pack text.
+fn resolve_prompt(
+    params: &mut ClaudeCodeParams,
+    request: &ProviderExecutionRequest,
+) -> PromptMetadata {
+    let profile_override = params.prompt_asset.as_deref().and_then(|asset| {
+        let key = prompt_override_environment_key(asset);
+        request
+            .execution_profile
+            .as_ref()
+            .and_then(|profile| profile.environment.get(&key))
+            .filter(|value| !value.trim().is_empty())
+            .cloned()
+    });
+    let organization_override = params
+        .prompt_override
+        .take()
+        .filter(|value| !value.trim().is_empty());
+    let (prompt, source) = match (profile_override, organization_override) {
+        (Some(prompt), _) => (prompt, "execution_profile"),
+        (None, Some(prompt)) => (prompt, "organization"),
+        (None, None) => (params.prompt.clone(), "pack"),
+    };
+    params.prompt = match params
+        .prompt_context
+        .take()
+        .filter(|context| !context.trim().is_empty())
+    {
+        Some(context) => format!("{}\n\n{}", prompt.trim_end(), context),
+        None => prompt,
+    };
+    PromptMetadata {
+        asset: params.prompt_asset.clone(),
+        digest: sha256_hex(params.prompt.as_bytes()),
+        source,
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(7 + digest.len() * 2);
+    encoded.push_str("sha256:");
+    for byte in digest {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn prompt_override_environment_key(asset: &str) -> String {
+    let suffix = asset
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("RUNINATOR_PROMPT_{suffix}")
+}
+
+fn attach_prompt_metadata(result: &mut TaskExecutionResult, metadata: PromptMetadata) {
+    let Some(Value::Object(output)) = result.output_json.as_mut() else {
+        return;
+    };
+    output.insert(
+        "prompt".into(),
+        json!({
+            "asset": metadata.asset,
+            "digest": metadata.digest,
+            "source": metadata.source,
+        }),
+    );
 }
 
 /// Run Claude Code's documented `stream-json` protocol as a bounded, non-PTY session.

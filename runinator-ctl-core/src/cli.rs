@@ -710,6 +710,21 @@ pub enum WorkflowCommands {
         #[arg(long)]
         filter: Option<String>,
     },
+    /// Apply a pack and run a live, billable evaluation corpus against real workflow providers.
+    /// Every case is persisted as a named workflow run for later inspection.
+    Eval {
+        /// Workflow pack source (.rrx or a directory of .rrx sources).
+        file: PathBuf,
+        /// Directory containing JSON case fixtures, or one JSON suite file.
+        #[arg(long)]
+        corpus: PathBuf,
+        /// Only run cases whose name contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Maximum time to wait for each workflow or judge run.
+        #[arg(long, default_value_t = 7200)]
+        timeout_seconds: u64,
+    },
     /// Watch a workflow pack, re-apply it on changes, and optionally run a workflow.
     Dev {
         file: Option<PathBuf>,

@@ -56,6 +56,9 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                 )
                 .with_parameters(vec![
                     ParameterMetadata::required("prompt", RuninatorType::String),
+                    ParameterMetadata::optional("prompt_asset", RuninatorType::String),
+                    ParameterMetadata::optional("prompt_override", RuninatorType::String),
+                    ParameterMetadata::optional("prompt_context", RuninatorType::String),
                     ParameterMetadata::optional("interactive", RuninatorType::Boolean)
                         .with_default(json!(false)),
                     ParameterMetadata::optional("model", RuninatorType::String)
@@ -83,7 +86,10 @@ impl<R: ProcessRunner + Clone + 'static> Provider for AiCommandProvider<R> {
                     ),
                     ParameterMetadata::optional("env", RuninatorType::map(RuninatorType::String)),
                 ])
-                .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)])
+                .with_results(vec![
+                    ResultMetadata::new("response", RuninatorType::Any),
+                    ResultMetadata::new("prompt", RuninatorType::Any),
+                ])
                 .as_agent("prompt", "/response/result")
                 .with_authentication(ActionAuthenticationMetadata::optional(vec![
                     ActionAuthenticationAlternative::ExecutionProfile,

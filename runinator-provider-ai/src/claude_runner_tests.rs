@@ -132,6 +132,89 @@ fn structured_output_is_verified_against_the_declared_schema() {
 }
 
 #[test]
+fn prompt_overrides_follow_profile_then_organization_then_pack_precedence() {
+    use runinator_models::execution_profiles::MaterializedExecutionProfile;
+    use std::collections::BTreeMap;
+
+    let mut params: ClaudeCodeParams = serde_json::from_value(
+        json!({
+            "prompt": "pack prompt",
+            "prompt_asset": "coding.review",
+            "prompt_override": "organization prompt",
+        })
+        .into(),
+    )
+    .unwrap();
+    let request = ProviderExecutionRequest {
+        run_id: None,
+        action_name: "ai-command".into(),
+        action_function: "claude_code".into(),
+        parameters: Value::Null,
+        timeout_secs: 5,
+        artifact_dir: String::new(),
+        events_jsonl_path: String::new(),
+        idempotency_key: None,
+        workspace_path: None,
+        execution_profile: Some(MaterializedExecutionProfile {
+            profile_id: uuid::Uuid::now_v7(),
+            revision: 1,
+            root: String::new(),
+            home: None,
+            environment: BTreeMap::from([(
+                "RUNINATOR_PROMPT_CODING_REVIEW".into(),
+                "profile prompt".into(),
+            )]),
+        }),
+        credential_injections: Default::default(),
+    };
+
+    let metadata = resolve_prompt(&mut params, &request);
+    assert_eq!(params.prompt, "profile prompt");
+    assert_eq!(metadata.asset.as_deref(), Some("coding.review"));
+    assert_eq!(metadata.source, "execution_profile");
+    assert!(metadata.digest.starts_with("sha256:"));
+
+    let mut organization: ClaudeCodeParams = serde_json::from_value(
+        json!({ "prompt": "pack prompt", "prompt_override": "organization prompt" }).into(),
+    )
+    .unwrap();
+    let mut request_without_profile = request;
+    request_without_profile.execution_profile = None;
+    assert_eq!(
+        resolve_prompt(&mut organization, &request_without_profile).source,
+        "organization"
+    );
+    assert_eq!(organization.prompt, "organization prompt");
+}
+
+#[test]
+fn prompt_identity_is_attached_to_the_action_result() {
+    let mut result = TaskExecutionResult {
+        message: None,
+        output_json: Some(json!({ "response": { "result": "ok" } })),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    };
+    attach_prompt_metadata(
+        &mut result,
+        PromptMetadata {
+            asset: Some("coding.review".into()),
+            digest: "sha256:abc".into(),
+            source: "pack",
+        },
+    );
+    let output = result.output_json.unwrap();
+    assert_eq!(
+        output.pointer("/prompt/asset").and_then(Value::as_str),
+        Some("coding.review")
+    );
+    assert_eq!(
+        output.pointer("/prompt/digest").and_then(Value::as_str),
+        Some("sha256:abc")
+    );
+}
+
+#[test]
 fn mission_mcp_uses_the_fixed_capability_reduced_server() {
     let params: ClaudeCodeParams = serde_json::from_value(
         json!({
