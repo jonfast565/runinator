@@ -423,6 +423,32 @@ pub fn recover_rabbitmq(workspace_root: &Path, kube_context: Option<&str>) -> Re
     exec_in_broker(&["add_vhost", "/"])?;
     exec_in_broker(&["set_permissions", "-p", "/", "runinator", ".*", ".*", ".*"])?;
 
+    // replace an unhealthy broker pod so it picks up the StatefulSet's current template.
+    let args = kubectl_args(
+        &ctx_args,
+        &[
+            "delete",
+            "pod/runinator-rabbitmq-0",
+            "--namespace",
+            NAMESPACE,
+            "--wait=true",
+            "--timeout=120s",
+        ],
+    );
+    exec::run("kubectl", &args, workspace_root)?;
+    let args = kubectl_args(
+        &ctx_args,
+        &[
+            "rollout",
+            "status",
+            "statefulset/runinator-rabbitmq",
+            "--namespace",
+            NAMESPACE,
+            "--timeout=120s",
+        ],
+    );
+    exec::run("kubectl", &args, workspace_root)?;
+
     for target in [
         "deployment/runinator-ws",
         "deployment/runinator-engine-worker",
