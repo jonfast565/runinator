@@ -454,8 +454,8 @@ pub fn recover_rabbitmq(workspace_root: &Path, kube_context: Option<&str>) -> Re
 /// Apply only PostgreSQL's Service and StatefulSet from a rendered overlay. Re-applying the
 /// StatefulSet updates its pod template without deleting its PVC. `from_scratch` instead scales
 /// PostgreSQL down and deletes its sole generated data claim before recreating the StatefulSet.
-/// It then restarts only the web service to run its database bootstrap, so the newly empty database
-/// becomes usable without applying the rest of the stack.
+/// The web service is restarted afterwards so its database pool cannot retain connections to a
+/// replaced database endpoint.
 pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
     exec::require_tool("kubectl")?;
 
@@ -501,9 +501,7 @@ pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
     let rollout = yaml_docs::rollout_target(&filtered, "runinator-postgres", "StatefulSet");
     run_rollout_checks(options.workspace_root, &ctx_args, &[rollout]);
 
-    if options.from_scratch {
-        bootstrap_fresh_database(options.workspace_root, &ctx_args, &docs)?;
-    }
+    restart_web_service(options.workspace_root, &ctx_args, &docs)?;
 
     Ok(())
 }
@@ -582,12 +580,8 @@ fn reset_postgres_data(workspace_root: &Path, ctx_args: &[String], docs: &[Value
     exec::run("kubectl", &delete_args, workspace_root)
 }
 
-fn bootstrap_fresh_database(
-    workspace_root: &Path,
-    ctx_args: &[String],
-    docs: &[Value],
-) -> Result<()> {
-    println!("==> Restarting the web service to bootstrap the fresh database");
+fn restart_web_service(workspace_root: &Path, ctx_args: &[String], docs: &[Value]) -> Result<()> {
+    println!("==> Restarting the web service to reconnect its database pool");
     let restart_args = kubectl_args(
         ctx_args,
         &[
