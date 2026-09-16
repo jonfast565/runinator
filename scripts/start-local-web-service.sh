@@ -2,8 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BOOTSTRAP_BIN="$ROOT_DIR/target/debug/runinator-bootstrap"
-WS_BIN="$ROOT_DIR/target/debug/runinator-ws"
+BOOTSTRAP_BIN="${RUNINATOR_BOOTSTRAP_BIN:-runinator-bootstrap}"
+WS_BIN="${RUNINATOR_WS_BIN:-runinator-ws}"
+
+for executable in "$BOOTSTRAP_BIN" "$WS_BIN"; do
+  if ! command -v "$executable" >/dev/null 2>&1; then
+    echo "required executable is not on PATH: $executable" >&2
+    echo "install it, set the matching RUNINATOR_*_BIN override, or use cargo run." >&2
+    exit 1
+  fi
+done
 
 database="${RUNINATOR_DATABASE:-sqlite}"
 sqlite_path="${RUNINATOR_SQLITE_PATH:-}"

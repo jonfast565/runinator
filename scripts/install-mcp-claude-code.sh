@@ -2,7 +2,7 @@
 # Register `runinatorctl mcp` as an MCP server with Claude Code, so every runinatorctl command is
 # available as a tool. Two shapes, matching how the web service is reached:
 #
-#   --local (default)  run the built runinatorctl directly against a web service on localhost
+#   --local (default)  run runinatorctl against a web service on localhost
 #   --k8s              run scripts/start-runinatorctl.sh --mcp against a web service you have
 #                      already port-forwarded locally
 #
@@ -16,7 +16,7 @@
 #   --scope <scope>      local | project | user (default project)
 #   --url <url>          web service base URL for --local (default http://127.0.0.1:8080)
 #   --port <n>           forwarded local port for --k8s (default 8081)
-#   --release            use the release binary instead of the debug one
+#   --release            run the release build through Cargo instead of a PATH installation
 #   --api-key <key>      pass RUNINATOR_API_KEY to the server through the client's env
 #   --workflow-tools     also advertise one tool per workflow (off by default)
 #   --force              replace an existing registration of the same name
@@ -73,25 +73,16 @@ esac
 
 # the server command itself, plus whatever the caller appended after `--`.
 server_args=()
+server_args+=("${ROOT_DIR}/scripts/start-runinatorctl.sh" "--mcp")
 if [[ "$mode" == "k8s" ]]; then
-  server_args+=("${ROOT_DIR}/scripts/start-runinatorctl.sh" "--mcp" "--port" "$local_port")
-  if [[ "$profile" == "release" ]]; then
-    server_args+=("--release")
-  fi
-  server_args+=("--")
+  server_args+=("--port" "$local_port")
 else
-  ctl_bin="${ROOT_DIR}/target/${profile}/runinatorctl"
-  if [[ ! -x "$ctl_bin" ]]; then
-    echo "No ${profile} binary at ${ctl_bin}; build it first:" >&2
-    if [[ "$profile" == "release" ]]; then
-      echo "  cargo build -p runinator-ctl --release" >&2
-    else
-      echo "  cargo build -p runinator-ctl" >&2
-    fi
-    exit 1
-  fi
-  server_args+=("$ctl_bin" "mcp" "--api-base-url" "$base_url")
+  server_args+=("--url" "$base_url")
 fi
+if [[ "$profile" == "release" ]]; then
+  server_args+=("--release")
+fi
+server_args+=("--")
 
 if [[ "$workflow_tools" -eq 1 ]]; then
   server_args+=("--workflow-tools")

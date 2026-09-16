@@ -6,7 +6,7 @@
 #
 # options:
 #   --api-base-url <url>       Runinator API URL (default RUNINATOR_API_BASE_URL or http://127.0.0.1:8080/)
-#   --ctl <path>               runinatorctl binary (default PATH, then target/debug/runinatorctl)
+#   --ctl <path>               runinatorctl executable (default PATH, then cargo run)
 #   --skip-tests               skip offline pack validation
 #   --skip-profile-bootstrap   do not install the claude profile when it is absent
 #   -h, --help                 show this help
@@ -55,16 +55,12 @@ if [[ -n "$ctl_path" ]]; then
   ctl=("$ctl_path")
 elif command -v runinatorctl >/dev/null 2>&1; then
   ctl=("$(command -v runinatorctl)")
-elif [[ -x "${ROOT_DIR}/target/debug/runinatorctl" ]]; then
-  ctl=("${ROOT_DIR}/target/debug/runinatorctl")
 else
   command -v cargo >/dev/null 2>&1 || {
-    echo "runinatorctl is not installed and cargo is not available to build it" >&2
+    echo "runinatorctl is not installed and cargo is not available" >&2
     exit 1
   }
-  echo "Building runinatorctl..."
-  cargo build --manifest-path "${ROOT_DIR}/Cargo.toml" -p runinator-ctl
-  ctl=("${ROOT_DIR}/target/debug/runinatorctl")
+  ctl=(cargo run -q --manifest-path "${ROOT_DIR}/Cargo.toml" -p runinator-ctl --)
 fi
 
 export RUNINATOR_API_BASE_URL="$api_base_url"

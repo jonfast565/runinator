@@ -13,7 +13,8 @@
 #   --mcp              serve `runinatorctl mcp` instead of the console. it speaks JSON-RPC on
 #                      stdout, so every message this script prints moves to stderr
 #   --port <n>         local web-service port (default 8081, matching port-forward-ws.sh)
-#   --release          use/build the release binary instead of the debug one
+#   --url <url>        web-service base URL (overrides --port)
+#   --release          run the release build through Cargo instead of a PATH installation
 #   --username <name>  login username (default $RUNINATOR_USERNAME, else admin)
 #   --password <pass>  login password (default $RUNINATOR_PASSWORD, else admin)
 #   --no-login         never log in; use whatever session/API key is already present
@@ -28,6 +29,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 local_port=8081
+base_url=""
 profile="debug"
 username="${RUNINATOR_USERNAME:-admin}"
 password="${RUNINATOR_PASSWORD:-admin}"
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --mcp)       subcommand="mcp"; shift ;;
     --port)      local_port="$2"; shift 2 ;;
+    --url)       base_url="$2"; shift 2 ;;
     --release)   profile="release"; shift ;;
     --username)  username="$2"; shift 2 ;;
     --password)  password="$2"; shift 2 ;;
@@ -51,7 +54,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-base_url="http://127.0.0.1:${local_port}/"
+if [[ -z "$base_url" ]]; then
+  base_url="http://127.0.0.1:${local_port}/"
+else
+  base_url="${base_url%/}/"
+fi
 
 # The MCP server owns stdout for JSON-RPC, so a progress line printed there would desynchronise
 # the client. everything this script says goes to stderr in that mode.
@@ -100,18 +107,23 @@ else
 fi
 note ""
 
-# prefer an already-built binary so opening the console does not pay for a cargo rebuild, and so
-# An MCP client is not left waiting on a build before the first JSON-RPC frame. The command runs
-# in the foreground so its exit status is preserved.
-ctl_bin="${ROOT_DIR}/target/${profile}/runinatorctl"
-if [[ -x "$ctl_bin" ]]; then
-  "$ctl_bin" "$subcommand" "$@"
-  exit $?
+# An explicit launcher override is useful for packaged installations. Otherwise use the
+# installed command for debug sessions and keep Cargo as the repository-local fallback.
+if [[ -n "${RUNINATORCTL_BIN:-}" ]]; then
+  if ! command -v "$RUNINATORCTL_BIN" >/dev/null 2>&1; then
+    echo "RUNINATORCTL_BIN is not executable: $RUNINATORCTL_BIN" >&2
+    exit 1
+  fi
+  exec "$RUNINATORCTL_BIN" "$subcommand" "$@"
 fi
 
+if [[ "$profile" == "debug" ]] && command -v runinatorctl >/dev/null 2>&1; then
+  exec runinatorctl "$subcommand" "$@"
+fi
+
+cd "$ROOT_DIR"
 cargo_args=("run" "-q" "-p" "runinator-ctl")
 if [[ "$profile" == "release" ]]; then
   cargo_args+=("--release")
 fi
-cd "$ROOT_DIR"
-cargo "${cargo_args[@]}" -- "$subcommand" "$@"
+exec cargo "${cargo_args[@]}" -- "$subcommand" "$@"
