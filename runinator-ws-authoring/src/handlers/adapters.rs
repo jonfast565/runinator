@@ -9,7 +9,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use runinator_adapter_client::{AdapterHostClient, HttpAdapterHostClient};
 use runinator_adapter_contract::{
     AdapterPollRequest, AdapterPollResponse, AdapterRequest, AdapterValidationRequest,
@@ -22,14 +22,15 @@ use runinator_models::{
         AdapterAuthentication, AdapterDefinition, AdapterKindMetadata, AdapterTransport,
     },
     rbac::{Action, ScopeKind, ScopeRef},
+    replicas::{ReplicaKind, ReplicaStatus},
     web::TaskResponse,
 };
 use runinator_store::{
     RuntimeStore,
     roles::{
         DefinitionStore, ExecutionProfileStore, IngressStore, NewAdapterDefinition,
-        NewAdapterRevision, OrchestrationStore, RbacStore, ScheduleStore, SettingStore,
-        WorkflowVmStore,
+        NewAdapterRevision, OrchestrationStore, RbacStore, ReplicaStore, ScheduleStore,
+        SettingStore, WorkflowVmStore,
     },
 };
 use runinator_ws_core::{
@@ -332,6 +333,27 @@ fn validate_definition(
         }
     }
     Ok(())
+}
+
+fn adapter_schema_digest(kind: &AdapterKindMetadata) -> String {
+    let bytes = serde_json::to_vec(kind).expect("adapter kind metadata must serialize");
+    format!("sha256:{}", runinator_blob_core::sha256_hex(&bytes))
+}
+
+fn replica_labels_match(
+    replica: &runinator_models::replicas::ReplicaRecord,
+    required: &BTreeMap<String, String>,
+) -> bool {
+    let labels = replica
+        .attributes
+        .get("labels")
+        .and_then(runinator_models::value::Value::as_object);
+    required.iter().all(|(key, expected)| {
+        labels
+            .and_then(|labels| labels.get(key))
+            .and_then(runinator_models::value::Value::as_str)
+            .is_some_and(|actual| actual == expected)
+    })
 }
 
 async fn validate_with_host(
@@ -813,22 +835,62 @@ pub async fn revisions<T: OrchestrationStore + AuthorizationStore>(
     }
 }
 
-pub async fn poll_status<T: OrchestrationStore + AuthorizationStore>(
+pub async fn poll_status<T: OrchestrationStore + AuthorizationStore + ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let operations = AdapterOperations::new(db.clone());
-    if let Err(reply) = authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
-        return reply.into_reply();
-    }
+    let adapter = match authorized_adapter(db.as_ref(), &operations, &ctx, id, Action::View).await {
+        Ok(value) => value,
+        Err(reply) => return reply.into_reply(),
+    };
     match operations.poll_status(id).await {
-        Ok(Some(status)) => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(
-                serde_json::to_value(status).unwrap_or_default().into(),
-            )),
-        ),
+        Ok(Some(mut status)) => {
+            let revision = match operations.current_revision(&adapter).await {
+                Ok(Some(value)) => value,
+                Ok(None) => return api_error("current adapter revision is missing"),
+                Err(error) => return api_error(error.to_string()),
+            };
+            if let AdapterAuthentication::ExecutionProfile {
+                required_labels, ..
+            } = revision.authentication
+            {
+                status.required_labels = required_labels;
+                let workers = match db
+                    .fetch_replicas(
+                        Some(ReplicaKind::Worker),
+                        Some(ReplicaStatus::Live),
+                        Utc::now() - Duration::seconds(90),
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(error) => return api_error(error.to_string()),
+                };
+                status.matching_worker_count = workers
+                    .iter()
+                    .filter(|worker| replica_labels_match(worker, &status.required_labels))
+                    .count() as i64;
+                if status.matching_worker_count == 0 {
+                    let selector = status
+                        .required_labels
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    status.worker_diagnostic = Some(format!(
+                        "no live worker matches the required labels: {selector}"
+                    ));
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::JsonValue(
+                    serde_json::to_value(status).unwrap_or_default().into(),
+                )),
+            )
+        }
         Ok(None) => not_found("adapter is not configured for polling"),
         Err(error) => api_error(error.to_string()),
     }
@@ -893,6 +955,7 @@ pub async fn create<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
                 name: request.name,
                 kind: request.kind,
                 kind_version: request.kind_version,
+                schema_digest: Some(adapter_schema_digest(&kind)),
                 transport: request.transport,
                 endpoint_identity: Uuid::new_v4().to_string(),
                 configuration: request.configuration,
@@ -1002,6 +1065,7 @@ pub async fn update<T: OrchestrationStore + AuthorizationStore + ExecutionProfil
                 adapter_id: id,
                 expected_revision,
                 kind_version: request.kind_version,
+                schema_digest: Some(adapter_schema_digest(&kind)),
                 transport: request.transport,
                 configuration: request.configuration,
                 authentication,
@@ -1470,7 +1534,8 @@ where
         + IngressStore
         + ScheduleStore
         + WorkflowVmStore
-        + ExecutionProfileStore,
+        + ExecutionProfileStore
+        + ReplicaStore,
 {
     routes_with_host(pool, publisher, Arc::new(HttpAdapterHostClient::from_env()))
 }
@@ -1489,7 +1554,8 @@ where
         + IngressStore
         + ScheduleStore
         + WorkflowVmStore
-        + ExecutionProfileStore,
+        + ExecutionProfileStore
+        + ReplicaStore,
 {
     axum::Router::new()
         .route("/orchestrations/adapters/kinds", get(kinds::<T>))

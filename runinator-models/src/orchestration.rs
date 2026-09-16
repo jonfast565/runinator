@@ -848,6 +848,9 @@ pub struct AdapterRevision {
     pub adapter_id: Uuid,
     pub revision: i64,
     pub kind_version: String,
+    /// SHA-256 of the adapter-kind metadata used to validate this immutable revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_digest: Option<String>,
     /// Selects the external delivery mechanism for this immutable revision. Missing values in
     /// older persisted revisions are intentionally interpreted as `webhook`.
     #[serde(default)]
@@ -951,6 +954,15 @@ pub struct AdapterPollStatus {
     pub last_success_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Frozen selector used when profile-backed polling is dispatched to workers.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub required_labels: BTreeMap<String, String>,
+    /// Number of currently live workers satisfying `required_labels`.
+    #[serde(default)]
+    pub matching_worker_count: i64,
+    /// Actionable scheduling diagnosis, present when polling cannot currently be dispatched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

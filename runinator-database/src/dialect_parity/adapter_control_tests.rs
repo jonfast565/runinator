@@ -255,6 +255,7 @@ pub(super) async fn poll_publication_recovers_and_retains_fenced_attempts<T: Dat
             name: "attempts".into(),
             kind: "github".into(),
             kind_version: "1".into(),
+            schema_digest: None,
             transport: AdapterTransport::Polling,
             endpoint_identity: adapter_id.to_string(),
             configuration: Value::Null,

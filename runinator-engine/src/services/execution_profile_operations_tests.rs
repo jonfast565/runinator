@@ -195,6 +195,7 @@ async fn adapter_dependencies_are_reported_for_profile_deletion() {
             name: "github-poller".into(),
             kind: "github".into(),
             kind_version: "1".into(),
+            schema_digest: None,
             transport: AdapterTransport::Polling,
             endpoint_identity: Uuid::now_v7().to_string(),
             configuration: runinator_models::json!({}),

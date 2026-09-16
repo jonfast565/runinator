@@ -25,7 +25,7 @@ use runinator_models::{
         AdapterAuthenticationKind, AdapterConfigurationField, AdapterKindCatalogEntry,
         AdapterKindMetadata, NormalizedAdapterEvent,
     },
-    types::RuninatorType,
+    types::{RuninatorField, RuninatorType},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -840,7 +840,7 @@ fn field(
 }
 
 fn sdlc_profile_type() -> RuninatorType {
-    RuninatorType::structure([
+    let mut profile = RuninatorType::structure([
         (
             "repository",
             RuninatorType::structure([
@@ -881,7 +881,16 @@ fn sdlc_profile_type() -> RuninatorType {
                 ("ref", RuninatorType::String),
             ]),
         ),
-    ])
+    ]);
+    if let RuninatorType::Struct { fields, .. } = &mut profile {
+        // installation-owned project policy travels with the delivery profile but remains opaque
+        // to the builtin adapter. workflows can type and consume this region without a host release.
+        fields.insert(
+            "extensions".into(),
+            RuninatorField::optional(RuninatorType::Any),
+        );
+    }
+    profile
 }
 
 fn generic_metadata() -> AdapterKindMetadata {
@@ -2516,7 +2525,13 @@ mod tests {
                 configuration: json!({
                     "instance_id": "acme.atlassian.net",
                     "routing_scope": "mission.sdlc",
-                    "sdlc_profile": { "repository": { "name": "service" } }
+                    "sdlc_profile": {
+                        "repository": { "name": "service" },
+                        "extensions": {
+                            "release_train": "weekly",
+                            "compliance": { "framework": "soc2" }
+                        }
+                    }
                 }),
                 secrets: json!({ "secret": "secret" }),
             },
@@ -2534,6 +2549,12 @@ mod tests {
                 .payload
                 .pointer("/profile/repository/name"),
             Some(&json!("service").into())
+        );
+        assert_eq!(
+            response.events[0]
+                .payload
+                .pointer("/profile/extensions/compliance/framework"),
+            Some(&json!("soc2").into())
         );
     }
 

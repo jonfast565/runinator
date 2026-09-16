@@ -8,6 +8,17 @@ Under **Orchestrations → Instances**, **Orchestration transitions** pauses the
 
 Polling with an execution profile uses the ordinary worker effect path. **Test** returns a durable job immediately and displays its result when the worker responds. Test jobs normalize and preview events without admitting them or changing a live checkpoint. Alias resolution and subject-revision/provenance enrichment are shared with live delivery preparation. Worker-backed poll/test attempts retain their publication state, deadline, outcome, and error, and adapter broker messages use adapter/attempt identity instead of masquerading as workflow-run messages.
 
+Each immutable adapter revision records the SHA-256 digest of the exact kind metadata used to
+validate it. Builtin SDLC profiles expose an `extensions` object for installation-owned project
+policy; its contents pass through unchanged as `params.profile.extensions`, so workflows can type
+and consume new fields without rebuilding the adapter host. Fields outside the declared schema are
+still rejected when the adapter is applied. Plugin kinds already publish their field schema as
+adapter metadata through the SDK/ABI and receive the same validation and digest treatment.
+
+The polling-status response includes the frozen worker-label selector, the number of live matching
+workers, and an actionable diagnostic when no worker can accept profile-backed polling. This makes
+label drift visible before a poll attempt times out.
+
 Normalized poll events enter the delivery journal before a checkpoint can advance. Routing failures and full downstream review queues therefore retain the delivery for retry. A capture failure retains the old checkpoint. Polling and webhook normalization both extract external-operation provenance for self-origin suppression. GitHub initialization establishes a current boundary without replaying history; a later scan exceeding the page or commit budget fails visibly without advancing its checkpoint. It does not silently truncate the event batch.
 
 Completed delivery history and terminal poll/test attempts are retained for seven days. Held and failed deliveries remain available. The inspector shows the most recent 500 deliveries and 100 attempts; the journal rejects new captures at 10,000 unresolved deliveries per adapter. Poll/test publication has a recoverable 30-second lease and a five-minute attempt deadline. Late terminal updates cannot replace an already terminal attempt. Diagnostic responses redact common secret fields without changing the durable event used for execution.

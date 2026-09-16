@@ -41,6 +41,7 @@ async fn fixture() -> (
                 name: "poll test".into(),
                 kind: "github".into(),
                 kind_version: "1".into(),
+                schema_digest: None,
                 transport: AdapterTransport::Polling,
                 endpoint_identity: Uuid::now_v7().to_string(),
                 configuration: Value::Null,

@@ -456,6 +456,7 @@ async fn platform_admin_can_view_orchestration_adapters_without_an_org() {
                 name: name.into(),
                 kind: "generic_webhook".into(),
                 kind_version: "1".into(),
+                schema_digest: None,
                 transport: AdapterTransport::Webhook,
                 endpoint_identity: Uuid::now_v7().to_string(),
                 configuration: json!({}),

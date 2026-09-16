@@ -42,6 +42,7 @@ async fn injected_circuit_failure_keeps_its_cooldown() {
             name: "injected poll".into(),
             kind: "github".into(),
             kind_version: "1".into(),
+            schema_digest: None,
             transport: AdapterTransport::Polling,
             endpoint_identity: uuid::Uuid::now_v7().to_string(),
             configuration: Value::Null,

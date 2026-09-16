@@ -296,6 +296,12 @@ user's repository, not in the platform database; only the *results* are platform
   `runinator-adapter-host`.
 - **Band:** P2.
 
+**Implemented 2026-09-16.** SDLC profiles now have an opaque `extensions` region that is validated
+as part of the profile and forwarded into mission parameters unchanged. Every immutable adapter
+revision persists a digest of the kind metadata used for validation, including schemas published by
+plugin adapters through the existing SDK/ABI metadata contract. Poll status also reports the frozen
+worker-label selector, the number of live matching workers, and a specific no-match diagnosis.
+
 **Verified 2026-09-16** against a live instance. The Jira adapter's `sdlc_profile` configuration
 field is a closed struct. `runinatorctl orchestrations adapters kinds --json` reports its schema as
 accepting exactly:

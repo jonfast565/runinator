@@ -163,7 +163,7 @@ fallible_row_mapper!(row_to_orchestration_adapter_revision(row) -> AdapterRevisi
     }
     Ok(AdapterRevision {
         id: row.get("id"), adapter_id: row.get("adapter_id"), revision: row.get("revision"),
-        kind_version: row.get("kind_version"), transport: serde_json::from_value(serde_json::Value::String(row.get("transport"))).unwrap_or_default(), configuration: parse_json(row.get("configuration")),
+        kind_version: row.get("kind_version"), schema_digest: row.get("schema_digest"), transport: serde_json::from_value(serde_json::Value::String(row.get("transport"))).unwrap_or_default(), configuration: parse_json(row.get("configuration")),
         authentication,
         identity_configuration: parse_json(row.get("identity_configuration")),
         created_at: timestamp(row.get("created_at")), actor_id: row.get("actor_id"),

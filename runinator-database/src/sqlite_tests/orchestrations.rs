@@ -108,6 +108,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
                 name: "Webhook".into(),
                 kind: "generic_webhook".into(),
                 kind_version: "1".into(),
+                schema_digest: Some("sha256:test-schema".into()),
                 transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 endpoint_identity: "endpoint-token".into(),
                 configuration: runinator_models::json!({ "authentication": "bearer" }),
@@ -121,6 +122,10 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
         .unwrap();
     assert_eq!(adapter.current_revision, 1);
     assert_eq!(adapter_revision.revision, 1);
+    assert_eq!(
+        adapter_revision.schema_digest.as_deref(),
+        Some("sha256:test-schema")
+    );
 
     let admission_id = Uuid::now_v7();
     db.claim_ingress_admission(
@@ -532,6 +537,7 @@ async fn orchestration_binding_lease_cas_epoch_and_command_outbox_are_durable() 
                 adapter_id,
                 expected_revision: 1,
                 kind_version: "1".into(),
+                schema_digest: None,
                 transport: runinator_models::orchestration::AdapterTransport::Webhook,
                 configuration: Value::Null,
                 authentication: runinator_models::orchestration::AdapterAuthentication::default(),
@@ -609,6 +615,7 @@ async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
             name: "GitHub poll".into(),
             kind: "github".into(),
             kind_version: "1".into(),
+            schema_digest: None,
             transport: AdapterTransport::Polling,
             endpoint_identity: "poll-endpoint".into(),
             configuration: runinator_models::json!({"repositories": ["acme/repo"]}),
@@ -735,6 +742,7 @@ async fn polling_adapter_claim_checkpoint_and_transport_switch_are_durable() {
             adapter_id,
             expected_revision: 1,
             kind_version: "1".into(),
+            schema_digest: None,
             transport: AdapterTransport::Webhook,
             configuration: Value::Null,
             authentication: runinator_models::orchestration::AdapterAuthentication::default(),
