@@ -21,7 +21,9 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{FileStore, OrchestrationStore, RunStore, ScheduleStore, WorkflowVmStore},
+    roles::{
+        AiUsageStore, FileStore, OrchestrationStore, RunStore, ScheduleStore, WorkflowVmStore,
+    },
 };
 use uuid::Uuid;
 
@@ -67,6 +69,24 @@ impl<T> RunOperations<T> {
         if let Some(signals) = &self.signals {
             signals.nudge_workflow_vm();
         }
+    }
+}
+
+impl<T: AiUsageStore> RunOperations<T> {
+    pub async fn ai_usage_for_run(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<runinator_models::ai_usage::AiUsageReport, SendableError> {
+        repository::ai_usage_for_run(self.store.as_ref(), workflow_run_id).await
+    }
+
+    pub async fn ai_usage_for_workflow(
+        &self,
+        workflow_id: Uuid,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<runinator_models::ai_usage::AiUsageReport, SendableError> {
+        repository::ai_usage_for_workflow(self.store.as_ref(), workflow_id, since, until).await
     }
 }
 

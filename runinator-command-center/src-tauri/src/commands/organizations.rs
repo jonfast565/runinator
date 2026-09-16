@@ -122,6 +122,19 @@ pub async fn fetch_rate_card(state: State<'_, CommandCenterState>) -> CommandRes
 }
 
 #[tauri::command]
+pub async fn update_ai_rate_card(
+    state: State<'_, CommandCenterState>,
+    ai_entries: Value,
+) -> CommandResult<Value> {
+    put_json(
+        &state,
+        "rate-card/ai",
+        &serde_json::json!({ "ai_entries": ai_entries }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn fetch_org_nodes(
     state: State<'_, CommandCenterState>,
     org_id: Uuid,

@@ -17,6 +17,7 @@ use runinator_comm::{
     EffectCommand,
 };
 use runinator_models::{
+    ai_usage::{AiCostSource, AiTokenUsage, AiUsageRecord},
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
     execution_profiles::{
         ExecutionProfile, ExecutionProfileAgentStatus, ExecutionProfileApprovalState,
@@ -1390,6 +1391,29 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
             .await
             .unwrap()
     );
+
+    let first_usage = AiUsageRecord {
+        event_id: Uuid::now_v7(),
+        effect_id,
+        workflow_run_id: run.id,
+        workflow_id: workflow.id.expect("workflow id"),
+        node_id: Some("ai-node".into()),
+        attempt: 0,
+        provider: "anthropic".into(),
+        model: "claude-test".into(),
+        tokens: AiTokenUsage {
+            input_tokens: 100,
+            cached_input_tokens: 20,
+            cache_creation_input_tokens: 5,
+            output_tokens: 10,
+            reasoning_tokens: 0,
+        },
+        cost_microusd: Some(321),
+        cost_source: Some(AiCostSource::ProviderReported),
+        recorded_at: Utc::now(),
+    };
+    assert!(db.insert_ai_usage(first_usage.clone()).await.unwrap());
+    assert!(!db.insert_ai_usage(first_usage).await.unwrap());
     let claimed_effect = db
         .fetch_workflow_effect(effect_id)
         .await
@@ -1465,6 +1489,7 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
             .is_empty()
     );
     assert!(db.fetch_workflow_effects(run.id).await.unwrap().is_empty());
+    assert!(db.fetch_ai_usage_for_run(run.id).await.unwrap().is_empty());
     assert!(db.fetch_workflow_effect(effect_id).await.unwrap().is_none());
     assert!(db.fetch_workflow_journal(run.id).await.unwrap().is_empty());
 }
@@ -3181,6 +3206,28 @@ async fn assert_workflow_effect_retry_lifecycle<T: DatabaseImpl + WorkflowVmStor
             .await
             .unwrap()
     );
+    assert!(
+        db.insert_ai_usage(AiUsageRecord {
+            event_id: Uuid::now_v7(),
+            effect_id,
+            workflow_run_id: run.id,
+            workflow_id: workflow.id.expect("workflow id"),
+            node_id: Some("ai-node".into()),
+            attempt: 0,
+            provider: "anthropic".into(),
+            model: "claude-test".into(),
+            tokens: AiTokenUsage {
+                input_tokens: 11,
+                output_tokens: 2,
+                ..Default::default()
+            },
+            cost_microusd: Some(42),
+            cost_source: Some(AiCostSource::ProviderReported),
+            recorded_at: Utc::now(),
+        })
+        .await
+        .unwrap()
+    );
 
     let due = Utc::now() + Duration::seconds(120);
     assert!(
@@ -3200,6 +3247,36 @@ async fn assert_workflow_effect_retry_lifecycle<T: DatabaseImpl + WorkflowVmStor
     // the lease is released but the attribution survives, exactly as settling does.
     assert_eq!(retried.current_executor_replica_id, None);
     assert_eq!(retried.last_executor_replica_id, Some(replica_id));
+    let retry_usage = AiUsageRecord {
+        event_id: Uuid::now_v7(),
+        effect_id,
+        workflow_run_id: run.id,
+        workflow_id: workflow.id.expect("workflow id"),
+        node_id: Some("ai-node".into()),
+        attempt: 1,
+        provider: "openai".into(),
+        model: "codex-test".into(),
+        tokens: AiTokenUsage {
+            output_tokens: 7,
+            reasoning_tokens: 3,
+            ..Default::default()
+        },
+        cost_microusd: None,
+        cost_source: None,
+        recorded_at: Utc::now(),
+    };
+    assert!(db.insert_ai_usage(retry_usage).await.unwrap());
+    let usage = db.fetch_ai_usage_for_run(run.id).await.unwrap();
+    assert_eq!(usage.len(), 2);
+    assert_eq!(usage[0].cost_source, Some(AiCostSource::ProviderReported));
+    assert_eq!(usage[1].attempt, 1);
+    assert_eq!(
+        db.fetch_ai_usage_for_workflow(workflow.id.expect("workflow id"), None, None)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
     // the parked thread must stay waiting: a retry is invisible to the graph.
     let parked = db
         .fetch_workflow_continuation(continuation_id)

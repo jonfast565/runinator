@@ -70,6 +70,14 @@ pub fn api_workflow(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}")
 }
 
+pub fn api_workflow_ai_usage(workflow_id: Uuid) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/ai-usage")
+}
+
+pub fn api_workflow_run_ai_usage(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/ai-usage")
+}
+
 pub fn api_workflow_export(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}/export")
 }

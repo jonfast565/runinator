@@ -177,6 +177,10 @@ pub struct EffectResult {
     pub workflow_run_id: Uuid,
     pub continuation_id: Uuid,
     pub attempt: u32,
+    /// Provider-normalized AI usage for this terminal attempt. This is accounting metadata and is
+    /// deliberately separate from the workflow-visible output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_usage: Option<runinator_models::ai_usage::AiUsage>,
     pub kind: EffectResultKind,
     pub timestamp: DateTime<Utc>,
     #[serde(default = "Uuid::now_v7")]
@@ -245,6 +249,7 @@ impl EffectResult {
             workflow_run_id: command.workflow_run_id,
             continuation_id: command.continuation_id,
             attempt: command.attempt,
+            ai_usage: None,
             kind: EffectResultKind::Status {
                 status,
                 output,
@@ -266,6 +271,7 @@ impl EffectResult {
             workflow_run_id: command.workflow_run_id,
             continuation_id: command.continuation_id,
             attempt: command.attempt,
+            ai_usage: None,
             kind: EffectResultKind::Claimed {
                 executor_replica_id,
             },
@@ -571,6 +577,7 @@ impl WakeCommand {
                 workflow_run_id,
                 continuation_id: Uuid::nil(),
                 attempt: 0,
+                ai_usage: None,
                 kind: EffectResultKind::Status {
                     status: WorkflowEffectStatus::Succeeded,
                     output: None,
@@ -609,6 +616,7 @@ impl WakeCommand {
                 workflow_run_id: Uuid::nil(),
                 continuation_id: Uuid::nil(),
                 attempt: 0,
+                ai_usage: None,
                 kind: EffectResultKind::Status {
                     status: WorkflowEffectStatus::Succeeded,
                     output: None,

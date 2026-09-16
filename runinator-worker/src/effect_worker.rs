@@ -764,7 +764,8 @@ async fn process_provider_effect(
                     *target = Some(Value::from(output));
                 }
             }
-            replay.event_id = stable_event_id(command.effect_id, "terminal");
+            replay.event_id =
+                stable_event_id(command.effect_id, &format!("terminal:{}", command.attempt));
             publish_result(broker.as_ref(), result_outbox.as_ref(), &mut replay, true).await?;
             broker
                 .ack_effect(&consumer, delivery.delivery_id)
@@ -901,6 +902,7 @@ async fn process_provider_effect(
                 workflow_run_id: command.workflow_run_id,
                 continuation_id: command.continuation_id,
                 attempt: command.attempt,
+                ai_usage: None,
                 kind: EffectResultKind::Artifact {
                     artifact: Value::encode(&artifact)?,
                 },
@@ -988,8 +990,10 @@ async fn process_provider_effect(
         _ => crate::events::ActionOutcome::Failed,
     };
     let mut terminal = EffectResult::status(&command, status, output, terminal_message);
+    terminal.ai_usage = output_sink.take_ai_usage();
     terminal.workspace_commit = workspace_commit.map(Box::new);
-    terminal.event_id = stable_event_id(command.effect_id, "terminal");
+    terminal.event_id =
+        stable_event_id(command.effect_id, &format!("terminal:{}", command.attempt));
     publish_result(broker.as_ref(), result_outbox.as_ref(), &mut terminal, true).await?;
     events.handle(crate::events::WorkerEvent::EffectFinished {
         workflow_run_id: command.workflow_run_id,
@@ -1106,7 +1110,7 @@ async fn publish_terminal(
     message: Option<String>,
 ) -> Result<(), SendableError> {
     let mut result = EffectResult::status(command, status, output, message);
-    result.event_id = stable_event_id(command.effect_id, "terminal");
+    result.event_id = stable_event_id(command.effect_id, &format!("terminal:{}", command.attempt));
     publish_result(broker, outbox, &mut result, true).await
 }
 
@@ -1127,6 +1131,7 @@ async fn publish_workspace_phases(
             workflow_run_id: command.workflow_run_id,
             continuation_id: command.continuation_id,
             attempt: command.attempt,
+            ai_usage: None,
             kind: EffectResultKind::Chunk {
                 stream: runinator_models::workspaces::WORKSPACE_TIMELINE_STREAM.into(),
                 content: serde_json::to_string(&phase)?,
@@ -1181,6 +1186,7 @@ struct EffectOutputSink {
     events: Arc<dyn crate::events::WorkerEventSink>,
     handle: tokio::runtime::Handle,
     pending: StdMutex<Vec<tokio::task::JoinHandle<Result<(), SendableError>>>>,
+    ai_usage: RetainedAiUsage,
     publish_order: Arc<tokio::sync::Mutex<()>>,
     terminal: StdMutex<Option<Receiver<ProviderTerminalControl>>>,
 }
@@ -1202,6 +1208,7 @@ impl EffectOutputSink {
             events,
             handle: tokio::runtime::Handle::current(),
             pending: StdMutex::new(Vec::new()),
+            ai_usage: RetainedAiUsage::default(),
             publish_order: Arc::new(tokio::sync::Mutex::new(())),
             terminal: StdMutex::new(Some(terminal)),
         }
@@ -1227,6 +1234,10 @@ impl EffectOutputSink {
                 .map_err(|error| -> SendableError { Box::new(error) })??;
         }
         Ok(())
+    }
+
+    fn take_ai_usage(&self) -> Option<runinator_models::ai_usage::AiUsage> {
+        self.ai_usage.take()
     }
 }
 
@@ -1262,6 +1273,7 @@ impl ProviderEventSink for EffectOutputSink {
                         workflow_run_id: command.workflow_run_id,
                         continuation_id: command.continuation_id,
                         attempt: command.attempt,
+                        ai_usage: None,
                         kind: EffectResultKind::Chunk { stream, content },
                         timestamp: chrono::Utc::now(),
                         trace_id: command.trace_id,
@@ -1298,6 +1310,7 @@ impl ProviderEventSink for EffectOutputSink {
                         workflow_run_id: command.workflow_run_id,
                         continuation_id: command.continuation_id,
                         attempt: command.attempt,
+                        ai_usage: None,
                         kind: EffectResultKind::Artifact {
                             artifact: Value::encode(&artifact)?,
                         },
@@ -1323,6 +1336,7 @@ impl ProviderEventSink for EffectOutputSink {
                         workflow_run_id: command.workflow_run_id,
                         continuation_id: command.continuation_id,
                         attempt: command.attempt,
+                        ai_usage: None,
                         kind: EffectResultKind::Progress { kind, payload },
                         timestamp: chrono::Utc::now(),
                         trace_id: command.trace_id,
@@ -1346,6 +1360,7 @@ impl ProviderEventSink for EffectOutputSink {
                         workflow_run_id: command.workflow_run_id,
                         continuation_id: command.continuation_id,
                         attempt: command.attempt,
+                        ai_usage: None,
                         kind: EffectResultKind::TerminalInteraction { interaction },
                         timestamp: chrono::Utc::now(),
                         trace_id: command.trace_id,
@@ -1354,8 +1369,26 @@ impl ProviderEventSink for EffectOutputSink {
                     publish_result(broker.as_ref(), outbox.as_ref(), &mut result, true).await
                 });
             }
+            runinator_models::runs::ProviderExecutionEvent::AiUsage { usage } => {
+                self.ai_usage.retain(usage);
+            }
             runinator_models::runs::ProviderExecutionEvent::Message { .. } => {}
         }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct RetainedAiUsage(StdMutex<Option<runinator_models::ai_usage::AiUsage>>);
+
+impl RetainedAiUsage {
+    pub(super) fn retain(&self, usage: runinator_models::ai_usage::AiUsage) {
+        if let Ok(mut retained) = self.0.lock() {
+            *retained = Some(usage);
+        }
+    }
+
+    pub(super) fn take(&self) -> Option<runinator_models::ai_usage::AiUsage> {
+        self.0.lock().ok()?.take()
     }
 }
 

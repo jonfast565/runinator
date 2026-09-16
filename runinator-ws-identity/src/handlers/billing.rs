@@ -4,14 +4,17 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_models::auth::AuthContext;
 use runinator_models::billing::{
-    OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest, UpdateOrgQuotaRequest,
-    UsageSample,
+    OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest, UpdateAiRateCardRequest,
+    UpdateOrgQuotaRequest, UsageSample,
 };
 use runinator_models::provisioning::{NodeSpec, ProvisionBackend};
 use runinator_models::replicas::ReplicaKind;
 use runinator_models::value::Value;
 use runinator_provisioner::ProvisionerRegistry;
-use runinator_store::{RuntimeStore, roles::OrgStore};
+use runinator_store::{
+    RuntimeStore,
+    roles::{OrgStore, SettingStore},
+};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -50,7 +53,7 @@ fn quota_error(message: impl Into<String>) -> Reply {
     )
 }
 
-/// the platform rate card. a fixed default today; a settings-backed override is a follow-up.
+/// the default platform node-pricing card used by the existing allocation calculations.
 fn rate_card() -> RateCard {
     RateCard::default_card()
 }
@@ -64,8 +67,33 @@ pub fn projected_monthly_cents(groups: &[OrgResourceGroup], card: &RateCard) -> 
 }
 
 /// the platform rate card (any authenticated principal may read it).
-pub async fn get_rate_card() -> Reply {
-    ok_value(&rate_card())
+pub async fn get_rate_card<T: RuntimeStore>(Extension(db): Extension<Arc<T>>) -> Reply {
+    match runinator_engine::settings::load_rate_card(db.as_ref()).await {
+        Ok(card) => ok_value(&card),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn put_ai_rate_card<T: RuntimeStore + SettingStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    ValidatedJson(request): ValidatedJson<UpdateAiRateCardRequest>,
+) -> Reply {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::BillingManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
+        return reply.into_reply();
+    }
+    let mut card = match runinator_engine::settings::load_rate_card(db.as_ref()).await {
+        Ok(card) => card,
+        Err(error) => return api_error(error.to_string()),
+    };
+    card.ai_entries = request.ai_entries;
+    match runinator_engine::settings::save_rate_card(db.as_ref(), &card).await {
+        Ok(()) => ok_value(&card),
+        Err(error) => api_error(error.to_string()),
+    }
 }
 
 /// an org's dedicated allocations, each annotated with its projected monthly cost.
@@ -350,11 +378,18 @@ pub fn integrate_usage(org_id: Uuid, samples: Vec<UsageSample>, card: &RateCard)
 }
 
 /// the `billing` endpoints.
-pub fn routes<T: OrgStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: OrgStore + RuntimeStore + SettingStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()
-        .route("/rate-card", get(get_rate_card))
+        .route(
+            "/rate-card",
+            get(get_rate_card::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/rate-card/ai",
+            axum::routing::put(put_ai_rate_card::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/orgs/{id}/nodes",
             get(get_org_nodes::<T>).layer(Extension(pool.clone())),

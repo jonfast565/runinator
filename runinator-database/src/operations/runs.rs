@@ -172,6 +172,7 @@ where
             // mysql 8 silently discards a column-level `REFERENCES`, so one engine would cascade
             // and another would orphan.
             for sql in [
+                "DELETE FROM workflow_ai_usage WHERE workflow_run_id = ?",
                 "DELETE FROM workflow_effect_dispatches WHERE effect_id IN (SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id WHERE c.workflow_run_id = ?)",
                 "DELETE FROM workflow_effect_output_events WHERE effect_id IN (SELECT e.id FROM workflow_effects e JOIN workflow_continuations c ON c.id = e.continuation_id WHERE c.workflow_run_id = ?)",
                 "DELETE FROM workflow_journal_entries WHERE workflow_run_id = ?",

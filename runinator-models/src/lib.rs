@@ -1,4 +1,5 @@
 pub mod adapter_control;
+pub mod ai_usage;
 pub mod api_routes;
 pub mod artifacts;
 pub mod auth;
@@ -55,5 +56,7 @@ pub mod workspaces;
 #[doc(hidden)]
 pub use serde_json as __serde_json;
 
+#[cfg(test)]
+mod ai_usage_tests;
 #[cfg(test)]
 mod lib_tests;

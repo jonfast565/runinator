@@ -152,6 +152,7 @@ pub(crate) fn keyword_documentation(keyword: &str) -> Option<&'static str> {
             "Maps an author-defined name and priority to a generic orchestration control effect."
         }
         "interrupt" => "Declares a handler region that suspends the run when its source fires.",
+        "interactive" => "Runs the provider action in an interactive terminal session.",
         "join" => "Declares a named continuation or a pipeline fan-in policy.",
         "json" => {
             "Converts a value to JSON text; as a type alias, accepts an unconstrained JSON value."

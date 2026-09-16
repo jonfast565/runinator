@@ -42,6 +42,7 @@ fn due_result(due_at: chrono::DateTime<Utc>) -> EffectResult {
         workflow_run_id: Uuid::now_v7(),
         continuation_id: Uuid::now_v7(),
         attempt: 0,
+        ai_usage: None,
         kind: EffectResultKind::Status {
             status: WorkflowEffectStatus::Succeeded,
             output: None,

@@ -42,6 +42,36 @@
             <MetricCard label="Disabled" :value="disabledWorkflowCount" />
             <MetricCard label="Selected" :value="selectedWorkflowLabel" />
           </div>
+          <div
+            v-if="workflowAiUsage && workflowAiUsage.totals.requests"
+            class="mb-2 grid grid-cols-3 gap-2"
+          >
+            <MetricCard label="AI tokens" :value="workflowAiTokens.toLocaleString()" />
+            <MetricCard
+              label="AI cost"
+              :value="formatAiCost(workflowAiUsage.totals.cost_microusd)"
+            />
+            <MetricCard
+              label="Unpriced"
+              :value="workflowAiUsage.totals.unpriced_requests || 'None'"
+            />
+          </div>
+          <div
+            v-if="workflowAiUsage && workflowAiUsage.totals.requests"
+            class="mb-2 rounded border border-border-subtle bg-surface-subtle p-2 text-xs text-fg-muted"
+          >
+            <div v-for="item in workflowAiUsage.by_provider" :key="`provider:${item.key}`">
+              {{ item.key }}: {{ aiTokenTotal(item.totals.tokens).toLocaleString() }} tokens ·
+              {{ formatAiCost(item.totals.cost_microusd) }}
+            </div>
+            <div v-for="item in workflowAiUsage.by_model" :key="`model:${item.key}`">
+              {{ item.key }}: {{ item.totals.requests }} attempt(s)
+            </div>
+            <div>
+              {{ workflowAiUsage.by_run.length }} run(s) · {{ workflowAiUsage.by_node.length }}
+              node(s)
+            </div>
+          </div>
           <EmptyState
             v-if="loadingWorkflows"
             compact
@@ -239,13 +269,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import {
   artifactIdentityError,
   artifactIdentityPath,
   REXRAP_IDENTIFIER_PATTERN,
   workflowPath,
+  type AiUsageReport,
 } from "../../core/domain/models";
+import { fetchWorkflowAiUsage } from "../../core/api/commandCenterApi";
+import { aiTokenTotal, formatAiCost } from "../../core/utils/ai-usage";
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
@@ -316,6 +349,21 @@ const disabledWorkflowCount = computed(
   () => scopedWorkflows.value.filter((workflow) => !workflow.enabled).length,
 );
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
+const workflowAiUsage = ref<AiUsageReport | null>(null);
+const workflowAiTokens = computed(() => {
+  const tokens = workflowAiUsage.value?.totals.tokens;
+  return tokens ? aiTokenTotal(tokens) : 0;
+});
+
+watch(
+  () => workflows.selectedWorkflowId,
+  async (workflowId) => {
+    workflowAiUsage.value = workflowId
+      ? await fetchWorkflowAiUsage(workflowId).catch(() => null)
+      : null;
+  },
+  { immediate: true },
+);
 const workflowNamespaceGroups = computed(() => {
   const groups = new Map<string, typeof scopedWorkflows.value>();
 

@@ -490,6 +490,7 @@ fn wake_result() -> runinator_comm::EffectResult {
         workflow_run_id: Uuid::now_v7(),
         continuation_id: Uuid::now_v7(),
         attempt: 0,
+        ai_usage: None,
         kind: runinator_comm::EffectResultKind::Status {
             status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
             output: None,

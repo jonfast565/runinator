@@ -1,5 +1,14 @@
 use super::*;
 
+#[derive(Default)]
+struct CapturedEvents(std::sync::Mutex<Vec<runinator_models::runs::ProviderExecutionEvent>>);
+
+impl runinator_plugin::provider::ProviderEventSink for CapturedEvents {
+    fn emit(&self, event: runinator_models::runs::ProviderExecutionEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
 #[test]
 fn claude_code_defaults_to_opus_five() {
     assert_eq!(crate::params::default_model(), "claude-opus-5");
@@ -209,6 +218,54 @@ fn test_claude_code_nonzero_exit() {
         runinator_plugin::cancel::CancellationToken::new(),
     );
     assert!(result.is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_claude_attempt_still_emits_terminal_usage() {
+    use std::{io::Write, os::unix::fs::PermissionsExt, sync::Arc};
+
+    let mut binary = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
+    writeln!(
+        binary,
+        "#!/bin/sh\nprintf '%s\\n' '{{\"usage\":{{\"input_tokens\":7,\"output_tokens\":2}},\"total_cost_usd\":0.000009}}'\nexit 1"
+    )
+    .unwrap();
+    let mut permissions = binary.as_file().metadata().unwrap().permissions();
+    permissions.set_mode(0o700);
+    binary.as_file().set_permissions(permissions).unwrap();
+
+    let provider = AiCommandProvider;
+    let request = ProviderExecutionRequest {
+        run_id: Some(uuid::Uuid::now_v7()),
+        action_name: "ai-command".into(),
+        action_function: "claude_code".into(),
+        parameters: json!({
+            "binary": binary.path(),
+            "prompt": "anything",
+            "output_format": "json"
+        }),
+        timeout_secs: 30,
+        artifact_dir: "".into(),
+        events_jsonl_path: "".into(),
+        idempotency_key: None,
+        workspace_path: None,
+        execution_profile: None,
+        credential_injections: Default::default(),
+    };
+    let events = Arc::new(CapturedEvents::default());
+    let result = provider.execute_service(
+        request,
+        Some(events.clone()),
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
+
+    assert!(result.is_err());
+    assert!(events.0.lock().unwrap().iter().any(|event| matches!(
+        event,
+        runinator_models::runs::ProviderExecutionEvent::AiUsage { usage }
+            if usage.tokens.input_tokens == 7 && usage.provider_cost_microusd == Some(9)
+    )));
 }
 
 #[test]

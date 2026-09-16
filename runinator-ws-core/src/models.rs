@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
 use runinator_models::value::Value;
 use runinator_models::{
+    ai_usage::AiUsageReport,
     bundles::{PackImportResult, ProviderBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail},
     execution_profiles::{
@@ -160,6 +161,7 @@ pub enum ApiResponse {
     ExternalOperation(runinator_models::orchestration::ExternalOperation),
     WorkflowRun(Box<WorkflowRunResponse>),
     WorkflowRunList(Vec<WorkflowRun>),
+    AiUsageReport(AiUsageReport),
     WorkflowNodeRun(WorkflowNodeRun),
     WorkflowNodeRunChunks(Vec<WorkflowNodeRunChunk>),
     WorkflowNodeRunArtifacts(Vec<WorkflowNodeRunArtifact>),

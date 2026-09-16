@@ -467,6 +467,9 @@ pub async fn fetch_workflow_run(
     let effects = get_json(&state, &format!("workflow_runs/{workflow_run_id}/effects")).await?;
     let journal = get_json(&state, &format!("workflow_runs/{workflow_run_id}/journal")).await?;
     let vm_cursors = get_json(&state, &format!("workflow_runs/{workflow_run_id}/cursors")).await?;
+    let ai_usage = get_json(&state, &format!("workflow_runs/{workflow_run_id}/ai-usage"))
+        .await
+        .ok();
     Ok(WorkflowRunDetail {
         run,
         nodes,
@@ -474,7 +477,44 @@ pub async fn fetch_workflow_run(
         effects,
         journal,
         vm_cursors,
+        ai_usage,
     })
+}
+
+#[tauri::command]
+pub async fn fetch_run_ai_usage(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Value> {
+    get_json(&state, &format!("workflow_runs/{workflow_run_id}/ai-usage")).await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_ai_usage(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    since: Option<String>,
+    until: Option<String>,
+) -> CommandResult<Value> {
+    let mut query = Vec::new();
+    if let Some(since) = since {
+        query.push(format!(
+            "since={}",
+            url::form_urlencoded::byte_serialize(since.as_bytes()).collect::<String>()
+        ));
+    }
+    if let Some(until) = until {
+        query.push(format!(
+            "until={}",
+            url::form_urlencoded::byte_serialize(until.as_bytes()).collect::<String>()
+        ));
+    }
+    let suffix = if query.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", query.join("&"))
+    };
+    get_json(&state, &format!("workflows/{workflow_id}/ai-usage{suffix}")).await
 }
 
 #[tauri::command]

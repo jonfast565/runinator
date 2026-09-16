@@ -8,9 +8,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::ai_usage::{AiRateEntry, AiTokenUsage};
 use crate::provisioning::ProvisionBackend;
 use crate::replicas::ReplicaKind;
 use crate::validation::{Validate, ValidationError, identifier};
+
+pub const AI_RATE_CARD_SCOPE: &str = "billing";
+pub const AI_RATE_CARD_NAME: &str = "ai_rate_card";
 
 /// one price line: what a single node of `kind` on `backend` costs per hour, in cents.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,6 +28,8 @@ pub struct RateEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RateCard {
     pub entries: Vec<RateEntry>,
+    #[serde(default)]
+    pub ai_entries: Vec<AiRateEntry>,
 }
 
 impl RateCard {
@@ -34,6 +40,27 @@ impl RateCard {
             .find(|entry| entry.backend == backend && entry.kind == kind)
             .map(|entry| entry.hourly_cents)
             .unwrap_or(0)
+    }
+
+    pub fn ai_rate(&self, provider: &str, model: &str) -> Option<&AiRateEntry> {
+        self.ai_entries
+            .iter()
+            .find(|entry| entry.provider == provider && entry.model == model)
+            .or_else(|| {
+                self.ai_entries
+                    .iter()
+                    .find(|entry| entry.provider == provider && entry.model == "*")
+            })
+    }
+
+    pub fn price_ai_usage(
+        &self,
+        provider: &str,
+        model: &str,
+        tokens: &AiTokenUsage,
+    ) -> Option<u64> {
+        self.ai_rate(provider, model)
+            .map(|entry| entry.price(tokens))
     }
 
     /// a conservative default price list so costs are non-zero out of the box.
@@ -64,7 +91,10 @@ impl RateCard {
                 });
             }
         }
-        Self { entries }
+        Self {
+            entries,
+            ai_entries: Vec::new(),
+        }
     }
 }
 
@@ -143,6 +173,12 @@ pub struct UpdateOrgQuotaRequest {
     pub max_monthly_cents: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAiRateCardRequest {
+    #[serde(default)]
+    pub ai_entries: Vec<AiRateEntry>,
+}
+
 impl Validate for ScaleOrgNodesRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         Ok(())
@@ -159,6 +195,34 @@ impl Validate for UpdateOrgQuotaRequest {
         }
         for key in self.max_nodes_per_kind.keys() {
             identifier(&format!("max_nodes_per_kind.{key}"), key)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for UpdateAiRateCardRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.ai_entries.len() > 256 {
+            return Err(ValidationError::new(
+                "ai_entries",
+                "must contain at most 256 entries",
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, entry) in self.ai_entries.iter().enumerate() {
+            identifier(&format!("ai_entries.{index}.provider"), &entry.provider)?;
+            if entry.model.trim().is_empty() || entry.model.len() > 200 {
+                return Err(ValidationError::new(
+                    format!("ai_entries.{index}.model"),
+                    "must contain 1 to 200 characters",
+                ));
+            }
+            if !seen.insert((entry.provider.clone(), entry.model.clone())) {
+                return Err(ValidationError::new(
+                    format!("ai_entries.{index}"),
+                    "duplicates an existing provider/model entry",
+                ));
+            }
         }
         Ok(())
     }

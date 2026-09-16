@@ -187,6 +187,7 @@ export type {
   OrgResourceGroup,
   OrgUsage,
   RateCard,
+  AiRateEntry,
 } from "./org-resources";
 export type { WorkflowSharingService } from "./workflow-sharing";
 export type { WorkflowRevisionsService } from "./workflow-revisions";

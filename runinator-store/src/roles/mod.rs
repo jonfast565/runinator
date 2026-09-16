@@ -16,6 +16,7 @@ pub struct QueueSnapshot {
     pub oldest_enqueued_at: Option<DateTime<Utc>>,
 }
 
+pub mod ai_usage;
 pub mod archive;
 pub mod auth;
 pub mod automation;
@@ -37,6 +38,7 @@ pub mod settings;
 pub mod workflow_vm;
 pub mod workspaces;
 
+pub use ai_usage::AiUsageStore;
 pub use archive::ArchiveStore;
 pub use auth::AuthStore;
 pub use automation::AutomationStore;

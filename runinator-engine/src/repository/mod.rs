@@ -27,6 +27,7 @@ use runinator_store::{
 };
 
 pub use agents::*;
+pub use ai_usage::*;
 pub use catalog::*;
 pub use debug::*;
 pub use definitions::*;
@@ -46,6 +47,7 @@ pub use scheduling::*;
 pub use triggers::*;
 
 mod agents;
+mod ai_usage;
 mod catalog;
 mod debug;
 mod replay;

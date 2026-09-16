@@ -3,5 +3,10 @@ export { defaultApi } from "./default";
 
 export type OrgResourcesApi = Pick<
   typeof Api,
-  "fetchOrgNodes" | "fetchOrgQuota" | "fetchOrgUsage" | "fetchRateCard" | "scaleOrgNodes"
+  | "fetchOrgNodes"
+  | "fetchOrgQuota"
+  | "fetchOrgUsage"
+  | "fetchRateCard"
+  | "updateAiRateCard"
+  | "scaleOrgNodes"
 >;

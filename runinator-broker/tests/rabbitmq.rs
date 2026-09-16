@@ -220,6 +220,7 @@ async fn assert_effect_round_trip(broker: &dyn Broker) {
         workflow_run_id: provider.workflow_run_id,
         continuation_id: provider.continuation_id,
         attempt: provider.attempt,
+        ai_usage: None,
         kind: EffectResultKind::Status {
             status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
             output: None,

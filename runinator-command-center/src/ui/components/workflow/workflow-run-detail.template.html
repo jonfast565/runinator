@@ -58,6 +58,41 @@
     </div>
   </div>
 
+  <div v-if="aiUsage && aiUsage.totals.requests > 0" class="run-detail-section run-summary-card">
+    <div class="summary-row">
+      <span class="summary-label">AI usage</span>
+      <span>{{ aiTotalTokens.toLocaleString() }} tokens</span>
+    </div>
+    <div class="summary-row">
+      <span class="summary-label">Priced cost</span>
+      <span>{{ formatAiCost(aiUsage.totals.cost_microusd) }}</span>
+    </div>
+    <div v-if="aiUsage.totals.unpriced_requests" class="summary-row">
+      <span class="summary-label">Unpriced</span>
+      <span>{{ aiUsage.totals.unpriced_requests }} attempt(s)</span>
+    </div>
+    <div class="overflow-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr>
+            <th class="text-left">Node / effect</th>
+            <th class="text-left">Model</th>
+            <th class="text-right">Tokens</th>
+            <th class="text-right">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="record in aiUsage.records" :key="`${record.event_id}:${record.attempt}`">
+            <td><code>{{ record.node_id ?? record.effect_id }}</code></td>
+            <td>{{ record.provider }} / {{ record.model }}</td>
+            <td class="text-right tabular-nums">{{ aiRecordTokens(record).toLocaleString() }}</td>
+            <td class="text-right tabular-nums">{{ formatAiCost(record.cost_microusd) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <div v-if="managedBindingId" class="run-detail-section run-summary-card">
     <div class="summary-row">
       <span class="summary-label">Managed by orchestration</span>

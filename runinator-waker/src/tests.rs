@@ -81,6 +81,7 @@ fn effect_result(due_at: chrono::DateTime<chrono::Utc>) -> runinator_broker::Eff
         workflow_run_id: uuid::Uuid::now_v7(),
         continuation_id: uuid::Uuid::now_v7(),
         attempt: 0,
+        ai_usage: None,
         kind: runinator_broker::EffectResultKind::Status {
             status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
             output: None,

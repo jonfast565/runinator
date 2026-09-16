@@ -15,7 +15,10 @@ pub const SERVER_SETTINGS_SCOPE: &str = "server";
 pub const SERVER_SETTINGS_NAME: &str = "operational_policy";
 
 pub fn is_reserved_server_setting(kind: SettingKind, scope: &str, name: &str) -> bool {
-    kind == SettingKind::Config && scope == SERVER_SETTINGS_SCOPE && name == SERVER_SETTINGS_NAME
+    kind == SettingKind::Config
+        && ((scope == SERVER_SETTINGS_SCOPE && name == SERVER_SETTINGS_NAME)
+            || (scope == crate::billing::AI_RATE_CARD_SCOPE
+                && name == crate::billing::AI_RATE_CARD_NAME))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

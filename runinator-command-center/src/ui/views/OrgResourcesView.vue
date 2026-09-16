@@ -151,6 +151,78 @@
           </DataTable>
         </div>
 
+        <div class="panel shrink-0">
+          <div class="panel-toolbar">
+            <div class="flex items-center gap-1">
+              <h3 class="m-0 text-sm font-semibold text-fg">AI pricing</h3>
+              <HelpBubble
+                text="Platform-wide fallback prices as integer micro-USD per million tokens. One million micro-USD equals $1. Provider-reported charges always take precedence; * matches any model for that provider."
+                label="About AI pricing"
+              />
+            </div>
+            <button
+              v-if="can('billing:manage')"
+              class="btn btn-sm"
+              type="button"
+              :disabled="savingAiRates"
+              @click="addAiRate"
+            >
+              Add rate
+            </button>
+          </div>
+          <EmptyState
+            v-if="!aiRates.length"
+            compact
+            icon="bolt"
+            title="No fallback AI rates"
+            description="Usage without a provider-reported cost will remain Unpriced."
+          />
+          <DataTable v-else>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Model</th>
+                <th class="text-right">Input (μ$/1M)</th>
+                <th class="text-right">Cached (μ$/1M)</th>
+                <th class="text-right">Cache create (μ$/1M)</th>
+                <th class="text-right">Output (μ$/1M)</th>
+                <th class="text-right">Reasoning (μ$/1M)</th>
+                <th v-if="can('billing:manage')"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(entry, index) in aiRates"
+                :key="`${entry.provider}:${entry.model}:${index}`"
+              >
+                <td><input v-model="entry.provider" :disabled="!can('billing:manage')" /></td>
+                <td><input v-model="entry.model" :disabled="!can('billing:manage')" /></td>
+                <td v-for="field in aiRateFields" :key="field" class="text-right">
+                  <input
+                    v-model.number="entry[field]"
+                    class="w-24 text-right tabular-nums"
+                    type="number"
+                    min="0"
+                    step="1"
+                    :disabled="!can('billing:manage')"
+                    :aria-label="`${field} micro-USD per million tokens`"
+                  />
+                </td>
+                <td v-if="can('billing:manage')">
+                  <button class="btn btn-ghost btn-sm" type="button" @click="removeAiRate(index)">
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </DataTable>
+          <div v-if="can('billing:manage') && aiRates.length" class="mt-2 flex justify-end">
+            <button class="btn btn-primary btn-sm" :disabled="savingAiRates" @click="saveAiRates">
+              {{ savingAiRates ? "Saving…" : "Save AI pricing" }}
+            </button>
+          </div>
+        </div>
+
         <div v-if="can('nodes:operate')" class="panel shrink-0">
           <div class="panel-toolbar">
             <div class="flex items-center gap-1">
@@ -218,6 +290,7 @@ import {
   type OrgResourceGroup,
   type OrgUsage,
   type RateCard,
+  type AiRateEntry,
 } from "../../core/services";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useCan } from "../composables/useCan";
@@ -235,7 +308,16 @@ const groups = ref<OrgResourceGroup[]>([]);
 const projectedMonthlyCents = ref(0);
 const quota = ref<OrgQuota | null>(null);
 const usage = ref<OrgUsage | null>(null);
-const rateCard = ref<RateCard>({ entries: [] });
+const rateCard = ref<RateCard>({ entries: [], ai_entries: [] });
+const aiRates = ref<AiRateEntry[]>([]);
+const savingAiRates = ref(false);
+const aiRateFields = [
+  "input_microusd_per_million_tokens",
+  "cached_input_microusd_per_million_tokens",
+  "cache_creation_input_microusd_per_million_tokens",
+  "output_microusd_per_million_tokens",
+  "reasoning_microusd_per_million_tokens",
+] as const;
 
 const scaleBackend = ref("standalone");
 const scaleKind = ref("worker");
@@ -260,6 +342,33 @@ function fmtCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+function addAiRate() {
+  aiRates.value.push({
+    provider: "",
+    model: "*",
+    input_microusd_per_million_tokens: 0,
+    cached_input_microusd_per_million_tokens: 0,
+    cache_creation_input_microusd_per_million_tokens: 0,
+    output_microusd_per_million_tokens: 0,
+    reasoning_microusd_per_million_tokens: 0,
+  });
+}
+
+function removeAiRate(index: number) {
+  aiRates.value.splice(index, 1);
+}
+
+async function saveAiRates() {
+  savingAiRates.value = true;
+
+  try {
+    rateCard.value = await orgResourcesService.updateAiRateCard(aiRates.value);
+    aiRates.value = structuredClone(rateCard.value.ai_entries);
+  } finally {
+    savingAiRates.value = false;
+  }
+}
+
 async function refresh() {
   const orgId = orgs.activeOrgId;
 
@@ -274,7 +383,10 @@ async function refresh() {
   refreshing.value = true;
 
   try {
-    rateCard.value = await orgResourcesService.fetchRateCard().catch(() => ({ entries: [] }));
+    rateCard.value = await orgResourcesService
+      .fetchRateCard()
+      .catch(() => ({ entries: [], ai_entries: [] }));
+    aiRates.value = structuredClone(rateCard.value.ai_entries);
     const nodes = await orgResourcesService.fetchNodes(orgId).catch(() => ({
       groups: [],
       projected_monthly_cents: 0,

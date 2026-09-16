@@ -192,6 +192,15 @@ export { workflowEffectId, type WorkflowNodeRun } from "./workflow/node-run";
 export type { NodeTransition, NodeTransitionStat } from "./workflow/transition";
 export type { WorkflowRunDetail } from "./workflow/run-detail";
 export { runWorkflowSnapshot } from "./workflow/run-detail";
+export type {
+  AiCostSource,
+  AiRateEntry,
+  AiTokenUsage,
+  AiUsageBreakdown,
+  AiUsageRecord,
+  AiUsageReport,
+  AiUsageTotals,
+} from "./ai-usage";
 export type { SimStep, SimulationRun, WorkflowSimulateRequest } from "./workflow/simulation";
 export type { WorkflowRunCreated } from "./workflow/run-created";
 

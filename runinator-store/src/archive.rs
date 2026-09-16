@@ -11,6 +11,7 @@ pub enum ArchiveTable {
     WorkflowContinuations,
     WorkflowEffects,
     WorkflowEffectOutputEvents,
+    WorkflowAiUsage,
     WorkflowEffectDispatches,
     WorkflowJournalEntries,
     WorkflowTriggerFirings,
@@ -43,7 +44,8 @@ pub enum ArchiveTable {
 }
 
 impl ArchiveTable {
-    pub const ALL: [ArchiveTable; 34] = [
+    pub const ALL: [ArchiveTable; 35] = [
+        ArchiveTable::WorkflowAiUsage,
         ArchiveTable::WorkflowEffectOutputEvents,
         ArchiveTable::WorkflowEffectDispatches,
         ArchiveTable::WorkflowEffects,
@@ -87,6 +89,7 @@ impl ArchiveTable {
             ArchiveTable::WorkflowContinuations => "workflow_continuations",
             ArchiveTable::WorkflowEffects => "workflow_effects",
             ArchiveTable::WorkflowEffectOutputEvents => "workflow_effect_output_events",
+            ArchiveTable::WorkflowAiUsage => "workflow_ai_usage",
             ArchiveTable::WorkflowEffectDispatches => "workflow_effect_dispatches",
             ArchiveTable::WorkflowJournalEntries => "workflow_journal_entries",
             ArchiveTable::WorkflowTriggerFirings => "workflow_trigger_firings",
@@ -121,7 +124,7 @@ impl ArchiveTable {
 
     pub fn primary_key_column(self) -> &'static str {
         match self {
-            ArchiveTable::WorkflowEffectOutputEvents => "event_id",
+            ArchiveTable::WorkflowEffectOutputEvents | ArchiveTable::WorkflowAiUsage => "event_id",
             ArchiveTable::AgentDirectives => "directive_id",
             _ => "id",
         }
@@ -143,6 +146,7 @@ impl FromStr for ArchiveTable {
             "workflow_continuations" => Ok(ArchiveTable::WorkflowContinuations),
             "workflow_effects" => Ok(ArchiveTable::WorkflowEffects),
             "workflow_effect_output_events" => Ok(ArchiveTable::WorkflowEffectOutputEvents),
+            "workflow_ai_usage" => Ok(ArchiveTable::WorkflowAiUsage),
             "workflow_effect_dispatches" => Ok(ArchiveTable::WorkflowEffectDispatches),
             "workflow_journal_entries" => Ok(ArchiveTable::WorkflowJournalEntries),
             "workflow_runs" => Ok(ArchiveTable::WorkflowRuns),
@@ -288,6 +292,7 @@ pub const DATABASE_TABLE_POLICIES: &[DatabaseTablePolicy] = &[
     table_policy!("teams", ExplicitLifecycle),
     table_policy!("user_identities", CascadeWithParent),
     table_policy!("users", ExplicitLifecycle),
+    table_policy!("workflow_ai_usage", ColdArchive),
     table_policy!("workflow_continuations", ColdArchive),
     table_policy!("workflow_cooldowns", ServiceRetention),
     table_policy!("workflow_cursor_frames", CascadeWithParent),

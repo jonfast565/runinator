@@ -6,6 +6,7 @@ import type {
   RateCard,
   ScaleOrgNodesRequest,
 } from "../api/commandCenterApi";
+import type { AiRateEntry } from "../domain/models";
 import type { AppService } from "./app";
 
 export function createOrgResourcesService(app: AppService, api: OrgResourcesApi = defaultApi) {
@@ -22,6 +23,9 @@ export function createOrgResourcesService(app: AppService, api: OrgResourcesApi 
     fetchRateCard() {
       return api.fetchRateCard();
     },
+    updateAiRateCard(entries: AiRateEntry[]) {
+      return app.runOperation("Saving AI rate card", () => api.updateAiRateCard(entries));
+    },
     scaleNodes(orgId: string, request: ScaleOrgNodesRequest) {
       return app.runOperation("Scaling org nodes", () => api.scaleOrgNodes(orgId, request));
     },
@@ -29,4 +33,4 @@ export function createOrgResourcesService(app: AppService, api: OrgResourcesApi 
 }
 
 export type OrgResourcesService = ReturnType<typeof createOrgResourcesService>;
-export type { OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest };
+export type { AiRateEntry, OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest };

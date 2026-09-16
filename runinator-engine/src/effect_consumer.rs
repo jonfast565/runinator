@@ -10,6 +10,7 @@ use runinator_models::workflow_vm::{
     WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowJournalEntry,
 };
 use runinator_models::{
+    ai_usage::{AiCostSource, AiUsageRecord},
     notifications::{ConversationReceipt, NotificationDeliveryStatus},
     orchestration::{DeliverySemantics, ExternalOperationStatus, OrchestrationEvidence},
     workflow_vm::WorkflowEffectStatus,
@@ -147,6 +148,17 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
                     }
                 }
             }
+            continue;
+        }
+
+        if delivery.result.ai_usage.is_some()
+            && matches!(delivery.result.kind, EffectResultKind::Status { .. })
+            && let Err(err) = record_ai_usage(db.as_ref(), &delivery.result).await
+        {
+            error!(error = %err, effect_id = %delivery.result.effect_id, "failed to record AI usage");
+            let _ = broker
+                .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                .await;
             continue;
         }
 
@@ -391,6 +403,59 @@ pub async fn run_effect_result_consumer<T: crate::engine::BackgroundEngineStore>
             }
         }
     }
+}
+
+async fn record_ai_usage<T: crate::engine::BackgroundEngineStore>(
+    db: &T,
+    result: &runinator_comm::EffectResult,
+) -> Result<(), runinator_models::errors::SendableError> {
+    let Some(usage) = &result.ai_usage else {
+        return Ok(());
+    };
+    let Some(run) = db.fetch_workflow_run(result.workflow_run_id).await? else {
+        return Ok(());
+    };
+    let (journal, module) = tokio::try_join!(
+        db.fetch_workflow_journal(result.workflow_run_id),
+        db.fetch_workflow_module(result.workflow_run_id),
+    )?;
+    let node_id = module.and_then(|module| {
+        journal.into_iter().find_map(|record| match record.entry {
+            WorkflowJournalEntry::EffectRequested {
+                effect_id,
+                instruction_pointer: Some(instruction_pointer),
+            } if effect_id == result.effect_id => module
+                .graph_location(instruction_pointer)
+                .map(|location| location.node_id.clone()),
+            _ => None,
+        })
+    });
+    let (cost_microusd, cost_source) = match usage.provider_cost_microusd {
+        Some(cost) => (Some(cost), Some(AiCostSource::ProviderReported)),
+        None => {
+            let card = crate::settings::load_rate_card(db).await?;
+            match card.price_ai_usage(&usage.provider, &usage.model, &usage.tokens) {
+                Some(cost) => (Some(cost), Some(AiCostSource::RateCard)),
+                None => (None, None),
+            }
+        }
+    };
+    db.insert_ai_usage(AiUsageRecord {
+        event_id: result.event_id,
+        effect_id: result.effect_id,
+        workflow_run_id: result.workflow_run_id,
+        workflow_id: run.workflow_id,
+        node_id,
+        attempt: result.attempt,
+        provider: usage.provider.clone(),
+        model: usage.model.clone(),
+        tokens: usage.tokens.clone(),
+        cost_microusd,
+        cost_source,
+        recorded_at: result.timestamp,
+    })
+    .await?;
+    Ok(())
 }
 
 async fn bind_notification_conversation<T: crate::engine::BackgroundEngineStore>(

@@ -31,3 +31,6 @@ pub use worker::{WorkerRuntime, load_libraries, start_worker_loop};
 
 mod durable_workspace;
 mod workspace_objects;
+
+#[cfg(test)]
+mod effect_worker_tests;

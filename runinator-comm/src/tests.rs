@@ -4,7 +4,11 @@ use crate::{
     WebServiceAnnouncement, WireCodec, WsIngressCommand,
 };
 use chrono::Utc;
-use runinator_models::{json, server_settings::WakerSettings};
+use runinator_models::{
+    ai_usage::{AiTokenUsage, AiUsage},
+    json,
+    server_settings::WakerSettings,
+};
 use uuid::Uuid;
 
 #[test]
@@ -22,6 +26,7 @@ fn wake_command_round_trips_with_json_and_carries_its_effect_result() {
             workflow_run_id,
             continuation_id: Uuid::now_v7(),
             attempt: 0,
+            ai_usage: None,
             kind: EffectResultKind::Status {
                 status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
                 output: None,
@@ -58,6 +63,7 @@ fn wake_command_round_trips_server_managed_waker_settings() {
             workflow_run_id: Uuid::now_v7(),
             continuation_id: Uuid::now_v7(),
             attempt: 0,
+            ai_usage: None,
             kind: EffectResultKind::Status {
                 status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
                 output: None,
@@ -99,6 +105,7 @@ fn ws_ingress_command_round_trips_and_dedupes_per_kind() {
         workflow_run_id,
         continuation_id: Uuid::now_v7(),
         attempt: 2,
+        ai_usage: None,
         kind: EffectResultKind::Status {
             status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
             output: None,
@@ -135,6 +142,7 @@ fn wake_command_dedupes_per_effect_attempt_and_carries_its_result() {
         workflow_run_id: Uuid::now_v7(),
         continuation_id: Uuid::now_v7(),
         attempt: 0,
+        ai_usage: None,
         kind: EffectResultKind::Status {
             status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
             output: None,
@@ -233,12 +241,23 @@ fn effect_results_round_trip_with_json() {
         idempotency_key: "effect-key".into(),
         notification_delivery_id: None,
     };
-    let result = EffectResult::status(
+    let mut result = EffectResult::status(
         &command,
         runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
         Some(json!({"ok": true})),
         None,
     );
+    result.ai_usage = Some(AiUsage {
+        provider: "openai".into(),
+        model: "gpt-test".into(),
+        tokens: AiTokenUsage {
+            input_tokens: 12,
+            output_tokens: 4,
+            reasoning_tokens: 2,
+            ..Default::default()
+        },
+        provider_cost_microusd: Some(99),
+    });
 
     let encoded = result.to_wire().unwrap();
     let decoded = EffectResult::from_wire(&encoded).unwrap();
@@ -246,6 +265,10 @@ fn effect_results_round_trip_with_json() {
     assert_eq!(decoded.effect_id, command.effect_id);
     assert_eq!(decoded.continuation_id, command.continuation_id);
     assert_eq!(decoded.attempt, 1);
+    assert_eq!(
+        decoded.ai_usage.as_ref().unwrap().tokens.reasoning_tokens,
+        2
+    );
     match decoded.kind {
         EffectResultKind::Status { status, output, .. } => {
             assert_eq!(
@@ -268,6 +291,11 @@ fn effect_results_round_trip_with_json() {
     );
     let decoded: EffectResult = serde_json::from_value(future).unwrap();
     assert!(!decoded.is_supported());
+
+    let mut legacy = serde_json::to_value(&result).unwrap();
+    legacy.as_object_mut().unwrap().remove("ai_usage");
+    let legacy: EffectResult = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.ai_usage.is_none());
 }
 
 #[test]
@@ -280,6 +308,7 @@ fn terminal_interaction_results_round_trip_with_json() {
         workflow_run_id: Uuid::now_v7(),
         continuation_id: Uuid::now_v7(),
         attempt: 2,
+        ai_usage: None,
         kind: EffectResultKind::TerminalInteraction {
             interaction: runinator_models::runs::TerminalInteraction {
                 sequence: 7,

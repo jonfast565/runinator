@@ -174,6 +174,11 @@ pub enum ProviderExecutionEvent {
     Message {
         message: String,
     },
+    /// Normalized accounting metadata retained by the worker and attached to the terminal result.
+    /// It is never exposed as workflow output.
+    AiUsage {
+        usage: crate::ai_usage::AiUsage,
+    },
     /// A structured, non-terminal provider event. This keeps long-lived agent and other
     /// streaming providers observable without treating provider-specific payloads as workflow
     /// completion output.

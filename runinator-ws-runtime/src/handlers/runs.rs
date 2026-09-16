@@ -13,7 +13,8 @@ use runinator_models::{
 use runinator_store::{
     RuntimeStore,
     roles::{
-        FileStore, IngressStore, OrchestrationStore, RunStore, ScheduleStore, WorkflowVmStore,
+        AiUsageStore, FileStore, IngressStore, OrchestrationStore, RunStore, ScheduleStore,
+        WorkflowVmStore,
     },
 };
 
@@ -48,6 +49,7 @@ pub trait RunOperationsStore:
     + FileStore
     + IngressStore
     + OrchestrationStore
+    + AiUsageStore
 {
 }
 
@@ -60,7 +62,58 @@ impl<T> RunOperationsStore for T where
         + FileStore
         + IngressStore
         + OrchestrationStore
+        + AiUsageStore
 {
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct AiUsageQuery {
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub async fn get_run_ai_usage<T: RunOperationsStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::View)
+        .await
+    {
+        return reply.into_reply();
+    }
+    match operations.ai_usage_for_run(workflow_run_id).await {
+        Ok(report) => (StatusCode::OK, Json(ApiResponse::AiUsageReport(report))),
+        Err(error) => api_error(error.to_string()),
+    }
+}
+
+pub async fn get_workflow_ai_usage<T: RunOperationsStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(workflow_id): Path<Uuid>,
+    Query(query): Query<AiUsageQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(
+            runinator_models::auth::ResourceType::Workflow,
+            workflow_id,
+            runinator_models::auth::Permission::View,
+        )
+        .await
+    {
+        return reply.into_reply();
+    }
+    match operations
+        .ai_usage_for_workflow(workflow_id, query.since, query.until)
+        .await
+    {
+        Ok(report) => (StatusCode::OK, Json(ApiResponse::AiUsageReport(report))),
+        Err(error) => api_error(error.to_string()),
+    }
 }
 
 pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
@@ -1106,6 +1159,14 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
                 .layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_runs/{id}/ai-usage",
+            get(get_run_ai_usage::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/ai-usage",
+            get(get_workflow_ai_usage::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/scheduler/workflow_runs/{id}/claim/renew",
             post(renew_workflow_run_claim::<T>).layer(Extension(pool.clone())),
         )
@@ -1152,7 +1213,50 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
 }
 
 /// the openapi entries for the routes above.
+const AI_USAGE_TIME_BOUNDS: &[ParamDoc] = &[
+    ParamDoc {
+        name: "since",
+        location: "query",
+        description: "Include usage recorded at or after this RFC 3339 timestamp.",
+        required: false,
+        example: "2026-09-01T00:00:00Z",
+    },
+    ParamDoc {
+        name: "until",
+        location: "query",
+        description: "Include usage recorded at or before this RFC 3339 timestamp.",
+        required: false,
+        example: "2026-09-30T23:59:59Z",
+    },
+];
+
 pub const DOCS: &[EndpointDoc] = &[
+    endpoint!(
+        "get",
+        "/workflow_runs/{id}/ai-usage",
+        "Workflow runs",
+        "Get run AI usage",
+        "Returns durable token and immutable cost accounting for one workflow run.",
+        false,
+        None,
+        &[],
+        200,
+        "AI usage report",
+        Example::None,
+    ),
+    endpoint!(
+        "get",
+        "/workflows/{id}/ai-usage",
+        "Workflows",
+        "Get workflow AI usage",
+        "Returns retained AI usage grouped by run, node, provider, and model. Optional since/until timestamps bound the report.",
+        false,
+        None,
+        AI_USAGE_TIME_BOUNDS,
+        200,
+        "AI usage report",
+        Example::None,
+    ),
     endpoint!(
         "get",
         "/workflow_runs/{id}/replay-plan",

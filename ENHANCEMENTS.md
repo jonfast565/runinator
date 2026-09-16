@@ -44,7 +44,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 11.2 | Structured execution outcomes | **P2** | models/comm, workflows, engine, worker, REXRAP |
 | 11.4 | Durable workflow state and mailboxes | **P2** | models, store/database, runtime, engine, REXRAP |
 | 8.6 | Split the utilities catch-all | **shipped 2026-08-22** | observability, secrets, platform, pack-wire, data-export |
-| 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
+| 5.6 | AI cost & token accounting | **shipped 2026-09-16** | provider-ai, comm/models, database, command-center |
 | 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
 | 9.7 | Pack provenance and signing | **P3** | pack, pack-wire, ctl, ws-authoring, database |
@@ -486,12 +486,11 @@ and ingress variants without adding another timer-settlement path.
 - **Boundary:** pack compilation remains in `runinator-pack`; only its compiled-artifact transport format belongs in `runinator-pack-wire`. `runinator-platform` can compose observability during process startup, but the observability crate has no reverse dependency on application paths or process lifecycle.
 - **Result:** the retired `runinator-utilities` package has no compatibility facade, so its old aggregate dependency surface cannot be accidentally pulled back into a consumer.
 
-### 5.6 AI cost & token accounting
-- **Owning crates:** `runinator-provider-ai`, `runinator-models`/`runinator-comm` (result event), `runinator-database`.
-- **Verified 2026-08-04:** still open — `runinator-provider-ai/src/claude_code.rs` captures no token or cost fields. There is no hook to attribute AI spend per node/run/workflow.
-- **Approach:** Capture usage in the provider, thread it back on the `WorkflowResultEvent`, persist per node-run, roll up per run/workflow in the command center.
-- **Boundary note:** adding usage to the result event is a `runinator-comm`/`runinator-models` contract change — thread through every broker backend, `mappers.rs`, and both DB backends.
-- **Note:** lands more cleanly now that rate cards exist in `billing.rs`, and it pairs naturally with 6.5's aggregate query layer.
+### 5.6 AI cost & token accounting — shipped 2026-09-16
+- **Delivered in 0.37.761:** Claude Code and Codex normalize terminal token usage into the additive effect-result contract without altering workflow output. The worker attaches usage exactly once to terminal settlement, including failed attempts, while sessions without machine-readable usage remain unaccounted.
+- **Durability:** `workflow_ai_usage` records every retained attempt across SQLite, PostgreSQL, and MariaDB, deduplicates broker redelivery by terminal event, attributes the pinned VM node, and participates in run deletion and archival before its parent effect.
+- **Pricing:** exact provider charges are authoritative. Otherwise the platform rate card matches provider/model and then provider wildcard prices, calculates in integer micro-USD, persists the source and amount immutably, and leaves unmatched usage explicitly unpriced.
+- **Surface:** authorized run and workflow reports expose attempt records and run/node/provider/model rollups. Run detail, workflow overview, and Resources & Billing render priced and unpriced usage and provide a purpose-built platform AI pricing editor.
 
 ### 5.2 AI-assisted REXRAP authoring in the command center
 - **Owning crates:** `runinator-command-center`, `runinator-provider-ai`.

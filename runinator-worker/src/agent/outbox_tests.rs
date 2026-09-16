@@ -17,6 +17,7 @@ fn effect_result_message() -> EffectResultMessage {
             workflow_run_id: Uuid::now_v7(),
             continuation_id: Uuid::now_v7(),
             attempt: 0,
+            ai_usage: None,
             kind: EffectResultKind::Status {
                 status: WorkflowEffectStatus::Succeeded,
                 output: None,

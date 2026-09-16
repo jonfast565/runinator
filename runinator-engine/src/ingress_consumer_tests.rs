@@ -37,6 +37,7 @@ fn effect_result(effect_id: Uuid, attempt: u32) -> runinator_comm::EffectResult 
         workflow_run_id: Uuid::now_v7(),
         continuation_id: Uuid::now_v7(),
         attempt,
+        ai_usage: None,
         kind: EffectResultKind::Status {
             status: WorkflowEffectStatus::Succeeded,
             output: None,

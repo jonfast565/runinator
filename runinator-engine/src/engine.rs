@@ -62,6 +62,7 @@ pub trait BackgroundEngineStore:
     RuntimeStore
     + WorkflowVmStore
     + RunStore
+    + runinator_store::roles::AiUsageStore
     + runinator_store::roles::FileStore
     + NotificationStore
     + ReplicaStore
@@ -83,6 +84,7 @@ impl<T> BackgroundEngineStore for T where
     T: RuntimeStore
         + WorkflowVmStore
         + RunStore
+        + runinator_store::roles::AiUsageStore
         + runinator_store::roles::FileStore
         + NotificationStore
         + ReplicaStore

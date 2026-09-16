@@ -51,6 +51,8 @@ pub struct WorkflowRunDetail {
     pub journal: Vec<WorkflowJournalRecord>,
     #[serde(default)]
     pub vm_cursors: Vec<WorkflowVmCursor>,
+    #[serde(default)]
+    pub ai_usage: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

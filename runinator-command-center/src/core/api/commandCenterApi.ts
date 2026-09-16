@@ -93,6 +93,8 @@ import type {
   PipelineTrigger,
   IngressAdmission,
   IngressInboxEntry,
+  AiRateEntry,
+  AiUsageReport,
 } from "../domain/models";
 
 async function fetchIngressJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1508,11 +1510,12 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   // but an older or briefly unavailable side endpoint must never turn a valid run into a blank
   // inspector (and erase the timeline/Gantt in the process).
   const detail = await command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
-  const [continuations, effects, journal, vmCursors] = await Promise.all([
+  const [continuations, effects, journal, vmCursors, aiUsage] = await Promise.all([
     fetchWorkflowContinuations(workflowRunId).catch(() => []),
     fetchWorkflowEffects(workflowRunId).catch(() => []),
     fetchWorkflowJournal(workflowRunId).catch(() => []),
     fetchWorkflowVmCursors(workflowRunId).catch(() => []),
+    fetchRunAiUsage(workflowRunId).catch(() => undefined),
   ]);
   const workspaceOutputByEffect = new Map(
     await Promise.all(
@@ -1745,6 +1748,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     effects,
     journal,
     vm_cursors: vmCursors,
+    ai_usage: aiUsage,
     execution_state: {
       ...(detail.execution_state ?? {}),
       cursors: vmCursors
@@ -2242,6 +2246,7 @@ export interface RateEntry {
 
 export interface RateCard {
   entries: RateEntry[];
+  ai_entries: AiRateEntry[];
 }
 
 export interface ScaleOrgNodesRequest {
@@ -2296,6 +2301,22 @@ export async function removeOrgMember(orgId: string, userId: string) {
 
 export async function fetchRateCard() {
   return command<RateCard>("fetch_rate_card");
+}
+
+export async function updateAiRateCard(aiEntries: AiRateEntry[]) {
+  return command<RateCard>("update_ai_rate_card", { aiEntries });
+}
+
+export async function fetchRunAiUsage(workflowRunId: string) {
+  return command<AiUsageReport>("fetch_run_ai_usage", { workflowRunId });
+}
+
+export async function fetchWorkflowAiUsage(
+  workflowId: string,
+  since?: string | null,
+  until?: string | null,
+) {
+  return command<AiUsageReport>("fetch_workflow_ai_usage", { workflowId, since, until });
 }
 
 export async function fetchOrgNodes(orgId: string) {

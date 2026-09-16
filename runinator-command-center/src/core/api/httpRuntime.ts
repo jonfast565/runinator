@@ -1393,6 +1393,35 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     headers: (args) => ({ "x-org-id": String(arg(args, "orgId")) }),
   },
   fetch_rate_card: { method: "GET", path: () => "rate-card" },
+  update_ai_rate_card: {
+    method: "PUT",
+    path: () => "rate-card/ai",
+    body: (args) => ({ ai_entries: arg(args, "aiEntries") }),
+  },
+  fetch_run_ai_usage: {
+    method: "GET",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/ai-usage`,
+  },
+  fetch_workflow_ai_usage: {
+    method: "GET",
+    path: (args) => {
+      const query = new URLSearchParams();
+      const since = argOpt(args, "since");
+      const until = argOpt(args, "until");
+
+      if (typeof since === "string" && since.length > 0) {
+        query.set("since", since);
+      }
+
+      if (typeof until === "string" && until.length > 0) {
+        query.set("until", until);
+      }
+
+      const suffix = query.toString();
+
+      return `workflows/${escape(arg(args, "workflowId"))}/ai-usage${suffix ? `?${suffix}` : ""}`;
+    },
+  },
   fetch_org_nodes: {
     method: "GET",
     path: (args) => `orgs/${escape(arg(args, "orgId"))}/nodes`,

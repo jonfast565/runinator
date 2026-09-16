@@ -4,6 +4,7 @@ mod errors;
 mod params;
 mod provider;
 mod shell;
+mod usage;
 
 pub use provider::AiCommandProvider;
 

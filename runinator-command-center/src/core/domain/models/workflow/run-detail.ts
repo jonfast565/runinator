@@ -9,6 +9,7 @@ import type {
   WorkflowVmCursor,
 } from "./vm";
 import type { WorkflowExecutionState } from "../workflow-state";
+import type { AiUsageReport } from "../ai-usage";
 
 export interface WorkflowRunDetail {
   run: RunSummary & {
@@ -22,10 +23,13 @@ export interface WorkflowRunDetail {
   journal?: WorkflowJournalRecord[];
   vm_cursors?: WorkflowVmCursor[];
   execution_state?: WorkflowExecutionState;
+  ai_usage?: AiUsageReport;
 }
 
 /** snapshot attached to a run detail, when the backend included the workflow definition. */
-export function runWorkflowSnapshot(detail: WorkflowRunDetail | null | undefined): WorkflowDefinition | null {
+export function runWorkflowSnapshot(
+  detail: WorkflowRunDetail | null | undefined,
+): WorkflowDefinition | null {
   const snapshot = detail?.run.workflow_snapshot;
   return snapshot ? (snapshot as unknown as WorkflowDefinition) : null;
 }

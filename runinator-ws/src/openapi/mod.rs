@@ -375,6 +375,7 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
         docs::EndpointPolicy::Authenticated,
     ),
     ("get", "/rate-card", docs::EndpointPolicy::Authenticated),
+    ("put", "/rate-card/ai", docs::EndpointPolicy::Authenticated),
     (
         "get",
         "/replicas/{replica_id}/samples",

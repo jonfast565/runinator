@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::{
+    billing::{AI_RATE_CARD_NAME, AI_RATE_CARD_SCOPE, RateCard},
     bundles::{SettingBundleEntry, SettingsBundle},
     errors::SendableError,
     server_settings::{SERVER_SETTINGS_NAME, SERVER_SETTINGS_SCOPE, ServerSettings},
@@ -469,6 +470,61 @@ pub async fn save_server_settings<T: SettingStore>(
         SettingKind::Config,
         SERVER_SETTINGS_SCOPE.into(),
         SERVER_SETTINGS_NAME.into(),
+        settings_cipher().encrypt(&bytes),
+        Utc::now().timestamp(),
+    )
+    .await
+}
+
+/// Load the platform AI rate card. Infrastructure rates retain their compiled defaults and AI
+/// entries default empty so an unknown model is never silently priced as free.
+pub async fn load_rate_card<T: RuntimeStore>(db: &T) -> Result<RateCard, SendableError> {
+    let records = db.list_settings(None).await?;
+    let Some(record) = records.iter().find(|record| {
+        record.kind == SettingKind::Config
+            && record.scope == AI_RATE_CARD_SCOPE
+            && record.name == AI_RATE_CARD_NAME
+    }) else {
+        return Ok(RateCard::default_card());
+    };
+    let plaintext = settings_cipher()
+        .try_decrypt(&record.value)
+        .ok_or_else(|| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "AI rate card could not be decrypted with the configured credential key",
+            )) as SendableError
+        })?;
+    let decoded = decode_config_value(&plaintext);
+    serde_json::from_value(decoded.into()).map_err(|error| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("stored AI rate card is invalid: {error}"),
+        )) as SendableError
+    })
+}
+
+pub async fn save_rate_card<T: SettingStore>(db: &T, card: &RateCard) -> Result<(), SendableError> {
+    let value = Value::from(serde_json::to_value(card)?);
+    let bytes = validate_and_encode(
+        SettingKind::Config,
+        AI_RATE_CARD_SCOPE,
+        AI_RATE_CARD_NAME,
+        &value,
+        None,
+        None,
+    )
+    .map_err(|message| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )) as SendableError
+    })?;
+    db.upsert_setting(
+        None,
+        SettingKind::Config,
+        AI_RATE_CARD_SCOPE.into(),
+        AI_RATE_CARD_NAME.into(),
         settings_cipher().encrypt(&bytes),
         Utc::now().timestamp(),
     )

@@ -24,6 +24,7 @@ use crate::{
         CODEX_CANCELED, CODEX_EXIT_CODE, CODEX_INPUT, CODEX_PROTOCOL, CODEX_SPAWN, CODEX_TIMEOUT,
     },
     params::{CodexParams, parse_params},
+    usage::{codex_usage, emit as emit_usage},
 };
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -135,16 +136,23 @@ fn run_exec(
             input: None,
             timeout,
             cancellation: &token,
-            sink,
+            sink: sink.clone(),
         })
         .map_err(|error| map_process_error(error, timeout, &params.binary))?;
+    let parsed = parse_exec_jsonl(&result.output.stdout);
+    if let Ok(parsed) = &parsed {
+        emit_usage(
+            sink.as_ref(),
+            codex_usage(&parsed.usage, params.model.as_deref()),
+        );
+    }
     if !result.status.success() {
         return Err(CODEX_EXIT_CODE.error(format!(
             "codex exited with {}: {}",
             result.status, result.output.stderr
         )));
     }
-    let parsed = parse_exec_jsonl(&result.output.stdout)?;
+    let parsed = parsed?;
     drop(schema_file);
     home.scrub();
     Ok(TaskExecutionResult {
@@ -267,7 +275,7 @@ fn run_app_server(
     let (sender, receiver) = mpsc::sync_channel(128);
     let _stdout_reader = spawn_reader(stdout, "stdout", sender.clone());
     let _stderr_reader = spawn_reader(stderr, "stderr", sender);
-    let mut session = AppSession::new(sink, request.timeout_secs, token);
+    let mut session = AppSession::new(sink.clone(), request.timeout_secs, token);
 
     send_request(
         &mut stdin,
@@ -340,6 +348,10 @@ fn run_app_server(
         .and_then(Value::as_str)
         .map(str::to_owned);
     let completed = session.run_turn(&mut child, &mut stdin, &receiver, &thread_id)?;
+    emit_usage(
+        sink.as_ref(),
+        codex_usage(&completed.usage, params.model.as_deref()),
+    );
     let _ = send_request(
         &mut stdin,
         4,

@@ -26,6 +26,7 @@ import { formatDate, formatErrorMessage, pretty } from "../../../core/utils/form
 import { computed, nextTick, ref, watch } from "vue";
 import type {
   ActionResultMetadata,
+  AiUsageRecord,
   DebugFrame,
   WorkflowNodeRun,
 } from "../../../core/domain/models";
@@ -39,6 +40,7 @@ import {
 import { formatResultValue, formatRunDuration, shortId } from "./run-detail-format";
 import { useWorkflowTransitionStats } from "./useWorkflowTransitionStats";
 import { compareStepsAscending, stepTimestamp } from "../shared/run-timeline-format";
+import { aiTokenTotal, formatAiCost } from "../../../core/utils/ai-usage";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -47,6 +49,16 @@ const pipelineRuns = usePipelineRunsStore();
 const orchestrations = useOrchestrationsStore();
 const auth = useAuthStore();
 const isPlatformAdmin = computed(() => auth.user?.platform_role === "admin");
+const aiUsage = computed(() => workflows.workflowRunDetail?.ai_usage ?? null);
+const aiTotalTokens = computed(() => {
+  const tokens = aiUsage.value?.totals.tokens;
+  return tokens ? aiTokenTotal(tokens) : 0;
+});
+
+function aiRecordTokens(record: AiUsageRecord): number {
+  return aiTokenTotal(record.tokens);
+}
+
 const managedOverrideReason = ref("");
 const managedOverrideBusy = ref(false);
 interface ManagedWorkspaceSummary {

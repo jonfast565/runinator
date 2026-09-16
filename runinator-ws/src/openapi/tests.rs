@@ -32,6 +32,9 @@ fn annotated_paths_are_present() {
         "/workflow_runs/{id}/resume",
         "/workflow_runs/{id}/replay",
         "/workflow_runs/{id}/rename",
+        "/workflow_runs/{id}/ai-usage",
+        "/workflows/{id}/ai-usage",
+        "/rate-card/ai",
         "/rexrap/compile",
         "/credentials",
         "/dead_letters",
@@ -111,6 +114,31 @@ fn auth_and_control_routes_expose_expected_schemas() {
         json["paths"]["/workflow_runs/{id}/cancel"]["post"]["responses"]["200"]["content"]["application/json"]
             ["schema"]["$ref"],
         "#/components/schemas/TaskResponseSchema"
+    );
+}
+
+#[test]
+fn ai_usage_routes_document_authentication_and_time_bounds() {
+    let json = openapi_document();
+    let workflow_usage = &json["paths"]["/workflows/{id}/ai-usage"]["get"];
+    let parameter_names = workflow_usage["parameters"]
+        .as_array()
+        .expect("workflow usage parameters")
+        .iter()
+        .filter_map(|parameter| parameter["name"].as_str())
+        .collect::<Vec<_>>();
+
+    assert!(parameter_names.contains(&"since"));
+    assert!(parameter_names.contains(&"until"));
+    assert!(json["security"].as_array().is_some_and(|v| !v.is_empty()));
+    assert_ne!(workflow_usage["security"], serde_json::json!([]));
+    assert_ne!(
+        json["paths"]["/workflow_runs/{id}/ai-usage"]["get"]["security"],
+        serde_json::json!([])
+    );
+    assert_ne!(
+        json["paths"]["/rate-card/ai"]["put"]["security"],
+        serde_json::json!([])
     );
 }
 

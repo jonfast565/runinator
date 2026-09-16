@@ -26,6 +26,7 @@ use crate::errors::{
     CLAUDE_INVALID_JSON, CLAUDE_SCHEMA, CLAUDE_SPAWN, CLAUDE_TIMEOUT,
 };
 use crate::params::{ClaudeCodeParams, parse_params};
+use crate::usage::{claude_usage, emit as emit_usage};
 
 const MAX_HARNESS_LINE_BYTES: usize = 1024 * 1024;
 const MAX_HARNESS_STDERR_BYTES: usize = 64 * 1024;
@@ -130,7 +131,7 @@ fn run_claude_once(
             input: None,
             timeout,
             cancellation: &token,
-            sink,
+            sink: sink.clone(),
         })
         .map_err(|error| match error {
             ProcessFailure::Canceled => CLAUDE_CANCELED.bare(),
@@ -146,13 +147,17 @@ fn run_claude_once(
     let status = result.status;
     let output = result.output;
 
+    let parsed = parse_claude_output(&params.output_format, &output.stdout);
+    if let Ok(parsed) = &parsed {
+        emit_usage(sink.as_ref(), claude_usage(parsed, &params.model));
+    }
     if !status.success() {
         return Err(
             CLAUDE_EXIT_CODE.error(format!("claude exited with {status}: {}", output.stderr))
         );
     }
 
-    let parsed = parse_claude_output(&params.output_format, &output.stdout)?;
+    let parsed = parsed?;
     validate_structured_output(params.output_schema.as_ref(), &parsed)?;
     Ok(TaskExecutionResult {
         message: Some("Claude Code completed".into()),
@@ -385,6 +390,9 @@ fn run_claude_harness(
     drop(line_receiver);
     drop(stdout_reader);
     drop(stderr_reader);
+    if let Some(response) = &result {
+        emit_usage(sink.as_ref(), claude_usage(response, &params.model));
+    }
     if !status.success() {
         return Err(CLAUDE_EXIT_CODE.error(format!("claude exited with {status}: {stderr_output}")));
     }

@@ -195,9 +195,11 @@ const widget = computed(() => props.field.widget ?? "");
 // resolve the current provider from sibling values (for action_function widget).
 const currentProvider = computed(() => {
   const providerName = props.siblingValues.provider as string | undefined;
+
   if (!providerName) {
     return null;
   }
+
   return providersStore.providers.find((p) => p.name === providerName) ?? null;
 });
 
@@ -249,6 +251,7 @@ function buildAssertionList(value: unknown): AssertionDraft[] {
   if (!Array.isArray(value)) {
     return [];
   }
+
   return value.map((item) => {
     const rec =
       item && typeof item === "object" && !Array.isArray(item)
@@ -266,12 +269,15 @@ function emitAssertions() {
   const serialized = assertionList.value.map((a) => {
     const condition = parseRequiredJson(a.condition_json) ?? true;
     const result: Record<string, unknown> = { condition };
+
     if (a.name.trim()) {
       result.name = a.name.trim();
     }
+
     if (a.message.trim()) {
       result.message = a.message.trim();
     }
+
     return result;
   });
   emit("update:modelValue", serialized);
