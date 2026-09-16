@@ -97,7 +97,11 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
             let command = match key {
                 '[' => Some(ProfileCommand::SelectPrevious),
                 ']' => Some(ProfileCommand::SelectNext),
+                character @ '1'..='9' => {
+                    Some(ProfileCommand::Select((character as u8 - b'1') as usize))
+                }
                 'a' => Some(ProfileCommand::Approve),
+                'A' => Some(ProfileCommand::ApproveAll),
                 'r' => Some(ProfileCommand::Revoke),
                 _ => None,
             };
@@ -158,7 +162,9 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
 enum ProfileCommand {
     SelectPrevious,
     SelectNext,
+    Select(usize),
     Approve,
+    ApproveAll,
     Revoke,
 }
 
@@ -246,6 +252,18 @@ fn handle_profile_command(
             *selected = (*selected + 1) % profiles.len();
             false
         }
+        ProfileCommand::Select(index) => {
+            if index < profiles.len() {
+                *selected = index;
+            } else {
+                tui::log_line(format!(
+                    "Execution profile {} is not available; {} profiles are configured.",
+                    index + 1,
+                    profiles.len()
+                ));
+            }
+            false
+        }
         ProfileCommand::Approve => {
             let profile = &profiles[*selected];
             if !profile.enabled {
@@ -276,6 +294,28 @@ fn handle_profile_command(
                 tui::log_line(format!(
                     "Could not save local approval for execution profile '{}'.",
                     profile.name
+                ));
+                false
+            }
+        }
+        ProfileCommand::ApproveAll => {
+            let mut config = crate::config::load();
+            let approved = approve_enabled_profiles(&mut config, profiles);
+            if approved.is_empty() {
+                tui::log_line("All enabled execution profiles are already approved.");
+                return false;
+            }
+            if crate::config::save(&config) {
+                tui::log_line(format!(
+                    "Approved {} execution profiles locally; synchronizing collection: {}.",
+                    approved.len(),
+                    approved.join(", ")
+                ));
+                true
+            } else {
+                tui::log_line(format!(
+                    "Could not save local approvals for {} execution profiles.",
+                    approved.len()
                 ));
                 false
             }
@@ -311,6 +351,25 @@ fn handle_profile_command(
     }
 }
 
+fn approve_enabled_profiles(
+    config: &mut AgentConfig,
+    profiles: &[crate::execution_profiles::LocalProfileStatus],
+) -> Vec<String> {
+    profiles
+        .iter()
+        .filter(|profile| profile.enabled)
+        .filter_map(|profile| {
+            if config.approved_execution_profiles.get(&profile.id) == Some(&profile.config_digest) {
+                return None;
+            }
+            config
+                .approved_execution_profiles
+                .insert(profile.id, profile.config_digest.clone());
+            Some(profile.name.clone())
+        })
+        .collect()
+}
+
 fn register_execution_profiles(
     profiles: &[crate::execution_profiles::LocalProfileStatus],
     selected: usize,
@@ -337,8 +396,9 @@ fn execution_profile_details(
 ) -> Vec<String> {
     let Some(profile) = profiles.get(selected) else {
         return vec![
+            "Controls: [/] select · 1-9 select directly · a approve · A approve all · r revoke"
+                .to_string(),
             "No centrally configured execution profiles are available yet.".to_string(),
-            "[/] select · a approve selected profile · r revoke selected profile".to_string(),
         ];
     };
     let approval = if !profile.enabled {
@@ -348,16 +408,35 @@ fn execution_profile_details(
     } else {
         "not approved on this computer"
     };
-    vec![
-        format!("{}/{}: {}", selected + 1, profiles.len(), profile.name),
-        approval.to_string(),
+    let mut details = vec![
+        "Controls: [/] select · 1-9 select directly · a approve · A approve all · r revoke"
+            .to_string(),
+        format!(
+            "Selected {}/{}: {} · {}",
+            selected + 1,
+            profiles.len(),
+            profile.name,
+            approval
+        ),
         format!(
             "config {} · collection {}",
             &profile.config_digest[..profile.config_digest.len().min(12)],
             profile.message
         ),
-        "[/] select · a approve selected profile · r revoke selected profile".to_string(),
-    ]
+        "Profiles:".to_string(),
+    ];
+    details.extend(profiles.iter().enumerate().map(|(index, profile)| {
+        let marker = if index == selected { '>' } else { ' ' };
+        let approval = if !profile.enabled {
+            "disabled"
+        } else if profile.approved {
+            "approved"
+        } else {
+            "approval required"
+        };
+        format!("{marker} {}. {} · {approval}", index + 1, profile.name)
+    }));
+    details
 }
 
 /// Host observer that supplements the worker-loop metrics with the lifecycle phase. Lifecycle log
