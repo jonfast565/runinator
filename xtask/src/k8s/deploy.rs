@@ -656,14 +656,13 @@ fn run_rollout_checks(workspace_root: &Path, ctx_args: &[String], targets: &[Str
 }
 
 /// deletes whichever stale controller kind (`Deployment` vs `StatefulSet`) the desired manifest no
-/// longer uses for worker/waker, so a kind change (e.g. worker moving from Deployment to
-/// StatefulSet) doesn't leave the old controller running alongside the new one.
+/// longer uses, so a kind change does not leave the old controller running alongside the new one.
 fn remove_superseded_workload_controllers(
     workspace_root: &Path,
     ctx_args: &[String],
     docs: &[Value],
 ) {
-    for name in ["runinator-worker", "runinator-waker"] {
+    for name in ["runinator-rabbitmq", "runinator-worker", "runinator-waker"] {
         let Some(desired_kind) = yaml_docs::workload_kind(docs, name) else {
             eprintln!(
                 "warning: could not determine desired workload kind for {name}; skipping stale workload cleanup."
